@@ -5,21 +5,21 @@ SceneDeck builds as a GNOME-runtime Flatpak.
 ## Prerequisites
 
 ```sh
-flatpak install flathub org.gnome.Platform//47 org.gnome.Sdk//47 \
-    org.freedesktop.Sdk.Extension.rust-stable//24.08
-pip install aiohttp toml   # for the cargo source generator
+flatpak install flathub org.gnome.Platform//50 org.gnome.Sdk//50 \
+    org.freedesktop.Sdk.Extension.rust-stable
 ```
 
-## 1. Generate the offline Cargo source manifest
+## 1. Vendor Cargo dependencies
 
-Flathub builds run offline, so dependencies must be vendored into a
-`cargo-sources.json` generated from `Cargo.lock`:
+The release workflow vendors Cargo dependencies before invoking
+`flatpak-builder`. Use the same approach locally when testing the release
+manifest:
 
 ```sh
-# One-time: fetch the generator
-curl -O https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
-
-python flatpak-cargo-generator.py ../../Cargo.lock -o cargo-sources.json
+cd ../..
+mkdir -p .cargo
+cargo vendor vendor > .cargo/config.toml
+cd packaging/flatpak
 ```
 
 Re-run this whenever `Cargo.lock` changes.
@@ -41,5 +41,5 @@ flatpak run io.scenedeck.app
 - The OBS password is stored via the host Secret Service
   (`--talk-name=org.freedesktop.secrets`), never in the sandbox.
 - `--share=network` is required for the OBS WebSocket connection.
-- The runtime version (`47`) should track the GNOME platform used for
+- The runtime version (`50`) should track the GNOME platform used for
   development; bump it together with the libadwaita feature level.

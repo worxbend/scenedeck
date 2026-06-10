@@ -1,0 +1,197 @@
+name: linux release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  APP_ID: io.scenedeck.app
+  BIN_NAME: scenedeck
+
+jobs:
+  build-linux:
+    name: Build Linux ${{ matrix.artifact_arch }} release artifacts
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact_arch: amd64
+            runner: ubuntu-24.04
+            appimage_arch: x86_64
+          - artifact_arch: arm64
+            runner: ubuntu-24.04-arm
+            appimage_arch: aarch64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            appstream \
+            build-essential \
+            desktop-file-utils \
+            file \
+            flatpak \
+            flatpak-builder \
+            jq \
+            libadwaita-1-dev \
+            libfuse2t64 \
+            libglib2.0-dev \
+            libgtk-4-dev \
+            librsvg2-bin \
+            patchelf \
+            pkg-config \
+            wget
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Determine package version
+        id: version
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate desktop metadata
+        run: |
+          desktop-file-validate "data/${APP_ID}.desktop"
+          appstreamcli validate --no-net "data/${APP_ID}.metainfo.xml"
+
+      - name: Render release icon
+        run: |
+          mkdir -p build-assets
+          rsvg-convert -w 256 -h 256 "assets/${APP_ID}.svg" -o "build-assets/${APP_ID}.png"
+
+      - name: Vendor Cargo dependencies for Flatpak
+        run: |
+          mkdir -p .cargo
+          cargo vendor vendor > .cargo/config.toml
+
+      - name: Build Flatpak bundle
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak-builder \
+            --user \
+            --force-clean \
+            --install-deps-from=flathub \
+            --state-dir=/tmp/scenedeck-flatpak-state-${{ matrix.artifact_arch }} \
+            --repo=/tmp/scenedeck-flatpak-repo-${{ matrix.artifact_arch }} \
+            /tmp/scenedeck-flatpak-build-${{ matrix.artifact_arch }} \
+            packaging/flatpak/${APP_ID}.yml
+          flatpak build-bundle \
+            /tmp/scenedeck-flatpak-repo-${{ matrix.artifact_arch }} \
+            ${BIN_NAME}-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.flatpak \
+            ${APP_ID}
+
+      - name: Run tests
+        run: cargo test --locked
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Stage standalone executable
+        run: |
+          install -Dm755 \
+            "target/release/${BIN_NAME}" \
+            "${BIN_NAME}-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}"
+
+      - name: Package release tarball
+        run: |
+          package="${BIN_NAME}-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}"
+          mkdir -p \
+            "dist/${package}/usr/bin" \
+            "dist/${package}/usr/share/applications" \
+            "dist/${package}/usr/share/glib-2.0/schemas" \
+            "dist/${package}/usr/share/icons/hicolor/scalable/apps" \
+            "dist/${package}/usr/share/icons/hicolor/256x256/apps" \
+            "dist/${package}/usr/share/metainfo"
+
+          install -Dm755 "target/release/${BIN_NAME}" "dist/${package}/usr/bin/${BIN_NAME}"
+          install -Dm644 "data/${APP_ID}.desktop" "dist/${package}/usr/share/applications/${APP_ID}.desktop"
+          install -Dm644 "data/${APP_ID}.metainfo.xml" "dist/${package}/usr/share/metainfo/${APP_ID}.metainfo.xml"
+          install -Dm644 "data/${APP_ID}.gschema.xml" "dist/${package}/usr/share/glib-2.0/schemas/${APP_ID}.gschema.xml"
+          install -Dm644 "assets/${APP_ID}.svg" "dist/${package}/usr/share/icons/hicolor/scalable/apps/${APP_ID}.svg"
+          install -Dm644 "build-assets/${APP_ID}.png" "dist/${package}/usr/share/icons/hicolor/256x256/apps/${APP_ID}.png"
+
+          tar -czf "${package}.tar.gz" -C dist "${package}"
+
+      - name: Build AppImage
+        run: |
+          appdir="${BIN_NAME}.AppDir"
+          rm -rf "${appdir}"
+          mkdir -p \
+            "${appdir}/usr/bin" \
+            "${appdir}/usr/share/applications" \
+            "${appdir}/usr/share/glib-2.0/schemas" \
+            "${appdir}/usr/share/icons/hicolor/scalable/apps" \
+            "${appdir}/usr/share/icons/hicolor/256x256/apps" \
+            "${appdir}/usr/share/metainfo"
+
+          install -Dm755 "target/release/${BIN_NAME}" "${appdir}/usr/bin/${BIN_NAME}"
+          install -Dm755 packaging/appimage/AppRun "${appdir}/AppRun"
+          install -Dm644 "data/${APP_ID}.desktop" "${appdir}/usr/share/applications/${APP_ID}.desktop"
+          install -Dm644 "data/${APP_ID}.metainfo.xml" "${appdir}/usr/share/metainfo/${APP_ID}.metainfo.xml"
+          install -Dm644 "data/${APP_ID}.gschema.xml" "${appdir}/usr/share/glib-2.0/schemas/${APP_ID}.gschema.xml"
+          install -Dm644 "assets/${APP_ID}.svg" "${appdir}/usr/share/icons/hicolor/scalable/apps/${APP_ID}.svg"
+          install -Dm644 "build-assets/${APP_ID}.png" "${appdir}/usr/share/icons/hicolor/256x256/apps/${APP_ID}.png"
+          glib-compile-schemas "${appdir}/usr/share/glib-2.0/schemas"
+
+          ln -sf "usr/share/applications/${APP_ID}.desktop" "${appdir}/${APP_ID}.desktop"
+          ln -sf "usr/share/icons/hicolor/256x256/apps/${APP_ID}.png" "${appdir}/${APP_ID}.png"
+          ln -sf "usr/share/icons/hicolor/256x256/apps/${APP_ID}.png" "${appdir}/.DirIcon"
+
+          wget -q -O linuxdeploy-${{ matrix.appimage_arch }}.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.appimage_arch }}.AppImage
+          wget -q -O appimagetool-${{ matrix.appimage_arch }}.AppImage \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${{ matrix.appimage_arch }}.AppImage
+          chmod +x linuxdeploy-${{ matrix.appimage_arch }}.AppImage appimagetool-${{ matrix.appimage_arch }}.AppImage
+
+          APPIMAGE_EXTRACT_AND_RUN=1 ./linuxdeploy-${{ matrix.appimage_arch }}.AppImage \
+            --appdir "${appdir}" \
+            --executable "${appdir}/usr/bin/${BIN_NAME}" \
+            --desktop-file "${appdir}/usr/share/applications/${APP_ID}.desktop" \
+            --icon-file "${appdir}/usr/share/icons/hicolor/256x256/apps/${APP_ID}.png"
+
+          install -Dm755 packaging/appimage/AppRun "${appdir}/AppRun"
+
+          ARCH=${{ matrix.appimage_arch }} APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool-${{ matrix.appimage_arch }}.AppImage \
+            "${appdir}" \
+            "${BIN_NAME}-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.AppImage"
+
+      - name: Upload Linux ${{ matrix.artifact_arch }} artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: scenedeck-linux-${{ matrix.artifact_arch }}-release
+          path: |
+            scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}
+            scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.tar.gz
+            scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.flatpak
+            scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.AppImage
+
+  publish-release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-24.04
+    needs: build-linux
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: scenedeck-linux-*-release
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-artifacts/*
+          generate_release_notes: true

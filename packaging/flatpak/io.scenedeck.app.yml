@@ -1,6 +1,6 @@
 app-id: io.scenedeck.app
 runtime: org.gnome.Platform
-runtime-version: '47'
+runtime-version: "50"
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
@@ -8,6 +8,7 @@ command: scenedeck
 
 finish-args:
   # OBS WebSocket connection (network), plus display + keyring access.
+  - --share=ipc
   - --share=network
   - --socket=wayland
   - --socket=fallback-x11
@@ -18,18 +19,13 @@ finish-args:
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
   env:
-    CARGO_HOME: /run/build/scenedeck/cargo
+    CARGO_HOME: /run/build/scenedeck/cargo-home
 
 modules:
   - name: scenedeck
     buildsystem: simple
-    build-options:
-      # Offline build: cargo-sources.json is generated from Cargo.lock with
-      # flatpak-cargo-generator.py (see packaging/flatpak/README.md).
-      env:
-        CARGO_NET_OFFLINE: 'true'
     build-commands:
-      - cargo build --release --offline
+      - cargo build --release --locked
       - install -Dm755 target/release/scenedeck /app/bin/scenedeck
       - install -Dm644 data/io.scenedeck.app.desktop
         /app/share/applications/io.scenedeck.app.desktop
@@ -43,5 +39,3 @@ modules:
     sources:
       - type: dir
         path: ../..
-      # Generated dependency manifest — see README.
-      - cargo-sources.json
