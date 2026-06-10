@@ -107,6 +107,11 @@ Roles:
 Inventory also shows stale registry entries when a locally remembered scene no
 longer exists in OBS. You can remove stale entries from this page.
 
+The Scene Registry YAML row exports or imports the local registry as a YAML
+file. This includes scene roles, tags, protection flags, and graph rule fields.
+Use export to back up a scene setup or move it to another machine; use import to
+replace the local registry from a YAML file.
+
 ## Graph Page
 
 Graph shows scene dependencies from nested scene sources. It lists parent scenes

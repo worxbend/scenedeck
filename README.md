@@ -1,5 +1,7 @@
 # SceneDeck
 
+![SceneDeck logo](docs/scenedeck-logo.svg)
+
 SceneDeck is a Linux desktop controller for OBS Studio. It is built with Rust,
 GTK4, libadwaita, Tokio, and the OBS WebSocket protocol.
 
@@ -21,6 +23,7 @@ keep local metadata about how scenes are used.
 - Lock an audio card slider locally to prevent accidental UI changes.
 - Display and control streaming and recording state.
 - Assign local scene roles in Inventory.
+- Export and import the local scene registry as YAML from Inventory.
 - Show nested scene dependencies in Graph.
 - Run Doctor diagnostics over scene roles and scene dependency structure.
 - Store OBS host and port in the config file and the OBS password in the system

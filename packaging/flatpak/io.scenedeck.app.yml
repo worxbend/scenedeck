@@ -37,7 +37,7 @@ modules:
         /app/share/metainfo/io.scenedeck.app.metainfo.xml
       - install -Dm644 data/io.scenedeck.app.gschema.xml
         /app/share/glib-2.0/schemas/io.scenedeck.app.gschema.xml
-      - install -Dm644 resources/icons/scalable/apps/io.scenedeck.app.svg
+      - install -Dm644 assets/io.scenedeck.app.svg
         /app/share/icons/hicolor/scalable/apps/io.scenedeck.app.svg
       - glib-compile-schemas /app/share/glib-2.0/schemas
     sources:

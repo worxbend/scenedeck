@@ -63,3 +63,75 @@ pub fn write_registry_to_path(path: &Path, registry: &SceneRegistry) -> io::Resu
     let raw = serde_json::to_string_pretty(registry).map_err(io::Error::other)?;
     write(path, raw)
 }
+
+pub fn read_registry_yaml_from_path(path: &Path) -> io::Result<SceneRegistry> {
+    let raw = read_to_string(path)?;
+    serde_yaml::from_str(&raw).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+pub fn write_registry_yaml_to_path(path: &Path, registry: &SceneRegistry) -> io::Result<()> {
+    if let Some(dir) = path.parent() {
+        create_dir_all(dir)?;
+    }
+    let raw = serde_yaml::to_string(registry)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    write(path, raw)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unique_temp_path(name: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "scenedeck-{name}-{}-{nanos}.yaml",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn yaml_registry_round_trips() {
+        let path = unique_temp_path("registry-round-trip");
+        let mut registry = SceneRegistry::default();
+        registry.scenes.insert(
+            "Main".into(),
+            SceneEntry {
+                role: SceneRole::Primary,
+                tags: vec!["live".into()],
+                protected: true,
+            },
+        );
+        registry
+            .rules
+            .forbidden_edges
+            .push(["primary".into(), "debug".into()]);
+
+        write_registry_yaml_to_path(&path, &registry).unwrap();
+        let parsed = read_registry_yaml_from_path(&path).unwrap();
+        let _ = std::fs::remove_file(path);
+
+        let main = parsed.scenes.get("Main").unwrap();
+        assert_eq!(main.role, SceneRole::Primary);
+        assert_eq!(main.tags, vec!["live"]);
+        assert!(main.protected);
+        assert_eq!(
+            parsed.rules.forbidden_edges,
+            vec![["primary".to_string(), "debug".to_string()]]
+        );
+    }
+
+    #[test]
+    fn invalid_yaml_returns_invalid_data() {
+        let path = unique_temp_path("registry-invalid");
+        std::fs::write(&path, "scenes: [").unwrap();
+
+        let err = read_registry_yaml_from_path(&path).unwrap_err();
+        let _ = std::fs::remove_file(path);
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+}

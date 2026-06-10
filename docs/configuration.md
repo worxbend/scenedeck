@@ -104,6 +104,30 @@ The UI currently edits scene roles and stale entries. Tags, protected flags, and
 custom rule fields are available in the file for deeper workflows and Doctor
 logic.
 
+## YAML Import and Export
+
+Inventory can export the scene registry to YAML and import it back from YAML.
+The YAML structure mirrors `registry.json`, so it preserves scenes, roles, tags,
+protected flags, and rule fields.
+
+Example:
+
+```yaml
+scenes:
+  Main:
+    role: primary
+    tags:
+      - live
+    protected: false
+rules:
+  primary_can_depend_on: []
+  module_can_depend_on: []
+  forbidden_edges:
+    - [primary, debug]
+```
+
+Import replaces the local registry file with the parsed YAML content.
+
 ## Secrets
 
 The OBS password is stored through the system Secret Service keyring. It is not

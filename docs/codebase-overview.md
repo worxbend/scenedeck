@@ -95,7 +95,8 @@ GTK and libadwaita UI.
 
 ## Assets and Resources
 
-`assets/scenedeck.css` is loaded by the UI at startup.
+`assets/scenedeck.css` is loaded by the UI at startup. App artwork also lives
+under `assets/`, including the installable app icon and wider logo/wordmark.
 
 `resources/scenedeck.gresource.xml` declares embedded GTK resources.
 `build.rs` runs `glib-compile-resources` and rebuilds resources when declared

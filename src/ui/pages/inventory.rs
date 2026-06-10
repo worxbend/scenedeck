@@ -1,13 +1,20 @@
 //! Inventory page — all scenes grouped by role.  Phase 5 implementation.
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::rc::Rc;
 
-use adw::{prelude::*, ComboRow, PreferencesGroup, PreferencesPage, StatusPage};
-use gtk4::{Align, Box as GtkBox, Button, Orientation};
+use adw::{prelude::*, ActionRow, ComboRow, PreferencesGroup, PreferencesPage, StatusPage};
+use gtk4::{
+    Align, Box as GtkBox, Button, FileChooserAction, FileChooserNative, FileFilter, Orientation,
+    ResponseType,
+};
 
 use crate::domain::role::SceneRole;
-use crate::storage::registry::{read_registry, write_registry, SceneEntry};
+use crate::storage::registry::{
+    read_registry, read_registry_yaml_from_path, write_registry, write_registry_yaml_to_path,
+    SceneEntry,
+};
 use crate::ui::navigation::NavigationContext;
 
 // ── Role index helpers ────────────────────────────────────────────────────────
@@ -49,12 +56,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     let refresh_fn: Rc<dyn Fn()> = Rc::new({
         let nav = nav.clone();
         let container = container.clone();
-        move || {
-            while let Some(child) = container.first_child() {
-                container.remove(&child);
-            }
-            populate(&container, &nav);
-        }
+        move || rebuild(&container, &nav)
     });
 
     container.connect_map({
@@ -63,6 +65,13 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     });
 
     (container.upcast(), refresh_fn)
+}
+
+fn rebuild(container: &GtkBox, nav: &NavigationContext) {
+    while let Some(child) = container.first_child() {
+        container.remove(&child);
+    }
+    populate(container, nav);
 }
 
 // ── Page population ───────────────────────────────────────────────────────────
@@ -94,6 +103,9 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
         .title("OBS Scenes")
         .description("Assign roles to control which scenes appear on the Live page.")
         .build();
+
+    let yaml_row = build_yaml_actions_row(container, nav);
+    scenes_group.add(&yaml_row);
 
     for scene in &inventory.scenes {
         // Look up the current role from the registry (source of truth).
@@ -207,4 +219,140 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
     }
 
     container.append(&page);
+}
+
+fn build_yaml_actions_row(container: &GtkBox, nav: &NavigationContext) -> ActionRow {
+    let row = ActionRow::builder()
+        .title("Scene Registry YAML")
+        .subtitle("Export or import scene roles, tags, protection flags, and graph rules.")
+        .build();
+
+    let export_btn = Button::builder()
+        .label("Export")
+        .icon_name("document-save-symbolic")
+        .tooltip_text("Export scene registry to YAML")
+        .valign(Align::Center)
+        .build();
+    export_btn.add_css_class("flat");
+
+    let import_btn = Button::builder()
+        .label("Import")
+        .icon_name("document-open-symbolic")
+        .tooltip_text("Import scene registry from YAML")
+        .valign(Align::Center)
+        .build();
+    import_btn.add_css_class("flat");
+
+    export_btn.connect_clicked({
+        let row = row.clone();
+        move |button| show_export_dialog(button, &row)
+    });
+
+    import_btn.connect_clicked({
+        let row = row.clone();
+        let container = container.clone();
+        let nav = nav.clone();
+        move |button| show_import_dialog(button, &row, &container, &nav)
+    });
+
+    row.add_suffix(&export_btn);
+    row.add_suffix(&import_btn);
+    row
+}
+
+fn show_export_dialog(button: &Button, status_row: &ActionRow) {
+    let dialog = FileChooserNative::new(
+        Some("Export Scene Registry"),
+        parent_window(button).as_ref(),
+        FileChooserAction::Save,
+        Some("Export"),
+        Some("Cancel"),
+    );
+    dialog.set_modal(true);
+    dialog.set_current_name("scenedeck-registry.yaml");
+    dialog.set_filter(&yaml_file_filter());
+
+    let status_row = status_row.clone();
+    dialog.run_async(move |dialog, response| {
+        if response == ResponseType::Accept {
+            match dialog.file().and_then(|file| file.path()) {
+                Some(path) => {
+                    let path = ensure_yaml_extension(path);
+                    let registry = read_registry();
+                    match write_registry_yaml_to_path(&path, &registry) {
+                        Ok(()) => status_row.set_subtitle(&format!(
+                            "Exported scene registry to {}.",
+                            path.display()
+                        )),
+                        Err(err) => status_row.set_subtitle(&format!("Export failed: {err}")),
+                    }
+                }
+                None => status_row.set_subtitle("Export failed: no file was selected."),
+            }
+        }
+        dialog.destroy();
+    });
+}
+
+fn show_import_dialog(
+    button: &Button,
+    status_row: &ActionRow,
+    container: &GtkBox,
+    nav: &NavigationContext,
+) {
+    let dialog = FileChooserNative::new(
+        Some("Import Scene Registry"),
+        parent_window(button).as_ref(),
+        FileChooserAction::Open,
+        Some("Import"),
+        Some("Cancel"),
+    );
+    dialog.set_modal(true);
+    dialog.set_filter(&yaml_file_filter());
+
+    let status_row = status_row.clone();
+    let container = container.clone();
+    let nav = nav.clone();
+    dialog.run_async(move |dialog, response| {
+        if response == ResponseType::Accept {
+            match dialog.file().and_then(|file| file.path()) {
+                Some(path) => match read_registry_yaml_from_path(&path)
+                    .and_then(|registry| write_registry(&registry))
+                {
+                    Ok(()) => rebuild(&container, &nav),
+                    Err(err) => status_row.set_subtitle(&format!("Import failed: {err}")),
+                },
+                None => status_row.set_subtitle("Import failed: no file was selected."),
+            }
+        }
+        dialog.destroy();
+    });
+}
+
+fn yaml_file_filter() -> FileFilter {
+    let filter = FileFilter::new();
+    filter.set_name(Some("YAML files"));
+    filter.add_pattern("*.yaml");
+    filter.add_pattern("*.yml");
+    filter
+}
+
+fn parent_window(button: &Button) -> Option<gtk4::Window> {
+    button
+        .root()
+        .and_then(|root| root.downcast::<gtk4::Window>().ok())
+}
+
+fn ensure_yaml_extension(mut path: PathBuf) -> PathBuf {
+    let has_yaml_extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("yaml") || ext.eq_ignore_ascii_case("yml"))
+        .unwrap_or(false);
+
+    if !has_yaml_extension {
+        path.set_extension("yaml");
+    }
+
+    path
 }
