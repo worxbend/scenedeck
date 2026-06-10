@@ -1,12 +1,12 @@
 //! Scene dependency graph validation.
 //!
 //! Pure functions only — no OBS or GTK types.  The graph itself is built in
-//! `obs::client::get_scene_graph`; this module classifies its edges against
-//! the role rules in `RuleConfig`.
+//! `obs::client::get_scene_graph`; this module classifies its edges against a
+//! domain-level graph dependency policy.
 
 use crate::domain::graph::EdgeStatus;
+use crate::domain::registry::GraphDependencyPolicy;
 use crate::domain::role::SceneRole;
-use crate::storage::registry::RuleConfig;
 
 /// Classify a single dependency edge `from → to` against the rules.
 ///
@@ -19,7 +19,7 @@ use crate::storage::registry::RuleConfig;
 pub fn classify_edge(
     from: Option<SceneRole>,
     to: Option<SceneRole>,
-    rules: &RuleConfig,
+    policy: &GraphDependencyPolicy,
 ) -> EdgeStatus {
     let (from, to) = match (from, to) {
         (Some(f), Some(t)) => (f, t),
@@ -27,14 +27,11 @@ pub fn classify_edge(
         _ => return EdgeStatus::Ok,
     };
 
-    let from_key = from.rule_key();
-    let to_key = to.rule_key();
-
     // 2. Explicit forbidden pairs take priority.
-    let forbidden = rules
+    let forbidden = policy
         .forbidden_edges
         .iter()
-        .any(|pair| pair[0] == from_key && pair[1] == to_key);
+        .any(|edge| edge.from == from && edge.to == to);
     if forbidden {
         return EdgeStatus::Forbidden;
     }
@@ -42,12 +39,12 @@ pub fn classify_edge(
     // 3. Allow-lists: if one is defined for this source role, the target must
     //    be in it.  An empty list means "no constraint configured".
     let allow_list = match from {
-        SceneRole::Primary => Some(&rules.primary_can_depend_on),
-        SceneRole::Module => Some(&rules.module_can_depend_on),
+        SceneRole::Primary => Some(policy.primary_can_depend_on.as_slice()),
+        SceneRole::Module => Some(policy.module_can_depend_on.as_slice()),
         _ => None,
     };
     if let Some(list) = allow_list {
-        if !list.is_empty() && !list.iter().any(|r| r == to_key) {
+        if !list.is_empty() && !list.contains(&to) {
             return EdgeStatus::Warning;
         }
     }
@@ -59,39 +56,36 @@ pub fn classify_edge(
 mod tests {
     use super::*;
 
-    fn rules() -> RuleConfig {
-        RuleConfig {
-            primary_can_depend_on: vec!["module".into(), "secondary".into()],
-            module_can_depend_on: vec!["module".into(), "raw".into()],
-            forbidden_edges: vec![
-                ["primary".into(), "debug".into()],
-                ["module".into(), "primary".into()],
-            ],
-        }
+    fn policy() -> GraphDependencyPolicy {
+        GraphDependencyPolicy::default()
+            .primary_can_depend_on([SceneRole::Module, SceneRole::Secondary])
+            .module_can_depend_on([SceneRole::Module, SceneRole::Raw])
+            .forbid(SceneRole::Primary, SceneRole::Debug)
+            .forbid(SceneRole::Module, SceneRole::Primary)
     }
 
     #[test]
     fn forbidden_pair_is_forbidden() {
-        let s = classify_edge(Some(SceneRole::Module), Some(SceneRole::Primary), &rules());
+        let s = classify_edge(Some(SceneRole::Module), Some(SceneRole::Primary), &policy());
         assert_eq!(s, EdgeStatus::Forbidden);
     }
 
     #[test]
     fn allowed_dependency_is_ok() {
-        let s = classify_edge(Some(SceneRole::Primary), Some(SceneRole::Module), &rules());
+        let s = classify_edge(Some(SceneRole::Primary), Some(SceneRole::Module), &policy());
         assert_eq!(s, EdgeStatus::Ok);
     }
 
     #[test]
     fn out_of_allow_list_is_warning() {
         // primary may depend on module/secondary, but not raw
-        let s = classify_edge(Some(SceneRole::Primary), Some(SceneRole::Raw), &rules());
+        let s = classify_edge(Some(SceneRole::Primary), Some(SceneRole::Raw), &policy());
         assert_eq!(s, EdgeStatus::Warning);
     }
 
     #[test]
     fn unassigned_endpoint_is_ok() {
-        let s = classify_edge(None, Some(SceneRole::Raw), &rules());
+        let s = classify_edge(None, Some(SceneRole::Raw), &policy());
         assert_eq!(s, EdgeStatus::Ok);
     }
 }

@@ -90,13 +90,17 @@ mapped to domain types before crossing into the controller or UI.
 events into GTK-side updates.
 
 `src/domain/` contains stable app concepts such as scenes, roles, audio inputs,
-output status, graph, diagnostics, and OBS named lists.
+output status, graph, diagnostics, registry snapshots, graph dependency
+policies, and OBS named lists.
 
 `src/services/` contains pure or mostly pure higher-level logic, such as Doctor
-checks and graph edge classification.
+checks, graph edge classification, and live-switch validation. Services consume
+domain-facing snapshots and policies instead of storage adapter structs.
 
 `src/storage/` owns local persistence: config JSON, scene registry JSON, XDG
-paths, and keyring integration.
+paths, and keyring integration. The scene registry storage type remains the
+serde representation for JSON/YAML, and converts to `SceneRegistrySnapshot`
+before application services use it.
 
 `src/ui/` owns GTK widget construction, CSS loading, page layout, navigation,
 and action registration.
@@ -124,3 +128,7 @@ The UI updates sidebar status, disables live output controls, shows the
 disconnected Live view, and displays a toast.
 
 Warnings that do not need user interruption use `tracing`.
+
+Storage adapters should keep source errors typed until the UI boundary. For
+example, registry loading distinguishes read failures from parse failures and
+logs the concrete path before falling back to defaults for the desktop UX.

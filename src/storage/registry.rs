@@ -4,10 +4,14 @@
 use std::collections::HashMap;
 use std::fs::{create_dir_all, read_to_string, write};
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
+use crate::domain::registry::{
+    GraphDependencyPolicy, RoleDependency, SceneMetadata, SceneRegistrySnapshot,
+};
 use crate::domain::role::SceneRole;
 use crate::storage::xdg;
 
@@ -40,15 +44,105 @@ pub struct RuleConfig {
     pub forbidden_edges: Vec<[String; 2]>,
 }
 
+#[derive(Debug, Error)]
+pub enum RegistryStorageError {
+    #[error("failed to read scene registry at {path}: {source}")]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to parse scene registry at {path}: {source}")]
+    Parse {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+}
+
+impl SceneRegistry {
+    pub fn snapshot(&self) -> SceneRegistrySnapshot {
+        let scenes = self
+            .scenes
+            .iter()
+            .map(|(scene_id, entry)| {
+                (
+                    scene_id.clone(),
+                    SceneMetadata {
+                        role: entry.role,
+                        tags: entry.tags.clone(),
+                        protected: entry.protected,
+                    },
+                )
+            })
+            .collect();
+
+        SceneRegistrySnapshot::new(scenes, self.rules.policy())
+    }
+}
+
+impl RuleConfig {
+    pub fn policy(&self) -> GraphDependencyPolicy {
+        GraphDependencyPolicy {
+            primary_can_depend_on: parse_role_list(&self.primary_can_depend_on),
+            module_can_depend_on: parse_role_list(&self.module_can_depend_on),
+            forbidden_edges: self
+                .forbidden_edges
+                .iter()
+                .filter_map(|[from_key, to_key]| {
+                    let from = SceneRole::from_rule_key(from_key);
+                    let to = SceneRole::from_rule_key(to_key);
+                    match (from, to) {
+                        (Some(from), Some(to)) => Some(RoleDependency::new(from, to)),
+                        _ => {
+                            tracing::warn!(
+                                from = from_key.as_str(),
+                                to = to_key.as_str(),
+                                "ignoring registry rule with unknown scene role"
+                            );
+                            None
+                        }
+                    }
+                })
+                .collect(),
+        }
+    }
+}
+
+fn parse_role_list(keys: &[String]) -> Vec<SceneRole> {
+    keys.iter()
+        .filter_map(|key| match SceneRole::from_rule_key(key) {
+            Some(role) => Some(role),
+            None => {
+                tracing::warn!(key, "ignoring registry rule with unknown scene role");
+                None
+            }
+        })
+        .collect()
+}
+
 pub fn read_registry() -> SceneRegistry {
     let path = xdg::config_dir().join("registry.json");
-    match read_to_string(&path) {
-        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => SceneRegistry::default(),
+    match read_registry_from_path(&path) {
+        Ok(registry) => registry,
         Err(err) => {
-            tracing::warn!(%err, "failed to read registry, using defaults");
+            tracing::warn!(%err, "failed to load registry, using defaults");
             SceneRegistry::default()
         }
+    }
+}
+
+pub fn read_registry_from_path(path: &Path) -> Result<SceneRegistry, RegistryStorageError> {
+    match read_to_string(path) {
+        Ok(raw) => serde_json::from_str(&raw).map_err(|source| RegistryStorageError::Parse {
+            path: path.to_path_buf(),
+            source,
+        }),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(SceneRegistry::default()),
+        Err(source) => Err(RegistryStorageError::Read {
+            path: path.to_path_buf(),
+            source,
+        }),
     }
 }
 
@@ -133,5 +227,40 @@ mod tests {
         let _ = std::fs::remove_file(path);
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn invalid_json_registry_returns_typed_parse_error() {
+        let path = unique_temp_path("registry-invalid-json");
+        std::fs::write(&path, "{").unwrap();
+
+        let err = read_registry_from_path(&path).unwrap_err();
+        let _ = std::fs::remove_file(path);
+
+        assert!(matches!(err, RegistryStorageError::Parse { .. }));
+    }
+
+    #[test]
+    fn registry_snapshot_converts_string_rules_to_typed_policy() {
+        let mut registry = SceneRegistry::default();
+        registry
+            .rules
+            .primary_can_depend_on
+            .push("module".to_string());
+        registry
+            .rules
+            .forbidden_edges
+            .push(["primary".to_string(), "debug".to_string()]);
+
+        let snapshot = registry.snapshot();
+
+        assert_eq!(
+            snapshot.graph_policy().primary_can_depend_on,
+            vec![SceneRole::Module]
+        );
+        assert_eq!(
+            snapshot.graph_policy().forbidden_edges,
+            vec![RoleDependency::new(SceneRole::Primary, SceneRole::Debug)]
+        );
     }
 }

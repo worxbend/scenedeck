@@ -6,16 +6,16 @@
 
 use crate::domain::diagnostic::{Diagnostic, DiagnosticSeverity};
 use crate::domain::graph::SceneGraph;
+use crate::domain::registry::SceneRegistrySnapshot;
 use crate::domain::role::SceneRole;
 use crate::domain::scene::SceneInventory;
-use crate::storage::registry::SceneRegistry;
 
 pub struct DoctorService;
 
 impl DoctorService {
     pub fn run(
         inventory: &SceneInventory,
-        registry: &SceneRegistry,
+        registry: &SceneRegistrySnapshot,
         graph: &SceneGraph,
     ) -> Vec<Diagnostic> {
         let mut diags = Vec::new();
@@ -31,18 +31,18 @@ impl DoctorService {
         diags
     }
 
-    fn role_of(registry: &SceneRegistry, scene: &str) -> Option<SceneRole> {
-        registry.scenes.get(scene).map(|e| e.role)
+    fn role_of(registry: &SceneRegistrySnapshot, scene: &str) -> Option<SceneRole> {
+        registry.scene_role(scene)
     }
 
     /// Every OBS scene should have a role assigned.
     fn check_role_coverage(
         inventory: &SceneInventory,
-        registry: &SceneRegistry,
+        registry: &SceneRegistrySnapshot,
         diags: &mut Vec<Diagnostic>,
     ) {
         for scene in &inventory.scenes {
-            if !registry.scenes.contains_key(&scene.id) {
+            if !registry.contains_scene(&scene.id) {
                 diags.push(Diagnostic {
                     severity: DiagnosticSeverity::Warning,
                     scene: Some(scene.id.clone()),
@@ -56,10 +56,10 @@ impl DoctorService {
     /// Registry entries that no longer exist in OBS.
     fn check_stale_entries(
         inventory: &SceneInventory,
-        registry: &SceneRegistry,
+        registry: &SceneRegistrySnapshot,
         diags: &mut Vec<Diagnostic>,
     ) {
-        for scene_name in registry.scenes.keys() {
+        for (scene_name, _) in registry.scenes() {
             if !inventory.scenes.iter().any(|s| &s.id == scene_name) {
                 diags.push(Diagnostic {
                     severity: DiagnosticSeverity::Info,
@@ -72,15 +72,15 @@ impl DoctorService {
     }
 
     /// Protected scenes should not be in a live-switchable role.
-    fn check_protected_switchable(registry: &SceneRegistry, diags: &mut Vec<Diagnostic>) {
-        for (name, entry) in &registry.scenes {
-            if entry.protected && entry.role.is_live_switchable() {
+    fn check_protected_switchable(registry: &SceneRegistrySnapshot, diags: &mut Vec<Diagnostic>) {
+        for (name, metadata) in registry.scenes() {
+            if metadata.protected && metadata.role.is_live_switchable() {
                 diags.push(Diagnostic {
                     severity: DiagnosticSeverity::Warning,
                     scene: Some(name.clone()),
                     message: format!(
                         "Protected scene is in the switchable '{}' role.",
-                        entry.role.label()
+                        metadata.role.label()
                     ),
                     suggestion: Some(
                         "Protected scenes are usually building blocks; consider Module or Raw."
@@ -92,7 +92,11 @@ impl DoctorService {
     }
 
     /// Structural rules between connected scenes, based on their roles.
-    fn check_edges(registry: &SceneRegistry, graph: &SceneGraph, diags: &mut Vec<Diagnostic>) {
+    fn check_edges(
+        registry: &SceneRegistrySnapshot,
+        graph: &SceneGraph,
+        diags: &mut Vec<Diagnostic>,
+    ) {
         for (parent, children) in &graph.edges {
             let parent_role = Self::role_of(registry, parent);
             for child in children {
@@ -176,8 +180,10 @@ fn edge_diagnostic(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    use crate::domain::registry::{SceneMetadata, SceneRegistrySnapshot};
     use crate::domain::scene::{Scene, SceneInventory};
-    use crate::storage::registry::SceneEntry;
 
     fn scene(id: &str) -> Scene {
         Scene {
@@ -187,12 +193,24 @@ mod tests {
         }
     }
 
-    fn entry(role: SceneRole) -> SceneEntry {
-        SceneEntry {
+    fn metadata(role: SceneRole) -> SceneMetadata {
+        SceneMetadata {
             role,
             tags: Vec::new(),
             protected: false,
         }
+    }
+
+    fn registry(
+        entries: impl IntoIterator<Item = (&'static str, SceneRole)>,
+    ) -> SceneRegistrySnapshot {
+        SceneRegistrySnapshot::new(
+            entries
+                .into_iter()
+                .map(|(scene, role)| (scene.to_string(), metadata(role)))
+                .collect::<HashMap<_, _>>(),
+            Default::default(),
+        )
     }
 
     #[test]
@@ -201,13 +219,7 @@ mod tests {
             scenes: vec![scene("Mod"), scene("Main")],
             current_id: None,
         };
-        let mut registry = SceneRegistry::default();
-        registry
-            .scenes
-            .insert("Mod".into(), entry(SceneRole::Module));
-        registry
-            .scenes
-            .insert("Main".into(), entry(SceneRole::Primary));
+        let registry = registry([("Mod", SceneRole::Module), ("Main", SceneRole::Primary)]);
 
         let mut graph = SceneGraph::default();
         graph.edges.insert("Mod".into(), vec!["Main".into()]);
@@ -223,9 +235,7 @@ mod tests {
             scenes: vec![scene("A"), scene("B")],
             current_id: None,
         };
-        let mut registry = SceneRegistry::default();
-        registry.scenes.insert("A".into(), entry(SceneRole::Module));
-        registry.scenes.insert("B".into(), entry(SceneRole::Module));
+        let registry = registry([("A", SceneRole::Module), ("B", SceneRole::Module)]);
 
         let mut graph = SceneGraph::default();
         graph.edges.insert("A".into(), vec!["B".into()]);

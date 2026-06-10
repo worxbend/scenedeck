@@ -8,4 +8,7 @@ pub mod services;
 pub mod storage;
 pub mod ui;
 
-pub use app::run;
+pub fn run() {
+    infra::logging::init();
+    app::run();
+}

@@ -60,7 +60,8 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
     }
 
     let registry = read_registry();
-    let diagnostics = DoctorService::run(&inventory, &registry, &graph);
+    let registry_snapshot = registry.snapshot();
+    let diagnostics = DoctorService::run(&inventory, &registry_snapshot, &graph);
 
     let page = PreferencesPage::builder()
         .title("Doctor")

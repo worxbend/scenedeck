@@ -13,6 +13,19 @@ pub enum SceneRole {
 }
 
 impl SceneRole {
+    /// Parse the lowercase policy key used by config and registry files.
+    pub const fn from_rule_key(key: &str) -> Option<Self> {
+        match key.as_bytes() {
+            b"primary" => Some(Self::Primary),
+            b"secondary" => Some(Self::Secondary),
+            b"module" => Some(Self::Module),
+            b"raw" => Some(Self::Raw),
+            b"debug" => Some(Self::Debug),
+            b"archive" => Some(Self::Archive),
+            _ => None,
+        }
+    }
+
     pub const fn label(self) -> &'static str {
         match self {
             Self::Primary => "Primary",

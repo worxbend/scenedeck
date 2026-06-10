@@ -276,12 +276,13 @@ impl GraphModel {
             *row += 1;
         }
 
+        let graph_policy = registry.rules.policy();
         let edges = edge_pairs
             .into_iter()
             .map(|(from, to)| GraphEdge {
                 from,
                 to,
-                status: classify_edge(nodes[from].role, nodes[to].role, &registry.rules),
+                status: classify_edge(nodes[from].role, nodes[to].role, &graph_policy),
             })
             .collect();
 
