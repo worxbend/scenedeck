@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="io.scenedeck.app" path="/io/scenedeck/app/">
+
+    <key name="theme-mode" type="s">
+      <default>'system'</default>
+      <summary>Color scheme preference</summary>
+      <description>One of: system, light, dark</description>
+    </key>
+
+    <key name="obs-host" type="s">
+      <default>'127.0.0.1'</default>
+      <summary>OBS WebSocket host</summary>
+    </key>
+
+    <key name="obs-port" type="q">
+      <default>4455</default>
+      <summary>OBS WebSocket port</summary>
+    </key>
+
+    <key name="live-show-roles" type="as">
+      <default>['primary']</default>
+      <summary>Roles visible on the Live page</summary>
+    </key>
+
+    <key name="live-audio-inputs" type="as">
+      <default>[]</default>
+      <summary>OBS input names shown in the audio mixer</summary>
+    </key>
+
+  </schema>
+</schemalist>

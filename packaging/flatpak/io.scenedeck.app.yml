@@ -1,0 +1,47 @@
+app-id: io.scenedeck.app
+runtime: org.gnome.Platform
+runtime-version: '47'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: scenedeck
+
+finish-args:
+  # OBS WebSocket connection (network), plus display + keyring access.
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Secret Service (GNOME Keyring) for the OBS password.
+  - --talk-name=org.freedesktop.secrets
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/scenedeck/cargo
+
+modules:
+  - name: scenedeck
+    buildsystem: simple
+    build-options:
+      # Offline build: cargo-sources.json is generated from Cargo.lock with
+      # flatpak-cargo-generator.py (see packaging/flatpak/README.md).
+      env:
+        CARGO_NET_OFFLINE: 'true'
+    build-commands:
+      - cargo build --release --offline
+      - install -Dm755 target/release/scenedeck /app/bin/scenedeck
+      - install -Dm644 data/io.scenedeck.app.desktop
+        /app/share/applications/io.scenedeck.app.desktop
+      - install -Dm644 data/io.scenedeck.app.metainfo.xml
+        /app/share/metainfo/io.scenedeck.app.metainfo.xml
+      - install -Dm644 data/io.scenedeck.app.gschema.xml
+        /app/share/glib-2.0/schemas/io.scenedeck.app.gschema.xml
+      - install -Dm644 resources/icons/scalable/apps/io.scenedeck.app.svg
+        /app/share/icons/hicolor/scalable/apps/io.scenedeck.app.svg
+      - glib-compile-schemas /app/share/glib-2.0/schemas
+    sources:
+      - type: dir
+        path: ../..
+      # Generated dependency manifest — see README.
+      - cargo-sources.json

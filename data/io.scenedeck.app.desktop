@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=SceneDeck
+GenericName=OBS Controller
+Comment=Role-aware scene and audio controller for OBS Studio
+Exec=scenedeck
+Icon=io.scenedeck.app
+Terminal=false
+Type=Application
+Categories=AudioVideo;Video;
+Keywords=OBS;streaming;scenes;audio;live;
+StartupNotify=true
+StartupWMClass=scenedeck

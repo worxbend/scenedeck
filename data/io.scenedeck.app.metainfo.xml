@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.scenedeck.app</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>SceneDeck</name>
+  <summary>Role-aware OBS scene and audio controller</summary>
+
+  <description>
+    <p>
+      SceneDeck is a native Linux controller for structured OBS Studio setups.
+      It replaces the flat OBS scene list with a role-aware surface: primary scenes
+      for live switching, module scenes for composition, and an integrated audio
+      mixer for daily operation.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Live page with primary-scene switching and audio mixer</li>
+      <li>Scene role system: Primary, Secondary, Module, Raw, Debug, Archive</li>
+      <li>Dependency graph viewer</li>
+      <li>Architecture diagnostics (Doctor)</li>
+      <li>Local scene registry with tags and protection flags</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">io.scenedeck.app.desktop</launchable>
+
+  <url type="homepage">https://github.com/</url>
+
+  <provides>
+    <binary>scenedeck</binary>
+  </provides>
+
+  <releases>
+    <release version="0.1.0" date="2026-06-10">
+      <description><p>Initial skeleton release.</p></description>
+    </release>
+  </releases>
+
+  <content_rating type="oars-1.1"/>
+</component>

@@ -1,0 +1,101 @@
+/* ── OBS connection status ──────────────────────────────────────────────────── */
+.obs-connected    { color: @success_color; }
+.obs-connecting   { color: @warning_color; }
+.obs-disconnected { color: @dim_label_color; }
+.obs-error        { color: @error_color; }
+
+/* ── Live output controls ──────────────────────────────────────────────────── */
+.output-control button {
+    min-width: 108px;
+}
+
+/* ── Header OBS selectors ──────────────────────────────────────────────────── */
+.header-selector {
+    margin-left: 6px;
+}
+
+.header-selector label.caption {
+    color: @dim_label_color;
+    font-size: 0.86em;
+    font-weight: 700;
+}
+
+.header-selector dropdown {
+    min-width: 150px;
+}
+
+/* ── Scene role badges ──────────────────────────────────────────────────────── */
+.role-primary,
+.role-secondary,
+.role-module,
+.role-raw,
+.role-debug,
+.role-archive {
+    background-color: @accent_bg_color;
+    color: @accent_fg_color;
+    border-radius: 4px;
+    padding: 1px 6px;
+}
+
+/* ── Live page scene cards ──────────────────────────────────────────────────── */
+.scene-card {
+    min-width: 188px;
+    min-height: 118px;
+    padding: 0;
+    border-radius: 8px;
+}
+
+.scene-card > box {
+    padding: 14px;
+}
+
+.scene-card-active {
+    outline: 2px solid @accent_color;
+}
+
+.scene-card-status-live,
+.scene-card-status-ready {
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-weight: 700;
+}
+
+.scene-card-status-live {
+    background-color: @accent_bg_color;
+    color: @accent_fg_color;
+}
+
+.scene-card-status-ready {
+    background-color: alpha(@card_fg_color, 0.10);
+    color: @dim_label_color;
+}
+
+/* ── Live page audio cards ──────────────────────────────────────────────────── */
+.audio-card {
+    min-width: 100px;
+    min-height: 148px;
+    padding: 8px;
+    border-radius: 8px;
+}
+
+.audio-card-title {
+    font-weight: 700;
+    font-size: 0.86em;
+}
+
+.audio-card-controls button {
+    min-width: 24px;
+    min-height: 24px;
+    padding: 0;
+}
+
+.audio-card-slider scale {
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+/* ── Doctor diagnostics ─────────────────────────────────────────────────────── */
+.diag-error   { color: @error_color; }
+.diag-warning { color: @warning_color; }
+.diag-info    { color: @accent_color; }
+.diag-ok      { color: @success_color; }

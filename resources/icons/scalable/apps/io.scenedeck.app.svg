@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- App icon: rounded square background -->
+  <rect x="8" y="8" width="112" height="112" rx="20" ry="20" fill="#3584e4"/>
+  <!-- Scene deck / clapperboard-inspired layout -->
+  <rect x="20" y="44" width="88" height="48" rx="6" ry="6" fill="white" opacity="0.15"/>
+  <rect x="20" y="36" width="88" height="14" rx="6" ry="6" fill="white" opacity="0.35"/>
+  <!-- Stripes on the clapperboard header -->
+  <rect x="32" y="36" width="10" height="14" fill="white" opacity="0.4"/>
+  <rect x="52" y="36" width="10" height="14" fill="white" opacity="0.4"/>
+  <rect x="72" y="36" width="10" height="14" fill="white" opacity="0.4"/>
+  <rect x="92" y="36" width="10" height="14" fill="white" opacity="0.4"/>
+  <!-- Record indicator dot -->
+  <circle cx="40" cy="68" r="9" fill="#ed333b"/>
+  <!-- Content lines -->
+  <rect x="56" y="61" width="40" height="6" rx="3" fill="white" opacity="0.8"/>
+  <rect x="56" y="73" width="28" height="6" rx="3" fill="white" opacity="0.5"/>
+</svg>
