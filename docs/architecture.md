@@ -87,11 +87,13 @@ On disconnect or event-stream end, the client slot is cleared and a
 mapped to domain types before crossing into the controller or UI.
 
 `src/controller/` owns orchestration. It translates commands into async work and
-events into GTK-side updates.
+events into GTK-side updates. Runtime dependencies such as config loading and
+OBS password retrieval are injected through `controller::dependencies`; the
+default production adapters still use local storage and the system keyring.
 
 `src/domain/` contains stable app concepts such as scenes, roles, audio inputs,
 output status, graph, diagnostics, registry snapshots, graph dependency
-policies, and OBS named lists.
+policies, appearance preferences, and OBS named lists.
 
 `src/services/` contains pure or mostly pure higher-level logic, such as Doctor
 checks, graph edge classification, and live-switch validation. Services consume
@@ -101,6 +103,10 @@ domain-facing snapshots and policies instead of storage adapter structs.
 paths, and keyring integration. The scene registry storage type remains the
 serde representation for JSON/YAML, and converts to `SceneRegistrySnapshot`
 before application services use it.
+
+Configuration should prefer domain types over raw strings where the value has a
+closed set of valid states. For example, `theme_mode` is stored as the same
+lowercase string on disk but is represented as `ThemeMode` in Rust.
 
 `src/ui/` owns GTK widget construction, CSS loading, page layout, navigation,
 and action registration.

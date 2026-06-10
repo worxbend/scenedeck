@@ -7,7 +7,8 @@ use adw::{
 };
 use gtk4::StringList;
 
-use crate::controller::state::{ObsStatus, ThemeMode};
+use crate::controller::state::ObsStatus;
+use crate::domain::appearance::ThemeMode;
 use crate::storage::config::write_config;
 use crate::storage::secret;
 use crate::ui::navigation::NavigationContext;
@@ -180,6 +181,6 @@ fn obs_status_text(nav: &NavigationContext) -> String {
 fn persist_config(nav: &NavigationContext) -> Result<(), std::io::Error> {
     let model = nav.state.borrow();
     let mut cfg = crate::storage::config::read_config().config;
-    cfg.theme_mode = model.theme_mode.as_str().to_string();
+    cfg.theme_mode = model.theme_mode;
     write_config(&cfg)
 }

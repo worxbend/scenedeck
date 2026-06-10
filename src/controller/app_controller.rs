@@ -34,14 +34,16 @@ use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 
 use crate::controller::command::AppCommand;
+use crate::controller::dependencies::ControllerDependencies;
 use crate::controller::event::AppEvent;
 use crate::domain::output::{OutputRunState, OutputStatus};
+use crate::infra::error::AppError;
 use crate::obs::client::ObsClient;
-use crate::storage::config::read_config;
 
 pub struct AppController {
     event_tx: SyncSender<AppEvent>,
     runtime: Handle,
+    dependencies: ControllerDependencies,
     /// Session task handle — aborted on disconnect or reconnect.
     session: Option<JoinHandle<()>>,
     /// Shared slot written by the session task once connected, read by
@@ -51,9 +53,18 @@ pub struct AppController {
 
 impl AppController {
     pub fn new(runtime: Handle, event_tx: SyncSender<AppEvent>) -> Self {
+        Self::with_dependencies(runtime, event_tx, ControllerDependencies::default())
+    }
+
+    pub fn with_dependencies(
+        runtime: Handle,
+        event_tx: SyncSender<AppEvent>,
+        dependencies: ControllerDependencies,
+    ) -> Self {
         Self {
             event_tx,
             runtime,
+            dependencies,
             session: None,
             client_slot: Arc::new(Mutex::new(None)),
         }
@@ -80,19 +91,8 @@ impl AppController {
             AppCommand::SetCurrentProfile(name) => {
                 self.with_client(|c, tx, rt| {
                     rt.spawn(async move {
-                        match c.set_current_profile(&name).await {
-                            Ok(()) => match c.get_profiles().await {
-                                Ok(profiles) => {
-                                    let _ = tx.send(AppEvent::ProfilesUpdated(profiles));
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(AppEvent::Error(e));
-                                }
-                            },
-                            Err(e) => {
-                                let _ = tx.send(AppEvent::Error(e));
-                            }
-                        }
+                        let result = c.set_current_profile(&name).await;
+                        publish_profiles_after(result, &c, &tx).await;
                     });
                 });
             }
@@ -100,19 +100,8 @@ impl AppController {
             AppCommand::CreateProfile(name) => {
                 self.with_client(|c, tx, rt| {
                     rt.spawn(async move {
-                        match c.create_profile(&name).await {
-                            Ok(()) => match c.get_profiles().await {
-                                Ok(profiles) => {
-                                    let _ = tx.send(AppEvent::ProfilesUpdated(profiles));
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(AppEvent::Error(e));
-                                }
-                            },
-                            Err(e) => {
-                                let _ = tx.send(AppEvent::Error(e));
-                            }
-                        }
+                        let result = c.create_profile(&name).await;
+                        publish_profiles_after(result, &c, &tx).await;
                     });
                 });
             }
@@ -120,53 +109,28 @@ impl AppController {
             AppCommand::RemoveProfile(name) => {
                 self.with_client(|c, tx, rt| {
                     rt.spawn(async move {
-                        match c.remove_profile(&name).await {
-                            Ok(()) => match c.get_profiles().await {
-                                Ok(profiles) => {
-                                    let _ = tx.send(AppEvent::ProfilesUpdated(profiles));
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(AppEvent::Error(e));
-                                }
-                            },
-                            Err(e) => {
-                                let _ = tx.send(AppEvent::Error(e));
-                            }
-                        }
+                        let result = c.remove_profile(&name).await;
+                        publish_profiles_after(result, &c, &tx).await;
                     });
                 });
             }
 
             AppCommand::SetCurrentSceneCollection(name) => {
+                let audio_filter = self.dependencies.load_config().live.audio_inputs;
                 self.with_client(|c, tx, rt| {
                     rt.spawn(async move {
-                        match c.set_current_scene_collection(&name).await {
-                            Ok(()) => {
-                                refresh_profile_and_collection_lists(&c, &tx).await;
-                                refresh_live_data(&c, &tx, &read_config().config.live.audio_inputs)
-                                    .await;
-                            }
-                            Err(e) => {
-                                let _ = tx.send(AppEvent::Error(e));
-                            }
-                        }
+                        let result = c.set_current_scene_collection(&name).await;
+                        refresh_after_collection_change(result, &c, &tx, &audio_filter).await;
                     });
                 });
             }
 
             AppCommand::CreateSceneCollection(name) => {
+                let audio_filter = self.dependencies.load_config().live.audio_inputs;
                 self.with_client(|c, tx, rt| {
                     rt.spawn(async move {
-                        match c.create_scene_collection(&name).await {
-                            Ok(()) => {
-                                refresh_profile_and_collection_lists(&c, &tx).await;
-                                refresh_live_data(&c, &tx, &read_config().config.live.audio_inputs)
-                                    .await;
-                            }
-                            Err(e) => {
-                                let _ = tx.send(AppEvent::Error(e));
-                            }
-                        }
+                        let result = c.create_scene_collection(&name).await;
+                        refresh_after_collection_change(result, &c, &tx, &audio_filter).await;
                     });
                 });
             }
@@ -257,14 +221,14 @@ impl AppController {
         }
 
         let tx = self.event_tx.clone();
-        let config = read_config().config;
+        let config = self.dependencies.load_config();
         let client_slot = Arc::clone(&self.client_slot);
 
         let _ = tx.send(AppEvent::Connecting);
 
         // Read the password synchronously on the GTK thread before spawning;
         // the keyring API is blocking and this avoids it on the async runtime.
-        let password = crate::storage::secret::get_obs_password().unwrap_or_else(|e| {
+        let password = self.dependencies.obs_password().unwrap_or_else(|e| {
             tracing::warn!(%e, "could not read OBS password from keyring");
             None
         });
@@ -312,7 +276,7 @@ impl AppController {
     }
 
     fn refresh_data(&self) {
-        let config = read_config().config;
+        let config = self.dependencies.load_config();
         self.with_client(|c, tx, rt| {
             rt.spawn(async move {
                 refresh_profile_and_collection_lists(&c, &tx).await;
@@ -345,6 +309,43 @@ impl AppController {
 }
 
 // ── Shared OBS refresh helpers ────────────────────────────────────────────────
+
+async fn publish_profiles_after(
+    operation: Result<(), AppError>,
+    client: &ObsClient,
+    tx: &SyncSender<AppEvent>,
+) {
+    match operation {
+        Ok(()) => match client.get_profiles().await {
+            Ok(profiles) => {
+                let _ = tx.send(AppEvent::ProfilesUpdated(profiles));
+            }
+            Err(e) => {
+                let _ = tx.send(AppEvent::Error(e));
+            }
+        },
+        Err(e) => {
+            let _ = tx.send(AppEvent::Error(e));
+        }
+    }
+}
+
+async fn refresh_after_collection_change(
+    operation: Result<(), AppError>,
+    client: &ObsClient,
+    tx: &SyncSender<AppEvent>,
+    audio_filter: &[String],
+) {
+    match operation {
+        Ok(()) => {
+            refresh_profile_and_collection_lists(client, tx).await;
+            refresh_live_data(client, tx, audio_filter).await;
+        }
+        Err(e) => {
+            let _ = tx.send(AppEvent::Error(e));
+        }
+    }
+}
 
 async fn refresh_profile_and_collection_lists(client: &ObsClient, tx: &SyncSender<AppEvent>) {
     match client.get_profiles().await {

@@ -10,11 +10,12 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::domain::appearance::ThemeMode;
 use crate::storage::xdg;
 
 // ── Config structs ────────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default = "default_version")]
     pub version: u32,
@@ -22,8 +23,8 @@ pub struct AppConfig {
     pub obs: ObsConfig,
     #[serde(default)]
     pub live: LiveConfig,
-    #[serde(default = "default_theme_mode")]
-    pub theme_mode: String,
+    #[serde(default)]
+    pub theme_mode: ThemeMode,
 }
 
 impl Default for AppConfig {
@@ -32,12 +33,12 @@ impl Default for AppConfig {
             version: default_version(),
             obs: ObsConfig::default(),
             live: LiveConfig::default(),
-            theme_mode: default_theme_mode(),
+            theme_mode: ThemeMode::default(),
         }
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObsConfig {
     #[serde(default = "default_obs_host")]
     pub host: String,
@@ -54,7 +55,7 @@ impl Default for ObsConfig {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LiveConfig {
     /// Roles whose scenes appear on the Live page.
     #[serde(default = "default_show_roles")]
@@ -80,9 +81,6 @@ fn default_obs_host() -> String {
 }
 fn default_obs_port() -> u16 {
     4455
-}
-fn default_theme_mode() -> String {
-    "system".to_string()
 }
 fn default_show_roles() -> Vec<String> {
     vec!["primary".to_string()]
@@ -199,7 +197,7 @@ mod tests {
         assert_eq!(c.version, 1);
         assert_eq!(c.obs.host, "127.0.0.1");
         assert_eq!(c.obs.port, 4455);
-        assert_eq!(c.theme_mode, "system");
+        assert_eq!(c.theme_mode, ThemeMode::System);
     }
 
     #[test]
@@ -211,11 +209,18 @@ mod tests {
                 port: 4455,
             },
             live: LiveConfig::default(),
-            theme_mode: "dark".to_string(),
+            theme_mode: ThemeMode::Dark,
         };
         let json = serde_json::to_string(&config).unwrap();
         let parsed: AppConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.obs.host, "192.168.1.10");
-        assert_eq!(parsed.theme_mode, "dark");
+        assert_eq!(parsed.theme_mode, ThemeMode::Dark);
+    }
+
+    #[test]
+    fn unknown_theme_mode_uses_system_fallback() {
+        let parsed: AppConfig = serde_json::from_str(r#"{"theme_mode":"future"}"#).unwrap();
+
+        assert_eq!(parsed.theme_mode, ThemeMode::System);
     }
 }

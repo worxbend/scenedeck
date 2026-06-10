@@ -1,5 +1,6 @@
 pub mod app_controller;
 pub mod command;
+pub mod dependencies;
 pub mod event;
 pub mod state;
 

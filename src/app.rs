@@ -13,7 +13,7 @@ use adw::prelude::*;
 use crate::app_info::APP_ID;
 use crate::controller::app_controller::AppController;
 use crate::controller::event::AppEvent;
-use crate::controller::state::{AppState, ThemeMode};
+use crate::controller::state::AppState;
 use crate::storage::config::read_config;
 use crate::ui;
 
@@ -60,8 +60,7 @@ fn build_ui(
     event_rx: mpsc::Receiver<AppEvent>,
 ) {
     let loaded = read_config();
-    // Infallible parse (FromStr::Err = Infallible), so unwrap can never panic.
-    let theme_mode = loaded.config.theme_mode.parse::<ThemeMode>().unwrap();
+    let theme_mode = loaded.config.theme_mode;
     let notice = loaded.startup_notice.map(|n| n.user_message());
 
     let state = Rc::new(RefCell::new(AppState::new(theme_mode, notice)));

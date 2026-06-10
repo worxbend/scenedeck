@@ -1,3 +1,4 @@
+pub mod appearance;
 pub mod audio;
 pub mod diagnostic;
 pub mod graph;

@@ -1,6 +1,7 @@
 //! Runtime application state — the single source of truth held inside an
 //! `Rc<RefCell<AppState>>` on the GTK main thread.
 
+use crate::domain::appearance::ThemeMode;
 use crate::domain::audio::AudioInput;
 use crate::domain::diagnostic::Diagnostic;
 use crate::domain::graph::SceneGraph;
@@ -50,38 +51,6 @@ impl Page {
             Self::Doctor => "emblem-default-symbolic",
             Self::Settings => "preferences-system-symbolic",
         }
-    }
-}
-
-// ── Theme ─────────────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ThemeMode {
-    System,
-    Light,
-    Dark,
-}
-
-impl ThemeMode {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::System => "system",
-            Self::Light => "light",
-            Self::Dark => "dark",
-        }
-    }
-}
-
-impl std::str::FromStr for ThemeMode {
-    /// Parsing never fails: unknown values fall back to `System`.
-    type Err = std::convert::Infallible;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
-            "light" => Self::Light,
-            "dark" => Self::Dark,
-            _ => Self::System,
-        })
     }
 }
 
