@@ -6,10 +6,10 @@
 use adw::prelude::*;
 use gtk4::{
     Align, Box as GtkBox, Button, FlowBox, Label, Orientation, Paned, PolicyType, ScrolledWindow,
+    Stack, StackTransitionType,
 };
 
 use crate::controller::command::AppCommand;
-use crate::controller::state::ObsStatus;
 use crate::domain::output::OutputStatus;
 use crate::domain::scene::SceneInventory;
 use crate::storage::registry::read_registry;
@@ -18,13 +18,11 @@ use crate::ui::widgets::{audio_card, scene_card};
 
 /// Widget handles that `ui::window` updates when `AppEvent`s arrive.
 pub(crate) struct LivePageHandle {
-    pub(crate) root: gtk4::Widget,
+    pub(crate) root: Stack,
     pub(crate) stream_label: Label,
     pub(crate) stream_btn: Button,
     pub(crate) record_label: Label,
     pub(crate) record_btn: Button,
-    pub(crate) status_label: Label,
-    pub(crate) connect_btn: Button,
     pub(crate) current_scene_label: Label,
     pub(crate) scenes_box: FlowBox,
     pub(crate) audio_box: FlowBox,
@@ -32,6 +30,15 @@ pub(crate) struct LivePageHandle {
 }
 
 pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
+    let root = Stack::builder()
+        .vexpand(true)
+        .hexpand(true)
+        .transition_type(StackTransitionType::Crossfade)
+        .build();
+
+    let disconnected = build_disconnected_view();
+    root.add_named(&disconnected, Some("disconnected"));
+
     // ── Outer layout ─────────────────────────────────────────────────────────
     let page = GtkBox::builder()
         .orientation(Orientation::Vertical)
@@ -43,8 +50,10 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
         .vexpand(true)
         .hexpand(true)
         .build();
+    root.add_named(&page, Some("live"));
+    root.set_visible_child_name("disconnected");
 
-    // ── Connection banner ────────────────────────────────────────────────────
+    // ── Output controls ──────────────────────────────────────────────────────
     let banner = GtkBox::new(Orientation::Horizontal, 0);
     banner.add_css_class("card");
 
@@ -105,38 +114,8 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
     let stream_control = build_output_control(&stream_btn, &stream_label);
     let record_control = build_output_control(&record_btn, &record_label);
 
-    let status_label = Label::builder()
-        .label(ObsStatus::Disconnected.label())
-        .xalign(0.0)
-        .hexpand(true)
-        .build();
-    status_label.add_css_class("obs-disconnected");
-
-    let connect_btn = Button::builder()
-        .label("Connect to OBS")
-        .valign(Align::Center)
-        .build();
-    connect_btn.add_css_class("suggested-action");
-
-    connect_btn.connect_clicked({
-        let nav = nav.clone();
-        move |_btn| {
-            let status = nav.state.borrow().obs_status.clone();
-            match status {
-                ObsStatus::Disconnected | ObsStatus::Error(_) => {
-                    nav.dispatch(AppCommand::Connect);
-                }
-                ObsStatus::Connected { .. } | ObsStatus::Connecting => {
-                    nav.dispatch(AppCommand::Disconnect);
-                }
-            }
-        }
-    });
-
     banner_inner.append(&stream_control);
     banner_inner.append(&record_control);
-    banner_inner.append(&status_label);
-    banner_inner.append(&connect_btn);
     page.append(&banner);
 
     // ── Program scene label ───────────────────────────────────────────────────
@@ -183,6 +162,7 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
         .min_children_per_line(1)
         .max_children_per_line(4)
         .build();
+    insert_scene_placeholder(&scenes_box, "Connect to OBS to load scenes.");
 
     let scenes_scroll = ScrolledWindow::builder()
         .vexpand(true)
@@ -230,18 +210,32 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
     live_split.set_end_child(Some(&audio_pane));
 
     LivePageHandle {
-        root: page.upcast(),
+        root,
         stream_label,
         stream_btn,
         record_label,
         record_btn,
-        status_label,
-        connect_btn,
         current_scene_label: current_label,
         scenes_box,
         audio_box,
         audio_cards: std::cell::RefCell::new(Vec::new()),
     }
+}
+
+pub(crate) fn show_disconnected_view(handle: &LivePageHandle, message: &str) {
+    handle.root.set_visible_child_name("disconnected");
+    if let Some(page) = handle.root.child_by_name("disconnected") {
+        if let Some(label) = page
+            .first_child()
+            .and_then(|child| child.downcast::<Label>().ok())
+        {
+            label.set_text(message);
+        }
+    }
+}
+
+pub(crate) fn show_live_view(handle: &LivePageHandle) {
+    handle.root.set_visible_child_name("live");
 }
 
 pub(crate) fn update_stream_status(handle: &LivePageHandle, status: &OutputStatus) {
@@ -297,6 +291,36 @@ fn build_output_control(button: &Button, label: &Label) -> GtkBox {
     control
 }
 
+fn build_disconnected_view() -> GtkBox {
+    let view = GtkBox::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(10)
+        .valign(Align::Center)
+        .halign(Align::Center)
+        .vexpand(true)
+        .hexpand(true)
+        .build();
+    view.add_css_class("live-disconnected-view");
+
+    let title = Label::builder()
+        .label("Connect to OBS to use Live controls")
+        .wrap(true)
+        .justify(gtk4::Justification::Center)
+        .build();
+    title.add_css_class("title-2");
+
+    let detail = Label::builder()
+        .label("Use the connection control at the bottom of the sidebar.")
+        .wrap(true)
+        .justify(gtk4::Justification::Center)
+        .build();
+    detail.add_css_class("dim-label");
+
+    view.append(&title);
+    view.append(&detail);
+    view
+}
+
 fn set_output_button(button: &Button, active: bool, start_label: &str, stop_label: &str) {
     if active {
         button.set_label(stop_label);
@@ -305,6 +329,16 @@ fn set_output_button(button: &Button, active: bool, start_label: &str, stop_labe
         button.set_label(start_label);
         button.remove_css_class("destructive-action");
     }
+}
+
+fn insert_scene_placeholder(scenes_box: &FlowBox, message: &str) {
+    let hint = Label::builder()
+        .label(message)
+        .wrap(true)
+        .xalign(0.0)
+        .build();
+    hint.add_css_class("dim-label");
+    scenes_box.insert(&hint, -1);
 }
 
 /// Rebuild the scene cards from the current inventory.

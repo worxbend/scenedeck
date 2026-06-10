@@ -13,7 +13,7 @@ type RefreshFn = Rc<dyn Fn()>;
 
 use adw::prelude::*;
 use gtk4::{
-    Box as GtkBox, DropDown, Label, ListBox, Orientation, SelectionMode, Stack,
+    Box as GtkBox, Button, DropDown, Label, ListBox, Orientation, SelectionMode, Stack,
     StackTransitionType, StringList,
 };
 
@@ -103,6 +103,20 @@ pub fn build_main_window(
 
     let header_selectors = build_header_selectors(&nav);
 
+    // ── Sidebar ───────────────────────────────────────────────────────────────
+    let (sidebar_page, sidebar_list, sidebar_controls) = build_sidebar(&nav);
+
+    sidebar_list.connect_row_selected({
+        let nav = nav.clone();
+        move |_, row| {
+            if let Some(row) = row {
+                if let Some(&page) = NAV_PAGES.get(row.index() as usize) {
+                    nav.switch_to_page(page);
+                }
+            }
+        }
+    });
+
     // ── Toast overlay (created early so the event poller can reference it) ────
     let toast_overlay = adw::ToastOverlay::new();
 
@@ -113,6 +127,7 @@ pub fn build_main_window(
         let toast_overlay = toast_overlay.clone();
         let refreshers = refreshers.clone();
         let header_selectors = header_selectors.clone();
+        let sidebar_controls = sidebar_controls.clone();
         move || {
             loop {
                 match event_rx.try_recv() {
@@ -123,6 +138,7 @@ pub fn build_main_window(
                         &toast_overlay,
                         &refreshers,
                         &header_selectors,
+                        &sidebar_controls,
                     ),
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => {
@@ -176,20 +192,6 @@ pub fn build_main_window(
         .child(&content_toolbar)
         .build();
 
-    // ── Sidebar ───────────────────────────────────────────────────────────────
-    let (sidebar_page, sidebar_list) = build_sidebar();
-
-    sidebar_list.connect_row_selected({
-        let nav = nav.clone();
-        move |_, row| {
-            if let Some(row) = row {
-                if let Some(&page) = NAV_PAGES.get(row.index() as usize) {
-                    nav.switch_to_page(page);
-                }
-            }
-        }
-    });
-
     // ── Navigation split view ─────────────────────────────────────────────────
     let split = adw::NavigationSplitView::new();
     split.set_sidebar(Some(&sidebar_page));
@@ -213,21 +215,22 @@ fn apply_event(
     toast: &adw::ToastOverlay,
     refreshers: &PageRefreshers,
     header_selectors: &HeaderSelectors,
+    sidebar_controls: &SidebarControls,
 ) {
     use crate::ui::pages::live::{
-        rebuild_audio_cards, rebuild_scene_cards, reset_output_controls, update_record_status,
-        update_stream_status,
+        rebuild_audio_cards, rebuild_scene_cards, reset_output_controls, show_disconnected_view,
+        show_live_view, update_record_status, update_stream_status,
     };
 
     match event {
         AppEvent::Connecting => {
             nav.state.borrow_mut().set_obs_status(ObsStatus::Connecting);
-            live.status_label.set_text("Connecting to OBS…");
-            set_status_class(&live.status_label, "obs-connecting");
-            live.connect_btn.set_label("Connecting…");
-            live.connect_btn.set_sensitive(false);
+            sidebar_controls.status_label.set_text("Connecting to OBS…");
+            set_status_class(&sidebar_controls.status_label, "obs-connecting");
+            sidebar_controls.connect_btn.set_label("Connecting…");
+            sidebar_controls.connect_btn.set_sensitive(false);
+            show_disconnected_view(live, "Connecting to OBS…");
             live.current_scene_label.set_text("Current scene: —");
-            clear_scenes(live);
             rebuild_audio_cards(live, &[], nav);
             reset_output_controls(live);
             update_named_selector(&header_selectors.profiles, &ObsNamedList::default());
@@ -241,27 +244,37 @@ fn apply_event(
             nav.state.borrow_mut().set_obs_status(ObsStatus::Connected {
                 obs_version: info.obs_version.clone(),
             });
-            live.status_label
+            sidebar_controls
+                .status_label
                 .set_text(&format!("Connected — OBS {}", info.obs_version));
-            set_status_class(&live.status_label, "obs-connected");
-            live.connect_btn.set_label("Disconnect");
-            live.connect_btn.set_sensitive(true);
-            live.connect_btn.remove_css_class("suggested-action");
-            live.connect_btn.add_css_class("destructive-action");
+            set_status_class(&sidebar_controls.status_label, "obs-connected");
+            sidebar_controls.connect_btn.set_label("Disconnect");
+            sidebar_controls.connect_btn.set_sensitive(true);
+            sidebar_controls
+                .connect_btn
+                .remove_css_class("suggested-action");
+            sidebar_controls
+                .connect_btn
+                .add_css_class("destructive-action");
+            show_live_view(live);
         }
 
         AppEvent::Disconnected => {
             nav.state
                 .borrow_mut()
                 .set_obs_status(ObsStatus::Disconnected);
-            live.status_label.set_text("Disconnected");
-            set_status_class(&live.status_label, "obs-disconnected");
-            live.connect_btn.set_label("Connect to OBS");
-            live.connect_btn.set_sensitive(true);
-            live.connect_btn.add_css_class("suggested-action");
-            live.connect_btn.remove_css_class("destructive-action");
+            sidebar_controls.status_label.set_text("Disconnected");
+            set_status_class(&sidebar_controls.status_label, "obs-disconnected");
+            sidebar_controls.connect_btn.set_label("Connect to OBS");
+            sidebar_controls.connect_btn.set_sensitive(true);
+            sidebar_controls
+                .connect_btn
+                .add_css_class("suggested-action");
+            sidebar_controls
+                .connect_btn
+                .remove_css_class("destructive-action");
+            show_disconnected_view(live, "Connect to OBS to use Live controls");
             live.current_scene_label.set_text("Current scene: —");
-            clear_scenes(live);
             rebuild_audio_cards(live, &[], nav);
             reset_output_controls(live);
             update_named_selector(&header_selectors.profiles, &ObsNamedList::default());
@@ -272,6 +285,7 @@ fn apply_event(
         }
 
         AppEvent::SceneInventoryUpdated(inventory) => {
+            show_live_view(live);
             nav.state.borrow_mut().scene_inventory = inventory.clone();
             // Update the current scene label from the inventory's known active scene.
             let scene_text = inventory.current_id.as_deref().unwrap_or("—");
@@ -310,13 +324,21 @@ fn apply_event(
             nav.state
                 .borrow_mut()
                 .set_obs_status(ObsStatus::Error(err.to_string()));
-            live.status_label.set_text(&format!("Error: {err}"));
-            set_status_class(&live.status_label, "obs-error");
-            live.connect_btn.set_label("Retry");
-            live.connect_btn.set_sensitive(true);
-            live.connect_btn.add_css_class("suggested-action");
-            live.connect_btn.remove_css_class("destructive-action");
+            sidebar_controls
+                .status_label
+                .set_text(&format!("Error: {err}"));
+            set_status_class(&sidebar_controls.status_label, "obs-error");
+            sidebar_controls.connect_btn.set_label("Retry");
+            sidebar_controls.connect_btn.set_sensitive(true);
+            sidebar_controls
+                .connect_btn
+                .add_css_class("suggested-action");
+            sidebar_controls
+                .connect_btn
+                .remove_css_class("destructive-action");
             reset_output_controls(live);
+            show_disconnected_view(live, "OBS connection failed");
+            live.current_scene_label.set_text("Current scene: —");
 
             // Surface the error as a dismissable toast so it's visible even
             // when the user is on a different page.
@@ -401,12 +423,6 @@ fn apply_event(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn clear_scenes(live: &LivePageHandle) {
-    while let Some(child) = live.scenes_box.first_child() {
-        live.scenes_box.remove(&child);
-    }
-}
-
 fn set_status_class(label: &gtk4::Label, new_class: &str) {
     for class in &[
         "obs-connected",
@@ -466,6 +482,7 @@ fn build_named_selector(label: &str, tooltip: &str) -> NamedSelector {
         .spacing(6)
         .valign(gtk4::Align::Center)
         .build();
+    root.set_visible(false);
     root.add_css_class("header-selector");
 
     let caption = Label::builder()
@@ -510,14 +527,17 @@ fn update_named_selector(selector: &NamedSelector, list: &ObsNamedList) {
         .map(|idx| idx as u32)
         .unwrap_or(gtk4::INVALID_LIST_POSITION);
 
-    selector.dropdown.set_sensitive(!list.items.is_empty());
+    let has_items = !list.items.is_empty();
+    selector.root.set_visible(has_items);
+    selector.dropdown.set_sensitive(has_items);
     selector.dropdown.set_selected(selected);
     selector.updating.set(false);
 }
 
-fn build_sidebar() -> (adw::NavigationPage, ListBox) {
+fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, SidebarControls) {
     let list = ListBox::builder()
         .selection_mode(SelectionMode::Single)
+        .vexpand(true)
         .build();
     list.add_css_class("navigation-sidebar");
 
@@ -535,17 +555,72 @@ fn build_sidebar() -> (adw::NavigationPage, ListBox) {
         list.select_row(Some(&row));
     }
 
+    let status_label = Label::builder()
+        .label(ObsStatus::Disconnected.label())
+        .xalign(0.0)
+        .wrap(true)
+        .build();
+    status_label.add_css_class("obs-disconnected");
+
+    let connect_btn = Button::builder()
+        .label("Connect to OBS")
+        .halign(gtk4::Align::Fill)
+        .hexpand(true)
+        .build();
+    connect_btn.add_css_class("suggested-action");
+    connect_btn.connect_clicked({
+        let nav = nav.clone();
+        move |_| {
+            let status = nav.state.borrow().obs_status.clone();
+            match status {
+                ObsStatus::Disconnected | ObsStatus::Error(_) => {
+                    nav.dispatch(AppCommand::Connect);
+                }
+                ObsStatus::Connected { .. } | ObsStatus::Connecting => {
+                    nav.dispatch(AppCommand::Disconnect);
+                }
+            }
+        }
+    });
+
+    let footer = GtkBox::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(8)
+        .margin_top(12)
+        .margin_bottom(12)
+        .margin_start(12)
+        .margin_end(12)
+        .build();
+    footer.add_css_class("sidebar-obs-footer");
+    footer.append(&status_label);
+    footer.append(&connect_btn);
+
+    let sidebar_content = GtkBox::builder()
+        .orientation(Orientation::Vertical)
+        .vexpand(true)
+        .hexpand(true)
+        .build();
+    sidebar_content.append(&list);
+    sidebar_content.append(&footer);
+
     let sidebar_header = adw::HeaderBar::builder().show_title(false).build();
     let sidebar_toolbar = adw::ToolbarView::new();
     sidebar_toolbar.add_top_bar(&sidebar_header);
-    sidebar_toolbar.set_content(Some(&list));
+    sidebar_toolbar.set_content(Some(&sidebar_content));
 
     let nav_page = adw::NavigationPage::builder()
         .title(APP_NAME)
         .child(&sidebar_toolbar)
         .build();
 
-    (nav_page, list)
+    (
+        nav_page,
+        list,
+        SidebarControls {
+            status_label,
+            connect_btn,
+        },
+    )
 }
 
 fn show_about(parent: &adw::ApplicationWindow) {
@@ -575,6 +650,12 @@ struct NamedSelector {
     dropdown: DropDown,
     model: StringList,
     updating: Rc<Cell<bool>>,
+}
+
+#[derive(Clone)]
+struct SidebarControls {
+    status_label: Label,
+    connect_btn: Button,
 }
 
 #[derive(Clone)]

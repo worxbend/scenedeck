@@ -4,6 +4,11 @@
 .obs-disconnected { color: @dim_label_color; }
 .obs-error        { color: @error_color; }
 
+/* ── Sidebar OBS connection ────────────────────────────────────────────────── */
+.sidebar-obs-footer button {
+    min-height: 34px;
+}
+
 /* ── Live output controls ──────────────────────────────────────────────────── */
 .output-control button {
     min-width: 108px;
