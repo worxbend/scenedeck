@@ -32,6 +32,9 @@
   </provides>
 
   <releases>
+    <release version="0.1.2" date="2026-06-13">
+      <description><p>Add Snapcraft packaging and Snap Store publishing workflow.</p></description>
+    </release>
     <release version="0.1.0" date="2026-06-10">
       <description><p>Initial skeleton release.</p></description>
     </release>
