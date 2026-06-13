@@ -7,7 +7,7 @@ on:
         description: Snap Store channel to release to.
         required: true
         type: choice
-        default: edge
+        default: stable
         options:
           - edge
           - beta
@@ -64,7 +64,7 @@ jobs:
 
       - name: Resolve Snap Store channel
         id: channel
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
         shell: bash
         env:
           INPUT_CHANNEL: ${{ inputs.channel }}
@@ -76,14 +76,15 @@ jobs:
           elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             channel="stable"
           else
-            channel="edge"
+            echo "Snap Store publishing is only enabled for workflow_dispatch or tag runs." >&2
+            exit 1
           fi
 
           echo "channel=${channel}" >> "${GITHUB_OUTPUT}"
           echo "Resolved Snap Store channel: ${channel}"
 
       - name: Check Snap Store credentials
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
         shell: bash
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
@@ -96,7 +97,7 @@ jobs:
           fi
 
       - name: Publish snap
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
         uses: snapcore/action-publish@v1
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
