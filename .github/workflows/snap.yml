@@ -1,0 +1,105 @@
+name: Snap
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Snap Store channel to release to.
+        required: true
+        type: choice
+        default: edge
+        options:
+          - edge
+          - beta
+          - candidate
+          - stable
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: snap-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  snap:
+    name: Build and Publish Snap ${{ matrix.artifact_arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact_arch: amd64
+            runner: ubuntu-24.04
+            snap_arch: amd64
+          - artifact_arch: arm64
+            runner: ubuntu-24.04-arm
+            snap_arch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Build snap
+        id: build
+        uses: snapcore/action-build@v1
+        with:
+          snapcraft-args: --build-for=${{ matrix.snap_arch }}
+
+      - name: Upload snap artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scenedeck-snap-${{ matrix.artifact_arch }}
+          path: ${{ steps.build.outputs.snap }}
+          if-no-files-found: error
+
+      - name: Resolve Snap Store channel
+        id: channel
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          INPUT_CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            channel="${INPUT_CHANNEL}"
+          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            channel="stable"
+          else
+            channel="edge"
+          fi
+
+          echo "channel=${channel}" >> "${GITHUB_OUTPUT}"
+          echo "Resolved Snap Store channel: ${channel}"
+
+      - name: Check Snap Store credentials
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${SNAPCRAFT_STORE_CREDENTIALS}" ]]; then
+            echo "SNAPCRAFT_STORE_CREDENTIALS is required to publish to the Snap Store." >&2
+            exit 1
+          fi
+
+      - name: Publish snap
+        if: github.event_name != 'pull_request'
+        uses: snapcore/action-publish@v1
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        with:
+          snap: ${{ steps.build.outputs.snap }}
+          release: ${{ steps.channel.outputs.channel }}
