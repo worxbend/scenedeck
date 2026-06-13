@@ -30,7 +30,13 @@ pub fn run() {
 
     let event_rx = Rc::new(RefCell::new(Some(event_rx)));
 
-    let app = adw::Application::builder().application_id(APP_ID).build();
+    let mut app_builder = adw::Application::builder().application_id(APP_ID);
+    if std::env::var_os("SNAP").is_some() {
+        // The snap does not declare a DBus slot, so avoid owning APP_ID on the
+        // session bus while confined.
+        app_builder = app_builder.flags(gio::ApplicationFlags::NON_UNIQUE);
+    }
+    let app = app_builder.build();
 
     app.connect_activate(move |app| {
         let rx = event_rx
