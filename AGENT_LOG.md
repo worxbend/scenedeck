@@ -2374,3 +2374,7 @@ M  assets/scenedeck.css
 M  docs/manual-test-plan.md
 M  docs/manual-test-runs.md
 M  src/ui/pages/live.rs
+2026-06-21T15:20:10Z final checkpoint policy behavior=source_and_telemetry terminal_reason=iterations_complete
+2026-06-21T15:20:10Z iteration final-25 checkpoint started
+2026-06-21T15:20:10Z iteration final-25 checkpoint status before commit:
+M  AGENT_LOG.md
