@@ -206,3 +206,94 @@ M  src/ui/pages/live.rs
 M  src/ui/pages/mixer.rs
 M  src/ui/widgets/audio_card.rs
 M  src/ui/window.rs
+2026-06-21T12:14:17Z iteration 3 started remaining=16553s
+2026-06-21T12:14:17Z iteration 3 preplanner effective budgets untracked_scan_max_bytes=536870912 untracked_scan_max_count=10000 snapshot_copy_max_bytes=536870912 snapshot_copy_max_count=10000 snapshot_copy_max_file_bytes=134217728
+2026-06-21T12:14:17Z iteration 3 disposable preplanner repo created path=/tmp/agent-loop-preplanner-repo-tz4q0mjo/repo copied_entries=114
+2026-06-21T12:14:17Z iteration 3 ideator phase started count=3
+2026-06-21T12:14:17Z iteration 3 ideator phase concurrency workers=3
+2026-06-21T12:14:17Z iteration 3 ideator 1 role="the pragmatist" started
+2026-06-21T12:14:17Z iteration 3 ideator 2 role="the architect" started
+2026-06-21T12:14:17Z iteration 3 ideator 3 role="the contrarian" started
+2026-06-21T12:14:26Z iteration 3 ideator 2 role="the architect" completed status=0
+2026-06-21T12:14:27Z iteration 3 ideator 1 role="the pragmatist" completed status=0
+2026-06-21T12:14:30Z iteration 3 ideator 3 role="the contrarian" completed status=0
+2026-06-21T12:14:30Z iteration 3 ideator phase completed approaches=3
+2026-06-21T12:14:30Z iteration 3 selector started approaches=3
+2026-06-21T12:14:41Z iteration 3 selector completed status=0
+2026-06-21T12:14:41Z iteration 3 disposable preplanner repo cleanup path=/tmp/agent-loop-preplanner-repo-tz4q0mjo/repo
+2026-06-21T12:14:41Z iteration 3 selector rejected alternative role="the architect" approach="Interaction-Intent Boundary First: treat the next iteration as a semantic cleanup of mixer refresh intent before adding more UI surface, drawing a hard line between automatic st..." reason="Strong framing, but as-is it risks becoming broader architectural cleanup than needed. The next planner should use the intent boundary, while keeping the implementation pressure narrowly tied to the retry failure."
+2026-06-21T12:14:41Z iteration 3 selector rejected alternative role="the pragmatist" approach="Intent-Gated Retry Semantics: treat mixer refreshes as two different classes of intent, automatic reconciliation and explicit user recovery, and let that distinction drive the n..." reason="Best narrow fix direction, but as-is it underweights the need to document and fence the reducer and legacy-field contract, which is important because future UI callbacks could recreate the same ambiguity."
+2026-06-21T12:14:41Z iteration 3 selector rejected alternative role="the contrarian" approach="Contract-First Retrenchment: pause feature growth and make mixer refresh semantics a small, explicit protocol before touching more UI polish" reason="Correctly prioritizes contract coherence, but as-is it risks spending too much iteration energy on retrenchment and invariant discussion. The planner still needs to stay anchored to the concrete retry semantics bug."
+2026-06-21T12:14:41Z iteration 3 selector alternatives persisted count=3
+2026-06-21T12:14:41Z iteration 3 selector structured alternatives persisted count=3
+2026-06-21T12:14:41Z iteration 3 planner started
+2026-06-21T12:14:58Z iteration 3 plan: 4 task(s) in 3 phase(s). This iteration targets the P0 mixer retry regression and makes the refresh contract explicit without introducing premature request-token machinery. Phase 1 creates the tested semantic boundary, Phase 2 wires real UI behavior to it, and Phase 3 handles documentation/state-contract hardening that can mostly proceed independently once the intent model is known.
+2026-06-21T12:14:58Z iteration 3 phase 1 started parallel=False tasks=1
+2026-06-21T12:16:43Z iteration 3 task t1 ('Add mixer refresh request intent helper') status=0
+2026-06-21T12:16:43Z iteration 3 phase 2 started parallel=False tasks=1
+2026-06-21T12:18:09Z iteration 3 task t2 ('Wire explicit mixer retries through UI callbacks') status=0
+2026-06-21T12:18:09Z iteration 3 phase 3 started parallel=True tasks=2
+2026-06-21T12:18:29Z iteration 3 task t4 ('Update stale mixer page module comment') status=0
+2026-06-21T12:18:59Z iteration 3 task t3 ('Document and fence mixer refresh state contract') status=0
+2026-06-21T12:18:59Z iteration 3 reviewer started
+
+## Review Summary - Iteration 3 - 2026-06-21
+
+### What Was Done
+
+- Added `MixerRefreshRequestIntent` to distinguish automatic mixer refresh
+  reconciliation from explicit user retry intent.
+- Added `should_request_mixer_scene_audio` and tests for automatic failure
+  dedupe, explicit retry after failure, loaded-scene dedupe, in-flight dedupe,
+  and UI tracker dedupe.
+- Routed mode changes, scene changes, and a new mixer error Retry button through
+  explicit refresh intent.
+- Updated the stale Mixer page module comment.
+- Documented the scene-level freshness contract for
+  `MixerAudioRefreshState::requested_scene`.
+- Added comments at the legacy mixer audio mirror fields warning that event
+  handlers should use reducer methods.
+- Added reducer coverage for repeated same-scene loading followed by same-scene
+  success.
+
+### What Was Found
+
+- The intended mixer failure retry regression is fixed for the normal UI flow:
+  failed selected/pinned refreshes now show a Retry button, automatic rebuilds
+  do not loop after a failure, and explicit user actions can retry once loading
+  and tracker state are clear.
+- The plan item to avoid request-token machinery was followed; scene-level
+  freshness is now documented as the chosen contract.
+- The legacy-field fence is only advisory. The fields remain public, and
+  `InputMuteChanged` / `InputVolumeChanged` still mutate `mixer_audio_inputs`
+  directly without updating `mixer_audio_refresh.loaded.inputs`.
+- Because reducer sync clones from `mixer_audio_refresh.loaded`, later mixer
+  loading/failure transitions can restore stale mixer input values after mute
+  or volume events.
+- There is still no integration-level coverage for the retry button or tracker
+  mutation sequence; coverage is currently pure-helper and reducer-level.
+
+### Top Improvement Proposals
+
+1. Add `AppState` mixer input update methods that keep reducer snapshots and
+   legacy mirrors synchronized, then route OBS mute/volume events through them.
+2. Narrow direct access to legacy mixer audio mirror fields with accessors or
+   `pub(crate)` visibility where practical.
+3. Add focused retry interaction tests around tracker mutation and
+   dispatch/no-dispatch behavior, especially failure -> Retry -> loading.
+4. Refine output confirmation dialog appearance so start actions are not styled
+   as destructive.
+5. Surface stream/record command failures in the output UI separately from OBS
+   connection errors.
+2026-06-21T12:22:01Z iteration 3 reviewer completed status=0
+2026-06-21T12:22:01Z iteration 3 memory updated
+2026-06-21T12:22:01Z iteration 3 completed validation_status=0
+2026-06-21T12:22:01Z iteration 3 checkpoint started
+2026-06-21T12:22:01Z iteration 3 checkpoint status before commit:
+M  AGENT_LOG.md
+M  ALTERNATIVES.jsonl
+M  MEMORY.md
+M  PLAN.md
+M  SCORES.jsonl
+M  src/controller/state.rs
+M  src/ui/pages/mixer.rs

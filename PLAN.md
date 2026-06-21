@@ -11,7 +11,8 @@ SceneDeck is a Rust GTK4/libadwaita OBS controller with these major surfaces:
   audio, stream controls, record controls, elapsed output timers, recording
   path copy, and configurable output confirmations.
 - Mixer page: Active/Selected/Pinned modes, scene selector, search, grouping,
-  scoped audio cards, scene-specific refreshes, and loading/error/empty states.
+  scoped audio cards, scene-specific refreshes, loading/error/empty states, and
+  explicit retry after selected/pinned refresh failures.
 - Graph page: nested scene dependency display.
 - Inventory page: local scene role assignment, stale registry cleanup, YAML
   import/export.
@@ -39,7 +40,9 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
 Status: all passed on 2026-06-21 after the mixer refresh contract, optimistic
-audio update, and output confirmation decision-helper work.
+audio update, output confirmation decision-helper work, and mixer retry-intent
+fix. The current review also reran the focused `mixer_refresh` and `request_`
+test filters.
 
 ## Completed Phases
 
@@ -170,82 +173,70 @@ Working tree, reviewed 2026-06-21:
 
 Review verdict:
 
-- Static validation passed:
-  `cargo fmt --all -- --check`, `cargo check --workspace --all-features`,
-  `cargo test --workspace --all-features`, and
-  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
-- The mixer reducer covers the key stale-response cases and is a good fit for
-  controller-owned async state.
-- The mixer duplicate guard prevents dispatch storms, but it also suppresses
-  explicit retries after a scene-specific refresh failure because the helper
-  returns early while `mixer_audio_error` matches the scene.
-- The mixer page module header is stale: it still says scene-specific OBS
-  refresh is left for a future phase.
-- Output confirmation logic is now testable, but all confirmation dialogs still
-  use destructive response styling, including start stream/start recording
-  actions.
-- The audio optimistic update path is functionally complete, but helper
-  coverage remains mostly service-level; the GTK-level dispatch/update helper is
-  not directly tested.
+- Static validation passed.
+- The mixer reducer covers loading, success, failure, stale success, stale
+  failure, and same-scene repeated loading.
+- The duplicate guard was useful but initially conflated automatic rebuilds
+  with explicit user retry intent.
+- Output confirmation logic is testable, but all confirmation dialogs still use
+  destructive response styling, including start stream/start recording.
+- The audio optimistic update path is functionally complete, but GTK-level
+  mixer card update coverage remains thin.
+
+### Mixer Retry Intent and Refresh Contract Documentation
+
+Working tree, reviewed 2026-06-21:
+
+- Added `MixerRefreshRequestIntent` and `should_request_mixer_scene_audio`.
+- Automatic mixer rebuilds still dedupe loaded, loading, tracked, and failed
+  scenes so persistent OBS failures do not loop.
+- Explicit mode/scene callbacks and the new Retry button can dispatch after a
+  matching mixer refresh failure.
+- Updated the stale Mixer page module comment.
+- Documented the scene-level freshness invariant for
+  `MixerAudioRefreshState::requested_scene`.
+- Added comments warning that legacy mixer audio fields mirror the reducer.
+- Added tests for automatic failure dedupe, explicit retry after failure,
+  loaded/in-flight/tracked dedupe, and repeated same-scene loading.
+
+Review verdict:
+
+- The intended P0 retry regression is fixed for the normal failed-state flow.
+- The manual Retry button is useful and avoids relying only on combo-row
+  reselection semantics.
+- No request-token machinery was added; scene-level freshness remains the
+  explicit contract.
+- Remaining high-priority gap: `InputMuteChanged` and `InputVolumeChanged`
+  still mutate `mixer_audio_inputs` directly in `src/ui/window.rs` without
+  updating `mixer_audio_refresh.loaded.inputs`. That violates the new mirror
+  contract and can let future reducer syncs resurrect stale input values.
+- Legacy mixer mirror fields remain public because GTK pages read them
+  directly; comments help, but do not mechanically prevent future bypasses.
 
 ## Groomed Next Steps
 
-### P0: Restore Mixer Failure Retry Semantics
+### P0: Make Mixer Audio Mirrors Mechanically Safe
 
 Problem:
 
-- `request_mixer_scene_audio` suppresses dispatch when the current scene has a
-  matching `mixer_audio_error`.
-- The same helper is used by explicit mode/scene callbacks, so a user cannot
-  retry a failed selected/pinned refresh by reselecting the target or toggling
-  back to the mode.
-- There is no manual retry button on the mixer error state.
+- `mixer_audio_scene`, `mixer_audio_inputs`, `mixer_audio_loading_scene`, and
+  `mixer_audio_error` are documented as mirrors of `MixerAudioRefreshState`,
+  but they are still public and can be directly mutated.
+- `InputMuteChanged` and `InputVolumeChanged` currently mutate
+  `mixer_audio_inputs` in `src/ui/window.rs` without updating
+  `mixer_audio_refresh.loaded.inputs`.
+- A later reducer sync can clone the stale loaded snapshot back into the legacy
+  fields and lose the latest mute/volume event.
 
 Plan:
 
-- Separate automatic rebuild dedupe from explicit user retry intent.
-- Add a retry action to the mixer error status, or allow combo/mode callbacks
-  to force a refresh that clears the matching error through the controller
-  loading event.
-- Keep automatic populate/rebuild from looping endlessly on persistent OBS
-  errors.
-- Add a narrow testable request-decision helper for loaded/loading/error/tracked
-  combinations and explicit-versus-automatic requests.
-- Update the stale module comment in `src/ui/pages/mixer.rs`.
-
-Files:
-
-- `src/ui/pages/mixer.rs`
-- possible `src/controller/state.rs` if retry intent should be modeled in the
-  reducer
-
-Tests:
-
-- Cover automatic no-loop after failure.
-- Cover explicit retry dispatch after failure.
-- Cover loaded and in-flight requests still dedupe correctly.
-
-### P0: Make Mixer Refresh Target Semantics Explicit
-
-Problem:
-
-- The reducer tracks a single requested scene and treats any success for the
-  requested scene as current. That is acceptable for target-level freshness, but
-  it cannot distinguish two sequential refreshes for the same scene.
-- UI state still carries both legacy fields (`mixer_audio_scene`,
-  `mixer_audio_inputs`, `mixer_audio_loading_scene`, `mixer_audio_error`) and
-  the new reducer, which risks future direct writes bypassing the contract.
-
-Plan:
-
-- Decide whether scene-level freshness is sufficient or whether requests need a
-  monotonically increasing token.
-- If scene-level freshness is sufficient, document the invariant and make
-  direct legacy-field writes harder by narrowing visibility or adding comments
-  at the field declarations.
-- Audit all event paths for direct mixer audio field mutation.
-- Consider clearing stale loaded snapshots on disconnect if selected/pinned
-  mixer controls should not show old OBS data while disconnected.
+- Add `AppState` methods for mixer input mute and volume updates that update
+  both the active mirror and `mixer_audio_refresh.loaded.inputs`.
+- Route `InputMuteChanged` and `InputVolumeChanged` through those methods.
+- Add `AppState` tests that prove mixer loaded snapshots and mirrors remain in
+  sync after input mute/volume events.
+- Consider making the legacy mixer fields `pub(crate)` or replacing UI reads
+  with accessor methods so direct writes become harder.
 
 Files:
 
@@ -255,9 +246,41 @@ Files:
 
 Tests:
 
-- Add reducer coverage for repeated same-scene loading/success if the desired
-  behavior is documented.
-- Add a disconnect-state test if clearing snapshots becomes required.
+- Updating a mixer input mute state updates both mirror and reducer snapshot.
+- Updating a mixer input volume updates both mirror and reducer snapshot.
+- A subsequent mixer loading/failure transition does not restore stale input
+  values from `mixer_audio_refresh.loaded`.
+
+### P0: Add Mixer Retry Interaction Coverage
+
+Problem:
+
+- Pure decision-helper tests cover explicit retry semantics, but no test covers
+  the UI event sequence: failure status clears the tracker, clicking Retry
+  dispatches once, loading replaces the error, and automatic rebuilds stay
+  quiet.
+- Combo-row callbacks can fire during row construction in some GTK patterns; the
+  current helper should keep this harmless, but it is only indirectly covered.
+
+Plan:
+
+- Extract a small request-dispatch adapter or testable state transition around
+  `request_mixer_scene_audio` so tracker mutation and dispatch/no-dispatch can
+  be verified without full GTK.
+- Cover failure -> Retry -> loading -> failure and failure -> automatic rebuild
+  sequences.
+- Confirm explicit requests are still deduped while a same-scene request is
+  already loading or tracked.
+
+Files:
+
+- `src/ui/pages/mixer.rs`
+
+Tests:
+
+- Explicit retry dispatches exactly once from a matching failed state.
+- Automatic rebuild after failure does not dispatch.
+- Explicit retry during loading/tracked state does not duplicate requests.
 
 ### P1: Surface Output Command Errors In Output UI
 
@@ -285,18 +308,18 @@ Files:
 
 Problem:
 
-- `requires_output_confirmation` is now tested, but the dialog presentation is
-  still generic.
+- `requires_output_confirmation` is tested, but the dialog presentation is still
+  generic.
 - Start stream/start recording confirmations use destructive styling even
   though they are not destructive in the same sense as stop actions.
 
 Plan:
 
-- Pass response appearance based on output kind/action, or add a small helper
-  that maps action to dialog copy and appearance.
+- Add a small helper that maps output kind/action to dialog copy and response
+  appearance.
 - Keep stop stream/stop recording as destructive.
 - Use neutral or suggested styling for start stream/start recording.
-- Add pure tests for action-to-dialog metadata if extracted.
+- Add pure tests for action-to-dialog metadata.
 
 Files:
 
@@ -306,7 +329,8 @@ Files:
 
 Problem:
 
-- Output safety toggles update in-memory state before disk persistence is known.
+- Output safety toggles update in-memory state before disk persistence is
+  known.
 - Write failures are logged but not shown to the user, matching some existing
   Settings patterns but weak for safety preferences.
 

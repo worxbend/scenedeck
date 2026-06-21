@@ -2,3 +2,4 @@
 [pattern] For operational controls, extract pure decision helpers around safety behavior so defaults and edge cases can be unit-tested outside GTK callbacks.
 [learning] Debounced sliders still need immediate local feedback for all volume controls; otherwise non-slider controls appear inert while waiting for OBS reconciliation.
 [anti-pattern] Reusing one duplicate-dispatch guard for automatic rebuilds and explicit user actions can accidentally block retries after recoverable failures.
+[anti-pattern] Public mirror fields around reducer-owned state drift unless every event path updates the reducer snapshot and the mirror together.

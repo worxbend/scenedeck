@@ -1,16 +1,18 @@
 //! Dedicated audio Mixer page.
 //!
-//! This first pass provides the navigation and control surface for mixer modes,
-//! scene selection, search, grouping, and scoped audio display. Active mode uses
-//! the existing active-scene audio snapshot; selected/pinned scene-specific OBS
-//! refresh is intentionally left for the next controller/OBS phase.
+//! Active mode uses the app's active-scene audio snapshot. Selected and Pinned
+//! modes request scene-specific mixer snapshots through the controller, with
+//! UI-side dispatch dedupe for rebuilds and explicit retry semantics for
+//! user-driven recovery after scene refresh failures.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use adw::{prelude::*, ComboRow, EntryRow, PreferencesGroup, PreferencesPage, StatusPage};
-use gtk4::{Box as GtkBox, FlowBox, Label, Orientation, PolicyType, ScrolledWindow, StringList};
+use gtk4::{
+    Box as GtkBox, Button, FlowBox, Label, Orientation, PolicyType, ScrolledWindow, StringList,
+};
 
 use crate::controller::command::AppCommand;
 use crate::domain::audio::AudioInput;
@@ -20,6 +22,12 @@ use crate::ui::navigation::NavigationContext;
 use crate::ui::widgets::audio_card;
 
 type MixerRefreshTracker = Rc<RefCell<Option<String>>>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MixerRefreshRequestIntent {
+    Automatic,
+    Explicit,
+}
 
 pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     let root = GtkBox::builder()
@@ -148,15 +156,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
                 .filter(|error| error.scene == scene)
             {
                 clear_tracked_request(refresh_tracker, scene);
-                append_mixer_status(
-                    root,
-                    "dialog-warning-symbolic",
-                    "Mixer Audio Unavailable",
-                    &format!(
-                        "Could not load audio sources for {scene}: {}",
-                        error.message
-                    ),
-                );
+                append_mixer_error_status(root, nav, refresh_tracker, scene, &error.message);
                 return;
             }
 
@@ -164,7 +164,12 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
                 clear_tracked_request(refresh_tracker, scene);
                 Some(state.mixer_audio_inputs)
             } else {
-                request_mixer_scene_audio(nav, refresh_tracker, scene);
+                request_mixer_scene_audio(
+                    nav,
+                    refresh_tracker,
+                    scene,
+                    MixerRefreshRequestIntent::Automatic,
+                );
                 append_mixer_status(
                     root,
                     "view-refresh-symbolic",
@@ -218,7 +223,12 @@ fn build_mode_row(
             };
             if mode != MixerMode::ActiveScene {
                 if let Some(scene) = target_scene {
-                    request_mixer_scene_audio(&nav, &refresh_tracker, &scene);
+                    request_mixer_scene_audio(
+                        &nav,
+                        &refresh_tracker,
+                        &scene,
+                        MixerRefreshRequestIntent::Explicit,
+                    );
                 }
             }
             persist_mixer_selection(&nav);
@@ -271,7 +281,12 @@ fn build_scene_row(
             };
             if let Some(scene) = target_scene {
                 if nav.state.borrow().mixer.mode != MixerMode::ActiveScene {
-                    request_mixer_scene_audio(&nav, &refresh_tracker, &scene);
+                    request_mixer_scene_audio(
+                        &nav,
+                        &refresh_tracker,
+                        &scene,
+                        MixerRefreshRequestIntent::Explicit,
+                    );
                 }
             }
             persist_mixer_selection(&nav);
@@ -394,6 +409,42 @@ fn append_mixer_status(root: &GtkBox, icon_name: &str, title: &str, description:
     root.append(&status);
 }
 
+fn append_mixer_error_status(
+    root: &GtkBox,
+    nav: &NavigationContext,
+    refresh_tracker: &MixerRefreshTracker,
+    scene: &str,
+    message: &str,
+) {
+    let status = StatusPage::builder()
+        .icon_name("dialog-warning-symbolic")
+        .title("Mixer Audio Unavailable")
+        .description(format!(
+            "Could not load audio sources for {scene}: {message}"
+        ))
+        .build();
+    let retry_btn = Button::builder()
+        .label("Retry")
+        .tooltip_text("Retry loading mixer audio")
+        .build();
+    retry_btn.add_css_class("suggested-action");
+    retry_btn.connect_clicked({
+        let nav = nav.clone();
+        let refresh_tracker = refresh_tracker.clone();
+        let scene = scene.to_string();
+        move |_| {
+            request_mixer_scene_audio(
+                &nav,
+                &refresh_tracker,
+                &scene,
+                MixerRefreshRequestIntent::Explicit,
+            );
+        }
+    });
+    status.set_child(Some(&retry_btn));
+    root.append(&status);
+}
+
 fn append_group(root: &GtkBox, nav: &NavigationContext, title: &str, inputs: &[AudioInput]) {
     let section = GtkBox::builder()
         .orientation(Orientation::Vertical)
@@ -498,16 +549,21 @@ fn request_mixer_scene_audio(
     nav: &NavigationContext,
     refresh_tracker: &MixerRefreshTracker,
     scene: &str,
+    intent: MixerRefreshRequestIntent,
 ) {
     {
         let state = nav.state.borrow();
-        let scene_is_loaded = state.mixer_audio_scene.as_deref() == Some(scene);
-        let scene_is_loading = state.mixer_audio_loading_scene.as_deref() == Some(scene);
-        let scene_has_error = state
-            .mixer_audio_error
-            .as_ref()
-            .is_some_and(|error| error.scene == scene);
-        if scene_is_loaded || scene_is_loading || scene_has_error {
+        if !should_request_mixer_scene_audio(
+            intent,
+            scene,
+            state.mixer_audio_scene.as_deref(),
+            state.mixer_audio_loading_scene.as_deref(),
+            state
+                .mixer_audio_error
+                .as_ref()
+                .map(|error| error.scene.as_str()),
+            refresh_tracker.borrow().as_deref(),
+        ) {
             return;
         }
     }
@@ -521,6 +577,24 @@ fn request_mixer_scene_audio(
     }
 
     nav.dispatch(AppCommand::RefreshMixerSceneAudio(scene.to_string()));
+}
+
+pub(crate) fn should_request_mixer_scene_audio(
+    intent: MixerRefreshRequestIntent,
+    scene: &str,
+    loaded_scene: Option<&str>,
+    loading_scene: Option<&str>,
+    error_scene: Option<&str>,
+    tracked_scene: Option<&str>,
+) -> bool {
+    if loaded_scene == Some(scene) || loading_scene == Some(scene) || tracked_scene == Some(scene) {
+        return false;
+    }
+
+    match intent {
+        MixerRefreshRequestIntent::Automatic => error_scene != Some(scene),
+        MixerRefreshRequestIntent::Explicit => true,
+    }
 }
 
 fn clear_tracked_request(refresh_tracker: &MixerRefreshTracker, scene: &str) {
@@ -573,4 +647,84 @@ fn write_mixer_selection(selection: MixerSelection) -> Result<(), std::io::Error
     let mut cfg = crate::storage::config::read_config().config;
     cfg.mixer = selection;
     write_config(&cfg)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{should_request_mixer_scene_audio, MixerRefreshRequestIntent};
+
+    #[test]
+    fn automatic_request_dedupes_matching_failure() {
+        assert!(!should_request_mixer_scene_audio(
+            MixerRefreshRequestIntent::Automatic,
+            "scene-a",
+            None,
+            None,
+            Some("scene-a"),
+            None,
+        ));
+    }
+
+    #[test]
+    fn explicit_request_retries_matching_failure() {
+        assert!(should_request_mixer_scene_audio(
+            MixerRefreshRequestIntent::Explicit,
+            "scene-a",
+            None,
+            None,
+            Some("scene-a"),
+            None,
+        ));
+    }
+
+    #[test]
+    fn request_dedupes_loaded_scene() {
+        for intent in [
+            MixerRefreshRequestIntent::Automatic,
+            MixerRefreshRequestIntent::Explicit,
+        ] {
+            assert!(!should_request_mixer_scene_audio(
+                intent,
+                "scene-a",
+                Some("scene-a"),
+                None,
+                None,
+                None,
+            ));
+        }
+    }
+
+    #[test]
+    fn request_dedupes_in_flight_scene() {
+        for intent in [
+            MixerRefreshRequestIntent::Automatic,
+            MixerRefreshRequestIntent::Explicit,
+        ] {
+            assert!(!should_request_mixer_scene_audio(
+                intent,
+                "scene-a",
+                None,
+                Some("scene-a"),
+                None,
+                None,
+            ));
+        }
+    }
+
+    #[test]
+    fn request_dedupes_tracked_scene() {
+        for intent in [
+            MixerRefreshRequestIntent::Automatic,
+            MixerRefreshRequestIntent::Explicit,
+        ] {
+            assert!(!should_request_mixer_scene_audio(
+                intent,
+                "scene-a",
+                None,
+                None,
+                None,
+                Some("scene-a"),
+            ));
+        }
+    }
 }

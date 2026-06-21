@@ -116,6 +116,12 @@ pub enum MixerAudioRefreshTransition {
 
 #[derive(Debug, Default, Clone)]
 pub struct MixerAudioRefreshState {
+    /// Scene-level freshness marker for the currently pending mixer snapshot.
+    ///
+    /// This deliberately tracks the requested scene, not a per-request token:
+    /// when multiple refreshes for the same scene are started, a success for
+    /// that scene is still current and must be accepted. Responses for any
+    /// other scene are stale and ignored by the reducer.
     pub requested_scene: Option<SceneId>,
     pub loaded: Option<MixerAudioSnapshot>,
     pub error: Option<MixerAudioError>,
@@ -178,9 +184,21 @@ pub struct AppState {
     pub last_recording_path: Option<String>,
     pub output_confirmations: OutputConfig,
     pub audio_inputs: Vec<AudioInput>,
+    /// Legacy mirror of `mixer_audio_refresh.loaded.scene`.
+    ///
+    /// Keep mixer snapshot freshness centralized in `MixerAudioRefreshState`.
+    /// Event handlers must update these legacy fields only through
+    /// `set_mixer_audio_loading`, `set_mixer_audio_success`,
+    /// `set_mixer_audio_failure`, or `clear_pending_mixer_audio_refresh`.
     pub mixer_audio_scene: Option<String>,
+    /// Legacy mirror of `mixer_audio_refresh.loaded.inputs`; see
+    /// `mixer_audio_scene` for the reducer contract.
     pub mixer_audio_inputs: Vec<AudioInput>,
+    /// Legacy mirror of `mixer_audio_refresh.requested_scene`; see
+    /// `mixer_audio_scene` for the reducer contract.
     pub mixer_audio_loading_scene: Option<SceneId>,
+    /// Legacy mirror of `mixer_audio_refresh.error`; see `mixer_audio_scene`
+    /// for the reducer contract.
     pub mixer_audio_error: Option<MixerAudioError>,
     pub mixer_audio_refresh: MixerAudioRefreshState,
     pub mixer: MixerSelection,
@@ -325,6 +343,22 @@ mod tests {
         assert_eq!(loaded.scene, "Scene A");
         assert_eq!(loaded.inputs.len(), 1);
         assert_eq!(loaded.inputs[0].id, "Mic A");
+        assert!(state.error.is_none());
+    }
+
+    #[test]
+    fn mixer_refresh_repeated_same_scene_loading_accepts_same_scene_success() {
+        let mut state = MixerAudioRefreshState::default();
+        state.loading("Scene A".to_string());
+        state.loading("Scene A".to_string());
+
+        let transition = state.success("Scene A".to_string(), vec![input("Latest Mic")]);
+
+        assert_eq!(transition, MixerAudioRefreshTransition::Success);
+        assert_eq!(state.requested_scene, None);
+        let loaded = state.loaded.as_ref().expect("loaded mixer snapshot");
+        assert_eq!(loaded.scene, "Scene A");
+        assert_eq!(loaded.inputs[0].id, "Latest Mic");
         assert!(state.error.is_none());
     }
 
