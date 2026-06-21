@@ -2000,3 +2000,97 @@ M  src/controller/app_controller.rs
 M  src/controller/event.rs
 M  src/controller/state.rs
 M  src/ui/pages/live.rs
+2026-06-21T14:50:08Z iteration 22 started remaining=7203s
+2026-06-21T14:50:08Z iteration 22 preplanner effective budgets untracked_scan_max_bytes=536870912 untracked_scan_max_count=10000 snapshot_copy_max_bytes=536870912 snapshot_copy_max_count=10000 snapshot_copy_max_file_bytes=134217728
+2026-06-21T14:50:08Z iteration 22 disposable preplanner repo created path=/tmp/agent-loop-preplanner-repo-ou9w63j_/repo copied_entries=115
+2026-06-21T14:50:08Z iteration 22 ideator phase started count=3
+2026-06-21T14:50:08Z iteration 22 ideator phase concurrency workers=3
+2026-06-21T14:50:08Z iteration 22 ideator 1 role="the pragmatist" started
+2026-06-21T14:50:08Z iteration 22 ideator 2 role="the architect" started
+2026-06-21T14:50:08Z iteration 22 ideator 3 role="the contrarian" started
+2026-06-21T14:50:17Z iteration 22 ideator 3 role="the contrarian" completed status=0
+2026-06-21T14:50:17Z iteration 22 ideator 2 role="the architect" completed status=0
+2026-06-21T14:50:24Z iteration 22 ideator 1 role="the pragmatist" completed status=0
+2026-06-21T14:50:24Z iteration 22 ideator phase completed approaches=3
+2026-06-21T14:50:24Z iteration 22 selector started approaches=3
+2026-06-21T14:50:35Z iteration 22 selector completed status=0
+2026-06-21T14:50:35Z iteration 22 disposable preplanner repo cleanup path=/tmp/agent-loop-preplanner-repo-ou9w63j_/repo
+2026-06-21T14:50:35Z iteration 22 selector rejected alternative role="the contrarian" approach="Evidence-Gated Product Hardening: pause broad feature work and prioritize only changes that either unblock executable runtime evidence or reduce already-proven architectural lea..." reason="Its stop-loss discipline is valuable, but selected as-is it is too broad and could leave the next Planner without a concrete high-confidence implementation direction. The output boundary cleanup supplies that direction."
+2026-06-21T14:50:35Z iteration 22 selector rejected alternative role="the architect" approach="Boundary-First Output Stabilization: prioritize tightening the output command recovery boundary before changing visible layout, so the next planner first makes ownership and vis..." reason="It correctly identifies the output recovery boundary as the best next cleanup, but it underweights the need to explicitly stop repeating blocked Mixer evidence work and speculative rebuild optimization."
+2026-06-21T14:50:35Z iteration 22 selector rejected alternative role="the pragmatist" approach="Boundary-First Output Hardening: finish the output command/reducer contract cleanup before touching layout or Mixer evidence, keeping the next slice small, testable, and centere..." reason="It is nearly aligned with the selected strategy, but selected as-is it is too focused on the output slice alone. The Planner should also carry the evidence-gating rule forward to avoid wasting the iteration on unavailable OBS/GTK prerequ..."
+2026-06-21T14:50:35Z iteration 22 selector alternatives persisted count=3
+2026-06-21T14:50:35Z iteration 22 selector structured alternatives persisted count=3
+2026-06-21T14:50:35Z iteration 22 planner started
+2026-06-21T14:50:56Z iteration 22 plan: 4 task(s) in 4 phase(s). This iteration focuses on the highest-value independent slice: finishing the output recovery ownership cleanup left by the latest work. All implementation tasks touch the same controller files, so they are sequential rather than parallel. Mixer evidence and rebuild optimization are intentionally excluded until OBS prerequisites and a real control path exist.
+2026-06-21T14:50:56Z iteration 22 phase 1 started parallel=False tasks=1
+2026-06-21T14:51:40Z iteration 22 task t1 ('Audit output recovery helper usage') status=0
+2026-06-21T14:51:40Z iteration 22 phase 2 started parallel=False tasks=1
+2026-06-21T14:52:31Z iteration 22 task t2 ('Tighten output recovery ownership boundary') status=0
+2026-06-21T14:52:31Z iteration 22 phase 3 started parallel=False tasks=1
+2026-06-21T14:54:26Z iteration 22 task t3 ('Refresh focused recovery tests') status=0
+2026-06-21T14:54:26Z iteration 22 phase 4 started parallel=False tasks=1
+2026-06-21T14:54:36Z iteration 22 task t4 ('Run focused validation') status=0
+2026-06-21T14:54:36Z iteration 22 reviewer started
+
+## Review Summary - Iteration 22 - 2026-06-21
+
+### What Was Done
+
+- Removed `AppState::recover_stream_command_failure_from_current` and
+  `AppState::recover_record_command_failure_from_current`.
+- Updated output command recovery reducer tests to apply explicit
+  `OutputCommandFailureRecovery` payloads instead of asking reducer state to
+  derive those payloads from current stream/record status.
+- Added tests proving stream and record recovery handlers apply the carried
+  fallback payload rather than recomputing from current reducer state.
+- Narrowed `fallback_status_after_failed_output_command` visibility from
+  public to `pub(crate)`.
+
+### What Was Found
+
+- Focused validation passed in review:
+  `git diff --check`,
+  `cargo test --workspace --all-features failed_output_command -- --nocapture`,
+  and `cargo test --workspace --all-features command_failure -- --nocapture`.
+- The reducer ownership cleanup is functionally complete: `AppState` now only
+  applies recovery events and no longer exposes convenience APIs that construct
+  command-recovery payloads.
+- No runtime regression was found in the touched paths. Localized output
+  command failures still remain separate from generic OBS connection errors and
+  still recover out of synthetic pending states through fallback payloads.
+- The event-boundary cleanup is not fully finished:
+  `OutputCommandFailureRecovery::from_current_status` remains public from
+  `controller::event`, and state tests still use it. Production controller code
+  already computes fallback statuses from the synthetic pending command state,
+  so the public constructor is now mostly a broad convenience API.
+- The fallback helper is narrower than before, but `pub(crate)` still permits
+  crate-wide use. That is acceptable for the current focused tests, but future
+  code should not treat fallback calculation as a generic reducer utility.
+
+### Top Improvement Proposals
+
+1. Remove or narrow `OutputCommandFailureRecovery::from_current_status`; keep
+   fallback derivation inside controller command-failure orchestration.
+2. Move fallback-helper tests into `controller::event` or add focused event
+   tests so reducer tests no longer need to import command orchestration
+   helpers.
+3. Keep `AppState` limited to applying explicit recovery payloads; do not add
+   new reducer helpers that derive event payloads from current state.
+4. Build stable Live output control cards next so pending state, elapsed time,
+   last concise error, backend details, and recording path have predictable
+   layout space.
+5. Keep Mixer runtime evidence gated behind OBS/WebSocket, temporary fixture,
+   and control-path prerequisites; do not repeat blocked runs in the same
+   unavailable environment.
+2026-06-21T14:56:48Z iteration 22 reviewer completed status=0
+2026-06-21T14:56:48Z iteration 22 memory updated
+2026-06-21T14:56:48Z iteration 22 completed validation_status=0
+2026-06-21T14:56:48Z iteration 22 checkpoint started
+2026-06-21T14:56:48Z iteration 22 checkpoint status before commit:
+M  AGENT_LOG.md
+M  ALTERNATIVES.jsonl
+M  MEMORY.md
+M  PLAN.md
+M  SCORES.jsonl
+M  src/controller/event.rs
+M  src/controller/state.rs

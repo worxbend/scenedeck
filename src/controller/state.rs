@@ -380,18 +380,6 @@ impl AppState {
         self.record_status = failure.fallback_status;
     }
 
-    pub fn recover_stream_command_failure_from_current(&mut self, message: String) {
-        let failure =
-            OutputCommandFailureRecovery::from_current_status(message, &self.stream_status);
-        self.set_stream_command_failure_with_recovery(failure);
-    }
-
-    pub fn recover_record_command_failure_from_current(&mut self, message: String) {
-        let failure =
-            OutputCommandFailureRecovery::from_current_status(message, &self.record_status);
-        self.set_record_command_failure_with_recovery(failure);
-    }
-
     pub fn clear_output_command_errors(&mut self) {
         self.last_stream_command_error = None;
         self.last_record_command_error = None;
@@ -787,12 +775,17 @@ mod tests {
     }
 
     #[test]
-    fn stream_command_start_failure_recovers_pending_to_inactive() {
+    fn stream_command_start_failure_applies_inactive_recovery_payload() {
         let mut state = app_state();
         state.set_record_command_failure("existing record failure".to_string());
         state.set_stream_command_pending(output_status(false, OutputRunState::Starting));
 
-        state.recover_stream_command_failure_from_current("stream start failed".to_string());
+        state.set_stream_command_failure_with_recovery(
+            OutputCommandFailureRecovery::with_fallback_status(
+                "stream start failed".to_string(),
+                output_status(false, OutputRunState::Inactive),
+            ),
+        );
 
         assert_eq!(
             state.stream_status,
@@ -810,12 +803,17 @@ mod tests {
     }
 
     #[test]
-    fn stream_command_stop_failure_recovers_pending_to_active() {
+    fn stream_command_stop_failure_applies_active_recovery_payload() {
         let mut state = app_state();
         state.set_record_command_failure("existing record failure".to_string());
         state.set_stream_command_pending(output_status(true, OutputRunState::Stopping));
 
-        state.recover_stream_command_failure_from_current("stream stop failed".to_string());
+        state.set_stream_command_failure_with_recovery(
+            OutputCommandFailureRecovery::with_fallback_status(
+                "stream stop failed".to_string(),
+                output_status(true, OutputRunState::Active),
+            ),
+        );
 
         assert_eq!(
             state.stream_status,
@@ -833,12 +831,17 @@ mod tests {
     }
 
     #[test]
-    fn record_command_start_failure_recovers_pending_to_inactive() {
+    fn record_command_start_failure_applies_inactive_recovery_payload() {
         let mut state = app_state();
         state.set_stream_command_failure("existing stream failure".to_string());
         state.set_record_command_pending(output_status(false, OutputRunState::Starting));
 
-        state.recover_record_command_failure_from_current("record start failed".to_string());
+        state.set_record_command_failure_with_recovery(
+            OutputCommandFailureRecovery::with_fallback_status(
+                "record start failed".to_string(),
+                output_status(false, OutputRunState::Inactive),
+            ),
+        );
 
         assert_eq!(
             state.record_status,
@@ -856,12 +859,17 @@ mod tests {
     }
 
     #[test]
-    fn record_command_stop_failure_recovers_pending_to_active() {
+    fn record_command_stop_failure_applies_active_recovery_payload() {
         let mut state = app_state();
         state.set_stream_command_failure("existing stream failure".to_string());
         state.set_record_command_pending(output_status(true, OutputRunState::Stopping));
 
-        state.recover_record_command_failure_from_current("record stop failed".to_string());
+        state.set_record_command_failure_with_recovery(
+            OutputCommandFailureRecovery::with_fallback_status(
+                "record stop failed".to_string(),
+                output_status(true, OutputRunState::Active),
+            ),
+        );
 
         assert_eq!(
             state.record_status,
@@ -925,10 +933,59 @@ mod tests {
     }
 
     #[test]
+    fn stream_failure_recovery_applies_payload_instead_of_current_state() {
+        let mut state = app_state();
+        state.set_stream_command_pending(output_status(false, OutputRunState::Starting));
+
+        state.set_stream_command_failure_with_recovery(
+            OutputCommandFailureRecovery::with_fallback_status(
+                "stream failed".to_string(),
+                output_status(true, OutputRunState::Active),
+            ),
+        );
+
+        assert_eq!(
+            state.stream_status,
+            output_status(true, OutputRunState::Active)
+        );
+        assert_eq!(
+            state.last_stream_command_error.as_deref(),
+            Some("stream failed")
+        );
+    }
+
+    #[test]
+    fn record_failure_recovery_applies_payload_instead_of_current_state() {
+        let mut state = app_state();
+        state.set_record_command_pending(output_status(true, OutputRunState::Stopping));
+
+        state.set_record_command_failure_with_recovery(
+            OutputCommandFailureRecovery::with_fallback_status(
+                "record failed".to_string(),
+                output_status(false, OutputRunState::Inactive),
+            ),
+        );
+
+        assert_eq!(
+            state.record_status,
+            output_status(false, OutputRunState::Inactive)
+        );
+        assert_eq!(
+            state.last_record_command_error.as_deref(),
+            Some("record failed")
+        );
+    }
+
+    #[test]
     fn separate_status_event_can_reconnect_after_stream_failure_recovery() {
         let mut state = app_state();
         state.set_stream_command_pending(output_status(false, OutputRunState::Starting));
-        state.recover_stream_command_failure_from_current("stream failed".to_string());
+        state.set_stream_command_failure_with_recovery(
+            OutputCommandFailureRecovery::with_fallback_status(
+                "stream failed".to_string(),
+                output_status(false, OutputRunState::Inactive),
+            ),
+        );
         assert_non_transitioning(&state.stream_status);
 
         state.set_stream_status(output_status(false, OutputRunState::Reconnecting));
@@ -947,7 +1004,12 @@ mod tests {
     fn separate_status_event_can_reconnect_after_record_failure_recovery() {
         let mut state = app_state();
         state.set_record_command_pending(output_status(false, OutputRunState::Starting));
-        state.recover_record_command_failure_from_current("record failed".to_string());
+        state.set_record_command_failure_with_recovery(
+            OutputCommandFailureRecovery::with_fallback_status(
+                "record failed".to_string(),
+                output_status(false, OutputRunState::Inactive),
+            ),
+        );
         assert_non_transitioning(&state.record_status);
 
         state.set_record_status(output_status(false, OutputRunState::Reconnecting));

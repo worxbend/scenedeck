@@ -22,3 +22,4 @@
 [learning] Naming command recovery state as fallback status protects future code from treating a local UI unblocking value as an authoritative OBS status read.
 [pattern] Compact operational error UI should show stable, user-facing failure labels while preserving raw backend detail in a tooltip or details affordance.
 [learning] Moving a command contract type out of reducer state is incomplete if reducer helpers still construct command-recovery payloads from current state.
+[learning] Public event constructors can preserve orchestration leakage even after reducer helpers are removed; narrow constructors as well as state APIs.

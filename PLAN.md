@@ -79,10 +79,12 @@ output-status refresh calls fail. The fallback calculation is covered for every
 status refresh logic is unified through a narrow `OutputStatusReader` helper
 shared by `ObsClient` and the output-command wrapper. Compact Live output error
 labels now show concise user-facing copy while preserving raw backend details in
-tooltips. The remaining output gaps are layout and API-boundary cleanup issues:
-the compact banner still lacks stable output-card space, and `AppState` still
-exposes test-oriented recovery convenience methods that encode command-recovery
-semantics inside reducer state.
+tooltips. The latest boundary cleanup removed `AppState` recovery constructors
+and narrowed the raw fallback helper to `pub(crate)`. The remaining output gaps
+are layout and final event-API cleanup: the compact banner still lacks stable
+output-card space, and `OutputCommandFailureRecovery::from_current_status`
+remains a public constructor that can derive command-recovery payloads from an
+arbitrary current status.
 
 ## Completed Phases
 
@@ -1001,6 +1003,45 @@ Review verdict:
   elapsed time, recording path, and last error. The CSS `max-width` hint should
   not be treated as proof of final layout quality without a GTK render check.
 
+### Output Recovery Ownership Boundary Tightening
+
+Working tree, reviewed 2026-06-21:
+
+- Removed `AppState::recover_stream_command_failure_from_current` and
+  `AppState::recover_record_command_failure_from_current`, so reducer state no
+  longer constructs `OutputCommandFailureRecovery` payloads from its current
+  output status.
+- Updated state tests to apply explicit `OutputCommandFailureRecovery`
+  payloads through `set_stream_command_failure_with_recovery` and
+  `set_record_command_failure_with_recovery`.
+- Added reducer tests proving the reducer applies the event payload it receives
+  rather than recalculating recovery from its current status.
+- Narrowed `fallback_status_after_failed_output_command` from public to
+  `pub(crate)`.
+
+Review verdict:
+
+- Focused validation passed in review:
+  `git diff --check`,
+  `cargo test --workspace --all-features failed_output_command -- --nocapture`,
+  and `cargo test --workspace --all-features command_failure -- --nocapture`.
+- The planned reducer ownership cleanup is complete: `AppState` now only
+  applies output command recovery events and no longer exposes convenience
+  methods that derive recovery from reducer-owned status.
+- No functional regression was found. Existing localized command failure paths
+  still avoid generic `AppEvent::Error`, preserve OBS connection state, and
+  leave synthetic pending states immediately through fallback payloads.
+- Remaining API-boundary issue:
+  `OutputCommandFailureRecovery::from_current_status` is still public from
+  `controller::event` and state tests still use it. That keeps a broad
+  constructor available for deriving a command-recovery payload from any
+  current status, even though production controller code already computes the
+  fallback from the synthetic pending command state.
+- `fallback_status_after_failed_output_command` is `pub(crate)`, which is an
+  improvement but still broad enough for any crate module to call. That is
+  acceptable while controller and reducer tests cover the helper directly, but
+  it should not become a general state utility.
+
 ## Groomed Next Steps
 
 ### P1: Make Focused Mixer Evidence Executable
@@ -1091,29 +1132,32 @@ Tests:
 - Add GTK-level or widget-level coverage only if a test harness can inspect card
   updates without excessive brittleness.
 
-### P1: Finish Output Recovery Boundary Cleanup
+### P1: Narrow Output Recovery Event API
 
 Problem:
 
 - `OutputCommandFailureRecovery` and
   `fallback_status_after_failed_output_command` now live with the controller
   event contract, which is the right broad boundary.
-- `AppState` still exposes `recover_stream_command_failure_from_current` and
-  `recover_record_command_failure_from_current`. They are useful in tests, but
-  they let reducer state construct command-recovery events from current output
-  status.
-- `fallback_status_after_failed_output_command` is public from
-  `controller::event` even though only controller/state internals and tests
-  need to call it directly.
+- `AppState` no longer exposes reducer-side recovery constructors, so reducer
+  ownership is fixed.
+- `OutputCommandFailureRecovery::from_current_status` remains public and state
+  tests still use it. That constructor can make fallback derivation look like a
+  generic event convenience instead of controller command orchestration.
+- `fallback_status_after_failed_output_command` is now `pub(crate)`, but direct
+  calls should remain limited to controller orchestration and focused tests.
 
 Plan:
 
-- Remove or `#[cfg(test)]`-gate the `recover_*_from_current` AppState helpers
-  if production code does not need them.
-- Narrow `fallback_status_after_failed_output_command` visibility to
-  `pub(crate)` or `pub(super)` if Rust module boundaries and tests allow it.
-- Keep `AppState` focused on applying `OutputCommandFailureRecovery`, not
-  deriving command-recovery payloads.
+- Replace state-test uses of `OutputCommandFailureRecovery::from_current_status`
+  with explicit fallback payloads or helper-level event tests.
+- If production code does not need it, remove
+  `OutputCommandFailureRecovery::from_current_status`; otherwise narrow it to
+  `pub(crate)` and document that it is for controller command-failure
+  orchestration only.
+- Consider moving fallback helper tests from `controller::state` to
+  `controller::event` so helper visibility can be narrowed further without
+  keeping reducer tests coupled to command orchestration.
 - Preserve current `failed_output_command` and `command_failure` coverage.
 
 Files:

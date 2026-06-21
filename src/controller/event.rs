@@ -34,7 +34,7 @@ impl OutputCommandFailureRecovery {
     }
 }
 
-pub fn fallback_status_after_failed_output_command(status: &OutputStatus) -> OutputStatus {
+pub(crate) fn fallback_status_after_failed_output_command(status: &OutputStatus) -> OutputStatus {
     let fallback_state = match (status.active, status.state) {
         (
             true,
