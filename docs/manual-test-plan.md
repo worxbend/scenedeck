@@ -145,6 +145,46 @@ Prerequisites:
 - Record OBS version, obs-websocket version, SceneDeck build or commit, and any
   skipped cases in `docs/manual-test-runs.md`.
 
+Fixture setup:
+
+- Use a throwaway OBS profile when possible. If the normal profile must be
+  used, create clearly temporary scenes and inputs only; destructive mutations
+  to a user's normal OBS setup are not part of the default run.
+- Create two test scenes named, for example, `SceneDeck Test A` and
+  `SceneDeck Test B`.
+- Add at least one global audio input visible in both scenes through the OBS
+  Audio Mixer, named, for example, `SceneDeck Global Mic` or
+  `SceneDeck Global Desktop`. This may be a safe disabled/test device if it
+  still appears as a global mixer input.
+- Add at least one scene-specific audio input to only one test scene, named,
+  for example, `SceneDeck Scene A Audio`. Do not add that source to the other
+  test scene. The focused run must be able to tell that `SceneDeck Test A` and
+  `SceneDeck Test B` have different scene-scoped audio.
+- Optional for fallback checks: add a second scene-specific source only to
+  `SceneDeck Test B`, named, for example, `SceneDeck Scene B Audio`.
+- Use only temporary scenes or the throwaway profile for failure/retry testing.
+  If the failure case requires renaming or removing a scene, rename or remove
+  only a `SceneDeck Test ...` fixture scene.
+- Cleanup after the run by deleting the temporary `SceneDeck Test ...` scenes
+  and scene-specific sources, or by switching away from and deleting the
+  throwaway OBS profile. Confirm that the user's normal scenes, sources,
+  profile, and collection were not changed by the default run.
+
+Interaction requirement:
+
+- The default focused run requires an interactive desktop session where the
+  tester can select GTK ComboRows, click the Mixer Retry button, and visually
+  inspect visible Mixer cards.
+- No validated UI automation path is currently part of this manual plan for the
+  target Wayland GTK session. `xdotool` is not suitable for Wayland, and no
+  committed SceneDeck harness currently exposes reliable selectors for GTK
+  ComboRows, Retry, or Mixer card readback.
+- If a future run uses automation, record the exact tool in
+  `docs/manual-test-runs.md` before claiming pass/fail results. The run entry
+  must state the tool's limitations for selecting GTK ComboRows, clicking
+  Retry, and inspecting visible Mixer cards; cases outside those limits remain
+  blocked, not passed.
+
 1. Open Mixer and select Active mode with the mode ComboRow.
 2. Change the current OBS program scene from OBS and from SceneDeck Live.
 3. Record whether Active mode follows the current scene and whether any

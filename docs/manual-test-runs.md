@@ -195,3 +195,110 @@ Non-claims:
   ComboRow scene changes, Selected or Pinned fallback behavior, Retry after
   selected/pinned refresh failure, OBS mute echoes, OBS volume echoes, stale
   visible cards, or perceived rebuild churn.
+
+## 2026-06-21 - Focused Mixer Refresh Contract (iteration 12)
+
+Status: Blocked.
+
+Scope: focused Mixer interaction run for ComboRow mode and scene changes, Retry
+after selected/pinned refresh failures, OBS mute and volume echo reconciliation,
+stale visible cards, and perceived rebuild churn.
+
+Environment:
+
+- SceneDeck build: `0.1.3`, git commit `95806c4`.
+- SceneDeck launch check: `timeout 12s cargo run --bin scenedeck` compiled and
+  launched `target/debug/scenedeck`; the non-interactive run stopped it by
+  timeout because the GTK window could not be driven.
+- Host: Linux `ubuntu` 7.0.0-22-generic x86_64.
+- Desktop/session: GNOME on Wayland (`XDG_SESSION_TYPE=wayland`,
+  `WAYLAND_DISPLAY=wayland-0`, `DISPLAY=:0`,
+  `XDG_CURRENT_DESKTOP=ubuntu:GNOME`).
+- Run context: non-interactive Codex session in
+  `/home/worxbend/Workspace/AI/scenedeck`.
+- OBS process: `pgrep -a obs` reported process `396269 obs`.
+- OBS CLI version: unavailable; `obs` was not in `PATH`.
+- OBS version from WebSocket `GetVersion`: OBS `32.1.2`.
+- obs-websocket version from WebSocket `GetVersion`: `5.7.3`.
+- OBS WebSocket: reachable at `127.0.0.1:4455`; WebSocket `Hello` contained no
+  authentication challenge, so local authentication was disabled and no secret
+  was required or recorded.
+- OBS inventory from read-only WebSocket requests: two scenes, `Scene 2` and
+  `Scene`; current program scene `Scene`; global audio inputs `Desktop Audio`
+  and `Mic/Aux`.
+- Scene item inventory: `Scene 2` had no scene items; `Scene` contained nested
+  scene source `Scene 2`. No scene-specific audio input was present in only one
+  test scene.
+
+Prerequisite result:
+
+- OBS WebSocket reachable: pass.
+- At least two scenes: pass.
+- Global audio inputs available: pass.
+- Differing scene-specific audio input available between two scenes: fail.
+  The required fixture was not present; only global audio inputs were observed.
+- SceneDeck GTK ComboRows and visible Mixer cards inspectable: fail.
+  `xdotool`, `ydotool`, `dogtail-run`, `sniff`, `grim`, and `gnome-screenshot`
+  were unavailable in this session; `gdbus` was present, but the GNOME Shell
+  screenshot DBus call was denied with `org.freedesktop.DBus.Error.AccessDenied`.
+  No committed SceneDeck harness exposed selectors for GTK ComboRows, Retry, or
+  Mixer card readback.
+- Non-destructive selected/pinned refresh failure setup available: skipped.
+  No temporary `SceneDeck Test ...` fixture existed, and mutating the user's
+  existing OBS scenes would be destructive for the default run.
+
+Executed observations:
+
+- ComboRow Active mode changes and scene following: blocked, not executed
+  because GTK ComboRows could not be selected or inspected and the fixture did
+  not include differing scene-specific audio.
+- Active mode no scene-specific refresh dispatch observation: blocked, not
+  executed because UI mode selection and dispatch observation were unavailable.
+- ComboRow Selected mode fallback and explicit scene changes: blocked, not
+  executed because GTK ComboRows and visible Mixer cards could not be inspected.
+- ComboRow Pinned mode explicit target and fallback order: blocked, not
+  executed because GTK ComboRows and visible Mixer cards could not be inspected.
+- Retry after failed selected/pinned refresh: blocked, not executed because a
+  non-destructive temporary failure fixture was unavailable and the Retry button
+  could not be clicked.
+- OBS mute echoes updating visible Mixer cards: blocked, not executed because
+  visible Mixer cards could not be inspected.
+- OBS volume echoes updating visible Mixer cards: blocked, not executed because
+  visible Mixer cards could not be inspected.
+- Stale visible cards after OBS echoes: blocked, not executed because mute and
+  volume echo cases were not exercised and the UI could not be inspected.
+- Perceived rebuild churn during repeated volume echoes: blocked, not executed
+  because repeated visible volume echoes could not be observed.
+
+Skipped cases:
+
+- Active mode following live active-scene audio without dispatching
+  scene-specific refreshes: skipped because Active mode could not be selected
+  or inspected through GTK automation in this non-interactive Wayland session.
+- Selected mode documented fallback behavior: skipped because the mode and
+  scene ComboRows could not be driven and visible Mixer cards could not be
+  inspected.
+- Pinned mode documented fallback behavior: skipped because the mode and scene
+  ComboRows could not be driven and visible Mixer cards could not be inspected.
+- Retry after selected/pinned refresh failure: skipped because the failure setup
+  would require mutating non-temporary OBS scenes and the Retry button could not
+  be clicked.
+- OBS mute echoes, OBS volume echoes, stale-card checks, and rebuild-churn
+  observation: skipped because the Mixer UI was not inspectable and the
+  required differing scene-specific audio fixture was absent.
+
+Non-claims:
+
+- This run does not claim pass/fail behavior for Active mode scene following,
+  absence of Active-mode scene-specific refresh dispatches, Selected fallback,
+  Pinned fallback, Retry after failed selected/pinned refresh, OBS mute echoes,
+  OBS volume echoes, stale visible cards, or perceived rebuild churn.
+- The reachable WebSocket/version/inventory checks only prove the OBS endpoint
+  and partial fixture readiness. They are not manual evidence that the focused
+  Mixer interaction contract passed.
+
+Optimization gate:
+
+- No runtime rebuild-churn issue was observed because repeated volume echoes
+  were not exercised against an inspectable Mixer UI. This blocked run provides
+  no evidence for changing the current full-page Mixer rebuild behavior.

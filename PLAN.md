@@ -46,12 +46,14 @@ Mixer input-event reconciliation, Mixer render-source reconciliation, legacy
 Mixer mirror state removal, hidden snapshot invariant restoration, shared
 Mixer scene-specific target resolution, refresh-target naming cleanup,
 fallback-aware Mixer summary copy, direct Mixer summary copy tests, output
-confirmation dialog appearance metadata, and tightened focused Mixer manual
-evidence instructions. Focused manual Mixer interaction evidence is still
-blocked: OBS WebSocket was reachable and version/inventory data was recorded,
-but the OBS scene setup lacked verified differing scene-specific audio inputs
-and the non-interactive environment could not safely drive GTK ComboRows or
-inspect the Mixer UI.
+confirmation dialog appearance metadata, tightened focused Mixer manual
+evidence instructions, and reproducible focused Mixer fixture documentation.
+Focused manual Mixer interaction evidence is still blocked after the iteration
+12 run: OBS WebSocket was reachable and version/inventory data was recorded,
+but the OBS scene setup still lacked a differing scene-specific audio input and
+the non-interactive Wayland session could not drive GTK ComboRows, click Retry,
+or inspect visible Mixer cards. No pass/fail behavior is claimed for the
+blocked interaction cases, and no runtime rebuild-churn issue was observed.
 
 ## Completed Phases
 
@@ -543,21 +545,102 @@ Review verdict:
   future reuse should extract a small copy/label helper rather than duplicating
   these strings in GTK code.
 
+### Focused Mixer Fixture Documentation And Evidence Triage
+
+Working tree, reviewed 2026-06-21:
+
+- Documented a small non-destructive OBS fixture for the focused Mixer manual
+  run: a throwaway OBS profile or clearly temporary `SceneDeck Test ...` scenes,
+  a global audio input visible in both scenes, and a scene-specific audio input
+  present in only one test scene.
+- Documented cleanup guidance and kept destructive mutations to the user's
+  normal OBS setup out of the default run.
+- Recorded the available UI automation status for the target session: no usable
+  tool was available for selecting GTK ComboRows, clicking Retry, or inspecting
+  visible Mixer cards, so an interactive desktop session remains required.
+- Recorded `docs/manual-test-runs.md` entry
+  `2026-06-21 - Focused Mixer Refresh Contract (iteration 12)`.
+
+Manual evidence:
+
+- Status: blocked.
+- Environment record: SceneDeck `0.1.3`, git commit `95806c4`, Linux `ubuntu`
+  7.0.0-22-generic x86_64, GNOME Wayland, OBS process detected, OBS WebSocket
+  reachable at `127.0.0.1:4455` without authentication, OBS `32.1.2`,
+  obs-websocket `5.7.3`, scenes `Scene 2` and `Scene`, and global audio inputs
+  `Desktop Audio` and `Mic/Aux`.
+- Blocking prerequisites: the OBS fixture did not include a scene-specific
+  audio input present in only one test scene, the non-interactive session could
+  not drive or inspect GTK controls/cards, and no non-destructive selected or
+  pinned refresh failure setup was available.
+- No pass/fail behavior is claimed for Active mode scene following, absence of
+  Active-mode scene-specific refresh dispatches, Selected fallback, Pinned
+  fallback, Retry after selected/pinned refresh failure, OBS mute echoes, OBS
+  volume echoes, stale visible cards, or perceived rebuild churn.
+- No stale-card issue, retry failure, ComboRow timing issue, or noticeable
+  rebuild churn was observed because the relevant interaction cases were not
+  executed.
+
+Triage decision:
+
+- Keep the focused Mixer runtime evidence gap open. The iteration 12 entry
+  improves fixture and environment documentation but remains a blocked manual
+  run, not a passing interaction run.
+- Keep in-place Mixer card optimization deferred. The current full-page Mixer
+  rebuild path remains accepted behavior until repeated volume echoes are
+  observed against an inspectable Mixer UI and produce noticeable churn.
+
 ## Groomed Next Steps
+
+### P1: Make Focused Mixer Manual Evidence Executable
+
+Problem:
+
+- Three focused 2026-06-21 Mixer runs were recorded, but all were blocked
+  before interaction cases executed.
+- The latest iteration 12 run verified WebSocket reachability, OBS version,
+  obs-websocket version, scenes, and global audio inputs, but the fixture did
+  not include a scene-specific audio input present in only one test scene.
+- The non-interactive Wayland session still could not safely select GTK
+  ComboRows, click Retry, or inspect visible Mixer cards.
+- The manual plan now documents the required fixture, but documentation alone
+  does not create the fixture or make GTK state inspectable. Repeating the same
+  run from the same non-interactive environment will likely produce another
+  blocked entry.
+
+Plan:
+
+- Decide the execution path before another run: either use a real interactive
+  desktop session, or add a small test/debug inspection path that can expose
+  Mixer mode, selected/pinned target, visible source names, mute state, volume
+  labels, and Retry/error state without brittle screen scraping.
+- Prepare the OBS fixture from `docs/manual-test-plan.md` in a throwaway
+  profile or clearly temporary `SceneDeck Test ...` scenes before launching
+  SceneDeck.
+- If automation is attempted, document the exact tool and verify it can drive
+  GTK ComboRows, activate Retry, and read Mixer card state before recording any
+  pass/fail claims.
+- Keep destructive OBS mutations out of the default flow; failure/retry setup
+  should use only temporary fixture scenes or a throwaway profile.
+
+Files:
+
+- `docs/manual-test-plan.md`
+- `docs/manual-test-runs.md`
+- possible debug/test-only support in `src/ui/pages/mixer.rs` or
+  `src/ui/window.rs`
 
 ### P1: Complete Focused Mixer Contract Manual Run
 
 Problem:
 
-- Two focused 2026-06-21 Mixer runs were recorded, but both were blocked before
-  interaction cases executed.
-- The latest run verified WebSocket reachability, OBS version, obs-websocket
-  version, scenes, and global audio inputs, but did not have differing
-  scene-specific audio inputs and could not safely drive/inspect GTK controls
-  from the non-interactive session.
+- The focused Mixer interaction contract still has no passing or failing
+  runtime evidence.
 - The unverified areas are exactly the ones unit tests approximate poorly:
   GTK ComboRow timing, Retry button behavior, OBS event echoes, and perceived
   rebuild churn.
+- This should wait until the fixture and inspection path from the executable
+  evidence task are available.
 
 Plan:
 
@@ -576,35 +659,8 @@ Plan:
 - Use the new focused Mixer run template in `docs/manual-test-runs.md` so each
   case has a pass/fail/blocked result and skipped cases list the exact
   prerequisite or safety reason.
-
-Files:
-
-- `docs/manual-test-plan.md`
-- `docs/manual-test-runs.md`
-
-### P1: Make Focused Mixer Manual Run Reproducible
-
-Problem:
-
-- The last two focused Mixer runs were blocked partly by environment setup:
-  missing differing scene-specific audio inputs and no safe way to drive or
-  inspect GTK controls from the non-interactive session.
-- The current manual checklist is clearer, but it still depends on a human or
-  ad hoc environment preparation.
-
-Plan:
-
-- Document a small, non-destructive OBS fixture setup for the focused Mixer run:
-  two temporary scenes, at least one global input, and one scene-specific input
-  present in only one test scene.
-- Decide whether this belongs as a short section in
-  `docs/manual-test-plan.md` or a separate helper note referenced from the
-  focused run.
-- If a reliable UI automation path exists in the target desktop session,
-  document the exact tool and limitations for selecting ComboRows, clicking
-  Retry, and capturing visible Mixer card state.
-- Keep destructive OBS mutations out of the default run; use temporary scenes
-  or a known throwaway OBS profile for failure/retry testing.
+- Preserve the iteration 12 non-claim language for any cases still blocked by
+  missing fixture state or unavailable UI inspection.
 
 Files:
 
@@ -619,17 +675,23 @@ Problem:
 - The current reconciliation path rebuilds the entire Mixer page when a visible
   Mixer input changes. This is simple and correct, but it recreates controls,
   groups, and scroll content rather than updating the affected card in place.
-- The focused 2026-06-21 manual run was blocked before the volume-echo case, so
-  no real OBS evidence currently proves whether this churn is noticeable.
+- The focused iteration 12 manual run was blocked before the volume-echo case,
+  so no real OBS evidence currently proves whether this churn is noticeable.
+- No stale-card issue, retry failure, ComboRow timing issue, or rebuild churn
+  was observed in the latest manual entry because the relevant cases were not
+  executed.
 
 Plan:
 
 - Use the focused manual run to observe repeated visible volume echoes before
   optimizing.
-- If rebuild churn is noticeable, track visible Mixer audio cards like Live
-  tracks `live.audio_cards` and update mute/volume on the matching card in
-  place.
+- If rebuild churn is noticeable, track visible Mixer audio cards by input name
+  and update mute/volume on the matching card in place, similar to the Live
+  page's audio-card handle map.
 - Keep the full rebuild fallback for grouping/search/scene mode changes.
+- Preserve the current render-source contract: Active mode updates from live
+  active-scene `audio_inputs`, while Selected/Pinned update from the
+  scene-specific Mixer refresh snapshot.
 
 Files:
 

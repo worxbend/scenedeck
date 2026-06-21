@@ -1037,3 +1037,95 @@ M  SCORES.jsonl
 M  docs/manual-test-plan.md
 M  docs/manual-test-runs.md
 M  src/ui/pages/mixer.rs
+2026-06-21T13:18:46Z iteration 12 started remaining=12685s
+2026-06-21T13:18:46Z iteration 12 preplanner effective budgets untracked_scan_max_bytes=536870912 untracked_scan_max_count=10000 snapshot_copy_max_bytes=536870912 snapshot_copy_max_count=10000 snapshot_copy_max_file_bytes=134217728
+2026-06-21T13:18:46Z iteration 12 disposable preplanner repo created path=/tmp/agent-loop-preplanner-repo-cz91e21o/repo copied_entries=115
+2026-06-21T13:18:46Z iteration 12 ideator phase started count=3
+2026-06-21T13:18:46Z iteration 12 ideator phase concurrency workers=3
+2026-06-21T13:18:46Z iteration 12 ideator 1 role="the pragmatist" started
+2026-06-21T13:18:46Z iteration 12 ideator 2 role="the architect" started
+2026-06-21T13:18:46Z iteration 12 ideator 3 role="the contrarian" started
+2026-06-21T13:18:54Z iteration 12 ideator 2 role="the architect" completed status=0
+2026-06-21T13:18:54Z iteration 12 ideator 1 role="the pragmatist" completed status=0
+2026-06-21T13:18:57Z iteration 12 ideator 3 role="the contrarian" completed status=0
+2026-06-21T13:18:57Z iteration 12 ideator phase completed approaches=3
+2026-06-21T13:18:57Z iteration 12 selector started approaches=3
+2026-06-21T13:19:07Z iteration 12 selector completed status=0
+2026-06-21T13:19:07Z iteration 12 disposable preplanner repo cleanup path=/tmp/agent-loop-preplanner-repo-cz91e21o/repo
+2026-06-21T13:19:07Z iteration 12 selector rejected alternative role="the architect" approach="Evidence-First Runtime Closure: prioritize a reproducible focused Mixer manual run before new feature work, using documentation and environment discipline to convert the current..." reason="Strongly aligned, but slightly too broad in framing manual evidence as the next architectural move; the Planner should keep the next strategy narrower and focused on making the existing focused Mixer run executable."
+2026-06-21T13:19:07Z iteration 12 selector rejected alternative role="the pragmatist" approach="Evidence-First Operational Hardening: prioritize producing trustworthy runtime evidence before adding more UI machinery, then let observed failures choose the next code change." reason="Strongly aligned, but not selected as-is because it blends evidence gathering with the possibility of immediately choosing code changes. The Planner should first establish the runtime evidence loop before deciding whether any implementat..."
+2026-06-21T13:19:07Z iteration 12 selector rejected alternative role="the contrarian" approach="Evidence-First Contrarian Path: prioritize making the Mixer runtime evidence loop executable before adding more product surface, and treat any optimization or UX polish as block..." reason="Strongly aligned, but too absolute in blocking all optimization or UX polish until manual results exist. The better guidance is to gate Mixer-specific performance and interaction changes on evidence, while leaving unrelated P1 work avail..."
+2026-06-21T13:19:07Z iteration 12 selector alternatives persisted count=3
+2026-06-21T13:19:07Z iteration 12 selector structured alternatives persisted count=3
+2026-06-21T13:19:07Z iteration 12 planner started
+2026-06-21T13:19:24Z iteration 12 plan: 3 task(s) in 3 phase(s). This iteration closes the highest-value uncertainty first: the remaining Mixer risk is at the OBS/GTK runtime boundary, not in reducer or copy logic already covered by pure tests. The tasks are sequential because the reproducible fixture enables the run, and the implementation roadmap should only be updated after actual runtime evidence exists.
+2026-06-21T13:19:24Z iteration 12 phase 1 started parallel=False tasks=1
+2026-06-21T13:20:05Z iteration 12 task t1 ('Document reproducible OBS Mixer fixture') status=0
+2026-06-21T13:20:05Z iteration 12 phase 2 started parallel=False tasks=1
+2026-06-21T13:22:01Z iteration 12 task t2 ('Execute focused Mixer contract manual run') status=0
+2026-06-21T13:22:01Z iteration 12 phase 3 started parallel=False tasks=1
+2026-06-21T13:23:06Z iteration 12 task t3 ('Triage Mixer runtime evidence') status=0
+2026-06-21T13:23:06Z iteration 12 reviewer started
+
+## Review Summary - Iteration 12 - 2026-06-21
+
+### What Was Done
+
+- Added focused Mixer fixture instructions to `docs/manual-test-plan.md`,
+  covering temporary OBS scenes, a global input, a scene-specific input present
+  in only one test scene, safe failure/retry setup, and cleanup.
+- Recorded `docs/manual-test-runs.md` entry
+  `2026-06-21 - Focused Mixer Refresh Contract (iteration 12)` with OBS
+  WebSocket reachability, OBS `32.1.2`, obs-websocket `5.7.3`, scene/input
+  inventory, Wayland session details, and unavailable UI automation tools.
+- Updated `PLAN.md` to mark fixture documentation and evidence triage complete,
+  keep manual Mixer evidence open, and keep in-place Mixer card updates gated
+  behind observed rebuild churn.
+
+### What Was Found
+
+- No production Rust behavior changed this iteration. The modified source of
+  truth is documentation and project planning.
+- The fixture documentation is a useful improvement and correctly avoids
+  destructive mutations to a user's normal OBS setup.
+- The iteration 12 manual run remains blocked, not passed. It verified the OBS
+  endpoint and partial inventory, but the OBS setup lacked a differing
+  scene-specific audio input, the session could not drive GTK ComboRows or
+  Retry, and visible Mixer cards could not be inspected.
+- The run entry is appropriately conservative: it makes no pass/fail claims for
+  Active mode following, Selected/Pinned fallback, Retry behavior, OBS mute or
+  volume echoes, stale-card behavior, or rebuild churn.
+- The main planning gap is that another identical non-interactive run would
+  likely remain blocked. The next step needs to make the evidence path
+  executable by preparing the fixture and choosing either an interactive desktop
+  run or a reliable inspection/automation hook.
+
+### Top Improvement Proposals
+
+1. Split the next Mixer evidence work into a prerequisite task that creates or
+   verifies the temporary OBS fixture and confirms an interaction/inspection
+   path before rerunning the checklist.
+2. Consider a small debug/test-only Mixer inspection path if interactive GTK
+   access remains unavailable; it should expose current Mixer mode, effective
+   target, visible card inputs, mute/volume display state, error state, and
+   Retry availability without weakening production architecture.
+3. Keep the full-page Mixer rebuild behavior until a completed run shows
+   visible volume-echo churn; avoid adding card-handle bookkeeping based only
+   on a blocked run.
+4. Move back to non-Mixer P1 work if the environment remains unavailable:
+   output command errors in the Live UI and Settings persistence feedback are
+   higher-confidence implementation tasks.
+5. Preserve non-claim language in future blocked entries so environment
+   readiness evidence is not mistaken for interaction-contract evidence.
+2026-06-21T13:24:31Z iteration 12 reviewer completed status=0
+2026-06-21T13:24:31Z iteration 12 memory updated
+2026-06-21T13:24:31Z iteration 12 completed validation_status=0
+2026-06-21T13:24:31Z iteration 12 checkpoint started
+2026-06-21T13:24:31Z iteration 12 checkpoint status before commit:
+M  AGENT_LOG.md
+M  ALTERNATIVES.jsonl
+M  MEMORY.md
+M  PLAN.md
+M  SCORES.jsonl
+M  docs/manual-test-plan.md
+M  docs/manual-test-runs.md

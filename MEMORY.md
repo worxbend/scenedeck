@@ -11,3 +11,4 @@
 [learning] Blocked manual runs are useful evidence only when they preserve non-claims; keep runtime risks open until a verified environment executes the interaction cases.
 [pattern] Gate UI performance optimizations behind observed runtime churn when the current path is correct; otherwise extra widget bookkeeping can add complexity without proof of value.
 [learning] State-level reason metadata tests do not protect final user-facing copy; helper-level string tests are needed when wording carries behavioral meaning.
+[pattern] Manual runtime plans should include non-destructive fixture setup and interaction/inspection prerequisites; otherwise repeated runs can document the same blocker without increasing confidence.
