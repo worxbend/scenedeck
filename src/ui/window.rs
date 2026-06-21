@@ -571,7 +571,12 @@ pub(crate) fn should_rebuild_visible_mixer_for_input_event(
     }
 
     let target_scene = match state.mixer.mode {
-        MixerMode::ActiveScene => return false,
+        MixerMode::ActiveScene => {
+            return state
+                .audio_inputs
+                .iter()
+                .any(|input| input.id == input_name);
+        }
         MixerMode::SelectedScene => state
             .mixer
             .selected_scene
@@ -899,6 +904,28 @@ mod tests {
         state.mixer.mode = MixerMode::SelectedScene;
         state.mixer.selected_scene = Some("Scene A".to_string());
         state
+    }
+
+    #[test]
+    fn mixer_input_event_rebuilds_for_visible_active_input() {
+        let mut state = app_state();
+        state.current_page = Page::Mixer;
+        state.mixer.mode = MixerMode::ActiveScene;
+        state.audio_inputs = vec![input("Mic"), input("Music")];
+
+        assert!(should_rebuild_visible_mixer_for_input_event(&state, "Mic"));
+    }
+
+    #[test]
+    fn mixer_input_event_ignores_unrelated_active_input() {
+        let mut state = app_state();
+        state.current_page = Page::Mixer;
+        state.mixer.mode = MixerMode::ActiveScene;
+        state.audio_inputs = vec![input("Mic")];
+
+        assert!(!should_rebuild_visible_mixer_for_input_event(
+            &state, "Music"
+        ));
     }
 
     #[test]

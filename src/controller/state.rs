@@ -5,7 +5,7 @@ use crate::domain::appearance::ThemeMode;
 use crate::domain::audio::AudioInput;
 use crate::domain::diagnostic::Diagnostic;
 use crate::domain::graph::SceneGraph;
-use crate::domain::mixer::MixerSelection;
+use crate::domain::mixer::{MixerMode, MixerSelection};
 use crate::domain::obs::ObsNamedList;
 use crate::domain::output::OutputStatus;
 use crate::domain::scene::{SceneId, SceneInventory};
@@ -122,6 +122,16 @@ pub enum MixerVisibleAudioStatus<'a> {
     Missing,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum MixerVisibleRenderSource<'a> {
+    ActiveScene(&'a [AudioInput]),
+    Scene {
+        scene: &'a str,
+        status: MixerVisibleAudioStatus<'a>,
+    },
+    MissingScene,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct MixerAudioRefreshState {
     /// Scene-level freshness marker for the currently pending mixer snapshot.
@@ -192,21 +202,21 @@ pub struct AppState {
     pub last_recording_path: Option<String>,
     pub output_confirmations: OutputConfig,
     pub audio_inputs: Vec<AudioInput>,
-    /// Legacy mirror of `mixer_audio_refresh.loaded.scene`.
+    /// Internal compatibility mirror of `mixer_audio_refresh.loaded.scene`.
     ///
     /// Keep mixer snapshot freshness centralized in `MixerAudioRefreshState`.
-    /// Event handlers must update these legacy fields only through
+    /// Event handlers update these fields only through
     /// `set_mixer_audio_loading`, `set_mixer_audio_success`,
     /// `set_mixer_audio_failure`, or `clear_pending_mixer_audio_refresh`.
     mixer_audio_scene: Option<String>,
-    /// Legacy mirror of `mixer_audio_refresh.loaded.inputs`; see
+    /// Internal compatibility mirror of `mixer_audio_refresh.loaded.inputs`; see
     /// `mixer_audio_scene` for the reducer contract.
     mixer_audio_inputs: Vec<AudioInput>,
-    /// Legacy mirror of `mixer_audio_refresh.requested_scene`; see
-    /// `mixer_audio_scene` for the reducer contract.
+    /// Internal compatibility mirror of `mixer_audio_refresh.requested_scene`;
+    /// see `mixer_audio_scene` for the reducer contract.
     mixer_audio_loading_scene: Option<SceneId>,
-    /// Legacy mirror of `mixer_audio_refresh.error`; see `mixer_audio_scene`
-    /// for the reducer contract.
+    /// Internal compatibility mirror of `mixer_audio_refresh.error`; see
+    /// `mixer_audio_scene` for the reducer contract.
     mixer_audio_error: Option<MixerAudioError>,
     pub mixer_audio_refresh: MixerAudioRefreshState,
     pub mixer: MixerSelection,
@@ -289,22 +299,6 @@ impl AppState {
         self.sync_mixer_audio_fields();
     }
 
-    pub fn mixer_audio_scene(&self) -> Option<&str> {
-        self.mixer_audio_scene.as_deref()
-    }
-
-    pub fn mixer_audio_inputs(&self) -> &[AudioInput] {
-        &self.mixer_audio_inputs
-    }
-
-    pub fn mixer_audio_loading_scene(&self) -> Option<&str> {
-        self.mixer_audio_loading_scene.as_deref()
-    }
-
-    pub fn mixer_audio_error(&self) -> Option<&MixerAudioError> {
-        self.mixer_audio_error.as_ref()
-    }
-
     pub fn visible_mixer_audio_status(&self, scene: &str) -> MixerVisibleAudioStatus<'_> {
         if self.mixer_audio_refresh.requested_scene.as_deref() == Some(scene) {
             return MixerVisibleAudioStatus::Loading;
@@ -323,6 +317,39 @@ impl AppState {
         }
 
         MixerVisibleAudioStatus::Missing
+    }
+
+    pub fn visible_mixer_render_source(&self) -> MixerVisibleRenderSource<'_> {
+        match self.mixer.mode {
+            MixerMode::ActiveScene => MixerVisibleRenderSource::ActiveScene(&self.audio_inputs),
+            MixerMode::SelectedScene | MixerMode::PinnedScene => {
+                let Some(scene) = self.visible_mixer_target_scene() else {
+                    return MixerVisibleRenderSource::MissingScene;
+                };
+
+                MixerVisibleRenderSource::Scene {
+                    scene,
+                    status: self.visible_mixer_audio_status(scene),
+                }
+            }
+        }
+    }
+
+    fn visible_mixer_target_scene(&self) -> Option<&str> {
+        match self.mixer.mode {
+            MixerMode::ActiveScene => self.scene_inventory.current_id.as_deref(),
+            MixerMode::SelectedScene => self
+                .mixer
+                .selected_scene
+                .as_deref()
+                .or(self.scene_inventory.current_id.as_deref()),
+            MixerMode::PinnedScene => self
+                .mixer
+                .pinned_scene
+                .as_deref()
+                .or(self.mixer.selected_scene.as_deref())
+                .or(self.scene_inventory.current_id.as_deref()),
+        }
     }
 
     pub fn update_mixer_input_mute(&mut self, input_id: &str, muted: bool) -> bool {
@@ -646,6 +673,121 @@ mod tests {
         assert!(matches!(
             state.visible_mixer_audio_status("Scene B"),
             MixerVisibleAudioStatus::Missing
+        ));
+    }
+
+    #[test]
+    fn visible_mixer_render_source_active_reads_live_audio_inputs() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::ActiveScene;
+        state.audio_inputs = vec![input("Live Mic"), input("Live Music")];
+        state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_failure("Scene A".to_string(), "OBS failed".to_string());
+
+        let MixerVisibleRenderSource::ActiveScene(inputs) = state.visible_mixer_render_source()
+        else {
+            panic!("expected active mixer render source");
+        };
+
+        assert_eq!(inputs.len(), 2);
+        assert_eq!(inputs[0].id, "Live Mic");
+        assert_eq!(inputs[1].id, "Live Music");
+    }
+
+    #[test]
+    fn visible_mixer_render_source_selected_uses_selected_scene_status() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::SelectedScene;
+        state.scene_inventory.current_id = Some("Active".to_string());
+        state.mixer.selected_scene = Some("Selected".to_string());
+        state.set_mixer_audio_loading("Selected".to_string());
+        state.set_mixer_audio_success("Selected".to_string(), vec![input("Selected Mic")]);
+
+        let MixerVisibleRenderSource::Scene { scene, status } = state.visible_mixer_render_source()
+        else {
+            panic!("expected scene mixer render source");
+        };
+
+        assert_eq!(scene, "Selected");
+        let MixerVisibleAudioStatus::Loaded(inputs) = status else {
+            panic!("expected selected mixer inputs");
+        };
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].id, "Selected Mic");
+    }
+
+    #[test]
+    fn visible_mixer_render_source_pinned_uses_pinned_scene_status() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::PinnedScene;
+        state.scene_inventory.current_id = Some("Active".to_string());
+        state.mixer.selected_scene = Some("Selected".to_string());
+        state.mixer.pinned_scene = Some("Pinned".to_string());
+        state.set_mixer_audio_loading("Pinned".to_string());
+
+        let MixerVisibleRenderSource::Scene { scene, status } = state.visible_mixer_render_source()
+        else {
+            panic!("expected scene mixer render source");
+        };
+
+        assert_eq!(scene, "Pinned");
+        assert!(matches!(status, MixerVisibleAudioStatus::Loading));
+    }
+
+    #[test]
+    fn visible_mixer_render_source_selected_reports_missing_for_other_loaded_scene() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::SelectedScene;
+        state.mixer.selected_scene = Some("Selected".to_string());
+        state.set_mixer_audio_loading("Loaded".to_string());
+        state.set_mixer_audio_success("Loaded".to_string(), vec![input("Other Mic")]);
+
+        let MixerVisibleRenderSource::Scene { scene, status } = state.visible_mixer_render_source()
+        else {
+            panic!("expected scene mixer render source");
+        };
+
+        assert_eq!(scene, "Selected");
+        assert!(matches!(status, MixerVisibleAudioStatus::Missing));
+    }
+
+    #[test]
+    fn visible_mixer_render_source_pinned_reports_target_error_over_other_loaded_scene() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::PinnedScene;
+        state.mixer.pinned_scene = Some("Pinned".to_string());
+        state.set_mixer_audio_loading("Loaded".to_string());
+        state.set_mixer_audio_success("Loaded".to_string(), vec![input("Other Mic")]);
+        state.set_mixer_audio_loading("Pinned".to_string());
+        state.set_mixer_audio_failure("Pinned".to_string(), "OBS failed".to_string());
+
+        let MixerVisibleRenderSource::Scene { scene, status } = state.visible_mixer_render_source()
+        else {
+            panic!("expected scene mixer render source");
+        };
+
+        assert_eq!(scene, "Pinned");
+        let MixerVisibleAudioStatus::Error(error) = status else {
+            panic!("expected pinned mixer error");
+        };
+        assert_eq!(error.scene, "Pinned");
+        assert_eq!(error.message, "OBS failed");
+    }
+
+    #[test]
+    fn visible_mixer_render_source_scene_modes_report_missing_without_target_scene() {
+        let mut state = app_state();
+
+        state.mixer.mode = MixerMode::SelectedScene;
+        assert!(matches!(
+            state.visible_mixer_render_source(),
+            MixerVisibleRenderSource::MissingScene
+        ));
+
+        state.mixer.mode = MixerMode::PinnedScene;
+        assert!(matches!(
+            state.visible_mixer_render_source(),
+            MixerVisibleRenderSource::MissingScene
         ));
     }
 

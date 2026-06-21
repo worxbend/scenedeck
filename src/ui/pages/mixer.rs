@@ -15,7 +15,7 @@ use gtk4::{
 };
 
 use crate::controller::command::AppCommand;
-use crate::controller::state::MixerVisibleAudioStatus;
+use crate::controller::state::{MixerVisibleAudioStatus, MixerVisibleRenderSource};
 use crate::domain::audio::AudioInput;
 use crate::domain::mixer::{MixerGrouping, MixerMode, MixerSelection};
 use crate::storage::config::write_config;
@@ -127,58 +127,54 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
 
     root.append(&page);
 
-    let source_inputs = match mixer.mode {
-        MixerMode::ActiveScene => Some(state.audio_inputs.clone()),
-        MixerMode::SelectedScene | MixerMode::PinnedScene => {
-            let Some(scene) = target_scene.as_deref() else {
+    let source_inputs = match state.visible_mixer_render_source() {
+        MixerVisibleRenderSource::ActiveScene(inputs) => inputs.to_vec(),
+        MixerVisibleRenderSource::MissingScene => {
+            append_mixer_status(
+                root,
+                "audio-volume-muted-symbolic",
+                "No Scene Selected",
+                "Choose a scene to load its mixer audio.",
+            );
+            return;
+        }
+        MixerVisibleRenderSource::Scene { scene, status } => match status {
+            MixerVisibleAudioStatus::Loading => {
+                clear_tracked_request(refresh_tracker, scene);
                 append_mixer_status(
                     root,
-                    "audio-volume-muted-symbolic",
-                    "No Scene Selected",
-                    "Choose a scene to load its mixer audio.",
+                    "view-refresh-symbolic",
+                    "Loading Mixer Audio",
+                    &format!("Loading audio sources for {scene}."),
                 );
                 return;
-            };
-
-            match state.visible_mixer_audio_status(scene) {
-                MixerVisibleAudioStatus::Loading => {
-                    clear_tracked_request(refresh_tracker, scene);
-                    append_mixer_status(
-                        root,
-                        "view-refresh-symbolic",
-                        "Loading Mixer Audio",
-                        &format!("Loading audio sources for {scene}."),
-                    );
-                    return;
-                }
-                MixerVisibleAudioStatus::Error(error) => {
-                    clear_tracked_request(refresh_tracker, scene);
-                    append_mixer_error_status(root, nav, refresh_tracker, scene, &error.message);
-                    return;
-                }
-                MixerVisibleAudioStatus::Loaded(inputs) => {
-                    clear_tracked_request(refresh_tracker, scene);
-                    Some(inputs.to_vec())
-                }
-                MixerVisibleAudioStatus::Missing => {
-                    request_mixer_scene_audio(
-                        nav,
-                        refresh_tracker,
-                        scene,
-                        MixerRefreshRequestIntent::Automatic,
-                    );
-                    append_mixer_status(
-                        root,
-                        "view-refresh-symbolic",
-                        "Loading Mixer Audio",
-                        &format!("Loading audio sources for {scene}."),
-                    );
-                    return;
-                }
             }
-        }
+            MixerVisibleAudioStatus::Error(error) => {
+                clear_tracked_request(refresh_tracker, scene);
+                append_mixer_error_status(root, nav, refresh_tracker, scene, &error.message);
+                return;
+            }
+            MixerVisibleAudioStatus::Loaded(inputs) => {
+                clear_tracked_request(refresh_tracker, scene);
+                inputs.to_vec()
+            }
+            MixerVisibleAudioStatus::Missing => {
+                request_mixer_scene_audio(
+                    nav,
+                    refresh_tracker,
+                    scene,
+                    MixerRefreshRequestIntent::Automatic,
+                );
+                append_mixer_status(
+                    root,
+                    "view-refresh-symbolic",
+                    "Loading Mixer Audio",
+                    &format!("Loading audio sources for {scene}."),
+                );
+                return;
+            }
+        },
     };
-    let source_inputs = source_inputs.unwrap_or_default();
     let inputs = filter_inputs(&source_inputs, &mixer.search);
     append_mixer_inputs(
         root,

@@ -488,3 +488,98 @@ M  SCORES.jsonl
 M  src/controller/state.rs
 M  src/ui/pages/mixer.rs
 M  src/ui/window.rs
+2026-06-21T12:37:24Z iteration 6 started remaining=15167s
+2026-06-21T12:37:24Z iteration 6 preplanner effective budgets untracked_scan_max_bytes=536870912 untracked_scan_max_count=10000 snapshot_copy_max_bytes=536870912 snapshot_copy_max_count=10000 snapshot_copy_max_file_bytes=134217728
+2026-06-21T12:37:24Z iteration 6 disposable preplanner repo created path=/tmp/agent-loop-preplanner-repo-s8y66kvz/repo copied_entries=114
+2026-06-21T12:37:24Z iteration 6 ideator phase started count=3
+2026-06-21T12:37:24Z iteration 6 ideator phase concurrency workers=3
+2026-06-21T12:37:24Z iteration 6 ideator 1 role="the pragmatist" started
+2026-06-21T12:37:24Z iteration 6 ideator 2 role="the architect" started
+2026-06-21T12:37:24Z iteration 6 ideator 3 role="the contrarian" started
+2026-06-21T12:37:33Z iteration 6 ideator 3 role="the contrarian" completed status=0
+2026-06-21T12:37:33Z iteration 6 ideator 1 role="the pragmatist" completed status=0
+2026-06-21T12:37:37Z iteration 6 ideator 2 role="the architect" completed status=0
+2026-06-21T12:37:37Z iteration 6 ideator phase completed approaches=3
+2026-06-21T12:37:37Z iteration 6 selector started approaches=3
+2026-06-21T12:37:47Z iteration 6 selector completed status=0
+2026-06-21T12:37:47Z iteration 6 disposable preplanner repo cleanup path=/tmp/agent-loop-preplanner-repo-s8y66kvz/repo
+2026-06-21T12:37:47Z iteration 6 selector rejected alternative role="the contrarian" approach="Contract-First Reconciliation: treat the Active-mode bug as evidence that the Mixer lacks a single explicit visibility contract, and make the next planner stabilize that contrac..." reason="Strong strategic framing, but selected as-is it risks over-weighting conceptual cleanup before the visible P0 stale-card regression is closed."
+2026-06-21T12:37:47Z iteration 6 selector rejected alternative role="the pragmatist" approach="Contract-First Reconciliation: tighten the Mixer visibility contract before expanding behavior, treating Active mode as the missing branch of the same UI reconciliation model ra..." reason="Mostly aligned, but it is slightly less explicit than the architect framing about making rebuild, retry, and accessor decisions subordinate to the render-source contract."
+2026-06-21T12:37:47Z iteration 6 selector rejected alternative role="the architect" approach="Render-Source Contract First: Treat the next iteration as a contract-hardening pass around Mixer visibility before expanding features. Start from the question 'what state source..." reason="The best structural framing, but selected alone it could sound broader than necessary; the hybrid adds the pragmatist constraint that the Active fix must remain small and local."
+2026-06-21T12:37:47Z iteration 6 selector alternatives persisted count=3
+2026-06-21T12:37:47Z iteration 6 selector structured alternatives persisted count=3
+2026-06-21T12:37:47Z iteration 6 planner started
+2026-06-21T12:38:07Z iteration 6 plan: 4 task(s) in 4 phase(s). This iteration is scoped to the Render-Source Contract pass: first make the Mixer visible data source explicit, then route rendering and event reconciliation through that contract, then remove obsolete read bypasses. Tasks are sequential because they either introduce APIs consumed by later tasks or touch the same file.
+2026-06-21T12:38:07Z iteration 6 phase 1 started parallel=False tasks=1
+2026-06-21T12:39:53Z iteration 6 task t1 ('Add explicit Mixer visible render-source contract') status=0
+2026-06-21T12:39:53Z iteration 6 phase 2 started parallel=False tasks=1
+2026-06-21T12:40:46Z iteration 6 task t2 ('Use render-source contract in Mixer page rendering') status=0
+2026-06-21T12:40:46Z iteration 6 phase 3 started parallel=False tasks=1
+2026-06-21T12:41:37Z iteration 6 task t3 ('Reconcile Active-mode Mixer input events locally') status=0
+2026-06-21T12:41:37Z iteration 6 phase 4 started parallel=False tasks=1
+2026-06-21T12:42:18Z iteration 6 task t4 ('Remove dead legacy Mixer mirror accessors') status=0
+2026-06-21T12:42:18Z iteration 6 reviewer started
+
+## Review Summary - Iteration 6 - 2026-06-21
+
+### What Was Done
+
+- Added `MixerVisibleRenderSource` and
+  `AppState::visible_mixer_render_source` to make the visible Mixer data source
+  explicit across Active, Selected, and Pinned modes.
+- Refactored Mixer page rendering to consume the render-source helper instead
+  of directly splitting Active from scene-specific refresh state.
+- Extended Mixer input-event reconciliation so Active mode locally rebuilds
+  when a visible active-scene input receives an OBS mute or volume event.
+- Removed the old legacy mixer mirror read accessors.
+- Added tests for render-source selection and Active-mode input-event rebuild
+  behavior.
+
+### What Was Found
+
+- Static validation passed: `cargo fmt --all -- --check`,
+  `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- The planned P0 Active-mode stale-card fix is complete and remains local-only:
+  input events rebuild the visible Mixer page from existing state without
+  dispatching OBS scene-audio refresh commands.
+- Selected/Pinned rendering remains correctly reducer-backed through
+  `MixerVisibleAudioStatus`; Active rendering remains correctly backed by live
+  `audio_inputs`.
+- No external direct reads or writes of the legacy mixer mirror fields remain.
+- Remaining design gap: `should_rebuild_visible_mixer_for_input_event` still
+  duplicates selected/pinned target-scene fallback logic instead of matching on
+  `visible_mixer_render_source`.
+- The private legacy mixer mirror fields are now production-dead and can be
+  removed; currently only synchronization code and tests inspect them.
+- Full Mixer page rebuilds on every relevant OBS input event are correct but
+  may become inefficient if OBS emits frequent volume-change echoes for large
+  scenes.
+
+### Top Improvement Proposals
+
+1. Remove the private legacy mixer mirror fields and rewrite mirror-focused
+   tests to assert through reducer-derived visible status.
+2. Refactor the Mixer input-event rebuild predicate to consume
+   `visible_mixer_render_source` directly, eliminating duplicated target-scene
+   fallback logic.
+3. Evaluate high-frequency Mixer volume-event behavior and, if needed, update
+   visible Mixer audio cards in place instead of rebuilding the full page.
+4. Surface stream/record command failures in the Live output UI separately
+   from generic OBS connection errors.
+5. Refine output confirmation dialog metadata so only stop actions use
+   destructive response styling.
+2026-06-21T12:44:38Z iteration 6 reviewer completed status=0
+2026-06-21T12:44:38Z iteration 6 memory updated
+2026-06-21T12:44:38Z iteration 6 completed validation_status=0
+2026-06-21T12:44:38Z iteration 6 checkpoint started
+2026-06-21T12:44:38Z iteration 6 checkpoint status before commit:
+M  AGENT_LOG.md
+M  ALTERNATIVES.jsonl
+M  MEMORY.md
+M  PLAN.md
+M  SCORES.jsonl
+M  src/controller/state.rs
+M  src/ui/pages/mixer.rs
+M  src/ui/window.rs
