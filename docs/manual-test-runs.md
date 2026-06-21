@@ -62,6 +62,75 @@ Non-claims:
   no pass/fail behavior is claimed for unexecuted ComboRow changes, Retry,
   mute echoes, volume echoes, stale cards, or rebuild churn.
 
+## Focused Mixer Inspection Run Template
+
+Use this structure for focused Mixer runs that capture the opt-in structured
+inspection output. Mark every case `pass`, `fail`, `blocked`, or `skipped`,
+and include an explicit reason in the row. Do not convert inspection output
+into claims about pointer interaction success, visual layout quality, or
+perceived rebuild churn unless those were also observed in an interactive
+session.
+
+Status: Passed, Failed, Blocked, or Mixed.
+
+Scope: focused Mixer render-state inspection using the debug inspection path,
+optionally paired with interactive OBS and GTK observations.
+
+Environment:
+
+- SceneDeck commit: `TODO`.
+- OBS version: `TODO`.
+- obs-websocket version: `TODO`.
+- WebSocket URL/auth mode: `TODO`; do not record secrets.
+- Desktop/session type: `TODO`.
+- Fixture scene names: `TODO`.
+- Global input names: `TODO`.
+- Scene-specific input names: `TODO`; identify which fixture scene owns each
+  scene-specific input.
+- Inspection method: `SCENEDECK_MIXER_INSPECT=1` structured output,
+  interactive desktop observation, UI automation, or a combination.
+- Captured structured inspection lines: paste the relevant lines or reference
+  the attached log artifact.
+
+Fixture notes:
+
+- Use a throwaway OBS profile or clearly temporary `SceneDeck Test ...` scenes.
+- Keep at least one global audio input visible in both fixture scenes.
+- Keep at least one scene-specific audio input present in only one fixture
+  scene.
+
+Per-case results:
+
+| Case | Result | Explicit reason and evidence |
+| --- | --- | --- |
+| Active mode following | TODO: pass/fail/blocked/skipped | TODO: cite the inspection line showing mode, visible source, and visible input names, or explain why unavailable. |
+| No Active scene-specific refresh target | TODO: pass/fail/blocked/skipped | TODO: cite the inspection line showing no scene-specific refresh target in Active mode, or explain why unavailable. |
+| Selected direct | TODO: pass/fail/blocked/skipped | TODO: cite selected scene, refresh target/reason, render source/status, and visible card input names. |
+| Selected fallback | TODO: pass/fail/blocked/skipped | TODO: cite fallback reason, effective refresh target, render source/status, and visible card input names. |
+| Pinned direct | TODO: pass/fail/blocked/skipped | TODO: cite pinned scene, refresh target/reason, render source/status, and visible card input names. |
+| Pinned fallback | TODO: pass/fail/blocked/skipped | TODO: cite fallback reason, effective refresh target, render source/status, and visible card input names. |
+| Retry after failure | TODO: pass/fail/blocked/skipped | TODO: cite error/loading/Retry visible and enabled state before and after retry, or explain why failure setup was unavailable. |
+| OBS mute echo | TODO: pass/fail/blocked/skipped | TODO: cite before/after inspection lines showing the visible card mute state changed for the expected input. |
+| OBS volume echo | TODO: pass/fail/blocked/skipped | TODO: cite before/after inspection lines showing the visible card volume value/label changed for the expected input. |
+| Stale visible cards | TODO: pass/fail/blocked/skipped | TODO: cite inspection lines proving cards matched the current render source after scene or OBS input changes, or describe the stale mismatch. |
+| Rebuild churn | TODO: pass/fail/blocked/skipped | TODO: cite interactive observation or instrumentation; inspection lines alone do not prove perceived churn. |
+
+Inspection evidence captured:
+
+- Mode, selected scene, and pinned scene: `TODO`.
+- Scene-specific refresh target and fallback reason: `TODO`.
+- Render source kind and loading/error/missing status: `TODO`.
+- Visible card input names: `TODO`.
+- Mute states: `TODO`.
+- Volume values and labels: `TODO`.
+- Retry visible/enabled state: `TODO`.
+
+Non-claims:
+
+- List any behavior not exercised. If this run used only structured inspection
+  output, explicitly state that it does not prove pointer interaction success,
+  visual layout quality, or perceived rebuild churn.
+
 ## 2026-06-21 - Focused Mixer Refresh Contract (iteration 10)
 
 Status: Blocked.

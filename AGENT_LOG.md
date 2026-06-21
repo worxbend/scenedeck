@@ -1129,3 +1129,104 @@ M  PLAN.md
 M  SCORES.jsonl
 M  docs/manual-test-plan.md
 M  docs/manual-test-runs.md
+2026-06-21T13:24:31Z iteration 13 started remaining=12339s
+2026-06-21T13:24:31Z iteration 13 preplanner effective budgets untracked_scan_max_bytes=536870912 untracked_scan_max_count=10000 snapshot_copy_max_bytes=536870912 snapshot_copy_max_count=10000 snapshot_copy_max_file_bytes=134217728
+2026-06-21T13:24:31Z iteration 13 disposable preplanner repo created path=/tmp/agent-loop-preplanner-repo-cwbi2yah/repo copied_entries=115
+2026-06-21T13:24:31Z iteration 13 ideator phase started count=3
+2026-06-21T13:24:31Z iteration 13 ideator phase concurrency workers=3
+2026-06-21T13:24:31Z iteration 13 ideator 1 role="the pragmatist" started
+2026-06-21T13:24:31Z iteration 13 ideator 2 role="the architect" started
+2026-06-21T13:24:31Z iteration 13 ideator 3 role="the contrarian" started
+2026-06-21T13:24:40Z iteration 13 ideator 3 role="the contrarian" completed status=0
+2026-06-21T13:24:41Z iteration 13 ideator 1 role="the pragmatist" completed status=0
+2026-06-21T13:24:45Z iteration 13 ideator 2 role="the architect" completed status=0
+2026-06-21T13:24:45Z iteration 13 ideator phase completed approaches=3
+2026-06-21T13:24:45Z iteration 13 selector started approaches=3
+2026-06-21T13:24:55Z iteration 13 selector completed status=0
+2026-06-21T13:24:55Z iteration 13 disposable preplanner repo cleanup path=/tmp/agent-loop-preplanner-repo-cwbi2yah/repo
+2026-06-21T13:24:55Z iteration 13 selector rejected alternative role="the contrarian" approach="Evidence Harness Before Product Polish: treat the blocked Mixer manual evidence as an observability problem, not a documentation problem. The next planner should prioritize crea..." reason="Strong directionally, but too forceful about building a debug harness before considering whether an interactive desktop session can satisfy the evidence requirement with less code and less risk of accidental product surface."
+2026-06-21T13:24:55Z iteration 13 selector rejected alternative role="the pragmatist" approach="Evidence-Gated Operational Hardening: prioritize creating a trustworthy runtime evidence path before optimizing or expanding Mixer behavior, while allowing independent output-er..." reason="Useful in allowing independent output-error UX work, but that risks diluting the immediate bottleneck. The next iteration should keep the Planner centered on resolving the Mixer evidence loop before expanding scope."
+2026-06-21T13:24:55Z iteration 13 selector rejected alternative role="the architect" approach="Evidence-First Instrumentation: prioritize making the focused Mixer contract observable before adding more UI behavior, using a narrow debug or inspection surface only if an int..." reason="Closest to the selected strategy, but the synthesized version makes the guardrails sharper: prefer real interaction evidence when available, use inspection only when necessary, and explicitly limit what evidence claims the inspection pat..."
+2026-06-21T13:24:55Z iteration 13 selector alternatives persisted count=3
+2026-06-21T13:24:55Z iteration 13 selector structured alternatives persisted count=3
+2026-06-21T13:24:55Z iteration 13 planner started
+2026-06-21T13:25:25Z iteration 13 plan: 4 task(s) in 3 phase(s). This slice follows the evidence-first constraint. It first creates a narrow observable Mixer state contract, then exposes it through an opt-in debug path, then updates the manual evidence process so the next run can produce useful claims instead of another blocked entry. The tasks avoid premature in-place card optimization until runtime churn is actually observed.
+2026-06-21T13:25:25Z iteration 13 phase 1 started parallel=False tasks=1
+2026-06-21T13:28:41Z iteration 13 task t1 ('Add Mixer inspection snapshot model') status=0
+2026-06-21T13:28:41Z iteration 13 phase 2 started parallel=False tasks=1
+2026-06-21T13:33:36Z iteration 13 task t2 ('Expose debug Mixer render inspection') status=0
+2026-06-21T13:33:36Z iteration 13 phase 3 started parallel=True tasks=2
+2026-06-21T13:34:19Z iteration 13 task t4 ('Prepare focused run result template for inspection output') status=0
+2026-06-21T13:34:43Z iteration 13 task t3 ('Document executable Mixer evidence path') status=0
+2026-06-21T13:34:43Z iteration 13 reviewer started
+
+## Review Summary - Iteration 13 - 2026-06-21
+
+### What Was Done
+
+- Added a reducer-derived Mixer inspection snapshot model covering mode,
+  selected/pinned scenes, scene-specific refresh target/reason, render source,
+  loading/error/missing/loaded status, visible input metadata, mute state,
+  raw volume values, and formatted dB labels.
+- Exposed opt-in debug inspection output from the Mixer page with
+  `SCENEDECK_MIXER_INSPECT=1`, emitting `scenedeck_mixer_inspect {json}` lines
+  that include visible cards and Retry visible/enabled state.
+- Added tests for inspection snapshot variants and JSON formatting.
+- Updated the focused manual test plan and run template so a future run can use
+  structured inspection output while preserving explicit limits around pointer
+  interaction, visual layout quality, and perceived rebuild churn.
+
+### What Was Found
+
+- Static validation passed in review:
+  `cargo fmt --all -- --check`, `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- The debug path is narrow and opt-in. It is a good fit for the blocked
+  non-interactive evidence problem and avoids adding production UI.
+- High-priority evidence issue: in `src/ui/pages/mixer.rs`, the
+  scene-specific Missing branch dispatches an automatic refresh and renders the
+  "Loading Mixer Audio" placeholder, but emits the inspection snapshot captured
+  before that dispatch. The structured line can report `missing` while the
+  visible UI is loading, weakening the inspection output as runtime evidence.
+- The inspection formatter reports loaded visible cards well, but it does not
+  distinguish loaded status pages such as "No Audio Sources" or filtered-empty
+  from other empty visible-card states.
+- Architecture concern: `src/controller/state.rs` now depends on
+  `AudioService` solely to format a UI/debug dB label. This is acceptable for
+  the narrow debug path, but if the inspection model grows, presentation
+  formatting should move closer to the UI/debug serialization layer.
+- The focused Mixer manual evidence remains incomplete. The new inspection path
+  can prove rendered state and card values after the mismatch is fixed, but it
+  still cannot prove ComboRow pointer interaction, visual layout quality, or
+  perceived rebuild churn without interactive observation.
+
+### Top Improvement Proposals
+
+1. Align inspection emission with the actual rendered Mixer branch before using
+   `SCENEDECK_MIXER_INSPECT=1` as authoritative evidence, especially the
+   Missing -> automatic refresh/loading-placeholder path.
+2. Add inspection formatter coverage for no-audio and filtered-empty loaded
+   states so empty `visible_cards` has unambiguous meaning in manual evidence.
+3. Run the focused Mixer inspection evidence pass against a temporary OBS
+   fixture with a scene-specific input present in only one scene, recording the
+   structured lines and explicit pass/fail/blocked results.
+4. Keep full-page Mixer rebuilds until a completed run shows visible churn from
+   high-frequency volume echoes; do not optimize based on blocked or ambiguous
+   evidence.
+5. Consider moving formatted dB labels out of the controller state inspection
+   snapshot if this debug DTO starts to be reused beyond evidence capture.
+2026-06-21T13:37:35Z iteration 13 reviewer completed status=0
+2026-06-21T13:37:35Z iteration 13 memory updated
+2026-06-21T13:37:35Z iteration 13 completed validation_status=0
+2026-06-21T13:37:35Z iteration 13 checkpoint started
+2026-06-21T13:37:35Z iteration 13 checkpoint status before commit:
+M  AGENT_LOG.md
+M  ALTERNATIVES.jsonl
+M  MEMORY.md
+M  PLAN.md
+M  SCORES.jsonl
+M  docs/manual-test-plan.md
+M  docs/manual-test-runs.md
+M  src/controller/state.rs
+M  src/ui/pages/mixer.rs

@@ -9,6 +9,7 @@ use crate::domain::mixer::{MixerMode, MixerSelection};
 use crate::domain::obs::ObsNamedList;
 use crate::domain::output::OutputStatus;
 use crate::domain::scene::{SceneId, SceneInventory};
+use crate::services::audio_service::AudioService;
 use crate::storage::config::OutputConfig;
 use std::time::Instant;
 
@@ -145,6 +146,43 @@ pub enum MixerSceneRefreshTargetReason {
 pub struct MixerSceneRefreshTarget<'a> {
     pub scene: &'a str,
     pub reason: MixerSceneRefreshTargetReason,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MixerInspectionRenderSourceKind {
+    ActiveScene,
+    Scene,
+    MissingScene,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MixerInspectionStatus<'a> {
+    Loaded,
+    Loading,
+    Error(&'a str),
+    Missing,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MixerInspectionInput<'a> {
+    pub name: &'a str,
+    pub display_name: &'a str,
+    pub muted: bool,
+    pub volume_mul: f64,
+    pub volume_db: f64,
+    pub volume_label: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MixerInspectionSnapshot<'a> {
+    pub mode: MixerMode,
+    pub selected_scene: Option<&'a str>,
+    pub pinned_scene: Option<&'a str>,
+    pub refresh_target: Option<MixerSceneRefreshTarget<'a>>,
+    pub render_source_kind: MixerInspectionRenderSourceKind,
+    pub scene: Option<&'a str>,
+    pub status: MixerInspectionStatus<'a>,
+    pub inputs: Vec<MixerInspectionInput<'a>>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -323,6 +361,44 @@ impl AppState {
         }
     }
 
+    pub fn mixer_inspection_snapshot(&self) -> MixerInspectionSnapshot<'_> {
+        let refresh_target = self.mixer_scene_refresh_target_details();
+        let (render_source_kind, scene, status, inputs) = match self.visible_mixer_render_source() {
+            MixerVisibleRenderSource::ActiveScene(inputs) => (
+                MixerInspectionRenderSourceKind::ActiveScene,
+                self.scene_inventory.current_id.as_deref(),
+                MixerInspectionStatus::Loaded,
+                mixer_inspection_inputs(inputs),
+            ),
+            MixerVisibleRenderSource::Scene { scene, status } => {
+                let (status, inputs) = mixer_inspection_scene_status(status);
+                (
+                    MixerInspectionRenderSourceKind::Scene,
+                    Some(scene),
+                    status,
+                    inputs,
+                )
+            }
+            MixerVisibleRenderSource::MissingScene => (
+                MixerInspectionRenderSourceKind::MissingScene,
+                None,
+                MixerInspectionStatus::Missing,
+                Vec::new(),
+            ),
+        };
+
+        MixerInspectionSnapshot {
+            mode: self.mixer.mode,
+            selected_scene: self.mixer.selected_scene.as_deref(),
+            pinned_scene: self.mixer.pinned_scene.as_deref(),
+            refresh_target,
+            render_source_kind,
+            scene,
+            status,
+            inputs,
+        }
+    }
+
     /// Scene target for OBS scene-specific Mixer refresh requests.
     ///
     /// Active mode renders live active-scene audio and must not dispatch a
@@ -420,6 +496,37 @@ impl AppState {
     }
 }
 
+fn mixer_inspection_scene_status(
+    status: MixerVisibleAudioStatus<'_>,
+) -> (MixerInspectionStatus<'_>, Vec<MixerInspectionInput<'_>>) {
+    match status {
+        MixerVisibleAudioStatus::Loading => (MixerInspectionStatus::Loading, Vec::new()),
+        MixerVisibleAudioStatus::Error(error) => (
+            MixerInspectionStatus::Error(error.message.as_str()),
+            Vec::new(),
+        ),
+        MixerVisibleAudioStatus::Loaded(inputs) => (
+            MixerInspectionStatus::Loaded,
+            mixer_inspection_inputs(inputs),
+        ),
+        MixerVisibleAudioStatus::Missing => (MixerInspectionStatus::Missing, Vec::new()),
+    }
+}
+
+fn mixer_inspection_inputs(inputs: &[AudioInput]) -> Vec<MixerInspectionInput<'_>> {
+    inputs
+        .iter()
+        .map(|input| MixerInspectionInput {
+            name: input.name.as_str(),
+            display_name: input.display_name.as_str(),
+            muted: input.muted,
+            volume_mul: input.volume_mul,
+            volume_db: input.volume_db,
+            volume_label: AudioService::format_db(input.volume_db),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -462,6 +569,21 @@ mod tests {
             .iter()
             .find(|input| input.id == id)
             .expect("loaded mixer input")
+    }
+
+    fn loud_muted_input(id: &str) -> AudioInput {
+        let mut input = AudioInput::new(id.to_string(), true, 0.5, -6.24);
+        input.display_name = format!("{id} Display");
+        input
+    }
+
+    fn assert_snapshot_input(input: &MixerInspectionInput<'_>, name: &str, muted: bool) {
+        assert_eq!(input.name, name);
+        assert_eq!(input.display_name, format!("{name} Display"));
+        assert_eq!(input.muted, muted);
+        assert_eq!(input.volume_mul, 0.5);
+        assert_eq!(input.volume_db, -6.24);
+        assert_eq!(input.volume_label, "-6.2 dB");
     }
 
     #[test]
@@ -912,6 +1034,189 @@ mod tests {
 
         assert_eq!(state.mixer_scene_refresh_target(), None);
         assert_eq!(state.mixer_scene_refresh_target_details(), None);
+    }
+
+    #[test]
+    fn mixer_inspection_snapshot_reports_active_render_source() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::ActiveScene;
+        state.scene_inventory.current_id = Some("Active".to_string());
+        state.mixer.selected_scene = Some("Selected".to_string());
+        state.mixer.pinned_scene = Some("Pinned".to_string());
+        state.audio_inputs = vec![loud_muted_input("Live Mic")];
+        state.set_mixer_audio_loading("Selected".to_string());
+
+        let snapshot = state.mixer_inspection_snapshot();
+
+        assert_eq!(snapshot.mode, MixerMode::ActiveScene);
+        assert_eq!(snapshot.selected_scene, Some("Selected"));
+        assert_eq!(snapshot.pinned_scene, Some("Pinned"));
+        assert_eq!(snapshot.refresh_target, None);
+        assert_eq!(
+            snapshot.render_source_kind,
+            MixerInspectionRenderSourceKind::ActiveScene
+        );
+        assert_eq!(snapshot.scene, Some("Active"));
+        assert_eq!(snapshot.status, MixerInspectionStatus::Loaded);
+        assert_eq!(snapshot.inputs.len(), 1);
+        assert_snapshot_input(&snapshot.inputs[0], "Live Mic", true);
+    }
+
+    #[test]
+    fn mixer_inspection_snapshot_reports_selected_direct_target() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::SelectedScene;
+        state.scene_inventory.current_id = Some("Active".to_string());
+        state.mixer.selected_scene = Some("Selected".to_string());
+        state.set_mixer_audio_loading("Selected".to_string());
+        state.set_mixer_audio_success("Selected".to_string(), vec![loud_muted_input("Scene Mic")]);
+
+        let snapshot = state.mixer_inspection_snapshot();
+
+        assert_eq!(snapshot.mode, MixerMode::SelectedScene);
+        assert_eq!(
+            snapshot.refresh_target,
+            Some(MixerSceneRefreshTarget {
+                scene: "Selected",
+                reason: MixerSceneRefreshTargetReason::DirectSelectedScene,
+            })
+        );
+        assert_eq!(
+            snapshot.render_source_kind,
+            MixerInspectionRenderSourceKind::Scene
+        );
+        assert_eq!(snapshot.scene, Some("Selected"));
+        assert_eq!(snapshot.status, MixerInspectionStatus::Loaded);
+        assert_eq!(snapshot.inputs.len(), 1);
+        assert_snapshot_input(&snapshot.inputs[0], "Scene Mic", true);
+    }
+
+    #[test]
+    fn mixer_inspection_snapshot_reports_selected_fallback_target() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::SelectedScene;
+        state.scene_inventory.current_id = Some("Active".to_string());
+        state.set_mixer_audio_loading("Active".to_string());
+        state.set_mixer_audio_success("Active".to_string(), vec![loud_muted_input("Active Mic")]);
+
+        let snapshot = state.mixer_inspection_snapshot();
+
+        assert_eq!(snapshot.selected_scene, None);
+        assert_eq!(
+            snapshot.refresh_target,
+            Some(MixerSceneRefreshTarget {
+                scene: "Active",
+                reason: MixerSceneRefreshTargetReason::SelectedModeCurrentSceneFallback,
+            })
+        );
+        assert_eq!(snapshot.scene, Some("Active"));
+        assert_eq!(snapshot.status, MixerInspectionStatus::Loaded);
+        assert_eq!(snapshot.inputs.len(), 1);
+        assert_snapshot_input(&snapshot.inputs[0], "Active Mic", true);
+    }
+
+    #[test]
+    fn mixer_inspection_snapshot_reports_pinned_direct_target() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::PinnedScene;
+        state.scene_inventory.current_id = Some("Active".to_string());
+        state.mixer.selected_scene = Some("Selected".to_string());
+        state.mixer.pinned_scene = Some("Pinned".to_string());
+        state.set_mixer_audio_loading("Pinned".to_string());
+        state.set_mixer_audio_success("Pinned".to_string(), vec![loud_muted_input("Pinned Mic")]);
+
+        let snapshot = state.mixer_inspection_snapshot();
+
+        assert_eq!(snapshot.mode, MixerMode::PinnedScene);
+        assert_eq!(snapshot.selected_scene, Some("Selected"));
+        assert_eq!(snapshot.pinned_scene, Some("Pinned"));
+        assert_eq!(
+            snapshot.refresh_target,
+            Some(MixerSceneRefreshTarget {
+                scene: "Pinned",
+                reason: MixerSceneRefreshTargetReason::DirectPinnedScene,
+            })
+        );
+        assert_eq!(snapshot.scene, Some("Pinned"));
+        assert_eq!(snapshot.status, MixerInspectionStatus::Loaded);
+        assert_eq!(snapshot.inputs.len(), 1);
+        assert_snapshot_input(&snapshot.inputs[0], "Pinned Mic", true);
+    }
+
+    #[test]
+    fn mixer_inspection_snapshot_reports_pinned_fallback_target() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::PinnedScene;
+        state.scene_inventory.current_id = Some("Active".to_string());
+        state.mixer.selected_scene = Some("Selected".to_string());
+        state.set_mixer_audio_loading("Selected".to_string());
+        state.set_mixer_audio_success(
+            "Selected".to_string(),
+            vec![loud_muted_input("Selected Mic")],
+        );
+
+        let snapshot = state.mixer_inspection_snapshot();
+
+        assert_eq!(snapshot.pinned_scene, None);
+        assert_eq!(
+            snapshot.refresh_target,
+            Some(MixerSceneRefreshTarget {
+                scene: "Selected",
+                reason: MixerSceneRefreshTargetReason::PinnedModeSelectedSceneFallback,
+            })
+        );
+        assert_eq!(snapshot.scene, Some("Selected"));
+        assert_eq!(snapshot.status, MixerInspectionStatus::Loaded);
+        assert_eq!(snapshot.inputs.len(), 1);
+        assert_snapshot_input(&snapshot.inputs[0], "Selected Mic", true);
+    }
+
+    #[test]
+    fn mixer_inspection_snapshot_reports_loading_status() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::SelectedScene;
+        state.mixer.selected_scene = Some("Selected".to_string());
+        state.set_mixer_audio_loading("Selected".to_string());
+
+        let snapshot = state.mixer_inspection_snapshot();
+
+        assert_eq!(snapshot.scene, Some("Selected"));
+        assert_eq!(snapshot.status, MixerInspectionStatus::Loading);
+        assert!(snapshot.inputs.is_empty());
+    }
+
+    #[test]
+    fn mixer_inspection_snapshot_reports_error_status() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::PinnedScene;
+        state.mixer.pinned_scene = Some("Pinned".to_string());
+        state.set_mixer_audio_loading("Pinned".to_string());
+        state.set_mixer_audio_failure("Pinned".to_string(), "OBS failed".to_string());
+
+        let snapshot = state.mixer_inspection_snapshot();
+
+        assert_eq!(snapshot.scene, Some("Pinned"));
+        assert_eq!(snapshot.status, MixerInspectionStatus::Error("OBS failed"));
+        assert!(snapshot.inputs.is_empty());
+    }
+
+    #[test]
+    fn mixer_inspection_snapshot_reports_missing_status() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::SelectedScene;
+        state.mixer.selected_scene = Some("Selected".to_string());
+        state.set_mixer_audio_loading("Other".to_string());
+        state.set_mixer_audio_success("Other".to_string(), vec![loud_muted_input("Other Mic")]);
+
+        let snapshot = state.mixer_inspection_snapshot();
+
+        assert_eq!(
+            snapshot.render_source_kind,
+            MixerInspectionRenderSourceKind::Scene
+        );
+        assert_eq!(snapshot.scene, Some("Selected"));
+        assert_eq!(snapshot.status, MixerInspectionStatus::Missing);
+        assert!(snapshot.inputs.is_empty());
     }
 
     #[test]

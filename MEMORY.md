@@ -12,3 +12,4 @@
 [pattern] Gate UI performance optimizations behind observed runtime churn when the current path is correct; otherwise extra widget bookkeeping can add complexity without proof of value.
 [learning] State-level reason metadata tests do not protect final user-facing copy; helper-level string tests are needed when wording carries behavioral meaning.
 [pattern] Manual runtime plans should include non-destructive fixture setup and interaction/inspection prerequisites; otherwise repeated runs can document the same blocker without increasing confidence.
+[learning] Debug inspection output is only useful evidence when it is emitted from the same rendered branch as the UI; pre-dispatch snapshots can contradict loading placeholders.

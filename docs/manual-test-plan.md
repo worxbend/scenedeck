@@ -140,8 +140,11 @@ Prerequisites:
 - OBS has global audio inputs available in the OBS Audio Mixer.
 - At least one scene has a scene-specific audio input, and that scene-specific
   input differs between two test scenes.
-- The tester can interact with SceneDeck GTK ComboRows and inspect the visible
-  Mixer cards.
+- The chosen execution path is available. For the interactive desktop path, the
+  tester can interact with SceneDeck GTK ComboRows and inspect the visible Mixer
+  cards. For the debug inspection path, the tester can run SceneDeck with
+  `SCENEDECK_MIXER_INSPECT=1` and capture the structured Mixer inspection
+  lines.
 - Record OBS version, obs-websocket version, SceneDeck build or commit, and any
   skipped cases in `docs/manual-test-runs.md`.
 
@@ -170,51 +173,79 @@ Fixture setup:
   throwaway OBS profile. Confirm that the user's normal scenes, sources,
   profile, and collection were not changed by the default run.
 
-Interaction requirement:
+Execution path:
 
-- The default focused run requires an interactive desktop session where the
-  tester can select GTK ComboRows, click the Mixer Retry button, and visually
-  inspect visible Mixer cards.
-- No validated UI automation path is currently part of this manual plan for the
-  target Wayland GTK session. `xdotool` is not suitable for Wayland, and no
-  committed SceneDeck harness currently exposes reliable selectors for GTK
-  ComboRows, Retry, or Mixer card readback.
-- If a future run uses automation, record the exact tool in
-  `docs/manual-test-runs.md` before claiming pass/fail results. The run entry
-  must state the tool's limitations for selecting GTK ComboRows, clicking
-  Retry, and inspecting visible Mixer cards; cases outside those limits remain
-  blocked, not passed.
+Use one of these paths before recording pass/fail results. If neither path is
+available, record the run as blocked instead of repeating the interaction
+checklist.
+
+- Interactive desktop path: run SceneDeck in a desktop session where the tester
+  can operate GTK ComboRows, click the Mixer Retry button, and inspect visible
+  Mixer cards directly. This path can validate pointer interaction, visible
+  card contents, Retry behavior, stale visible cards, visual layout quality, and
+  perceived rebuild churn.
+- Debug inspection path: run SceneDeck with `SCENEDECK_MIXER_INSPECT=1` and
+  capture the structured Mixer inspection lines emitted while exercising the
+  cases below. This path can prove rendered Mixer state, visible input names,
+  mute state, volume labels, loading/error state, and Retry visible/enabled
+  state. It can also show selected and pinned target/fallback state when the
+  application renders those modes.
+
+Debug inspection limits:
+
+- The debug inspection path cannot prove actual pointer interaction success.
+  Mode and scene changes must still be triggered by a real desktop interaction
+  or another documented control path before their rendered inspection lines can
+  be used as evidence.
+- The debug inspection path cannot prove visual layout quality.
+- The debug inspection path cannot prove perceived rebuild churn unless a
+  tester also observes the interactive session while repeated OBS volume echoes
+  occur.
+- For any automated or alternate control path, record the exact tool or method
+  in `docs/manual-test-runs.md`. Cases outside that method's control and
+  inspection limits remain blocked, not passed.
 
 1. Open Mixer and select Active mode with the mode ComboRow.
 2. Change the current OBS program scene from OBS and from SceneDeck Live.
-3. Record whether Active mode follows the current scene and whether any
-   unexpected selected/pinned scene refresh is observed.
+3. Record whether Active mode follows the current scene. With debug inspection,
+   capture the rendered mode, visible render source/status, visible input names,
+   mute states, and volume labels.
 4. Switch to Selected mode with the mode ComboRow and no selected scene
    configured.
 5. Record whether the summary copy identifies the current-scene fallback and
-   whether the visible cards match that fallback scene.
+   whether the visible cards match that fallback scene. With debug inspection,
+   capture the selected scene, refresh target/reason, render source/status, and
+   visible input names.
 6. Choose an explicit scene with the scene ComboRow.
 7. Record whether the selected-scene summary and visible cards follow the
-   explicit scene after additional OBS program-scene changes.
+   explicit scene after additional OBS program-scene changes. With debug
+   inspection, capture the selected scene, refresh target/reason, render
+   source/status, and visible input names.
 8. Switch to Pinned mode with the mode ComboRow.
 9. Test pinned fallback order by using an explicit pinned scene, then a missing
    pinned scene with a selected scene available, then no pinned or selected
    scene with a current scene available.
-10. Record the summary copy and visible card target for each pinned case.
+10. Record the summary copy and visible card target for each pinned case. With
+    debug inspection, capture the pinned scene, selected scene, refresh
+    target/reason, render source/status, and visible input names.
 11. Force a selected or pinned scene refresh failure with a non-destructive
     setup, such as selecting a temporary test scene and then removing or
     renaming only that temporary scene in OBS.
 12. Use the Mixer Retry button after the failure.
 13. Record whether Retry sends a new refresh attempt and whether the error,
-    loading, and visible-card states recover or remain failed.
+    loading, and visible-card states recover or remain failed. With debug
+    inspection, capture loading/error/missing status and whether Retry is
+    visible/enabled before and after Retry is activated.
 14. In OBS Audio Mixer, toggle mute for a visible Mixer source in Active,
     Selected, and Pinned modes where the source is present.
 15. Record whether each OBS mute echo updates the visible Mixer card without a
-    manual page change.
+    manual page change. With debug inspection, capture the matching input name
+    and mute state before and after the OBS echo.
 16. In OBS Audio Mixer, move volume for a visible Mixer source repeatedly in
     Active, Selected, and Pinned modes where the source is present.
 17. Record whether each OBS volume echo updates the visible Mixer card without a
-    manual page change.
+    manual page change. With debug inspection, capture the matching input name,
+    volume value, and volume label before and after the OBS echo.
 18. After mute and volume echoes, check for stale visible cards by comparing the
     SceneDeck mute state and dB readout with OBS.
 19. During repeated volume echoes, record perceived rebuild churn: visible
@@ -222,12 +253,16 @@ Interaction requirement:
     churn.
 
 Expected result: cases are marked passed only when exercised. A complete pass
-shows ComboRow mode and scene changes selecting the expected Mixer target,
-Retry recovering or retrying after a failed selected or pinned refresh, OBS mute
-and volume echoes updating visible Mixer cards, no stale visible cards after
-echoes, and no noticeable rebuild churn under repeated volume echoes. If any
-prerequisite or interaction path is unavailable, record the case as blocked or
-skipped and make no pass/fail claim for that behavior.
+through the interactive desktop path shows ComboRow mode and scene changes
+selecting the expected Mixer target, Retry recovering or retrying after a
+failed selected or pinned refresh, OBS mute and volume echoes updating visible
+Mixer cards, no stale visible cards after echoes, acceptable visual layout, and
+no noticeable rebuild churn under repeated volume echoes. A complete pass
+through the debug inspection path shows structured lines matching the rendered
+Mixer state, visible input names, mute states, volume values and labels,
+loading/error/missing state, and Retry visible/enabled state for the exercised
+cases. If any prerequisite or interaction path is unavailable, record the case
+as blocked or skipped and make no pass/fail claim for that behavior.
 
 ### Volume and Mute Sync: SceneDeck to OBS
 

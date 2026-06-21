@@ -16,21 +16,41 @@ use gtk4::{
 
 use crate::controller::command::AppCommand;
 use crate::controller::state::{
+    MixerInspectionRenderSourceKind, MixerInspectionSnapshot, MixerInspectionStatus,
     MixerSceneRefreshTarget, MixerSceneRefreshTargetReason, MixerVisibleAudioStatus,
     MixerVisibleRenderSource,
 };
 use crate::domain::audio::AudioInput;
 use crate::domain::mixer::{MixerGrouping, MixerMode, MixerSelection};
+use crate::services::audio_service::AudioService;
 use crate::storage::config::write_config;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::widgets::audio_card;
 
 type MixerRefreshTracker = Rc<RefCell<Option<String>>>;
+const MIXER_INSPECT_ENV: &str = "SCENEDECK_MIXER_INSPECT";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MixerRefreshRequestIntent {
     Automatic,
     Explicit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MixerRetryInspection {
+    visible: bool,
+    enabled: bool,
+}
+
+impl MixerRetryInspection {
+    const HIDDEN: Self = Self {
+        visible: false,
+        enabled: false,
+    };
+    const VISIBLE_ENABLED: Self = Self {
+        visible: true,
+        enabled: true,
+    };
 }
 
 pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
@@ -73,6 +93,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
     let mixer = state.mixer.clone();
     let active_scene = inventory.current_id.clone();
     let target_scene = state.mixer_scene_refresh_target().map(str::to_string);
+    let inspection_snapshot = state.mixer_inspection_snapshot();
     let target_details = state
         .mixer_scene_refresh_target_details()
         .map(|target| (target.scene.to_string(), target.reason));
@@ -131,6 +152,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
     let source_inputs = match state.visible_mixer_render_source() {
         MixerVisibleRenderSource::ActiveScene(inputs) => inputs.to_vec(),
         MixerVisibleRenderSource::MissingScene => {
+            emit_mixer_inspection(&inspection_snapshot, &[], MixerRetryInspection::HIDDEN);
             append_mixer_status(
                 root,
                 "audio-volume-muted-symbolic",
@@ -142,6 +164,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
         MixerVisibleRenderSource::Scene { scene, status } => match status {
             MixerVisibleAudioStatus::Loading => {
                 clear_tracked_request(refresh_tracker, scene);
+                emit_mixer_inspection(&inspection_snapshot, &[], MixerRetryInspection::HIDDEN);
                 append_mixer_status(
                     root,
                     "view-refresh-symbolic",
@@ -152,6 +175,11 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
             }
             MixerVisibleAudioStatus::Error(error) => {
                 clear_tracked_request(refresh_tracker, scene);
+                emit_mixer_inspection(
+                    &inspection_snapshot,
+                    &[],
+                    MixerRetryInspection::VISIBLE_ENABLED,
+                );
                 append_mixer_error_status(root, nav, refresh_tracker, scene, &error.message);
                 return;
             }
@@ -165,6 +193,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
                     refresh_tracker,
                     MixerRefreshRequestIntent::Automatic,
                 );
+                emit_mixer_inspection(&inspection_snapshot, &[], MixerRetryInspection::HIDDEN);
                 append_mixer_status(
                     root,
                     "view-refresh-symbolic",
@@ -176,6 +205,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
         },
     };
     let inputs = filter_inputs(&source_inputs, &mixer.search);
+    emit_mixer_inspection(&inspection_snapshot, &inputs, MixerRetryInspection::HIDDEN);
     append_mixer_inputs(
         root,
         nav,
@@ -474,6 +504,109 @@ fn filter_inputs(inputs: &[AudioInput], search: &str) -> Vec<AudioInput> {
         .collect()
 }
 
+fn emit_mixer_inspection(
+    snapshot: &MixerInspectionSnapshot<'_>,
+    visible_cards: &[AudioInput],
+    retry: MixerRetryInspection,
+) {
+    if std::env::var(MIXER_INSPECT_ENV).ok().as_deref() == Some("1") {
+        eprintln!(
+            "{}",
+            format_mixer_inspection_line(snapshot, visible_cards, retry)
+        );
+    }
+}
+
+fn format_mixer_inspection_line(
+    snapshot: &MixerInspectionSnapshot<'_>,
+    visible_cards: &[AudioInput],
+    retry: MixerRetryInspection,
+) -> String {
+    let cards: Vec<_> = visible_cards
+        .iter()
+        .map(|input| {
+            let snapshot_input = snapshot
+                .inputs
+                .iter()
+                .find(|snapshot_input| snapshot_input.name == input.name.as_str());
+            serde_json::json!({
+                "name": input.name,
+                "display_name": input.display_name,
+                "muted": input.muted,
+                "volume_mul": input.volume_mul,
+                "volume_db": input.volume_db,
+                "volume_label": snapshot_input
+                    .map(|input| input.volume_label.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| AudioService::format_db(input.volume_db)),
+            })
+        })
+        .collect();
+
+    let line = serde_json::json!({
+        "event": "mixer_inspect",
+        "mode": mixer_mode_inspection_label(snapshot.mode),
+        "selected_scene": snapshot.selected_scene,
+        "pinned_scene": snapshot.pinned_scene,
+        "refresh_target": snapshot.refresh_target.map(|target| target.scene),
+        "refresh_reason": snapshot
+            .refresh_target
+            .map(|target| mixer_refresh_reason_inspection_label(target.reason)),
+        "render_source": mixer_render_source_inspection_label(snapshot.render_source_kind),
+        "render_scene": snapshot.scene,
+        "status": mixer_status_inspection_value(snapshot.status),
+        "visible_cards": cards,
+        "retry": {
+            "visible": retry.visible,
+            "enabled": retry.enabled,
+        },
+    });
+    format!("scenedeck_mixer_inspect {line}")
+}
+
+fn mixer_status_inspection_value(status: MixerInspectionStatus<'_>) -> serde_json::Value {
+    match status {
+        MixerInspectionStatus::Loaded => serde_json::json!({ "kind": "loaded" }),
+        MixerInspectionStatus::Loading => serde_json::json!({ "kind": "loading" }),
+        MixerInspectionStatus::Error(message) => {
+            serde_json::json!({ "kind": "error", "message": message })
+        }
+        MixerInspectionStatus::Missing => serde_json::json!({ "kind": "missing" }),
+    }
+}
+
+fn mixer_mode_inspection_label(mode: MixerMode) -> &'static str {
+    match mode {
+        MixerMode::ActiveScene => "active",
+        MixerMode::SelectedScene => "selected",
+        MixerMode::PinnedScene => "pinned",
+    }
+}
+
+fn mixer_render_source_inspection_label(kind: MixerInspectionRenderSourceKind) -> &'static str {
+    match kind {
+        MixerInspectionRenderSourceKind::ActiveScene => "active_scene",
+        MixerInspectionRenderSourceKind::Scene => "scene",
+        MixerInspectionRenderSourceKind::MissingScene => "missing_scene",
+    }
+}
+
+fn mixer_refresh_reason_inspection_label(reason: MixerSceneRefreshTargetReason) -> &'static str {
+    match reason {
+        MixerSceneRefreshTargetReason::DirectSelectedScene => "direct_selected_scene",
+        MixerSceneRefreshTargetReason::DirectPinnedScene => "direct_pinned_scene",
+        MixerSceneRefreshTargetReason::SelectedModeCurrentSceneFallback => {
+            "selected_mode_current_scene_fallback"
+        }
+        MixerSceneRefreshTargetReason::PinnedModeSelectedSceneFallback => {
+            "pinned_mode_selected_scene_fallback"
+        }
+        MixerSceneRefreshTargetReason::PinnedModeCurrentSceneFallback => {
+            "pinned_mode_current_scene_fallback"
+        }
+    }
+}
+
 fn source_summary(
     mode: MixerMode,
     active_scene: Option<&str>,
@@ -654,14 +787,16 @@ fn write_mixer_selection(selection: MixerSelection) -> Result<(), std::io::Error
 #[cfg(test)]
 mod tests {
     use super::{
-        prepare_mixer_scene_audio_request, should_request_mixer_scene_audio, source_summary,
-        MixerRefreshRequestIntent,
+        format_mixer_inspection_line, prepare_mixer_scene_audio_request,
+        should_request_mixer_scene_audio, source_summary, MixerRefreshRequestIntent,
+        MixerRetryInspection,
     };
     use crate::controller::command::AppCommand;
     use crate::controller::state::{
         AppState, MixerAudioError, MixerSceneRefreshTargetReason, MixerVisibleAudioStatus,
     };
     use crate::domain::appearance::ThemeMode;
+    use crate::domain::audio::AudioInput;
     use crate::domain::mixer::{MixerMode, MixerSelection};
     use crate::storage::config::OutputConfig;
 
@@ -697,6 +832,19 @@ mod tests {
 
     fn loaded_status() -> MixerVisibleAudioStatus<'static> {
         MixerVisibleAudioStatus::Loaded(&[])
+    }
+
+    fn input(id: &str, muted: bool, volume_mul: f64, volume_db: f64) -> AudioInput {
+        let mut input = AudioInput::new(id.to_string(), muted, volume_mul, volume_db);
+        input.display_name = format!("{id} Display");
+        input
+    }
+
+    fn inspection_json(line: &str) -> serde_json::Value {
+        let payload = line
+            .strip_prefix("scenedeck_mixer_inspect ")
+            .expect("inspection line prefix");
+        serde_json::from_str(payload).expect("valid inspection json")
     }
 
     fn command_scene(command: Option<AppCommand>) -> Option<String> {
@@ -781,6 +929,67 @@ mod tests {
         state.mixer.mode = MixerMode::SelectedScene;
 
         assert_eq!(mixer_summary(&state), "No scene selected");
+    }
+
+    #[test]
+    fn mixer_inspection_line_reports_visible_cards() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::ActiveScene;
+        state.scene_inventory.current_id = Some("Program".to_string());
+        state.audio_inputs = vec![
+            input("Music", true, 0.5, -6.24),
+            input("Mic", false, 1.0, 0.0),
+        ];
+        let visible_cards = vec![state.audio_inputs[0].clone()];
+        let snapshot = state.mixer_inspection_snapshot();
+
+        let json = inspection_json(&format_mixer_inspection_line(
+            &snapshot,
+            &visible_cards,
+            MixerRetryInspection::HIDDEN,
+        ));
+
+        assert_eq!(json["event"], "mixer_inspect");
+        assert_eq!(json["mode"], "active");
+        assert_eq!(json["render_source"], "active_scene");
+        assert_eq!(json["render_scene"], "Program");
+        assert_eq!(json["status"]["kind"], "loaded");
+        assert_eq!(json["retry"]["visible"], false);
+        let cards = json["visible_cards"].as_array().unwrap();
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0]["name"], "Music");
+        assert_eq!(cards[0]["display_name"], "Music Display");
+        assert_eq!(cards[0]["muted"], true);
+        assert_eq!(cards[0]["volume_mul"], 0.5);
+        assert_eq!(cards[0]["volume_db"], -6.24);
+        assert_eq!(cards[0]["volume_label"], "-6.2 dB");
+    }
+
+    #[test]
+    fn mixer_inspection_line_reports_error_and_retry_state() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::SelectedScene;
+        state.mixer.selected_scene = Some("Scene A".to_string());
+        state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_failure("Scene A".to_string(), "OBS failed".to_string());
+        let snapshot = state.mixer_inspection_snapshot();
+
+        let json = inspection_json(&format_mixer_inspection_line(
+            &snapshot,
+            &[],
+            MixerRetryInspection::VISIBLE_ENABLED,
+        ));
+
+        assert_eq!(json["mode"], "selected");
+        assert_eq!(json["refresh_target"], "Scene A");
+        assert_eq!(json["refresh_reason"], "direct_selected_scene");
+        assert_eq!(json["render_source"], "scene");
+        assert_eq!(json["render_scene"], "Scene A");
+        assert_eq!(json["status"]["kind"], "error");
+        assert_eq!(json["status"]["message"], "OBS failed");
+        assert_eq!(json["visible_cards"].as_array().unwrap().len(), 0);
+        assert_eq!(json["retry"]["visible"], true);
+        assert_eq!(json["retry"]["enabled"], true);
     }
 
     #[test]

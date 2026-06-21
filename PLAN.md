@@ -47,13 +47,15 @@ Mixer mirror state removal, hidden snapshot invariant restoration, shared
 Mixer scene-specific target resolution, refresh-target naming cleanup,
 fallback-aware Mixer summary copy, direct Mixer summary copy tests, output
 confirmation dialog appearance metadata, tightened focused Mixer manual
-evidence instructions, and reproducible focused Mixer fixture documentation.
-Focused manual Mixer interaction evidence is still blocked after the iteration
-12 run: OBS WebSocket was reachable and version/inventory data was recorded,
-but the OBS scene setup still lacked a differing scene-specific audio input and
-the non-interactive Wayland session could not drive GTK ComboRows, click Retry,
-or inspect visible Mixer cards. No pass/fail behavior is claimed for the
-blocked interaction cases, and no runtime rebuild-churn issue was observed.
+evidence instructions, reproducible focused Mixer fixture documentation, and
+the opt-in Mixer debug inspection path. Focused manual Mixer interaction
+evidence is still not complete: the debug path now exposes structured Mixer
+render state, visible cards, mute/volume labels, and Retry/error state, but the
+review found one evidence-quality issue before it should be trusted for a run:
+the automatic Missing -> Loading branch can emit a `missing` inspection snapshot
+while the visible page has already chosen a loading placeholder. No pass/fail
+behavior is claimed yet for ComboRow timing, Retry activation, OBS mute/volume
+echoes, stale visible cards, or runtime rebuild churn.
 
 ## Completed Phases
 
@@ -590,57 +592,100 @@ Triage decision:
   rebuild path remains accepted behavior until repeated volume echoes are
   observed against an inspectable Mixer UI and produce noticeable churn.
 
+### Mixer Debug Inspection Path
+
+Working tree, reviewed 2026-06-21:
+
+- Added `MixerInspectionSnapshot`, `MixerInspectionInput`,
+  `MixerInspectionStatus`, and `MixerInspectionRenderSourceKind` in
+  `src/controller/state.rs`.
+- Added `AppState::mixer_inspection_snapshot` so debug evidence can read the
+  same render-source, refresh-target, fallback, loading/error/missing, mute,
+  volume, and formatted dB state used by the Mixer page.
+- Added opt-in `SCENEDECK_MIXER_INSPECT=1` stderr output from
+  `src/ui/pages/mixer.rs`, using `scenedeck_mixer_inspect {json}` lines with
+  mode, selected/pinned scenes, refresh target/reason, render source/status,
+  visible cards, and Retry visible/enabled state.
+- Added unit coverage for snapshot variants and inspection JSON formatting.
+- Updated `docs/manual-test-plan.md` and `docs/manual-test-runs.md` with a
+  debug inspection execution path, limits, and a focused inspection run
+  template.
+
+Review verdict:
+
+- Static validation passed in review:
+  `cargo fmt --all -- --check`, `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- The debug path is narrow, opt-in, and useful for avoiding brittle GTK screen
+  scraping. It does not introduce a visible production surface.
+- The inspection model mostly follows the existing Mixer render-source and
+  refresh-target contracts and is covered across Active, Selected, Pinned,
+  loading, error, missing, and visible-card formatting cases.
+- High-priority evidence gap: in `populate`, the Missing scene-specific branch
+  dispatches an automatic refresh and renders the "Loading Mixer Audio"
+  placeholder, but emits the inspection snapshot captured before that dispatch.
+  The structured line can therefore report `status.kind = "missing"` while the
+  visible UI shown to the tester is loading. This weakens the inspection output
+  as executable evidence and should be fixed before a run is treated as
+  authoritative.
+- Design concern: the controller state module now imports `AudioService` only
+  to format a debug/UI-facing dB label. This is not a functional regression, but
+  future cleanup should keep presentation formatting close to UI/debug
+  serialization if the inspection path grows.
+- The debug inspection path cannot prove pointer interaction success, visual
+  layout quality, or perceived rebuild churn; the docs correctly preserve those
+  limits.
+
 ## Groomed Next Steps
 
-### P1: Make Focused Mixer Manual Evidence Executable
+### P1: Align Mixer Inspection Output With Rendered UI
 
 Problem:
 
-- Three focused 2026-06-21 Mixer runs were recorded, but all were blocked
-  before interaction cases executed.
-- The latest iteration 12 run verified WebSocket reachability, OBS version,
-  obs-websocket version, scenes, and global audio inputs, but the fixture did
-  not include a scene-specific audio input present in only one test scene.
-- The non-interactive Wayland session still could not safely select GTK
-  ComboRows, click Retry, or inspect visible Mixer cards.
-- The manual plan now documents the required fixture, but documentation alone
-  does not create the fixture or make GTK state inspectable. Repeating the same
-  run from the same non-interactive environment will likely produce another
-  blocked entry.
+- `SCENEDECK_MIXER_INSPECT=1` now emits structured Mixer state, but the
+  automatic scene-specific Missing branch requests a refresh and renders a
+  loading placeholder while emitting a pre-request `missing` snapshot.
+- That mismatch can make the focused inspection run ambiguous exactly when it
+  is trying to replace brittle visual card inspection.
+- The current formatter also lacks an explicit UI/status-page state for loaded
+  snapshots that render "No Audio Sources" or "No Matching Audio Sources".
 
 Plan:
 
-- Decide the execution path before another run: either use a real interactive
-  desktop session, or add a small test/debug inspection path that can expose
-  Mixer mode, selected/pinned target, visible source names, mute state, volume
-  labels, and Retry/error state without brittle screen scraping.
-- Prepare the OBS fixture from `docs/manual-test-plan.md` in a throwaway
-  profile or clearly temporary `SceneDeck Test ...` scenes before launching
-  SceneDeck.
-- If automation is attempted, document the exact tool and verify it can drive
-  GTK ComboRows, activate Retry, and read Mixer card state before recording any
-  pass/fail claims.
-- Keep destructive OBS mutations out of the default flow; failure/retry setup
-  should use only temporary fixture scenes or a throwaway profile.
+- Emit inspection from the same branch-specific view decision that appends the
+  visible status or cards. For Missing -> automatic request, either emit a
+  status that explicitly means "refresh requested/loading placeholder shown" or
+  defer emission until the controller loading event rebuilds the page.
+- Add formatter tests for Missing -> requested/loading placeholder behavior and
+  for filtered-empty/no-audio status pages, so inspection evidence can
+  distinguish "loaded with no visible cards" from "still loading/missing".
+- Consider moving dB label formatting out of `AppState` and into the debug
+  serialization layer if the inspection snapshot is meant to remain a
+  controller-level state contract rather than a UI DTO.
+- Keep the debug path opt-in through `SCENEDECK_MIXER_INSPECT=1`; do not add a
+  visible production control for this evidence-only surface.
 
 Files:
 
+- `src/controller/state.rs`
+- `src/ui/pages/mixer.rs`
 - `docs/manual-test-plan.md`
 - `docs/manual-test-runs.md`
-- possible debug/test-only support in `src/ui/pages/mixer.rs` or
-  `src/ui/window.rs`
 
-### P1: Complete Focused Mixer Contract Manual Run
+### P1: Run Focused Mixer Inspection Evidence
 
 Problem:
 
 - The focused Mixer interaction contract still has no passing or failing
   runtime evidence.
-- The unverified areas are exactly the ones unit tests approximate poorly:
-  GTK ComboRow timing, Retry button behavior, OBS event echoes, and perceived
-  rebuild churn.
-- This should wait until the fixture and inspection path from the executable
-  evidence task are available.
+- The debug inspection path now exists but should not be used as authoritative
+  evidence until the rendered-state mismatch above is resolved.
+- The OBS fixture still needs a scene-specific input present in only one test
+  scene before Selected/Pinned scene-specific behavior can be proven.
+- Pointer interaction, layout quality, and perceived rebuild churn still
+  require an interactive desktop observation even when structured inspection
+  lines are captured.
 
 Plan:
 
@@ -651,16 +696,16 @@ Plan:
   can select ComboRows, click Retry, and inspect visible Mixer cards.
 - Execute `Focused Mixer Refresh Contract` from
   `docs/manual-test-plan.md`.
+- Capture `SCENEDECK_MIXER_INSPECT=1` output and use the focused inspection run
+  template in `docs/manual-test-runs.md`.
 - Record OBS version, SceneDeck build/commit, pass/fail results, skipped cases,
-  and any stale-card, retry, or rebuild-churn observations in
-  `docs/manual-test-runs.md`.
+  relevant structured lines, and any stale-card, retry, or rebuild-churn
+  observations.
 - Keep blocked entries explicit if any prerequisite remains unavailable; do not
   convert pure-test confidence into manual pass claims.
-- Use the new focused Mixer run template in `docs/manual-test-runs.md` so each
-  case has a pass/fail/blocked result and skipped cases list the exact
-  prerequisite or safety reason.
-- Preserve the iteration 12 non-claim language for any cases still blocked by
-  missing fixture state or unavailable UI inspection.
+- Keep the inspection path's limits explicit: it can prove rendered state and
+  card data, but not pointer interaction success, visual layout quality, or
+  perceived churn unless those were also observed interactively.
 
 Files:
 
