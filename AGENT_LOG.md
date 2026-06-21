@@ -1703,3 +1703,102 @@ M  SCORES.jsonl
 M  src/controller/app_controller.rs
 M  src/controller/state.rs
 M  src/ui/window.rs
+2026-06-21T14:20:15Z iteration 19 started remaining=8996s
+2026-06-21T14:20:15Z iteration 19 preplanner effective budgets untracked_scan_max_bytes=536870912 untracked_scan_max_count=10000 snapshot_copy_max_bytes=536870912 snapshot_copy_max_count=10000 snapshot_copy_max_file_bytes=134217728
+2026-06-21T14:20:15Z iteration 19 disposable preplanner repo created path=/tmp/agent-loop-preplanner-repo-3osd2qbz/repo copied_entries=115
+2026-06-21T14:20:15Z iteration 19 ideator phase started count=3
+2026-06-21T14:20:15Z iteration 19 ideator phase concurrency workers=3
+2026-06-21T14:20:15Z iteration 19 ideator 1 role="the pragmatist" started
+2026-06-21T14:20:15Z iteration 19 ideator 2 role="the architect" started
+2026-06-21T14:20:15Z iteration 19 ideator 3 role="the contrarian" started
+2026-06-21T14:20:23Z iteration 19 ideator 2 role="the architect" completed status=0
+2026-06-21T14:20:24Z iteration 19 ideator 3 role="the contrarian" completed status=0
+2026-06-21T14:20:25Z iteration 19 ideator 1 role="the pragmatist" completed status=0
+2026-06-21T14:20:25Z iteration 19 ideator phase completed approaches=3
+2026-06-21T14:20:25Z iteration 19 selector started approaches=3
+2026-06-21T14:20:34Z iteration 19 selector completed status=0
+2026-06-21T14:20:34Z iteration 19 disposable preplanner repo cleanup path=/tmp/agent-loop-preplanner-repo-3osd2qbz/repo
+2026-06-21T14:20:34Z iteration 19 selector rejected alternative role="the architect" approach="Failure-Contract First: stabilize output command recovery by defining the reducer-visible end state before touching UI polish or Mixer evidence. Treat command failure plus refre..." reason="Selected in substance, but strengthened by making the final reducer-visible non-transitioning invariant the explicit planning anchor rather than only a controller recovery concern."
+2026-06-21T14:20:34Z iteration 19 selector rejected alternative role="the contrarian" approach="State-Recovery First: prioritize the output command failure recovery contract before more Mixer evidence work, treating UI transition escape as the next reliability boundary." reason="Selected in substance, but the synthesized strategy is more specific about preserving uncertainty and avoiding stale-status overconfidence when refreshes fail."
+2026-06-21T14:20:34Z iteration 19 selector rejected alternative role="the pragmatist" approach="Failure-State First: stabilize output command recovery before expanding UI or Mixer evidence work, using explicit reducer-visible recovery semantics as the organizing principle." reason="Selected in substance, but refined to emphasize the hard invariant across every localized command path and the condition under which connection/session handling is still appropriate."
+2026-06-21T14:20:34Z iteration 19 selector alternatives persisted count=3
+2026-06-21T14:20:34Z iteration 19 selector structured alternatives persisted count=3
+2026-06-21T14:20:34Z iteration 19 planner started
+2026-06-21T14:20:56Z iteration 19 plan: 4 task(s) in 4 phase(s). This decomposition targets the highest-priority unblocked correctness gap: localized stream/record command failures must always resolve out of synthetic pending states even when status refresh also fails. The phases are sequential because the controller event/state contract drives both command orchestration and UI handling, and the same controller files are shared across the core implementation and tests.
+2026-06-21T14:20:56Z iteration 19 phase 1 started parallel=False tasks=1
+2026-06-21T14:24:46Z iteration 19 task t1 ('Define output command recovery state contract') status=0
+2026-06-21T14:24:46Z iteration 19 phase 2 started parallel=False tasks=1
+2026-06-21T14:29:03Z iteration 19 task t2 ('Recover after command failure plus refresh failure') status=0
+2026-06-21T14:29:03Z iteration 19 phase 3 started parallel=False tasks=1
+2026-06-21T14:30:01Z iteration 19 task t3 ('Wire recovered failure events through Live UI') status=0
+2026-06-21T14:30:01Z iteration 19 phase 4 started parallel=False tasks=1
+2026-06-21T14:30:30Z iteration 19 task t4 ('Run focused and full validation') status=0
+2026-06-21T14:30:30Z iteration 19 reviewer started
+
+## Review Summary - Iteration 19 - 2026-06-21
+
+### What Was Done
+
+- Added an `OutputCommandFailure` payload carrying both command error text and
+  a recovered output status.
+- Changed stream/record command failure events to carry that recovery payload
+  instead of only a string.
+- Computed fallback states from the synthetic pending command state so failed
+  starts recover to inactive and failed stops recover to active.
+- Applied recovered failure events through `AppState` and the Live event
+  handler so buttons leave `Starting`/`Stopping` immediately on localized
+  command failure.
+- Extended fake output-client tests to cover failed stream/record status
+  refreshes after command failure, including the case where both output status
+  refreshes fail.
+- Added reducer coverage proving recovered command failures leave
+  non-transitioning output states and preserve the other output's command
+  error.
+
+### What Was Found
+
+- Full validation passed in review:
+  `cargo fmt --all -- --check`, `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- The high-priority stuck-control bug is fixed for the targeted failure path:
+  command failure plus failed status refresh no longer strands the affected
+  Live output button in a disabled synthetic transition state.
+- The implementation preserves the localized failure boundary; these recovery
+  paths still do not emit generic `AppEvent::Error` or force OBS into
+  disconnected/error UI.
+- No functional regression was found in the changed source paths.
+- Design gap: `recovered_status` is a localized fallback rather than an
+  authoritative OBS status. The payload name/location should be tightened so
+  future code does not mistake it for a fresh status read.
+- Design debt remains in duplicated stream/record status refresh logic between
+  the direct `ObsClient` helper and the output-command wrapper helper.
+- Output error presentation remains basic: full backend error text is still
+  rendered in the compact Live banner, with the same text in a tooltip.
+
+### Top Improvement Proposals
+
+1. Clarify the output failure recovery payload naming and helper structure so
+   fallback status semantics are explicit and independently tested for every
+   `OutputRunState`.
+2. Unify duplicated output status refresh helpers while preserving localized
+   logging behavior for ordinary status refresh failures.
+3. Improve Live output error presentation with concise visible copy and full
+   backend details in a tooltip or details affordance.
+4. Keep Mixer runtime evidence gated behind OBS/WebSocket, temporary fixture,
+   and control-path prerequisites; do not add more blocked Mixer entries from
+   the same unavailable environment.
+2026-06-21T14:33:44Z iteration 19 reviewer completed status=0
+2026-06-21T14:33:44Z iteration 19 memory updated
+2026-06-21T14:33:44Z iteration 19 completed validation_status=0
+2026-06-21T14:33:44Z iteration 19 checkpoint started
+2026-06-21T14:33:44Z iteration 19 checkpoint status before commit:
+M  AGENT_LOG.md
+M  ALTERNATIVES.jsonl
+M  MEMORY.md
+M  PLAN.md
+M  SCORES.jsonl
+M  src/controller/app_controller.rs
+M  src/controller/event.rs
+M  src/controller/state.rs
+M  src/ui/window.rs

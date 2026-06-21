@@ -1,3 +1,4 @@
+use crate::controller::state::OutputCommandFailure;
 use crate::domain::audio::{AudioInput, InputId};
 use crate::domain::diagnostic::Diagnostic;
 use crate::domain::graph::SceneGraph;
@@ -58,8 +59,8 @@ pub enum AppEvent {
     RecordCommandPending(OutputStatus),
     StreamCommandSucceeded,
     RecordCommandSucceeded,
-    StreamCommandFailed(String),
-    RecordCommandFailed(String),
+    StreamCommandFailed(OutputCommandFailure),
+    RecordCommandFailed(OutputCommandFailure),
 
     // Graph & diagnostics
     GraphUpdated(SceneGraph),

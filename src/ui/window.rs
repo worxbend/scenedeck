@@ -595,10 +595,10 @@ fn apply_event(
             update_record_status(live, &status, elapsed, last_path.as_deref(), None);
         }
 
-        AppEvent::StreamCommandFailed(message) => {
+        AppEvent::StreamCommandFailed(failure) => {
             let (status, elapsed, error) = {
                 let mut state = nav.state.borrow_mut();
-                state.set_stream_command_failure(message);
+                state.set_stream_command_failure_with_recovery(failure);
                 (
                     state.stream_status.clone(),
                     state.stream_active_since.map(format_elapsed),
@@ -608,10 +608,10 @@ fn apply_event(
             update_stream_status(live, &status, elapsed, error.as_deref());
         }
 
-        AppEvent::RecordCommandFailed(message) => {
+        AppEvent::RecordCommandFailed(failure) => {
             let (status, elapsed, last_path, error) = {
                 let mut state = nav.state.borrow_mut();
-                state.set_record_command_failure(message);
+                state.set_record_command_failure_with_recovery(failure);
                 (
                     state.record_status.clone(),
                     state.record_active_since.map(format_elapsed),

@@ -38,6 +38,7 @@ use tokio::task::JoinHandle;
 use crate::controller::command::AppCommand;
 use crate::controller::dependencies::ControllerDependencies;
 use crate::controller::event::AppEvent;
+use crate::controller::state::OutputCommandFailure;
 use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::infra::error::AppError;
 use crate::obs::client::ObsClient;
@@ -337,9 +338,15 @@ impl AppController {
         let Some(client) = self.output_command_client() else {
             clear_stream_pending(&self.output_pending);
             tracing::warn!("stream command ignored — not connected to OBS");
-            let _ = self.event_tx.send(AppEvent::StreamCommandFailed(
+            let failure = OutputCommandFailure::with_recovered_status(
                 "Not connected to OBS".to_string(),
-            ));
+                OutputStatus {
+                    active: false,
+                    state: OutputRunState::Inactive,
+                    detail: None,
+                },
+            );
+            let _ = self.event_tx.send(AppEvent::StreamCommandFailed(failure));
             return;
         };
 
@@ -350,11 +357,15 @@ impl AppController {
         } else {
             OutputRunState::Stopping
         };
-        let _ = tx.send(AppEvent::StreamCommandPending(OutputStatus {
+        let pending_status = OutputStatus {
             active: !active,
             state: transition_state,
             detail: None,
-        }));
+        };
+        let recovered_failure_status =
+            OutputCommandFailure::from_current_status(String::new(), &pending_status)
+                .recovered_status;
+        let _ = tx.send(AppEvent::StreamCommandPending(pending_status));
 
         self.runtime.spawn(async move {
             match client.set_streaming(active).await {
@@ -365,7 +376,11 @@ impl AppController {
                 Err(e) => {
                     let message = e.to_string();
                     tracing::warn!(%e, active, "stream command failed");
-                    let _ = tx.send(AppEvent::StreamCommandFailed(message));
+                    let failure = OutputCommandFailure::with_recovered_status(
+                        message,
+                        recovered_failure_status,
+                    );
+                    let _ = tx.send(AppEvent::StreamCommandFailed(failure));
                     refresh_output_statuses_for_output_client(&client, &tx).await;
                 }
             }
@@ -385,9 +400,15 @@ impl AppController {
         let Some(client) = self.output_command_client() else {
             clear_record_pending(&self.output_pending);
             tracing::warn!("record command ignored — not connected to OBS");
-            let _ = self.event_tx.send(AppEvent::RecordCommandFailed(
+            let failure = OutputCommandFailure::with_recovered_status(
                 "Not connected to OBS".to_string(),
-            ));
+                OutputStatus {
+                    active: false,
+                    state: OutputRunState::Inactive,
+                    detail: None,
+                },
+            );
+            let _ = self.event_tx.send(AppEvent::RecordCommandFailed(failure));
             return;
         };
 
@@ -398,11 +419,15 @@ impl AppController {
         } else {
             OutputRunState::Stopping
         };
-        let _ = tx.send(AppEvent::RecordCommandPending(OutputStatus {
+        let pending_status = OutputStatus {
             active: !active,
             state: transition_state,
             detail: None,
-        }));
+        };
+        let recovered_failure_status =
+            OutputCommandFailure::from_current_status(String::new(), &pending_status)
+                .recovered_status;
+        let _ = tx.send(AppEvent::RecordCommandPending(pending_status));
 
         self.runtime.spawn(async move {
             match client.set_recording(active).await {
@@ -420,7 +445,11 @@ impl AppController {
                 Err(e) => {
                     let message = e.to_string();
                     tracing::warn!(%e, active, "record command failed");
-                    let _ = tx.send(AppEvent::RecordCommandFailed(message));
+                    let failure = OutputCommandFailure::with_recovered_status(
+                        message,
+                        recovered_failure_status,
+                    );
+                    let _ = tx.send(AppEvent::RecordCommandFailed(failure));
                     refresh_output_statuses_for_output_client(&client, &tx).await;
                 }
             }
@@ -871,8 +900,8 @@ mod tests {
     struct FakeOutputClient {
         stream_result: Result<(), AppError>,
         record_result: Result<Option<String>, AppError>,
-        stream_status: OutputStatus,
-        record_status: OutputStatus,
+        stream_status: Result<OutputStatus, AppError>,
+        record_status: Result<OutputStatus, AppError>,
         stream_status_calls: Arc<Mutex<usize>>,
         record_status_calls: Arc<Mutex<usize>>,
     }
@@ -882,16 +911,30 @@ mod tests {
             Arc::new(Self {
                 stream_result: Err(AppError::Request("stream backend refused".to_string())),
                 record_result: Err(AppError::Request("record backend refused".to_string())),
-                stream_status: OutputStatus {
+                stream_status: Ok(OutputStatus {
                     active: false,
                     state: OutputRunState::Inactive,
                     detail: None,
-                },
-                record_status: OutputStatus {
+                }),
+                record_status: Ok(OutputStatus {
                     active: true,
                     state: OutputRunState::Active,
                     detail: Some("/tmp/current-recording.mkv".to_string()),
-                },
+                }),
+                stream_status_calls: Arc::new(Mutex::new(0)),
+                record_status_calls: Arc::new(Mutex::new(0)),
+            })
+        }
+
+        fn with_status_results(
+            stream_status: Result<OutputStatus, AppError>,
+            record_status: Result<OutputStatus, AppError>,
+        ) -> Arc<Self> {
+            Arc::new(Self {
+                stream_result: Err(AppError::Request("stream backend refused".to_string())),
+                record_result: Err(AppError::Request("record backend refused".to_string())),
+                stream_status,
+                record_status,
                 stream_status_calls: Arc::new(Mutex::new(0)),
                 record_status_calls: Arc::new(Mutex::new(0)),
             })
@@ -928,7 +971,7 @@ mod tests {
             let calls = Arc::clone(&self.stream_status_calls);
             Box::pin(async move {
                 *calls.lock().expect("stream status calls") += 1;
-                Ok(status)
+                status
             })
         }
 
@@ -937,7 +980,7 @@ mod tests {
             let calls = Arc::clone(&self.record_status_calls);
             Box::pin(async move {
                 *calls.lock().expect("record status calls") += 1;
-                Ok(status)
+                status
             })
         }
     }
@@ -951,6 +994,75 @@ mod tests {
             .collect()
     }
 
+    fn inactive_status() -> OutputStatus {
+        OutputStatus {
+            active: false,
+            state: OutputRunState::Inactive,
+            detail: None,
+        }
+    }
+
+    fn active_status() -> OutputStatus {
+        OutputStatus {
+            active: true,
+            state: OutputRunState::Active,
+            detail: Some("/tmp/current-recording.mkv".to_string()),
+        }
+    }
+
+    fn app_state() -> crate::controller::state::AppState {
+        crate::controller::state::AppState::new(
+            crate::domain::appearance::ThemeMode::default(),
+            crate::domain::mixer::MixerSelection::default(),
+            crate::storage::config::OutputConfig::default(),
+            None,
+        )
+    }
+
+    fn apply_output_event(state: &mut crate::controller::state::AppState, event: &AppEvent) {
+        match event {
+            AppEvent::StreamStatusUpdated(status) => state.set_stream_status(status.clone()),
+            AppEvent::RecordStatusUpdated(status) => state.set_record_status(status.clone()),
+            AppEvent::StreamCommandPending(status) => {
+                state.set_stream_command_pending(status.clone());
+            }
+            AppEvent::RecordCommandPending(status) => {
+                state.set_record_command_pending(status.clone());
+            }
+            AppEvent::StreamCommandFailed(failure) => {
+                state.set_stream_command_failure_with_recovery(failure.clone());
+            }
+            AppEvent::RecordCommandFailed(failure) => {
+                state.set_record_command_failure_with_recovery(failure.clone());
+            }
+            AppEvent::StreamCommandSucceeded => state.set_stream_command_success(),
+            AppEvent::RecordCommandSucceeded => state.set_record_command_success(),
+            _ => {}
+        }
+    }
+
+    fn assert_non_transitioning(status: &OutputStatus) {
+        assert!(
+            !status.state.is_transitioning(),
+            "expected non-transitioning output status, got {status:?}"
+        );
+    }
+
+    fn wait_for_status_calls(fake: &FakeOutputClient, stream_calls: usize, record_calls: usize) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while std::time::Instant::now() < deadline {
+            if fake.stream_status_call_count() >= stream_calls
+                && fake.record_status_call_count() >= record_calls
+            {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert_eq!(fake.stream_status_call_count(), stream_calls);
+        assert_eq!(fake.record_status_call_count(), record_calls);
+    }
+
     #[test]
     fn start_streaming_without_client_emits_stream_command_failure() {
         let (_runtime, mut controller, rx) = controller_with_receiver();
@@ -958,10 +1070,11 @@ mod tests {
         controller.handle(AppCommand::StartStreaming);
 
         let event = rx.try_recv().expect("stream failure event");
-        let AppEvent::StreamCommandFailed(message) = event else {
+        let AppEvent::StreamCommandFailed(failure) = event else {
             panic!("expected stream command failure event");
         };
-        assert_eq!(message, "Not connected to OBS");
+        assert_eq!(failure.message, "Not connected to OBS");
+        assert_eq!(failure.recovered_status, inactive_status());
         assert!(rx.try_recv().is_err());
     }
 
@@ -972,10 +1085,11 @@ mod tests {
         controller.handle(AppCommand::StartRecording);
 
         let event = rx.try_recv().expect("record failure event");
-        let AppEvent::RecordCommandFailed(message) = event else {
+        let AppEvent::RecordCommandFailed(failure) = event else {
             panic!("expected record command failure event");
         };
-        assert_eq!(message, "Not connected to OBS");
+        assert_eq!(failure.message, "Not connected to OBS");
+        assert_eq!(failure.recovered_status, inactive_status());
         assert!(rx.try_recv().is_err());
     }
 
@@ -997,10 +1111,11 @@ mod tests {
             })
         ));
 
-        let AppEvent::StreamCommandFailed(message) = &events[1] else {
+        let AppEvent::StreamCommandFailed(failure) = &events[1] else {
             panic!("expected stream command failure after pending event");
         };
-        assert!(message.contains("stream backend refused"));
+        assert!(failure.message.contains("stream backend refused"));
+        assert_eq!(failure.recovered_status, inactive_status());
 
         assert!(matches!(
             events[2],
@@ -1047,10 +1162,11 @@ mod tests {
             })
         ));
 
-        let AppEvent::RecordCommandFailed(message) = &events[1] else {
+        let AppEvent::RecordCommandFailed(failure) = &events[1] else {
             panic!("expected record command failure after pending event");
         };
-        assert!(message.contains("record backend refused"));
+        assert!(failure.message.contains("record backend refused"));
+        assert_eq!(failure.recovered_status, inactive_status());
 
         assert!(matches!(
             events[2],
@@ -1073,6 +1189,244 @@ mod tests {
                 .iter()
                 .any(|event| matches!(event, AppEvent::Error(_))),
             "output command failure should not emit generic AppEvent::Error"
+        );
+        assert_eq!(fake.stream_status_call_count(), 1);
+        assert_eq!(fake.record_status_call_count(), 1);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn stream_command_failure_with_stream_status_refresh_failure_unblocks_stream() {
+        let (_runtime, mut controller, rx) = controller_with_receiver();
+        let fake = FakeOutputClient::with_status_results(
+            Err(AppError::Request("stream status unavailable".to_string())),
+            Ok(active_status()),
+        );
+        controller.set_output_client_override(OutputCommandClient::Fake(fake.clone()));
+
+        controller.handle(AppCommand::StartStreaming);
+
+        let events = receive_events(&rx, 3, "stream command failure with stream refresh failure");
+        wait_for_status_calls(&fake, 1, 1);
+
+        assert!(matches!(
+            events[0],
+            AppEvent::StreamCommandPending(OutputStatus {
+                active: false,
+                state: OutputRunState::Starting,
+                detail: None
+            })
+        ));
+        let AppEvent::StreamCommandFailed(failure) = &events[1] else {
+            panic!("expected stream command failure after pending event");
+        };
+        assert!(failure.message.contains("stream backend refused"));
+        assert_eq!(failure.recovered_status, inactive_status());
+        assert!(matches!(events[2], AppEvent::RecordStatusUpdated(_)));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AppEvent::Error(_))),
+            "localized stream/status failure should not emit generic AppEvent::Error"
+        );
+
+        let mut state = app_state();
+        state.set_record_command_failure("existing record error".to_string());
+        for event in &events {
+            apply_output_event(&mut state, event);
+        }
+        assert_eq!(state.stream_status, inactive_status());
+        assert_non_transitioning(&state.stream_status);
+        assert!(state
+            .last_stream_command_error
+            .as_deref()
+            .is_some_and(|message| message.contains("stream backend refused")));
+        assert_eq!(
+            state.last_record_command_error.as_deref(),
+            Some("existing record error")
+        );
+        assert_eq!(fake.stream_status_call_count(), 1);
+        assert_eq!(fake.record_status_call_count(), 1);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn record_command_failure_with_record_status_refresh_failure_unblocks_record() {
+        let (_runtime, mut controller, rx) = controller_with_receiver();
+        let fake = FakeOutputClient::with_status_results(
+            Ok(inactive_status()),
+            Err(AppError::Request("record status unavailable".to_string())),
+        );
+        controller.set_output_client_override(OutputCommandClient::Fake(fake.clone()));
+
+        controller.handle(AppCommand::StartRecording);
+
+        let events = receive_events(&rx, 3, "record command failure with record refresh failure");
+        wait_for_status_calls(&fake, 1, 1);
+
+        assert!(matches!(
+            events[0],
+            AppEvent::RecordCommandPending(OutputStatus {
+                active: false,
+                state: OutputRunState::Starting,
+                detail: None
+            })
+        ));
+        let AppEvent::RecordCommandFailed(failure) = &events[1] else {
+            panic!("expected record command failure after pending event");
+        };
+        assert!(failure.message.contains("record backend refused"));
+        assert_eq!(failure.recovered_status, inactive_status());
+        assert!(matches!(events[2], AppEvent::StreamStatusUpdated(_)));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AppEvent::Error(_))),
+            "localized record/status failure should not emit generic AppEvent::Error"
+        );
+
+        let mut state = app_state();
+        state.set_stream_command_failure("existing stream error".to_string());
+        for event in &events {
+            apply_output_event(&mut state, event);
+        }
+        assert_eq!(state.record_status, inactive_status());
+        assert_non_transitioning(&state.record_status);
+        assert_eq!(
+            state.last_stream_command_error.as_deref(),
+            Some("existing stream error")
+        );
+        assert!(state
+            .last_record_command_error
+            .as_deref()
+            .is_some_and(|message| message.contains("record backend refused")));
+        assert_eq!(fake.stream_status_call_count(), 1);
+        assert_eq!(fake.record_status_call_count(), 1);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn stream_command_failure_with_both_status_refreshes_failing_unblocks_stream_stop() {
+        let (_runtime, mut controller, rx) = controller_with_receiver();
+        let fake = FakeOutputClient::with_status_results(
+            Err(AppError::Request("stream status unavailable".to_string())),
+            Err(AppError::Request("record status unavailable".to_string())),
+        );
+        controller.set_output_client_override(OutputCommandClient::Fake(fake.clone()));
+
+        controller.handle(AppCommand::StopStreaming);
+
+        let events = receive_events(&rx, 2, "stream command failure with both refreshes failing");
+        wait_for_status_calls(&fake, 1, 1);
+
+        assert!(matches!(
+            events[0],
+            AppEvent::StreamCommandPending(OutputStatus {
+                active: true,
+                state: OutputRunState::Stopping,
+                detail: None
+            })
+        ));
+        let AppEvent::StreamCommandFailed(failure) = &events[1] else {
+            panic!("expected stream command failure after pending event");
+        };
+        assert!(failure.message.contains("stream backend refused"));
+        assert_eq!(
+            failure.recovered_status,
+            OutputStatus {
+                active: true,
+                state: OutputRunState::Active,
+                detail: None
+            }
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AppEvent::Error(_))),
+            "localized stream/status failure should not emit generic AppEvent::Error"
+        );
+
+        let mut state = app_state();
+        state.set_record_command_failure("existing record error".to_string());
+        for event in &events {
+            apply_output_event(&mut state, event);
+        }
+        assert_eq!(
+            state.stream_status,
+            OutputStatus {
+                active: true,
+                state: OutputRunState::Active,
+                detail: None
+            }
+        );
+        assert_non_transitioning(&state.stream_status);
+        assert_eq!(
+            state.last_record_command_error.as_deref(),
+            Some("existing record error")
+        );
+        assert_eq!(fake.stream_status_call_count(), 1);
+        assert_eq!(fake.record_status_call_count(), 1);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn record_command_failure_with_both_status_refreshes_failing_unblocks_record_stop() {
+        let (_runtime, mut controller, rx) = controller_with_receiver();
+        let fake = FakeOutputClient::with_status_results(
+            Err(AppError::Request("stream status unavailable".to_string())),
+            Err(AppError::Request("record status unavailable".to_string())),
+        );
+        controller.set_output_client_override(OutputCommandClient::Fake(fake.clone()));
+
+        controller.handle(AppCommand::StopRecording);
+
+        let events = receive_events(&rx, 2, "record command failure with both refreshes failing");
+        wait_for_status_calls(&fake, 1, 1);
+
+        assert!(matches!(
+            events[0],
+            AppEvent::RecordCommandPending(OutputStatus {
+                active: true,
+                state: OutputRunState::Stopping,
+                detail: None
+            })
+        ));
+        let AppEvent::RecordCommandFailed(failure) = &events[1] else {
+            panic!("expected record command failure after pending event");
+        };
+        assert!(failure.message.contains("record backend refused"));
+        assert_eq!(
+            failure.recovered_status,
+            OutputStatus {
+                active: true,
+                state: OutputRunState::Active,
+                detail: None
+            }
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AppEvent::Error(_))),
+            "localized record/status failure should not emit generic AppEvent::Error"
+        );
+
+        let mut state = app_state();
+        state.set_stream_command_failure("existing stream error".to_string());
+        for event in &events {
+            apply_output_event(&mut state, event);
+        }
+        assert_eq!(
+            state.record_status,
+            OutputStatus {
+                active: true,
+                state: OutputRunState::Active,
+                detail: None
+            }
+        );
+        assert_non_transitioning(&state.record_status);
+        assert_eq!(
+            state.last_stream_command_error.as_deref(),
+            Some("existing stream error")
         );
         assert_eq!(fake.stream_status_call_count(), 1);
         assert_eq!(fake.record_status_call_count(), 1);

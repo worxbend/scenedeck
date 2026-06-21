@@ -49,10 +49,12 @@ fallback-aware Mixer summary copy, direct Mixer summary copy tests, output
 confirmation dialog appearance metadata, tightened focused Mixer manual
 evidence instructions, reproducible focused Mixer fixture documentation, the
 opt-in Mixer debug inspection path, rendered-branch inspection status
-alignment, output-command error state/UI labels, and output command failure
-separation from generic OBS connection errors. Focused review reran
+alignment, output-command error state/UI labels, output command failure
+separation from generic OBS connection errors, and localized output command
+failure recovery when follow-up status refreshes fail. Focused review reran
 `cargo test --workspace --all-features command_failure -- --nocapture`,
-`stream_command`, and `record_command`; all passed.
+`stream_command`, and `record_command`; all passed before the full validation
+rule also passed.
 
 The Mixer debug path now distinguishes loading placeholders, error
 placeholders, missing no-target state, loaded visible cards, loaded empty audio,
@@ -68,11 +70,14 @@ cards, or runtime rebuild churn.
 
 Output command errors now have per-output state fields, Live-page labels, async
 failure coverage through a test-only output-command client, and no longer emit
-generic `AppEvent::Error` for localized stream/record command failures. The
-remaining high-priority output gap is recovery when the command fails and the
-follow-up output-status refresh also fails: the localized path currently logs
-the refresh failure, but the Live button can remain in its synthetic
-Starting/Stopping state until another event arrives.
+generic `AppEvent::Error` for localized stream/record command failures. Failed
+stream/record commands now carry a reducer-visible recovered status, so failed
+starts fall back to inactive and failed stops fall back to active even when one
+or both follow-up output-status refresh calls fail. The remaining output gaps
+are presentational and architectural rather than stuck-control correctness:
+the failure payload should make its fallback nature clearer, output status
+refresh logic is duplicated between `ObsClient` and the output-command wrapper,
+and compact Live error labels still render full backend text.
 
 ## Completed Phases
 
@@ -860,6 +865,53 @@ Review verdict:
   `refresh_output_statuses_for_output_client` for the wrapper. This is small
   but should be unified if output-client abstraction grows.
 
+### Output Command Failure Recovery
+
+Working tree, reviewed 2026-06-21:
+
+- Added `OutputCommandFailure` with a message and recovered `OutputStatus`.
+- Changed `StreamCommandFailed` and `RecordCommandFailed` to carry the
+  recovered failure payload instead of only a string.
+- Computed localized fallback statuses from the synthetic pending status:
+  failed starts recover to inactive and failed stops recover to active.
+- Normalized carried recovery statuses so `Starting`, `Stopping`, and
+  `Reconnecting` cannot remain as the immediate command-failure result.
+- Routed failure events through `AppState::set_*_command_failure_with_recovery`
+  in `src/ui/window.rs`, so Live controls update from the recovered status as
+  soon as the failure event arrives.
+- Extended the fake output-command client so status refreshes can fail.
+- Added controller tests for stream and record command failures where the
+  affected status refresh fails and where both stream/record status refreshes
+  fail.
+- Added reducer tests proving failed starts/stops leave non-transitioning
+  output states and preserve the other output's command error.
+
+Review verdict:
+
+- Full validation passed in review:
+  `cargo fmt --all -- --check`, `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- The high-priority stuck-control bug is fixed for the targeted path:
+  localized command failure plus failed follow-up status refresh no longer
+  leaves the affected Live button disabled in synthetic Starting/Stopping
+  state.
+- The implementation preserves the event-boundary rule from the previous
+  iteration: ordinary stream/record command failures still do not emit generic
+  `AppEvent::Error` or reset OBS connection state.
+- No functional regression was found in the changed source paths.
+- Design gap: `OutputCommandFailure.recovered_status` is a localized fallback,
+  not necessarily an authoritative OBS status. Its name and placement in
+  `controller::state` are serviceable for the current reducer path, but future
+  code could treat it as a fresh OBS reading unless the type is clarified or
+  moved closer to the output event contract.
+- Design debt remains from the previous iteration: output status refresh logic
+  is duplicated between the direct `ObsClient` helper and the
+  `OutputCommandClient` wrapper helper.
+- Output error presentation remains compact and technical. Long backend error
+  strings are still shown directly in the Live banner, though tooltips preserve
+  the full text.
+
 ## Groomed Next Steps
 
 ### P1: Make Focused Mixer Evidence Executable
@@ -950,59 +1002,75 @@ Tests:
 - Add GTK-level or widget-level coverage only if a test harness can inspect card
   updates without excessive brittleness.
 
-### P1: Harden Output Command Failure Recovery
+### P1: Clarify Output Failure Recovery Event Semantics
 
 Problem:
 
-- Stream/record command failures are now localized output errors and no longer
-  emit generic `AppEvent::Error`.
-- The controller sends a synthetic pending output status before the async OBS
-  command runs. On command failure it emits the output-specific failed event,
-  then tries to refresh stream/record statuses.
-- If that follow-up status refresh also fails, the UI can keep the synthetic
-  `Starting` or `Stopping` state and the affected output button remains
-  disabled because `StreamCommandFailed` / `RecordCommandFailed` only record
-  the error text.
-- Refresh failures are currently logged only. That is correct for isolated
-  status refresh noise, but after a failed command it leaves no explicit
-  recovery event for the UI.
+- `OutputCommandFailure` currently carries a `recovered_status` that is a
+  localized fallback derived from the command's synthetic pending state.
+- That fallback is intentionally not a generic OBS connection error and not
+  necessarily a fresh OBS status reading.
+- The current name and location in `src/controller/state.rs` make the reducer
+  path convenient, but they do not strongly communicate the distinction between
+  "fallback used to unblock UI" and "authoritative status fetched from OBS."
+- The recovery helper also builds the fallback indirectly through
+  `OutputCommandFailure::from_current_status(String::new(), &pending_status)`,
+  which works but obscures the actual state-machine rule.
 
 Plan:
 
-- Decide the recovery contract for command failure plus status-refresh failure:
-  either emit an output-specific failed event carrying a fallback
-  non-transitioning status, or emit an explicit session/connection failure only
-  when the refresh error indicates the OBS client is unusable.
-- Prefer a localized fallback for ordinary request/status failures so a failed
-  start returns the stream/record UI to inactive and a failed stop returns it
-  to active when the previous active state is known.
-- Add controller tests with the fake output client where `set_streaming` or
-  `set_recording` fails and one or both status refresh calls fail. Assert the
-  event sequence unblocks the affected output control and does not clear the
-  other output's error.
-- Add state/event-sequence coverage for pending -> failed-with-refresh-failure
-  so the reducer cannot leave `OutputRunState::Starting`,
-  `OutputRunState::Stopping`, or `OutputRunState::Reconnecting` as the final
-  visible state.
-- Keep generic `AppEvent::Error` reserved for actual connection/session
-  failures; do not reintroduce it as a convenient output-command fallback.
-- Consider an output-command toast after the state contract is correct, with a
-  stream/record-specific title and without changing connection state.
+- Rename or reshape the event payload so the fallback nature is explicit, e.g.
+  `OutputCommandFailureRecovery` with `fallback_status`, or a separate
+  command-failure recovery event type.
+- Move the pure fallback calculation into a clearly named helper such as
+  `fallback_status_after_failed_output_command`.
+- Keep normalization that prevents command-failure payloads from carrying
+  `Starting`, `Stopping`, or `Reconnecting` as the immediate recovered state.
+- Add focused tests for the pure helper, including `Unknown` and `Paused`
+  passthrough behavior, so the non-transitioning invariant is precise rather
+  than implied by controller event tests.
+- Keep generic `AppEvent::Error` reserved for true connection/session failures.
 
 Files:
 
+- `src/controller/event.rs`
 - `src/controller/state.rs`
 - `src/controller/app_controller.rs`
-- `src/ui/pages/live.rs`
 - `src/ui/window.rs`
 
 Tests:
 
-- Full validation rule.
-- Focused controller tests for stream and record command failure plus status
-  refresh failure.
-- Event-sequence tests proving failed commands always leave output controls in
-  a non-transitioning state unless an explicit connection/session event follows.
+- Focused state/helper tests for every `OutputRunState` mapping.
+- Existing command-failure controller tests should continue to pass.
+
+### P1: Unify Output Status Refresh Helpers
+
+Problem:
+
+- `refresh_output_statuses` reads stream/record status from `ObsClient`.
+- `refresh_output_statuses_for_output_client` repeats the same logic for the
+  wrapper used by command handling and tests.
+- The duplication is currently small, but the output-command wrapper is now a
+  meaningful seam and future status behavior could drift between normal
+  refreshes and command-triggered refreshes.
+
+Plan:
+
+- Extract one shared output-status refresh helper over a narrow trait or
+  callback pair that can be used by both `ObsClient` and `OutputCommandClient`.
+- Preserve the current behavior of logging refresh failures instead of emitting
+  generic `AppEvent::Error` for ordinary output-status refresh noise.
+- Keep the fake-client test coverage for successful status refreshes and
+  failed stream/record status refreshes.
+
+Files:
+
+- `src/controller/app_controller.rs`
+
+Tests:
+
+- Existing command-failure tests should cover the wrapper path.
+- Add one focused test if the refactor changes helper behavior or call order.
 
 ### P1: Improve Output Error Presentation
 
