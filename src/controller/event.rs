@@ -27,13 +27,16 @@ pub enum AppEvent {
 
     // Audio
     AudioInputsUpdated(Vec<AudioInput>),
+    /// Starts a mixer scene audio refresh for the requested target scene.
     MixerAudioInputsLoading {
         scene: SceneId,
     },
+    /// Completes a mixer scene audio refresh; state decides whether it is stale.
     MixerAudioInputsUpdated {
         scene: SceneId,
         inputs: Vec<AudioInput>,
     },
+    /// Fails a mixer scene audio refresh; state decides whether it is stale.
     MixerAudioInputsFailed {
         scene: SceneId,
         message: String,

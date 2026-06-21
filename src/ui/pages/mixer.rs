@@ -5,6 +5,7 @@
 //! the existing active-scene audio snapshot; selected/pinned scene-specific OBS
 //! refresh is intentionally left for the next controller/OBS phase.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -18,6 +19,8 @@ use crate::storage::config::write_config;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::widgets::audio_card;
 
+type MixerRefreshTracker = Rc<RefCell<Option<String>>>;
+
 pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     let root = GtkBox::builder()
         .orientation(Orientation::Vertical)
@@ -26,12 +29,15 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         .build();
     root.add_css_class("mixer-page");
 
-    populate(&root, &nav);
+    let refresh_tracker = Rc::new(RefCell::new(None));
+
+    populate(&root, &nav, &refresh_tracker);
 
     let refresh_fn: Rc<dyn Fn()> = Rc::new({
         let root = root.clone();
         let nav = nav.clone();
-        move || rebuild(&root, &nav)
+        let refresh_tracker = refresh_tracker.clone();
+        move || rebuild(&root, &nav, &refresh_tracker)
     });
 
     root.connect_map({
@@ -42,14 +48,14 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     (root.upcast(), refresh_fn)
 }
 
-fn rebuild(root: &GtkBox, nav: &NavigationContext) {
+fn rebuild(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefreshTracker) {
     while let Some(child) = root.first_child() {
         root.remove(&child);
     }
-    populate(root, nav);
+    populate(root, nav, refresh_tracker);
 }
 
-fn populate(root: &GtkBox, nav: &NavigationContext) {
+fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefreshTracker) {
     let state = nav.state.borrow().clone();
     let inventory = state.scene_inventory;
     let mixer = state.mixer;
@@ -82,8 +88,13 @@ fn populate(root: &GtkBox, nav: &NavigationContext) {
         .description(mixer.mode.description())
         .build();
 
-    let mode_row = build_mode_row(nav, mixer.mode);
-    let scene_row = build_scene_row(nav, &inventory.scenes, mixer.selected_scene.as_deref());
+    let mode_row = build_mode_row(nav, mixer.mode, refresh_tracker);
+    let scene_row = build_scene_row(
+        nav,
+        &inventory.scenes,
+        mixer.selected_scene.as_deref(),
+        refresh_tracker,
+    );
     let grouping_row = build_grouping_row(nav, mixer.grouping);
     let search_row = build_search_row(nav, &mixer.search);
 
@@ -121,6 +132,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext) {
             };
 
             if state.mixer_audio_loading_scene.as_deref() == Some(scene) {
+                clear_tracked_request(refresh_tracker, scene);
                 append_mixer_status(
                     root,
                     "view-refresh-symbolic",
@@ -135,6 +147,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext) {
                 .as_ref()
                 .filter(|error| error.scene == scene)
             {
+                clear_tracked_request(refresh_tracker, scene);
                 append_mixer_status(
                     root,
                     "dialog-warning-symbolic",
@@ -148,10 +161,10 @@ fn populate(root: &GtkBox, nav: &NavigationContext) {
             }
 
             if state.mixer_audio_scene.as_deref() == Some(scene) {
+                clear_tracked_request(refresh_tracker, scene);
                 Some(state.mixer_audio_inputs)
             } else {
-                mark_mixer_scene_loading(nav, scene);
-                nav.dispatch(AppCommand::RefreshMixerSceneAudio(scene.to_string()));
+                request_mixer_scene_audio(nav, refresh_tracker, scene);
                 append_mixer_status(
                     root,
                     "view-refresh-symbolic",
@@ -175,7 +188,11 @@ fn populate(root: &GtkBox, nav: &NavigationContext) {
     );
 }
 
-fn build_mode_row(nav: &NavigationContext, selected: MixerMode) -> ComboRow {
+fn build_mode_row(
+    nav: &NavigationContext,
+    selected: MixerMode,
+    refresh_tracker: &MixerRefreshTracker,
+) -> ComboRow {
     let model = StringList::new(&["Active", "Selected", "Pinned"]);
     let row = ComboRow::builder()
         .title("Mode")
@@ -186,6 +203,7 @@ fn build_mode_row(nav: &NavigationContext, selected: MixerMode) -> ComboRow {
 
     row.connect_selected_notify({
         let nav = nav.clone();
+        let refresh_tracker = refresh_tracker.clone();
         move |row| {
             let mode = index_to_mode(row.selected());
             let target_scene = {
@@ -200,7 +218,7 @@ fn build_mode_row(nav: &NavigationContext, selected: MixerMode) -> ComboRow {
             };
             if mode != MixerMode::ActiveScene {
                 if let Some(scene) = target_scene {
-                    nav.dispatch(AppCommand::RefreshMixerSceneAudio(scene));
+                    request_mixer_scene_audio(&nav, &refresh_tracker, &scene);
                 }
             }
             persist_mixer_selection(&nav);
@@ -215,6 +233,7 @@ fn build_scene_row(
     nav: &NavigationContext,
     scenes: &[crate::domain::scene::Scene],
     selected_scene: Option<&str>,
+    refresh_tracker: &MixerRefreshTracker,
 ) -> ComboRow {
     let names: Vec<&str> = scenes.iter().map(|scene| scene.name.as_str()).collect();
     let model = StringList::new(&names);
@@ -231,6 +250,7 @@ fn build_scene_row(
 
     row.connect_selected_notify({
         let nav = nav.clone();
+        let refresh_tracker = refresh_tracker.clone();
         let scene_ids: Vec<_> = scenes.iter().map(|scene| scene.id.clone()).collect();
         move |row| {
             if let Some(scene_id) = scene_ids.get(row.selected() as usize) {
@@ -251,7 +271,7 @@ fn build_scene_row(
             };
             if let Some(scene) = target_scene {
                 if nav.state.borrow().mixer.mode != MixerMode::ActiveScene {
-                    nav.dispatch(AppCommand::RefreshMixerSceneAudio(scene));
+                    request_mixer_scene_audio(&nav, &refresh_tracker, &scene);
                 }
             }
             persist_mixer_selection(&nav);
@@ -474,16 +494,39 @@ fn mixer_target_scene(
     .map(str::to_string)
 }
 
-fn mark_mixer_scene_loading(nav: &NavigationContext, scene: &str) {
-    let mut state = nav.state.borrow_mut();
-    state.mixer_audio_loading_scene = Some(scene.to_string());
-    if state
-        .mixer_audio_error
-        .as_ref()
-        .map(|error| error.scene.as_str())
-        == Some(scene)
+fn request_mixer_scene_audio(
+    nav: &NavigationContext,
+    refresh_tracker: &MixerRefreshTracker,
+    scene: &str,
+) {
     {
-        state.mixer_audio_error = None;
+        let state = nav.state.borrow();
+        let scene_is_loaded = state.mixer_audio_scene.as_deref() == Some(scene);
+        let scene_is_loading = state.mixer_audio_loading_scene.as_deref() == Some(scene);
+        let scene_has_error = state
+            .mixer_audio_error
+            .as_ref()
+            .is_some_and(|error| error.scene == scene);
+        if scene_is_loaded || scene_is_loading || scene_has_error {
+            return;
+        }
+    }
+
+    {
+        let mut tracked_scene = refresh_tracker.borrow_mut();
+        if tracked_scene.as_deref() == Some(scene) {
+            return;
+        }
+        *tracked_scene = Some(scene.to_string());
+    }
+
+    nav.dispatch(AppCommand::RefreshMixerSceneAudio(scene.to_string()));
+}
+
+fn clear_tracked_request(refresh_tracker: &MixerRefreshTracker, scene: &str) {
+    let mut tracked_scene = refresh_tracker.borrow_mut();
+    if tracked_scene.as_deref() == Some(scene) {
+        *tracked_scene = None;
     }
 }
 

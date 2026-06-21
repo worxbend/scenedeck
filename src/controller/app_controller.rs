@@ -288,6 +288,10 @@ impl AppController {
     fn refresh_mixer_scene_audio(&self, scene: String) {
         let config = self.dependencies.load_config();
         let tx = self.event_tx.clone();
+        let _ = tx.send(AppEvent::MixerAudioInputsLoading {
+            scene: scene.clone(),
+        });
+
         let Some(client) = self.client_slot.lock().ok().and_then(|s| s.clone()) else {
             tracing::warn!("mixer scene audio refresh ignored — not connected to OBS");
             let _ = tx.send(AppEvent::MixerAudioInputsFailed {
@@ -296,10 +300,6 @@ impl AppController {
             });
             return;
         };
-
-        let _ = tx.send(AppEvent::MixerAudioInputsLoading {
-            scene: scene.clone(),
-        });
 
         self.runtime.spawn(async move {
             match client

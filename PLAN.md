@@ -38,8 +38,8 @@ cargo test --workspace --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
-Status: all passed on 2026-06-21 after the output confirmation, audio
-throttling, manual test plan, and mixer loading-state work.
+Status: all passed on 2026-06-21 after the mixer refresh contract, optimistic
+audio update, and output confirmation decision-helper work.
 
 ## Completed Phases
 
@@ -141,111 +141,137 @@ Working tree, reviewed 2026-06-21:
 
 Review verdict:
 
-- Static validation passes.
-- Output confirmations and documentation are largely complete.
-- Audio slider throttling reduces OBS command volume, but direct +/- and reset
-  controls should update the local scale/readout optimistically.
-- Mixer loading states improve the empty-state flash, but refresh ordering still
-  needs hardening against stale selected/pinned scene responses and duplicate
-  initial refreshes.
+- Static validation passed.
+- Output confirmations and documentation were largely complete.
+- Audio slider throttling reduced OBS command volume.
+- Mixer loading states improved the empty-state flash, but refresh ordering
+  still needed hardening against stale selected/pinned scene responses and
+  duplicate initial refreshes.
+
+### Mixer Refresh Contract, Optimistic Audio, Output Confirmation Helper
+
+Working tree, reviewed 2026-06-21:
+
+- Added `MixerAudioRefreshState` and `MixerAudioRefreshTransition` to separate
+  requested scene, loaded snapshot, and visible error state.
+- Routed mixer loading/success/failure events through reducer methods in
+  `AppState`; stale success/failure responses no longer overwrite current
+  selected/pinned mixer state.
+- Moved mixer loading ownership out of UI pre-marking and into controller
+  `MixerAudioInputsLoading` events.
+- Added a UI-side duplicate request tracker to avoid repeated selected/pinned
+  refresh dispatches during rebuilds and combo callbacks.
+- Unified audio volume application so slider, +/- dB, and reset all update the
+  local scale/readout immediately and cancel pending debounced sends on
+  immediate commands.
+- Centralized OBS volume multiplier sanitization and expanded debouncer tests.
+- Extracted and tested a pure output confirmation decision helper for stream
+  and recording start/stop actions.
+
+Review verdict:
+
+- Static validation passed:
+  `cargo fmt --all -- --check`, `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- The mixer reducer covers the key stale-response cases and is a good fit for
+  controller-owned async state.
+- The mixer duplicate guard prevents dispatch storms, but it also suppresses
+  explicit retries after a scene-specific refresh failure because the helper
+  returns early while `mixer_audio_error` matches the scene.
+- The mixer page module header is stale: it still says scene-specific OBS
+  refresh is left for a future phase.
+- Output confirmation logic is now testable, but all confirmation dialogs still
+  use destructive response styling, including start stream/start recording
+  actions.
+- The audio optimistic update path is functionally complete, but helper
+  coverage remains mostly service-level; the GTK-level dispatch/update helper is
+  not directly tested.
 
 ## Groomed Next Steps
 
-### P0: Harden Mixer Scene Refresh State
+### P0: Restore Mixer Failure Retry Semantics
 
 Problem:
 
-- Selected/Pinned refresh can be requested both from combo callbacks and from
-  page population.
-- Loading state is currently set from UI population before the controller emits
-  its loading event.
-- A late successful response for an older scene can overwrite the single
-  `mixer_audio_scene` snapshot even after the user has selected a different
-  target.
+- `request_mixer_scene_audio` suppresses dispatch when the current scene has a
+  matching `mixer_audio_error`.
+- The same helper is used by explicit mode/scene callbacks, so a user cannot
+  retry a failed selected/pinned refresh by reselecting the target or toggling
+  back to the mode.
+- There is no manual retry button on the mixer error state.
 
 Plan:
 
-- Make the controller event stream the single source of truth for mixer loading
-  and failure state.
-- Track the currently requested mixer target separately from the last loaded
-  snapshot.
-- Ignore or preserve stale responses that do not match the current
-  Selected/Pinned target.
-- Avoid duplicate refresh dispatches during mode/scene selection and rebuild.
+- Separate automatic rebuild dedupe from explicit user retry intent.
+- Add a retry action to the mixer error status, or allow combo/mode callbacks
+  to force a refresh that clears the matching error through the controller
+  loading event.
+- Keep automatic populate/rebuild from looping endlessly on persistent OBS
+  errors.
+- Add a narrow testable request-decision helper for loaded/loading/error/tracked
+  combinations and explicit-versus-automatic requests.
+- Update the stale module comment in `src/ui/pages/mixer.rs`.
 
 Files:
 
-- `src/controller/event.rs`
-- `src/controller/state.rs`
-- `src/controller/app_controller.rs`
 - `src/ui/pages/mixer.rs`
+- possible `src/controller/state.rs` if retry intent should be modeled in the
+  reducer
+
+Tests:
+
+- Cover automatic no-loop after failure.
+- Cover explicit retry dispatch after failure.
+- Cover loaded and in-flight requests still dedupe correctly.
+
+### P0: Make Mixer Refresh Target Semantics Explicit
+
+Problem:
+
+- The reducer tracks a single requested scene and treats any success for the
+  requested scene as current. That is acceptable for target-level freshness, but
+  it cannot distinguish two sequential refreshes for the same scene.
+- UI state still carries both legacy fields (`mixer_audio_scene`,
+  `mixer_audio_inputs`, `mixer_audio_loading_scene`, `mixer_audio_error`) and
+  the new reducer, which risks future direct writes bypassing the contract.
+
+Plan:
+
+- Decide whether scene-level freshness is sufficient or whether requests need a
+  monotonically increasing token.
+- If scene-level freshness is sufficient, document the invariant and make
+  direct legacy-field writes harder by narrowing visibility or adding comments
+  at the field declarations.
+- Audit all event paths for direct mixer audio field mutation.
+- Consider clearing stale loaded snapshots on disconnect if selected/pinned
+  mixer controls should not show old OBS data while disconnected.
+
+Files:
+
+- `src/controller/state.rs`
 - `src/ui/window.rs`
+- `src/ui/pages/mixer.rs`
 
 Tests:
 
-- Add pure state-transition tests if possible, or extract a small mixer refresh
-  state reducer that can cover loading, success, failure, stale success, and
-  stale failure.
-
-### P0: Improve Audio Card Optimistic Volume Semantics
-
-Problem:
-
-- Slider changes update the dB label immediately and debounce OBS commands.
-- +/- dB and reset commands dispatch immediately but do not move the local scale
-  or label until an OBS volume event arrives.
-- If OBS rejects the command or event delivery lags, the UI appears inert.
-
-Plan:
-
-- Add one helper that updates local scale/readout and dispatches either
-  debounced or immediate volume commands.
-- Use it for slider, +/- dB, and reset paths.
-- Preserve OBS event reconciliation and cancellation of pending debounced
-  sends.
-- Consider clamping outgoing slider values to OBS-supported ranges in one place.
-
-Files:
-
-- `src/ui/widgets/audio_card.rs`
-- `src/services/audio_service.rs`
-
-Tests:
-
-- Extend debouncer tests for immediate-send cancellation and sanitized values.
-
-### P0: Add Regression Coverage for Output Confirmation Defaults
-
-Problem:
-
-- Config defaults are tested, but the Live confirmation behavior itself is UI
-  callback logic and not currently covered by a narrow testable decision
-  function.
-
-Plan:
-
-- Extract a pure helper that maps output kind, active state, and `OutputConfig`
-  to whether confirmation is required.
-- Test all four output action/default combinations.
-- Keep the GTK dialog construction in `src/ui/pages/live.rs`.
-
-Files:
-
-- `src/ui/pages/live.rs` or a small UI-adjacent helper module.
-- `src/storage/config.rs`.
+- Add reducer coverage for repeated same-scene loading/success if the desired
+  behavior is documented.
+- Add a disconnect-state test if clearing snapshots becomes required.
 
 ### P1: Surface Output Command Errors In Output UI
 
 Problem:
 
 - Output command failures still surface through generic OBS errors/toasts and
-  can make output-specific failures look like connection failures.
+  can make stream/record command failures look like connection failures.
 
 Plan:
 
 - Extend output UI state with last stream/record error.
 - Preserve OBS connection errors separately from stream/record command errors.
 - Show output errors on the Live output area and later on output cards.
+- Clear output-specific errors on new pending command, success, and disconnect.
 
 Files:
 
@@ -254,6 +280,45 @@ Files:
 - `src/controller/app_controller.rs`
 - `src/ui/pages/live.rs`
 - `src/ui/window.rs`
+
+### P1: Refine Output Confirmation Dialog Semantics
+
+Problem:
+
+- `requires_output_confirmation` is now tested, but the dialog presentation is
+  still generic.
+- Start stream/start recording confirmations use destructive styling even
+  though they are not destructive in the same sense as stop actions.
+
+Plan:
+
+- Pass response appearance based on output kind/action, or add a small helper
+  that maps action to dialog copy and appearance.
+- Keep stop stream/stop recording as destructive.
+- Use neutral or suggested styling for start stream/start recording.
+- Add pure tests for action-to-dialog metadata if extracted.
+
+Files:
+
+- `src/ui/pages/live.rs`
+
+### P1: Settings Persistence Feedback
+
+Problem:
+
+- Output safety toggles update in-memory state before disk persistence is known.
+- Write failures are logged but not shown to the user, matching some existing
+  Settings patterns but weak for safety preferences.
+
+Plan:
+
+- Reuse or add a Settings status row for output preference persistence failures.
+- Decide whether failed writes should roll back the switch or keep the
+  in-memory session value with an explicit warning.
+
+Files:
+
+- `src/ui/pages/settings.rs`
 
 ### P1: Output Control Cards
 
@@ -273,24 +338,6 @@ Files:
 - `src/ui/pages/live.rs`
 - possible new `src/ui/widgets/output_card.rs`
 - `assets/scenedeck.css`
-
-### P1: Settings Persistence Feedback
-
-Problem:
-
-- Output safety toggles update in-memory state before disk persistence is known.
-- Write failures are logged but not shown to the user, matching some existing
-  Settings patterns but weak for safety preferences.
-
-Plan:
-
-- Reuse or add a Settings status row for output preference persistence failures.
-- Decide whether failed writes should roll back the switch or keep the in-memory
-  session value with an explicit warning.
-
-Files:
-
-- `src/ui/pages/settings.rs`
 
 ### P1: Manual Test Plan Execution Record
 

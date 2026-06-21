@@ -21,7 +21,7 @@ use crate::app_info::APP_NAME;
 use crate::controller::app_controller::AppController;
 use crate::controller::command::AppCommand;
 use crate::controller::event::AppEvent;
-use crate::controller::state::{AppState, ObsStatus, Page};
+use crate::controller::state::{AppState, MixerAudioRefreshTransition, ObsStatus, Page};
 use crate::domain::appearance::ThemeMode;
 use crate::domain::obs::ObsNamedList;
 use crate::ui::navigation::NavigationContext;
@@ -262,6 +262,7 @@ fn apply_event(
                 state.set_obs_status(ObsStatus::Connecting);
                 state.stream_active_since = None;
                 state.record_active_since = None;
+                state.clear_pending_mixer_audio_refresh();
             }
             sidebar_controls.status_label.set_text("Connecting to OBS…");
             set_status_class(&sidebar_controls.status_label, "obs-connecting");
@@ -303,6 +304,7 @@ fn apply_event(
                 state.set_obs_status(ObsStatus::Disconnected);
                 state.stream_active_since = None;
                 state.record_active_since = None;
+                state.clear_pending_mixer_audio_refresh();
             }
             sidebar_controls.status_label.set_text("Disconnected");
             set_status_class(&sidebar_controls.status_label, "obs-disconnected");
@@ -370,6 +372,7 @@ fn apply_event(
                 state.set_obs_status(ObsStatus::Error(err.to_string()));
                 state.stream_active_since = None;
                 state.record_active_since = None;
+                state.clear_pending_mixer_audio_refresh();
             }
             sidebar_controls
                 .status_label
@@ -406,21 +409,13 @@ fn apply_event(
         }
 
         AppEvent::MixerAudioInputsUpdated { scene, inputs } => {
-            {
+            let transition = {
                 let mut state = nav.state.borrow_mut();
-                if state.mixer_audio_loading_scene.as_deref() == Some(scene.as_str()) {
-                    state.mixer_audio_loading_scene = None;
-                }
-                if state
-                    .mixer_audio_error
-                    .as_ref()
-                    .map(|err| err.scene.as_str())
-                    == Some(scene.as_str())
-                {
-                    state.mixer_audio_error = None;
-                }
-                state.mixer_audio_scene = Some(scene);
-                state.mixer_audio_inputs = inputs;
+                state.set_mixer_audio_success(scene, inputs)
+            };
+            if transition == MixerAudioRefreshTransition::StaleSuccess {
+                tracing::debug!("ignored stale mixer audio success");
+                return;
             }
             if nav.state.borrow().current_page == Page::Mixer {
                 refreshers.call(Page::Mixer);
@@ -430,15 +425,7 @@ fn apply_event(
         AppEvent::MixerAudioInputsLoading { scene } => {
             {
                 let mut state = nav.state.borrow_mut();
-                state.mixer_audio_loading_scene = Some(scene.clone());
-                if state
-                    .mixer_audio_error
-                    .as_ref()
-                    .map(|err| err.scene.as_str())
-                    == Some(scene.as_str())
-                {
-                    state.mixer_audio_error = None;
-                }
+                state.set_mixer_audio_loading(scene);
             }
             if nav.state.borrow().current_page == Page::Mixer {
                 refreshers.call(Page::Mixer);
@@ -446,13 +433,13 @@ fn apply_event(
         }
 
         AppEvent::MixerAudioInputsFailed { scene, message } => {
-            {
+            let transition = {
                 let mut state = nav.state.borrow_mut();
-                if state.mixer_audio_loading_scene.as_deref() == Some(scene.as_str()) {
-                    state.mixer_audio_loading_scene = None;
-                }
-                state.mixer_audio_error =
-                    Some(crate::controller::state::MixerAudioError { scene, message });
+                state.set_mixer_audio_failure(scene, message)
+            };
+            if transition == MixerAudioRefreshTransition::StaleFailure {
+                tracing::debug!("ignored stale mixer audio failure");
+                return;
             }
             if nav.state.borrow().current_page == Page::Mixer {
                 refreshers.call(Page::Mixer);

@@ -12,9 +12,16 @@ use gtk4::{
 use crate::controller::command::AppCommand;
 use crate::domain::output::OutputStatus;
 use crate::domain::scene::SceneInventory;
+use crate::storage::config::OutputConfig;
 use crate::storage::registry::read_registry;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::widgets::{audio_card, scene_card};
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum OutputKind {
+    Stream,
+    Recording,
+}
 
 /// Widget handles that `ui::window` updates when `AppEvent`s arrive.
 pub(crate) struct LivePageHandle {
@@ -85,14 +92,11 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
             } else {
                 AppCommand::StartStreaming
             };
-            let should_confirm = {
-                let state = nav.state.borrow();
-                if active {
-                    state.output_confirmations.confirm_stop_stream
-                } else {
-                    state.output_confirmations.confirm_start_stream
-                }
-            };
+            let should_confirm = requires_output_confirmation(
+                OutputKind::Stream,
+                active,
+                &nav.state.borrow().output_confirmations,
+            );
             if should_confirm {
                 confirm_output_action(
                     button,
@@ -142,14 +146,11 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
             } else {
                 AppCommand::StartRecording
             };
-            let should_confirm = {
-                let state = nav.state.borrow();
-                if active {
-                    state.output_confirmations.confirm_stop_recording
-                } else {
-                    state.output_confirmations.confirm_start_recording
-                }
-            };
+            let should_confirm = requires_output_confirmation(
+                OutputKind::Recording,
+                active,
+                &nav.state.borrow().output_confirmations,
+            );
             if should_confirm {
                 confirm_output_action(
                     button,
@@ -460,6 +461,15 @@ fn output_label(kind: &str, status: &OutputStatus, elapsed: Option<&str>) -> Str
     }
 }
 
+fn requires_output_confirmation(kind: OutputKind, active: bool, config: &OutputConfig) -> bool {
+    match (kind, active) {
+        (OutputKind::Stream, false) => config.confirm_start_stream,
+        (OutputKind::Stream, true) => config.confirm_stop_stream,
+        (OutputKind::Recording, false) => config.confirm_start_recording,
+        (OutputKind::Recording, true) => config.confirm_stop_recording,
+    }
+}
+
 fn confirm_output_action(
     parent: &impl IsA<gtk4::Widget>,
     heading: &str,
@@ -571,5 +581,76 @@ pub(crate) fn rebuild_audio_cards(
         let card = audio_card::build(input, nav.clone());
         handle.audio_box.insert(&card.root, -1);
         cards.push(card);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn output_confirmation_defaults_match_output_actions() {
+        let config = OutputConfig::default();
+
+        assert!(!requires_output_confirmation(
+            OutputKind::Stream,
+            false,
+            &config
+        ));
+        assert!(requires_output_confirmation(
+            OutputKind::Stream,
+            true,
+            &config
+        ));
+        assert!(!requires_output_confirmation(
+            OutputKind::Recording,
+            false,
+            &config
+        ));
+        assert!(requires_output_confirmation(
+            OutputKind::Recording,
+            true,
+            &config
+        ));
+    }
+
+    #[test]
+    fn output_confirmation_honors_disabled_stop_preferences() {
+        let config = OutputConfig {
+            confirm_stop_stream: false,
+            confirm_stop_recording: false,
+            ..OutputConfig::default()
+        };
+
+        assert!(!requires_output_confirmation(
+            OutputKind::Stream,
+            true,
+            &config
+        ));
+        assert!(!requires_output_confirmation(
+            OutputKind::Recording,
+            true,
+            &config
+        ));
+    }
+
+    #[test]
+    fn output_confirmation_honors_enabled_start_preferences() {
+        let config = OutputConfig {
+            confirm_start_stream: true,
+            confirm_start_recording: true,
+            ..OutputConfig::default()
+        };
+
+        assert!(requires_output_confirmation(
+            OutputKind::Stream,
+            false,
+            &config
+        ));
+        assert!(requires_output_confirmation(
+            OutputKind::Recording,
+            false,
+            &config
+        ));
     }
 }

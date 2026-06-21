@@ -6,6 +6,8 @@ use crate::domain::audio::AudioInput;
 
 pub const VOLUME_SLIDER_DEBOUNCE: Duration = Duration::from_millis(120);
 const VOLUME_MEANINGFUL_DELTA: f64 = 0.005;
+const MIN_VOLUME_DB: f64 = -100.0;
+const MAX_VOLUME_DB: f64 = 26.0;
 
 pub struct AudioService;
 
@@ -30,7 +32,7 @@ impl AudioService {
     }
 
     pub fn volume_db_to_mul(db: f64) -> f64 {
-        if !db.is_finite() || db <= -100.0 {
+        if !db.is_finite() || db <= MIN_VOLUME_DB {
             0.0
         } else {
             10.0_f64.powf(db / 20.0)
@@ -51,9 +53,21 @@ impl AudioService {
         let base = if current_db.is_finite() {
             current_db
         } else {
-            -100.0
+            MIN_VOLUME_DB
         };
-        (base + delta_db).clamp(-100.0, 26.0)
+        (base + delta_db).clamp(MIN_VOLUME_DB, MAX_VOLUME_DB)
+    }
+
+    pub fn max_volume_mul() -> f64 {
+        Self::volume_db_to_mul(MAX_VOLUME_DB)
+    }
+
+    pub fn sanitize_volume_mul(volume_mul: f64) -> f64 {
+        if volume_mul.is_finite() {
+            volume_mul.clamp(0.0, Self::max_volume_mul())
+        } else {
+            0.0
+        }
     }
 }
 
@@ -67,14 +81,14 @@ pub struct VolumeChangeDebouncer {
 impl VolumeChangeDebouncer {
     pub fn new(initial_volume: f64) -> Self {
         Self {
-            last_sent: Some(initial_volume),
+            last_sent: Some(AudioService::sanitize_volume_mul(initial_volume)),
             pending: None,
             meaningful_delta: VOLUME_MEANINGFUL_DELTA,
         }
     }
 
     pub fn queue(&mut self, volume_mul: f64) {
-        self.pending = Some(sanitize_volume_mul(volume_mul));
+        self.pending = Some(AudioService::sanitize_volume_mul(volume_mul));
     }
 
     pub fn take_due(&mut self) -> Option<f64> {
@@ -88,12 +102,12 @@ impl VolumeChangeDebouncer {
     }
 
     pub fn mark_sent(&mut self, volume_mul: f64) {
-        self.last_sent = Some(sanitize_volume_mul(volume_mul));
+        self.last_sent = Some(AudioService::sanitize_volume_mul(volume_mul));
         self.pending = None;
     }
 
     pub fn reset_to_observed(&mut self, volume_mul: f64) {
-        self.last_sent = Some(sanitize_volume_mul(volume_mul));
+        self.last_sent = Some(AudioService::sanitize_volume_mul(volume_mul));
         self.pending = None;
     }
 
@@ -101,14 +115,6 @@ impl VolumeChangeDebouncer {
         self.last_sent
             .map(|last| (volume_mul - last).abs() >= self.meaningful_delta)
             .unwrap_or(true)
-    }
-}
-
-fn sanitize_volume_mul(volume_mul: f64) -> f64 {
-    if volume_mul.is_finite() {
-        volume_mul.max(0.0)
-    } else {
-        0.0
     }
 }
 
@@ -134,6 +140,16 @@ mod tests {
     fn clamps_fine_adjustment_range() {
         assert_eq!(AudioService::adjust_volume_db(25.8, 1.0), 26.0);
         assert_eq!(AudioService::adjust_volume_db(-99.8, -1.0), -100.0);
+    }
+
+    #[test]
+    fn sanitizes_volume_multiplier_for_obs_range() {
+        assert_eq!(AudioService::sanitize_volume_mul(f64::NAN), 0.0);
+        assert_eq!(AudioService::sanitize_volume_mul(-0.5), 0.0);
+        assert_eq!(
+            AudioService::sanitize_volume_mul(AudioService::max_volume_mul() + 1.0),
+            AudioService::max_volume_mul()
+        );
     }
 
     #[test]
@@ -165,5 +181,27 @@ mod tests {
         debouncer.queue(0.802);
 
         assert_eq!(debouncer.take_due(), None);
+    }
+
+    #[test]
+    fn debouncer_immediate_send_clears_pending_slider_value() {
+        let mut debouncer = VolumeChangeDebouncer::new(0.5);
+
+        debouncer.queue(0.8);
+        debouncer.mark_sent(0.6);
+
+        assert_eq!(debouncer.take_due(), None);
+    }
+
+    #[test]
+    fn debouncer_sanitizes_queued_and_immediate_values() {
+        let mut debouncer = VolumeChangeDebouncer::new(0.5);
+
+        debouncer.queue(f64::NAN);
+        assert_eq!(debouncer.take_due(), Some(0.0));
+
+        debouncer.mark_sent(AudioService::max_volume_mul() + 1.0);
+        debouncer.queue(f64::INFINITY);
+        assert_eq!(debouncer.take_due(), Some(0.0));
     }
 }
