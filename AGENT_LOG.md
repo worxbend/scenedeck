@@ -394,3 +394,97 @@ M  SCORES.jsonl
 M  src/controller/state.rs
 M  src/ui/pages/mixer.rs
 M  src/ui/window.rs
+2026-06-21T12:29:37Z iteration 5 started remaining=15633s
+2026-06-21T12:29:37Z iteration 5 preplanner effective budgets untracked_scan_max_bytes=536870912 untracked_scan_max_count=10000 snapshot_copy_max_bytes=536870912 snapshot_copy_max_count=10000 snapshot_copy_max_file_bytes=134217728
+2026-06-21T12:29:37Z iteration 5 disposable preplanner repo created path=/tmp/agent-loop-preplanner-repo-ud9tw65i/repo copied_entries=114
+2026-06-21T12:29:37Z iteration 5 ideator phase started count=3
+2026-06-21T12:29:37Z iteration 5 ideator phase concurrency workers=3
+2026-06-21T12:29:37Z iteration 5 ideator 1 role="the pragmatist" started
+2026-06-21T12:29:37Z iteration 5 ideator 2 role="the architect" started
+2026-06-21T12:29:37Z iteration 5 ideator 3 role="the contrarian" started
+2026-06-21T12:29:46Z iteration 5 ideator 2 role="the architect" completed status=0
+2026-06-21T12:29:46Z iteration 5 ideator 3 role="the contrarian" completed status=0
+2026-06-21T12:29:46Z iteration 5 ideator 1 role="the pragmatist" completed status=0
+2026-06-21T12:29:46Z iteration 5 ideator phase completed approaches=3
+2026-06-21T12:29:46Z iteration 5 selector started approaches=3
+2026-06-21T12:29:57Z iteration 5 selector completed status=0
+2026-06-21T12:29:57Z iteration 5 disposable preplanner repo cleanup path=/tmp/agent-loop-preplanner-repo-ud9tw65i/repo
+2026-06-21T12:29:57Z iteration 5 selector rejected alternative role="the architect" approach="Reducer-First UI Reconciliation: treat the next iteration as a state-consistency pass, where visible GTK updates are driven from reducer-owned mixer snapshots instead of adding..." reason="Strong directionally, but selected as-is it leans too quickly toward visible refresh behavior without explicitly collapsing the fragmented read model that still forces Mixer UI code to combine several accessors manually."
+2026-06-21T12:29:57Z iteration 5 selector rejected alternative role="the contrarian" approach="Stabilize the Read Model Before UI Behavior: pause new interaction fixes and first force Mixer rendering through a single reducer-derived visibility contract, then let retry and..." reason="Its read-model-first emphasis is valuable, but as-is it risks delaying the user-visible stale-card fix too much. The selected hybrid keeps the read contract first while requiring it to immediately serve the reconciliation and retry-cover..."
+2026-06-21T12:29:57Z iteration 5 selector rejected alternative role="the pragmatist" approach="UI-State Reconciliation First: prioritize a narrow, testable bridge between reducer-owned mixer state and visible GTK controls before expanding feature surface." reason="It correctly prioritizes closing the gap between correct state and visible UI, but as-is it may encourage adding a refresh predicate before reducing the number of state access paths that can drift. The hybrid keeps the pragmatic target w..."
+2026-06-21T12:29:57Z iteration 5 selector alternatives persisted count=3
+2026-06-21T12:29:57Z iteration 5 selector structured alternatives persisted count=3
+2026-06-21T12:29:57Z iteration 5 planner started
+2026-06-21T12:30:23Z iteration 5 plan: 4 task(s) in 3 phase(s). This slices the next iteration around the selected reducer-derived Mixer reconciliation approach. Phase 1 establishes the authoritative read boundary in AppState. Phase 2 can run in parallel because Mixer retry/rendering work and Window input-event predicate work touch separate files after the state helper exists. Phase 3 depends on both pieces to connect actual UI reconciliation without introducing OBS refresh side effects.
+2026-06-21T12:30:23Z iteration 5 phase 1 started parallel=False tasks=1
+2026-06-21T12:31:35Z iteration 5 task t1 ('Add reducer-derived Mixer visibility contract') status=0
+2026-06-21T12:31:35Z iteration 5 phase 2 started parallel=True tasks=2
+2026-06-21T12:34:04Z iteration 5 task t3 ('Add local Mixer rebuild predicate for OBS input events') status=0
+2026-06-21T12:34:17Z iteration 5 task t2 ('Refactor Mixer page rendering and retry dispatch around visible status') status=0
+2026-06-21T12:34:17Z iteration 5 phase 3 started parallel=False tasks=1
+2026-06-21T12:35:09Z iteration 5 task t4 ('Reconcile visible Mixer cards after OBS input events') status=0
+2026-06-21T12:35:09Z iteration 5 reviewer started
+
+## Review Summary - Iteration 5 - 2026-06-21
+
+### What Was Done
+
+- Added `MixerVisibleAudioStatus` and `AppState::visible_mixer_audio_status`
+  as the reducer-derived read contract for scene-specific Mixer visibility.
+- Refactored selected/pinned Mixer rendering and retry dispatch to use the
+  visible-status helper.
+- Added a request-dispatch adapter around Mixer scene refreshes with tests for
+  tracker mutation, automatic failure dedupe, explicit retry after failure,
+  loading dedupe, and tracked-request dedupe.
+- Added a local `should_rebuild_visible_mixer_for_input_event` predicate and
+  wired OBS mute/volume input events to refresh the Mixer page when a visible
+  selected/pinned Mixer snapshot contains the changed input.
+- Added focused predicate tests for selected and pinned visible snapshots,
+  unrelated inputs, non-Mixer pages, loading/error/missing snapshots, and
+  other-scene snapshots.
+
+### What Was Found
+
+- Static validation passed: `cargo fmt --all -- --check`,
+  `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- The read contract is a clear improvement: selected/pinned rendering no
+  longer coordinates several mirror accessors manually.
+- The retry interaction coverage gap is mostly addressed at the adapter level;
+  it now verifies dispatch/no-dispatch and tracker mutation without full GTK.
+- Selected and pinned Mixer cards are now locally rebuilt after relevant OBS
+  input events, avoiding an unnecessary OBS refresh.
+- High-priority gap: Active Mixer mode still renders cards from
+  `state.audio_inputs`, but the rebuild predicate returns false for
+  `MixerMode::ActiveScene`. Visible Active-mode Mixer cards can still remain
+  stale after mute/volume events until another rebuild occurs.
+- The legacy mirror read accessors are now unused outside `AppState`; they can
+  be removed to strengthen the reducer-derived read boundary.
+
+### Top Improvement Proposals
+
+1. Extend `should_rebuild_visible_mixer_for_input_event` to rebuild Active
+   Mixer mode when the changed input exists in `state.audio_inputs`.
+2. Remove unused legacy mixer mirror accessors now that the Mixer page uses
+   `visible_mixer_audio_status`.
+3. Clarify the Mixer read model so Active-mode local audio and selected/pinned
+   scene-specific snapshots are handled through one explicit visible-source
+   contract.
+4. Refine output confirmation dialog metadata so start actions are not styled
+   as destructive.
+5. Surface stream/record command failures in the Live output UI separately
+   from OBS connection errors.
+2026-06-21T12:37:24Z iteration 5 reviewer completed status=0
+2026-06-21T12:37:24Z iteration 5 memory updated
+2026-06-21T12:37:24Z iteration 5 completed validation_status=0
+2026-06-21T12:37:24Z iteration 5 checkpoint started
+2026-06-21T12:37:24Z iteration 5 checkpoint status before commit:
+M  AGENT_LOG.md
+M  ALTERNATIVES.jsonl
+M  MEMORY.md
+M  PLAN.md
+M  SCORES.jsonl
+M  src/controller/state.rs
+M  src/ui/pages/mixer.rs
+M  src/ui/window.rs

@@ -114,6 +114,14 @@ pub enum MixerAudioRefreshTransition {
     StaleFailure,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum MixerVisibleAudioStatus<'a> {
+    Loading,
+    Error(&'a MixerAudioError),
+    Loaded(&'a [AudioInput]),
+    Missing,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct MixerAudioRefreshState {
     /// Scene-level freshness marker for the currently pending mixer snapshot.
@@ -295,6 +303,26 @@ impl AppState {
 
     pub fn mixer_audio_error(&self) -> Option<&MixerAudioError> {
         self.mixer_audio_error.as_ref()
+    }
+
+    pub fn visible_mixer_audio_status(&self, scene: &str) -> MixerVisibleAudioStatus<'_> {
+        if self.mixer_audio_refresh.requested_scene.as_deref() == Some(scene) {
+            return MixerVisibleAudioStatus::Loading;
+        }
+
+        if let Some(error) = self.mixer_audio_refresh.error.as_ref() {
+            if error.scene == scene {
+                return MixerVisibleAudioStatus::Error(error);
+            }
+        }
+
+        if let Some(snapshot) = self.mixer_audio_refresh.loaded.as_ref() {
+            if snapshot.scene == scene {
+                return MixerVisibleAudioStatus::Loaded(&snapshot.inputs);
+            }
+        }
+
+        MixerVisibleAudioStatus::Missing
     }
 
     pub fn update_mixer_input_mute(&mut self, input_id: &str, muted: bool) -> bool {
@@ -544,6 +572,81 @@ mod tests {
                 message: "current failure".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn visible_mixer_audio_status_reports_loading_for_target_scene() {
+        let mut state = app_state();
+        state.set_mixer_audio_loading("Scene A".to_string());
+
+        assert!(matches!(
+            state.visible_mixer_audio_status("Scene A"),
+            MixerVisibleAudioStatus::Loading
+        ));
+    }
+
+    #[test]
+    fn visible_mixer_audio_status_reports_error_for_target_scene() {
+        let mut state = app_state();
+        state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_failure("Scene A".to_string(), "OBS failed".to_string());
+
+        let MixerVisibleAudioStatus::Error(error) = state.visible_mixer_audio_status("Scene A")
+        else {
+            panic!("expected visible mixer error");
+        };
+
+        assert_eq!(error.scene, "Scene A");
+        assert_eq!(error.message, "OBS failed");
+    }
+
+    #[test]
+    fn visible_mixer_audio_status_reports_loaded_inputs_for_target_scene() {
+        let mut state = app_state();
+        state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_success("Scene A".to_string(), vec![input("Mic"), input("Music")]);
+
+        let MixerVisibleAudioStatus::Loaded(inputs) = state.visible_mixer_audio_status("Scene A")
+        else {
+            panic!("expected visible mixer inputs");
+        };
+
+        assert_eq!(inputs.len(), 2);
+        assert_eq!(inputs[0].id, "Mic");
+        assert_eq!(inputs[1].id, "Music");
+    }
+
+    #[test]
+    fn visible_mixer_audio_status_reports_missing_without_target_state() {
+        let state = app_state();
+
+        assert!(matches!(
+            state.visible_mixer_audio_status("Scene A"),
+            MixerVisibleAudioStatus::Missing
+        ));
+    }
+
+    #[test]
+    fn visible_mixer_audio_status_treats_other_scene_state_as_missing() {
+        let mut state = app_state();
+        state.set_mixer_audio_loading("Scene A".to_string());
+        assert!(matches!(
+            state.visible_mixer_audio_status("Scene B"),
+            MixerVisibleAudioStatus::Missing
+        ));
+
+        state.set_mixer_audio_failure("Scene A".to_string(), "OBS failed".to_string());
+        assert!(matches!(
+            state.visible_mixer_audio_status("Scene B"),
+            MixerVisibleAudioStatus::Missing
+        ));
+
+        state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_success("Scene A".to_string(), vec![input("Mic")]);
+        assert!(matches!(
+            state.visible_mixer_audio_status("Scene B"),
+            MixerVisibleAudioStatus::Missing
+        ));
     }
 
     #[test]

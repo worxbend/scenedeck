@@ -15,6 +15,7 @@ use gtk4::{
 };
 
 use crate::controller::command::AppCommand;
+use crate::controller::state::MixerVisibleAudioStatus;
 use crate::domain::audio::AudioInput;
 use crate::domain::mixer::{MixerGrouping, MixerMode, MixerSelection};
 use crate::storage::config::write_config;
@@ -139,43 +140,41 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
                 return;
             };
 
-            if state.mixer_audio_loading_scene() == Some(scene) {
-                clear_tracked_request(refresh_tracker, scene);
-                append_mixer_status(
-                    root,
-                    "view-refresh-symbolic",
-                    "Loading Mixer Audio",
-                    &format!("Loading audio sources for {scene}."),
-                );
-                return;
-            }
-
-            if let Some(error) = state
-                .mixer_audio_error()
-                .filter(|error| error.scene == scene)
-            {
-                clear_tracked_request(refresh_tracker, scene);
-                append_mixer_error_status(root, nav, refresh_tracker, scene, &error.message);
-                return;
-            }
-
-            if state.mixer_audio_scene() == Some(scene) {
-                clear_tracked_request(refresh_tracker, scene);
-                Some(state.mixer_audio_inputs().to_vec())
-            } else {
-                request_mixer_scene_audio(
-                    nav,
-                    refresh_tracker,
-                    scene,
-                    MixerRefreshRequestIntent::Automatic,
-                );
-                append_mixer_status(
-                    root,
-                    "view-refresh-symbolic",
-                    "Loading Mixer Audio",
-                    &format!("Loading audio sources for {scene}."),
-                );
-                return;
+            match state.visible_mixer_audio_status(scene) {
+                MixerVisibleAudioStatus::Loading => {
+                    clear_tracked_request(refresh_tracker, scene);
+                    append_mixer_status(
+                        root,
+                        "view-refresh-symbolic",
+                        "Loading Mixer Audio",
+                        &format!("Loading audio sources for {scene}."),
+                    );
+                    return;
+                }
+                MixerVisibleAudioStatus::Error(error) => {
+                    clear_tracked_request(refresh_tracker, scene);
+                    append_mixer_error_status(root, nav, refresh_tracker, scene, &error.message);
+                    return;
+                }
+                MixerVisibleAudioStatus::Loaded(inputs) => {
+                    clear_tracked_request(refresh_tracker, scene);
+                    Some(inputs.to_vec())
+                }
+                MixerVisibleAudioStatus::Missing => {
+                    request_mixer_scene_audio(
+                        nav,
+                        refresh_tracker,
+                        scene,
+                        MixerRefreshRequestIntent::Automatic,
+                    );
+                    append_mixer_status(
+                        root,
+                        "view-refresh-symbolic",
+                        "Loading Mixer Audio",
+                        &format!("Loading audio sources for {scene}."),
+                    );
+                    return;
+                }
             }
         }
     };
@@ -550,46 +549,53 @@ fn request_mixer_scene_audio(
     scene: &str,
     intent: MixerRefreshRequestIntent,
 ) {
-    {
+    let command = {
         let state = nav.state.borrow();
-        if !should_request_mixer_scene_audio(
+        let mut tracked_scene = refresh_tracker.borrow_mut();
+        prepare_mixer_scene_audio_request(
             intent,
             scene,
-            state.mixer_audio_scene(),
-            state.mixer_audio_loading_scene(),
-            state.mixer_audio_error().map(|error| error.scene.as_str()),
-            refresh_tracker.borrow().as_deref(),
-        ) {
-            return;
-        }
+            state.visible_mixer_audio_status(scene),
+            &mut tracked_scene,
+        )
+    };
+
+    if let Some(command) = command {
+        nav.dispatch(command);
+    }
+}
+
+fn prepare_mixer_scene_audio_request(
+    intent: MixerRefreshRequestIntent,
+    scene: &str,
+    visible_status: MixerVisibleAudioStatus<'_>,
+    tracked_scene: &mut Option<String>,
+) -> Option<AppCommand> {
+    if !should_request_mixer_scene_audio(intent, visible_status, scene, tracked_scene.as_deref()) {
+        return None;
     }
 
-    {
-        let mut tracked_scene = refresh_tracker.borrow_mut();
-        if tracked_scene.as_deref() == Some(scene) {
-            return;
-        }
-        *tracked_scene = Some(scene.to_string());
-    }
-
-    nav.dispatch(AppCommand::RefreshMixerSceneAudio(scene.to_string()));
+    *tracked_scene = Some(scene.to_string());
+    Some(AppCommand::RefreshMixerSceneAudio(scene.to_string()))
 }
 
 pub(crate) fn should_request_mixer_scene_audio(
     intent: MixerRefreshRequestIntent,
+    visible_status: MixerVisibleAudioStatus<'_>,
     scene: &str,
-    loaded_scene: Option<&str>,
-    loading_scene: Option<&str>,
-    error_scene: Option<&str>,
     tracked_scene: Option<&str>,
 ) -> bool {
-    if loaded_scene == Some(scene) || loading_scene == Some(scene) || tracked_scene == Some(scene) {
+    if tracked_scene == Some(scene) {
         return false;
     }
 
-    match intent {
-        MixerRefreshRequestIntent::Automatic => error_scene != Some(scene),
-        MixerRefreshRequestIntent::Explicit => true,
+    match visible_status {
+        MixerVisibleAudioStatus::Loading | MixerVisibleAudioStatus::Loaded(_) => false,
+        MixerVisibleAudioStatus::Error(_) => match intent {
+            MixerRefreshRequestIntent::Automatic => false,
+            MixerRefreshRequestIntent::Explicit => true,
+        },
+        MixerVisibleAudioStatus::Missing => true,
     }
 }
 
@@ -647,28 +653,51 @@ fn write_mixer_selection(selection: MixerSelection) -> Result<(), std::io::Error
 
 #[cfg(test)]
 mod tests {
-    use super::{should_request_mixer_scene_audio, MixerRefreshRequestIntent};
+    use super::{
+        prepare_mixer_scene_audio_request, should_request_mixer_scene_audio,
+        MixerRefreshRequestIntent,
+    };
+    use crate::controller::command::AppCommand;
+    use crate::controller::state::{MixerAudioError, MixerVisibleAudioStatus};
+
+    fn mixer_error() -> MixerAudioError {
+        MixerAudioError {
+            scene: "scene-a".to_string(),
+            message: "failed".to_string(),
+        }
+    }
+
+    fn loaded_status() -> MixerVisibleAudioStatus<'static> {
+        MixerVisibleAudioStatus::Loaded(&[])
+    }
+
+    fn command_scene(command: Option<AppCommand>) -> Option<String> {
+        match command {
+            Some(AppCommand::RefreshMixerSceneAudio(scene)) => Some(scene),
+            _ => None,
+        }
+    }
 
     #[test]
     fn automatic_request_dedupes_matching_failure() {
+        let error = mixer_error();
+
         assert!(!should_request_mixer_scene_audio(
             MixerRefreshRequestIntent::Automatic,
+            MixerVisibleAudioStatus::Error(&error),
             "scene-a",
-            None,
-            None,
-            Some("scene-a"),
             None,
         ));
     }
 
     #[test]
     fn explicit_request_retries_matching_failure() {
+        let error = mixer_error();
+
         assert!(should_request_mixer_scene_audio(
             MixerRefreshRequestIntent::Explicit,
+            MixerVisibleAudioStatus::Error(&error),
             "scene-a",
-            None,
-            None,
-            Some("scene-a"),
             None,
         ));
     }
@@ -681,10 +710,8 @@ mod tests {
         ] {
             assert!(!should_request_mixer_scene_audio(
                 intent,
+                loaded_status(),
                 "scene-a",
-                Some("scene-a"),
-                None,
-                None,
                 None,
             ));
         }
@@ -698,10 +725,8 @@ mod tests {
         ] {
             assert!(!should_request_mixer_scene_audio(
                 intent,
+                MixerVisibleAudioStatus::Loading,
                 "scene-a",
-                None,
-                Some("scene-a"),
-                None,
                 None,
             ));
         }
@@ -715,12 +740,107 @@ mod tests {
         ] {
             assert!(!should_request_mixer_scene_audio(
                 intent,
+                MixerVisibleAudioStatus::Missing,
                 "scene-a",
-                None,
-                None,
-                None,
                 Some("scene-a"),
             ));
         }
+    }
+
+    #[test]
+    fn adapter_tracks_and_dispatches_missing_request_once() {
+        let mut tracked_scene = None;
+
+        let command = prepare_mixer_scene_audio_request(
+            MixerRefreshRequestIntent::Automatic,
+            "scene-a",
+            MixerVisibleAudioStatus::Missing,
+            &mut tracked_scene,
+        );
+
+        assert_eq!(command_scene(command).as_deref(), Some("scene-a"));
+        assert_eq!(tracked_scene.as_deref(), Some("scene-a"));
+
+        let command = prepare_mixer_scene_audio_request(
+            MixerRefreshRequestIntent::Automatic,
+            "scene-a",
+            MixerVisibleAudioStatus::Missing,
+            &mut tracked_scene,
+        );
+
+        assert_eq!(command_scene(command), None);
+        assert_eq!(tracked_scene.as_deref(), Some("scene-a"));
+    }
+
+    #[test]
+    fn adapter_does_not_loop_automatic_rebuild_after_failure() {
+        let mut tracked_scene = None;
+        let error = mixer_error();
+
+        let command = prepare_mixer_scene_audio_request(
+            MixerRefreshRequestIntent::Automatic,
+            "scene-a",
+            MixerVisibleAudioStatus::Error(&error),
+            &mut tracked_scene,
+        );
+
+        assert_eq!(command_scene(command), None);
+        assert_eq!(tracked_scene, None);
+    }
+
+    #[test]
+    fn adapter_allows_one_explicit_retry_after_failure() {
+        let mut tracked_scene = None;
+        let error = mixer_error();
+
+        let command = prepare_mixer_scene_audio_request(
+            MixerRefreshRequestIntent::Explicit,
+            "scene-a",
+            MixerVisibleAudioStatus::Error(&error),
+            &mut tracked_scene,
+        );
+
+        assert_eq!(command_scene(command).as_deref(), Some("scene-a"));
+        assert_eq!(tracked_scene.as_deref(), Some("scene-a"));
+
+        let command = prepare_mixer_scene_audio_request(
+            MixerRefreshRequestIntent::Explicit,
+            "scene-a",
+            MixerVisibleAudioStatus::Error(&error),
+            &mut tracked_scene,
+        );
+
+        assert_eq!(command_scene(command), None);
+    }
+
+    #[test]
+    fn adapter_dedupes_explicit_retry_while_loading() {
+        let mut tracked_scene = None;
+
+        let command = prepare_mixer_scene_audio_request(
+            MixerRefreshRequestIntent::Explicit,
+            "scene-a",
+            MixerVisibleAudioStatus::Loading,
+            &mut tracked_scene,
+        );
+
+        assert_eq!(command_scene(command), None);
+        assert_eq!(tracked_scene, None);
+    }
+
+    #[test]
+    fn adapter_dedupes_explicit_retry_while_tracked() {
+        let mut tracked_scene = Some("scene-a".to_string());
+        let error = mixer_error();
+
+        let command = prepare_mixer_scene_audio_request(
+            MixerRefreshRequestIntent::Explicit,
+            "scene-a",
+            MixerVisibleAudioStatus::Error(&error),
+            &mut tracked_scene,
+        );
+
+        assert_eq!(command_scene(command), None);
+        assert_eq!(tracked_scene.as_deref(), Some("scene-a"));
     }
 }

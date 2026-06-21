@@ -41,8 +41,8 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 Status: all passed on 2026-06-21 after the mixer refresh contract, optimistic
 audio update, output confirmation decision-helper work, mixer retry-intent fix,
-and reducer-owned mixer input mirror containment. The current review reran the
-full validation rule plus the focused `mixer_input` test filter.
+reducer-owned mixer input mirror containment, and selected/pinned Mixer input
+event reconciliation. The current review reran the full validation rule.
 
 ## Completed Phases
 
@@ -246,103 +246,134 @@ Review verdict:
   term, the Mixer page should read a single derived snapshot/accessor instead
   of coordinating four mirror accessors itself.
 
+### Mixer Visibility Contract and Selected/Pinned Reconciliation
+
+Working tree, reviewed 2026-06-21:
+
+- Added `MixerVisibleAudioStatus` and `AppState::visible_mixer_audio_status`
+  so the Mixer page reads one reducer-derived status for a target scene:
+  loading, error, loaded inputs, or missing.
+- Refactored selected/pinned Mixer rendering and retry dispatch to use the
+  visible status helper instead of coordinating separate legacy mirror
+  accessors.
+- Added `prepare_mixer_scene_audio_request` tests covering tracker mutation,
+  automatic failure dedupe, explicit retry after failure, loading dedupe, and
+  tracked-request dedupe.
+- Added `should_rebuild_visible_mixer_for_input_event` and routed OBS
+  `InputMuteChanged` / `InputVolumeChanged` events to rebuild the Mixer page
+  locally when a visible selected/pinned snapshot contains the changed input.
+- Added predicate coverage for selected and pinned visible snapshots,
+  unrelated inputs, non-Mixer pages, loading/error/missing snapshots, and
+  stale other-scene snapshots.
+
+Review verdict:
+
+- Static validation passed: `cargo fmt --all -- --check`,
+  `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- The reducer-derived read helper is a useful boundary and removes the Mixer
+  page's previous manual combination of loading, error, loaded scene, and
+  loaded inputs.
+- The retry dispatch adapter closes most of the previously identified retry
+  interaction coverage gap without requiring full GTK tests.
+- Selected and pinned Mixer cards now refresh from local state after relevant
+  OBS input events without dispatching a new OBS refresh.
+- High-priority gap: Active Mixer mode still renders from `state.audio_inputs`,
+  but `should_rebuild_visible_mixer_for_input_event` returns false for
+  `MixerMode::ActiveScene`. Visible Active-mode Mixer cards can still remain
+  stale after mute/volume events until another page rebuild occurs.
+- The old legacy mirror accessors are now unused outside `AppState`; keeping
+  them around weakens the new read-contract cleanup and invites future drift.
+
 ## Groomed Next Steps
 
-### P0: Add Mixer Retry Interaction Coverage
+### P0: Complete Active-Mode Mixer Input Event Reconciliation
 
 Problem:
 
-- Pure decision-helper tests cover explicit retry semantics, but no test covers
-  the UI event sequence: failure status clears the tracker, clicking Retry
-  dispatches once, loading replaces the error, and automatic rebuilds stay
-  quiet.
-- Combo-row callbacks can fire during row construction in some GTK patterns; the
-  current helper should keep this harmless, but it is only indirectly covered.
+- The selected/pinned stale-card fix does not cover Active mode. The Mixer page
+  renders Active mode from `state.audio_inputs`, and OBS input events already
+  mutate that vector, but `should_rebuild_visible_mixer_for_input_event`
+  immediately returns false for `MixerMode::ActiveScene`.
+- A user viewing Mixer in Active mode can still see stale mute/volume controls
+  until a scene change, manual refresh, navigation, or another rebuild occurs.
 
 Plan:
 
-- Extract a small request-dispatch adapter or testable state transition around
-  `request_mixer_scene_audio` so tracker mutation and dispatch/no-dispatch can
-  be verified without full GTK.
-- Cover failure -> Retry -> loading -> failure and failure -> automatic rebuild
-  sequences.
-- Confirm explicit requests are still deduped while a same-scene request is
-  already loading or tracked.
-
-Files:
-
-- `src/ui/pages/mixer.rs`
-
-Tests:
-
-- Explicit retry dispatches exactly once from a matching failed state.
-- Automatic rebuild after failure does not dispatch.
-- Explicit retry during loading/tracked state does not duplicate requests.
-
-### P1: Keep Visible Mixer Cards Synced With OBS Input Events
-
-Problem:
-
-- `InputMuteChanged` and `InputVolumeChanged` now keep `AppState` mixer
-  snapshots correct, but `src/ui/window.rs` only updates `live.audio_cards`.
-- Mixer page cards are rebuilt from state, so they eventually become correct,
-  but visible selected/pinned Mixer controls can display stale mute/volume
-  values until a page refresh occurs.
-
-Plan:
-
-- Decide whether Mixer cards should be tracked like Live cards or whether input
-  events should refresh the Mixer page when it is visible.
-- Prefer a small, testable page-refresh condition first: when the current page
-  is Mixer and the changed input exists in the visible mixer snapshot, refresh
-  only the Mixer page.
-- Avoid dispatching OBS refreshes from this path; it is a local UI/state
-  reconciliation for an already received OBS event.
-- Add focused coverage for the predicate that decides whether a Mixer rebuild
-  is needed after an input event.
+- Extend the rebuild predicate to treat Active mode as visible when the changed
+  input exists in `state.audio_inputs`.
+- Keep the path local-only: rebuild the Mixer page from existing state without
+  dispatching OBS refresh commands.
+- Add tests for Active mode matched and unmatched inputs, preserving the
+  existing selected/pinned behavior.
 
 Files:
 
 - `src/ui/window.rs`
-- `src/ui/pages/mixer.rs`
-- possible `src/controller/state.rs` helper for snapshot membership
 
 Tests:
 
-- An input event for a visible selected/pinned mixer snapshot triggers a Mixer
-  rebuild/update.
-- An unrelated input event does not rebuild Mixer.
-- Active-scene Live audio updates continue to update existing Live cards.
+- Active Mixer mode rebuilds for a visible changed input.
+- Active Mixer mode ignores unrelated input events.
+- Selected/pinned predicate tests continue to pass.
 
-### P1: Collapse Mixer Mirror Read Model
+### P1: Remove Dead Legacy Mixer Mirror Accessors
 
 Problem:
 
-- The legacy mixer mirror fields are now private, but the Mixer page still has
-  to combine `mixer_audio_scene()`, `mixer_audio_inputs()`,
-  `mixer_audio_loading_scene()`, and `mixer_audio_error()` manually.
-- That preserves some of the old split-state shape in read code even though
-  writes are now reducer-owned.
+- `mixer_audio_scene()`, `mixer_audio_inputs()`,
+  `mixer_audio_loading_scene()`, and `mixer_audio_error()` are no longer used
+  outside `src/controller/state.rs` after the `visible_mixer_audio_status`
+  refactor.
+- Keeping unused compatibility accessors preserves an attractive bypass around
+  the reducer-derived read contract.
 
 Plan:
 
-- Add a small `AppState` read helper that returns the visible mixer refresh
-  status for a target scene: loading, error, loaded inputs, or missing.
-- Refactor `src/ui/pages/mixer.rs` to branch on that helper rather than on four
-  separate accessors.
-- Keep the legacy mirror fields only as compatibility state while the page
-  still needs cloned `AudioInput` values for card construction.
+- Delete the unused accessors if no external caller remains.
+- Keep the private mirror fields only as internal compatibility state while
+  `sync_mixer_audio_fields` exists.
+- Remove stale comments that imply external read compatibility is still needed.
+
+Files:
+
+- `src/controller/state.rs`
+
+Tests:
+
+- Existing reducer and Mixer page tests continue to compile without the
+  accessors.
+
+### P1: Clarify Active Versus Scene-Specific Mixer Read Model
+
+Problem:
+
+- Selected and pinned modes use `visible_mixer_audio_status`, while Active mode
+  directly clones `state.audio_inputs`. This is reasonable, but the distinction
+  is implicit and already led to the Active-mode rebuild omission.
+
+Plan:
+
+- Add a small helper or comments that make the visible Mixer source explicit:
+  Active uses active audio inputs; Selected/Pinned use scene-specific refresh
+  status.
+- Prefer one helper that returns the visible input slice/status for the current
+  Mixer mode if it can stay simple and borrow-friendly.
+- Keep request/retry decisions scene-specific; do not apply scene refresh
+  statuses to Active mode.
 
 Files:
 
 - `src/controller/state.rs`
 - `src/ui/pages/mixer.rs`
+- `src/ui/window.rs`
 
 Tests:
 
-- Target-scene helper reports loading, error, loaded, and missing states.
-- Stale loaded/error data for another scene is not reported as visible for the
-  requested target.
+- Active/Selected/Pinned visible source selection is covered by pure tests.
+- Selected/Pinned stale scene states still report missing for the requested
+  target.
 
 ### P1: Surface Output Command Errors In Output UI
 

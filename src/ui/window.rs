@@ -21,8 +21,11 @@ use crate::app_info::APP_NAME;
 use crate::controller::app_controller::AppController;
 use crate::controller::command::AppCommand;
 use crate::controller::event::AppEvent;
-use crate::controller::state::{AppState, MixerAudioRefreshTransition, ObsStatus, Page};
+use crate::controller::state::{
+    AppState, MixerAudioRefreshTransition, MixerVisibleAudioStatus, ObsStatus, Page,
+};
 use crate::domain::appearance::ThemeMode;
+use crate::domain::mixer::MixerMode;
 use crate::domain::obs::ObsNamedList;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::pages::live::LivePageHandle;
@@ -447,19 +450,24 @@ fn apply_event(
         }
 
         AppEvent::InputMuteChanged { input, muted } => {
-            {
+            let rebuild_mixer = {
                 let mut state = nav.state.borrow_mut();
                 if let Some(a) = state.audio_inputs.iter_mut().find(|a| a.id == input) {
                     a.muted = muted;
                 }
                 state.update_mixer_input_mute(&input, muted);
-            }
+                should_rebuild_visible_mixer_for_input_event(&state, &input)
+            };
 
             for card in live.audio_cards.borrow().iter() {
                 if card.input_id == input {
                     card.update_mute(muted);
                     break;
                 }
+            }
+
+            if rebuild_mixer {
+                refreshers.call(Page::Mixer);
             }
         }
 
@@ -468,20 +476,25 @@ fn apply_event(
             volume_mul,
             volume_db,
         } => {
-            {
+            let rebuild_mixer = {
                 let mut state = nav.state.borrow_mut();
                 if let Some(a) = state.audio_inputs.iter_mut().find(|a| a.id == input) {
                     a.volume_mul = volume_mul;
                     a.volume_db = volume_db;
                 }
                 state.update_mixer_input_volume(&input, volume_mul, volume_db);
-            }
+                should_rebuild_visible_mixer_for_input_event(&state, &input)
+            };
 
             for card in live.audio_cards.borrow().iter() {
                 if card.input_id == input {
                     card.update_volume(volume_mul, volume_db);
                     break;
                 }
+            }
+
+            if rebuild_mixer {
+                refreshers.call(Page::Mixer);
             }
         }
 
@@ -545,6 +558,44 @@ fn update_active_since(active: bool, active_since: &mut Option<Instant>) {
         (true, false) => *active_since = Some(Instant::now()),
         (false, true) => *active_since = None,
         _ => {}
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn should_rebuild_visible_mixer_for_input_event(
+    state: &AppState,
+    input_name: &str,
+) -> bool {
+    if state.current_page != Page::Mixer {
+        return false;
+    }
+
+    let target_scene = match state.mixer.mode {
+        MixerMode::ActiveScene => return false,
+        MixerMode::SelectedScene => state
+            .mixer
+            .selected_scene
+            .as_deref()
+            .or(state.scene_inventory.current_id.as_deref()),
+        MixerMode::PinnedScene => state
+            .mixer
+            .pinned_scene
+            .as_deref()
+            .or(state.mixer.selected_scene.as_deref())
+            .or(state.scene_inventory.current_id.as_deref()),
+    };
+
+    let Some(target_scene) = target_scene else {
+        return false;
+    };
+
+    match state.visible_mixer_audio_status(target_scene) {
+        MixerVisibleAudioStatus::Loaded(inputs) => {
+            inputs.iter().any(|input| input.id == input_name)
+        }
+        MixerVisibleAudioStatus::Loading
+        | MixerVisibleAudioStatus::Error(_)
+        | MixerVisibleAudioStatus::Missing => false,
     }
 }
 
@@ -820,4 +871,112 @@ pub(crate) fn apply_color_scheme(style_manager: &adw::StyleManager, mode: ThemeM
         ThemeMode::Dark => adw::ColorScheme::ForceDark,
     };
     style_manager.set_color_scheme(scheme);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::audio::AudioInput;
+    use crate::domain::mixer::MixerSelection;
+    use crate::storage::config::OutputConfig;
+
+    fn input(id: &str) -> AudioInput {
+        AudioInput::new(id.to_string(), false, 1.0, 0.0)
+    }
+
+    fn app_state() -> AppState {
+        AppState::new(
+            ThemeMode::default(),
+            MixerSelection::default(),
+            OutputConfig::default(),
+            None,
+        )
+    }
+
+    fn selected_mixer_state() -> AppState {
+        let mut state = app_state();
+        state.current_page = Page::Mixer;
+        state.mixer.mode = MixerMode::SelectedScene;
+        state.mixer.selected_scene = Some("Scene A".to_string());
+        state
+    }
+
+    #[test]
+    fn mixer_input_event_rebuilds_for_visible_loaded_selected_input() {
+        let mut state = selected_mixer_state();
+        state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_success("Scene A".to_string(), vec![input("Mic"), input("Music")]);
+
+        assert!(should_rebuild_visible_mixer_for_input_event(&state, "Mic"));
+    }
+
+    #[test]
+    fn mixer_input_event_rebuilds_for_visible_loaded_pinned_input() {
+        let mut state = app_state();
+        state.current_page = Page::Mixer;
+        state.mixer.mode = MixerMode::PinnedScene;
+        state.mixer.selected_scene = Some("Scene A".to_string());
+        state.mixer.pinned_scene = Some("Pinned".to_string());
+        state.set_mixer_audio_loading("Pinned".to_string());
+        state.set_mixer_audio_success("Pinned".to_string(), vec![input("Pinned Mic")]);
+
+        assert!(should_rebuild_visible_mixer_for_input_event(
+            &state,
+            "Pinned Mic"
+        ));
+    }
+
+    #[test]
+    fn mixer_input_event_ignores_unrelated_loaded_input() {
+        let mut state = selected_mixer_state();
+        state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_success("Scene A".to_string(), vec![input("Mic")]);
+
+        assert!(!should_rebuild_visible_mixer_for_input_event(
+            &state, "Music"
+        ));
+    }
+
+    #[test]
+    fn mixer_input_event_ignores_non_mixer_page() {
+        let mut state = selected_mixer_state();
+        state.current_page = Page::Live;
+        state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_success("Scene A".to_string(), vec![input("Mic")]);
+
+        assert!(!should_rebuild_visible_mixer_for_input_event(&state, "Mic"));
+    }
+
+    #[test]
+    fn mixer_input_event_ignores_loading_error_missing_and_empty_snapshots() {
+        let mut loading = selected_mixer_state();
+        loading.set_mixer_audio_loading("Scene A".to_string());
+        assert!(!should_rebuild_visible_mixer_for_input_event(
+            &loading, "Mic"
+        ));
+
+        let mut error = selected_mixer_state();
+        error.set_mixer_audio_loading("Scene A".to_string());
+        error.set_mixer_audio_failure("Scene A".to_string(), "OBS failed".to_string());
+        assert!(!should_rebuild_visible_mixer_for_input_event(&error, "Mic"));
+
+        let missing = selected_mixer_state();
+        assert!(!should_rebuild_visible_mixer_for_input_event(
+            &missing, "Mic"
+        ));
+
+        let mut empty = selected_mixer_state();
+        empty.set_mixer_audio_loading("Scene A".to_string());
+        empty.set_mixer_audio_success("Scene A".to_string(), Vec::new());
+        assert!(!should_rebuild_visible_mixer_for_input_event(&empty, "Mic"));
+    }
+
+    #[test]
+    fn mixer_input_event_ignores_snapshot_for_other_scene() {
+        let mut state = selected_mixer_state();
+        state.set_mixer_audio_loading("Scene B".to_string());
+        state.set_mixer_audio_success("Scene B".to_string(), vec![input("Mic")]);
+
+        assert!(!should_rebuild_visible_mixer_for_input_event(&state, "Mic"));
+    }
 }
