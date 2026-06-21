@@ -331,6 +331,9 @@ impl AppController {
         let Some(client) = self.client_slot.lock().ok().and_then(|s| s.clone()) else {
             clear_stream_pending(&self.output_pending);
             tracing::warn!("stream command ignored — not connected to OBS");
+            let _ = self.event_tx.send(AppEvent::StreamCommandFailed(
+                "Not connected to OBS".to_string(),
+            ));
             return;
         };
 
@@ -341,7 +344,7 @@ impl AppController {
         } else {
             OutputRunState::Stopping
         };
-        let _ = tx.send(AppEvent::StreamStatusUpdated(OutputStatus {
+        let _ = tx.send(AppEvent::StreamCommandPending(OutputStatus {
             active: !active,
             state: transition_state,
             detail: None,
@@ -349,9 +352,14 @@ impl AppController {
 
         self.runtime.spawn(async move {
             match client.set_streaming(active).await {
-                Ok(()) => refresh_output_statuses(&client, &tx).await,
+                Ok(()) => {
+                    let _ = tx.send(AppEvent::StreamCommandSucceeded);
+                    refresh_output_statuses(&client, &tx).await;
+                }
                 Err(e) => {
+                    let message = e.to_string();
                     let _ = tx.send(AppEvent::Error(e));
+                    let _ = tx.send(AppEvent::StreamCommandFailed(message));
                     refresh_output_statuses(&client, &tx).await;
                 }
             }
@@ -371,6 +379,9 @@ impl AppController {
         let Some(client) = self.client_slot.lock().ok().and_then(|s| s.clone()) else {
             clear_record_pending(&self.output_pending);
             tracing::warn!("record command ignored — not connected to OBS");
+            let _ = self.event_tx.send(AppEvent::RecordCommandFailed(
+                "Not connected to OBS".to_string(),
+            ));
             return;
         };
 
@@ -381,7 +392,7 @@ impl AppController {
         } else {
             OutputRunState::Stopping
         };
-        let _ = tx.send(AppEvent::RecordStatusUpdated(OutputStatus {
+        let _ = tx.send(AppEvent::RecordCommandPending(OutputStatus {
             active: !active,
             state: transition_state,
             detail: None,
@@ -390,6 +401,7 @@ impl AppController {
         self.runtime.spawn(async move {
             match client.set_recording(active).await {
                 Ok(path) => {
+                    let _ = tx.send(AppEvent::RecordCommandSucceeded);
                     refresh_output_statuses(&client, &tx).await;
                     if let Some(path) = path {
                         let _ = tx.send(AppEvent::RecordStatusUpdated(OutputStatus {
@@ -400,7 +412,9 @@ impl AppController {
                     }
                 }
                 Err(e) => {
+                    let message = e.to_string();
                     let _ = tx.send(AppEvent::Error(e));
+                    let _ = tx.send(AppEvent::RecordCommandFailed(message));
                     refresh_output_statuses(&client, &tx).await;
                 }
             }
@@ -737,5 +751,47 @@ fn output_status_from_event(
         active,
         state,
         detail,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+    use tokio::runtime::Runtime;
+
+    fn controller_with_receiver() -> (Runtime, AppController, mpsc::Receiver<AppEvent>) {
+        let runtime = Runtime::new().expect("test runtime");
+        let handle = runtime.handle().clone();
+        let (tx, rx) = mpsc::sync_channel(8);
+        (runtime, AppController::new(handle, tx), rx)
+    }
+
+    #[test]
+    fn start_streaming_without_client_emits_stream_command_failure() {
+        let (_runtime, mut controller, rx) = controller_with_receiver();
+
+        controller.handle(AppCommand::StartStreaming);
+
+        let event = rx.try_recv().expect("stream failure event");
+        let AppEvent::StreamCommandFailed(message) = event else {
+            panic!("expected stream command failure event");
+        };
+        assert_eq!(message, "Not connected to OBS");
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn start_recording_without_client_emits_record_command_failure() {
+        let (_runtime, mut controller, rx) = controller_with_receiver();
+
+        controller.handle(AppCommand::StartRecording);
+
+        let event = rx.try_recv().expect("record failure event");
+        let AppEvent::RecordCommandFailed(message) = event else {
+            panic!("expected record command failure event");
+        };
+        assert_eq!(message, "Not connected to OBS");
+        assert!(rx.try_recv().is_err());
     }
 }

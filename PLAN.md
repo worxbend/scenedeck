@@ -48,18 +48,23 @@ Mixer scene-specific target resolution, refresh-target naming cleanup,
 fallback-aware Mixer summary copy, direct Mixer summary copy tests, output
 confirmation dialog appearance metadata, tightened focused Mixer manual
 evidence instructions, reproducible focused Mixer fixture documentation, the
-opt-in Mixer debug inspection path, and rendered-branch inspection status
-alignment. The debug path now distinguishes loading placeholders, error
-placeholders, missing no-target state, loaded visible cards, loaded empty audio,
-and filtered-empty audio, and structured `volume_label` values are derived with
-the same `AudioService::format_db` helper used by rendered audio cards from the
-same visible-card `volume_db` value emitted in JSON. Focused manual Mixer
+opt-in Mixer debug inspection path, rendered-branch inspection status
+alignment, and the first output-command error state/UI slice. The debug path
+now distinguishes loading placeholders, error placeholders, missing no-target
+state, loaded visible cards, loaded empty audio, and filtered-empty audio, and
+structured `volume_label` values are derived with the same
+`AudioService::format_db` helper used by rendered audio cards from the same
+visible-card `volume_db` value emitted in JSON. Focused manual Mixer
 interaction evidence is still not complete. The latest focused run was blocked
 because OBS was not running, `127.0.0.1:4455` refused WebSocket connections,
 no temporary fixture could be verified, and the non-interactive session had no
 control path for GTK ComboRows or Retry. No pass/fail behavior is claimed yet
 for ComboRow timing, Retry activation, OBS mute/volume echoes, stale visible
-cards, or runtime rebuild churn.
+cards, or runtime rebuild churn. Output command errors now have per-output
+state fields and Live-page labels, but command failures still incorrectly emit
+the generic connection-level `Error` event before the output-specific failure,
+so the Live page can still switch to OBS error/disconnected UI for a stream or
+record operation failure.
 
 ## Completed Phases
 
@@ -763,6 +768,46 @@ Review verdict:
   until OBS/WebSocket, a temporary fixture, and an interaction or control path
   are available.
 
+### Output Command Error State And Live Rendering
+
+Working tree, reviewed 2026-06-21:
+
+- Added `last_stream_command_error` and `last_record_command_error` to
+  `AppState`.
+- Added stream/record command pending, succeeded, and failed events.
+- Routed command pending/success/failure events through the UI so Live stream
+  and record controls can show per-output error labels.
+- Cleared output command errors on new pending command, command success,
+  reconnect/connecting/disconnect resets, and Live output reset.
+- Added state-level tests for stream/record error ownership and controller
+  tests for no-client stream/record command failures.
+- Tightened the focused Mixer evidence gate in the manual test docs so the
+  blocked environment is not re-run as a full interaction checklist.
+
+Review verdict:
+
+- Full validation passed in review:
+  `cargo fmt --all -- --check`, `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- The state and Live label slice is mostly implemented: stream and record
+  errors are tracked independently and rendered in the output area.
+- High-priority regression/unfinished contract: `set_streaming` and
+  `set_recording` still send generic `AppEvent::Error` on OBS command failure
+  before sending the output-specific failed event. The generic handler marks
+  OBS status as error, clears output errors, resets controls, shows the
+  disconnected/error Live view, and emits an OBS-error toast. This violates the
+  stated goal of preserving OBS connection errors separately from output
+  command errors and can still make stream/record failures look like connection
+  failures.
+- The no-client path correctly emits only the output-specific failure event,
+  but async OBS command failures are not covered by tests because the
+  controller still lacks an injected fake output command client.
+- Output error label layout is functional, but long backend error text is
+  inserted verbatim into the compact banner. A later output-card layout should
+  give these errors a dedicated bounded area and possibly shorter display copy
+  with the full text in a tooltip.
+
 ## Groomed Next Steps
 
 ### P1: Make Focused Mixer Evidence Executable
@@ -853,19 +898,38 @@ Tests:
 - Add GTK-level or widget-level coverage only if a test harness can inspect card
   updates without excessive brittleness.
 
-### P1: Surface Output Command Errors In Output UI
+### P1: Finish Output Command Error Separation
 
 Problem:
 
-- Output command failures still surface through generic OBS errors/toasts and
-  can make stream/record command failures look like connection failures.
+- The first output error slice added per-output state and Live labels, but OBS
+  command failures still send generic `AppEvent::Error` before
+  `StreamCommandFailed` or `RecordCommandFailed`.
+- `AppEvent::Error` is connection/session scoped in the UI: it sets OBS status
+  to error, resets output controls, clears output command errors, shows the
+  disconnected/error Live view, and emits an OBS-error toast.
+- That means real stream/record command failures can still look like OBS
+  connection failures, directly violating the output-error separation goal.
 
 Plan:
 
-- Extend output UI state with last stream/record error.
-- Preserve OBS connection errors separately from stream/record command errors.
-- Show output errors on the Live output area and later on output cards.
-- Clear output-specific errors on new pending command, success, and disconnect.
+- Stop routing stream/record command failures through generic `AppEvent::Error`
+  when the OBS session remains usable. Send only the output-specific failed
+  event and refresh output statuses.
+- Keep genuine connection/session failures on `AppEvent::Error`; if an output
+  command error proves the client is unusable, emit an explicit disconnect or
+  connection-failed path rather than conflating all command errors with
+  connection errors.
+- Preserve an informational toast if desired, but title it as a stream or
+  recording command failure and do not reset connection state.
+- Add controller-level coverage for async OBS command failures, preferably by
+  introducing an injectable output-command dependency or fake OBS client seam
+  that can fail `set_streaming` / `set_recording` while succeeding status
+  refresh.
+- Add UI-state reducer tests or an event-sequence helper proving command
+  failure leaves `ObsStatus::Connected`, keeps the Live page visible, clears
+  only the relevant pending state/error on retry/success, and does not erase
+  the other output's error.
 
 Files:
 
@@ -874,6 +938,35 @@ Files:
 - `src/controller/app_controller.rs`
 - `src/ui/pages/live.rs`
 - `src/ui/window.rs`
+
+Tests:
+
+- Full validation rule.
+- Focused command-failure tests for stream and record async failures.
+- Event-sequence tests for pending -> failed -> status refresh and pending ->
+  succeeded -> status refresh behavior.
+
+### P1: Improve Output Error Presentation
+
+Problem:
+
+- Output errors are displayed in the compact banner beneath the stream/record
+  row.
+- Backend error strings can be long and technical, which can make the banner
+  visually noisy before output cards exist.
+
+Plan:
+
+- Keep full error text in a tooltip or details affordance.
+- Show concise user-facing text in the banner, e.g. "Stream command failed" or
+  "Recording command failed", with detailed text available on hover/details.
+- Revisit this when extracting output control cards so pending state, elapsed
+  time, last error, and recording path all have stable space.
+
+Files:
+
+- `src/ui/pages/live.rs`
+- `assets/scenedeck.css`
 
 ### P1: Settings Persistence Feedback
 

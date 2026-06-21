@@ -250,6 +250,8 @@ pub struct AppState {
     pub scene_collections: ObsNamedList,
     pub stream_status: OutputStatus,
     pub record_status: OutputStatus,
+    pub last_stream_command_error: Option<String>,
+    pub last_record_command_error: Option<String>,
     pub stream_active_since: Option<Instant>,
     pub record_active_since: Option<Instant>,
     pub last_recording_path: Option<String>,
@@ -279,6 +281,8 @@ impl AppState {
             scene_collections: ObsNamedList::default(),
             stream_status: OutputStatus::default(),
             record_status: OutputStatus::default(),
+            last_stream_command_error: None,
+            last_record_command_error: None,
             stream_active_since: None,
             record_active_since: None,
             last_recording_path: None,
@@ -323,6 +327,37 @@ impl AppState {
 
     pub fn clear_pending_mixer_audio_refresh(&mut self) {
         self.mixer_audio_refresh.clear_pending();
+    }
+
+    pub fn set_stream_command_pending(&mut self, status: OutputStatus) {
+        self.last_stream_command_error = None;
+        self.stream_status = status;
+    }
+
+    pub fn set_record_command_pending(&mut self, status: OutputStatus) {
+        self.last_record_command_error = None;
+        self.record_status = status;
+    }
+
+    pub fn set_stream_command_success(&mut self) {
+        self.last_stream_command_error = None;
+    }
+
+    pub fn set_record_command_success(&mut self) {
+        self.last_record_command_error = None;
+    }
+
+    pub fn set_stream_command_failure(&mut self, message: String) {
+        self.last_stream_command_error = Some(message);
+    }
+
+    pub fn set_record_command_failure(&mut self, message: String) {
+        self.last_record_command_error = Some(message);
+    }
+
+    pub fn clear_output_command_errors(&mut self) {
+        self.last_stream_command_error = None;
+        self.last_record_command_error = None;
     }
 
     pub fn visible_mixer_audio_status(&self, scene: &str) -> MixerVisibleAudioStatus<'_> {
@@ -539,6 +574,7 @@ fn mixer_inspection_inputs(inputs: &[AudioInput]) -> Vec<MixerInspectionInput<'_
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::output::OutputRunState;
 
     fn input(id: &str) -> AudioInput {
         AudioInput::new(id.to_string(), false, 1.0, 0.0)
@@ -592,6 +628,102 @@ mod tests {
         assert_eq!(input.muted, muted);
         assert_eq!(input.volume_mul, 0.5);
         assert_eq!(input.volume_db, -6.24);
+    }
+
+    fn output_status(active: bool, state: OutputRunState) -> OutputStatus {
+        OutputStatus {
+            active,
+            state,
+            detail: None,
+        }
+    }
+
+    #[test]
+    fn stream_command_failure_sets_stream_error_only() {
+        let mut state = app_state();
+
+        state.set_stream_command_failure("stream failed".to_string());
+
+        assert_eq!(
+            state.last_stream_command_error.as_deref(),
+            Some("stream failed")
+        );
+        assert_eq!(state.last_record_command_error, None);
+    }
+
+    #[test]
+    fn record_command_failure_sets_record_error_only() {
+        let mut state = app_state();
+
+        state.set_record_command_failure("record failed".to_string());
+
+        assert_eq!(state.last_stream_command_error, None);
+        assert_eq!(
+            state.last_record_command_error.as_deref(),
+            Some("record failed")
+        );
+    }
+
+    #[test]
+    fn stream_pending_and_success_clear_only_stream_error() {
+        let mut state = app_state();
+        state.set_stream_command_failure("old stream failure".to_string());
+        state.set_record_command_failure("record failure".to_string());
+
+        state.set_stream_command_pending(output_status(false, OutputRunState::Starting));
+
+        assert_eq!(state.last_stream_command_error, None);
+        assert_eq!(
+            state.last_record_command_error.as_deref(),
+            Some("record failure")
+        );
+        assert_eq!(state.stream_status.state, OutputRunState::Starting);
+
+        state.set_stream_command_failure("new stream failure".to_string());
+        state.set_stream_command_success();
+
+        assert_eq!(state.last_stream_command_error, None);
+        assert_eq!(
+            state.last_record_command_error.as_deref(),
+            Some("record failure")
+        );
+    }
+
+    #[test]
+    fn record_pending_and_success_clear_only_record_error() {
+        let mut state = app_state();
+        state.set_stream_command_failure("stream failure".to_string());
+        state.set_record_command_failure("old record failure".to_string());
+
+        state.set_record_command_pending(output_status(true, OutputRunState::Stopping));
+
+        assert_eq!(
+            state.last_stream_command_error.as_deref(),
+            Some("stream failure")
+        );
+        assert_eq!(state.last_record_command_error, None);
+        assert_eq!(state.record_status.state, OutputRunState::Stopping);
+
+        state.set_record_command_failure("new record failure".to_string());
+        state.set_record_command_success();
+
+        assert_eq!(
+            state.last_stream_command_error.as_deref(),
+            Some("stream failure")
+        );
+        assert_eq!(state.last_record_command_error, None);
+    }
+
+    #[test]
+    fn output_command_errors_clear_together_on_session_reset() {
+        let mut state = app_state();
+        state.set_stream_command_failure("stream failure".to_string());
+        state.set_record_command_failure("record failure".to_string());
+
+        state.clear_output_command_errors();
+
+        assert_eq!(state.last_stream_command_error, None);
+        assert_eq!(state.last_record_command_error, None);
     }
 
     #[test]

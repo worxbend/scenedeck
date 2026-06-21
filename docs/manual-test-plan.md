@@ -132,19 +132,28 @@ selection.
 
 ### Focused Mixer Refresh Contract
 
+Evidence gate:
+
+Do not record a new focused Mixer run until all gate prerequisites below pass.
+If any item fails, record only the missing prerequisite in
+`docs/manual-test-runs.md` and do not proceed through the interaction
+checklist.
+
 Prerequisites:
 
+- OBS is running.
 - OBS WebSocket is reachable from SceneDeck with the configured host, port, and
-  password state recorded.
-- OBS has at least two scenes.
-- OBS has global audio inputs available in the OBS Audio Mixer.
-- At least one scene has a scene-specific audio input, and that scene-specific
-  input differs between two test scenes.
-- The chosen execution path is available. For the interactive desktop path, the
-  tester can interact with SceneDeck GTK ComboRows and inspect the visible Mixer
-  cards. For the debug inspection path, the tester can run SceneDeck with
-  `SCENEDECK_MIXER_INSPECT=1` and capture the structured Mixer inspection
-  lines.
+  authentication mode verified and recorded without secrets.
+- A temporary fixture exists in a throwaway OBS profile or clearly temporary
+  `SceneDeck Test ...` scenes. The fixture has at least two scenes, at least
+  one global audio input visible in the OBS Audio Mixer, and at least one
+  scene-specific audio input present in only one fixture scene.
+- A chosen interaction/control path is available and can switch Mixer modes,
+  select Mixer scenes, click the Mixer Retry button, and set Mixer search text.
+  For the interactive desktop path, the tester can also inspect the visible
+  Mixer cards directly. For the debug inspection path, the tester can run
+  SceneDeck with `SCENEDECK_MIXER_INSPECT=1` and capture the structured Mixer
+  inspection lines after the interaction/control path drives each case.
 - Record OBS version, obs-websocket version, SceneDeck build or commit, and any
   skipped cases in `docs/manual-test-runs.md`.
 

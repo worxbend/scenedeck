@@ -266,6 +266,7 @@ fn apply_event(
                 state.stream_active_since = None;
                 state.record_active_since = None;
                 state.clear_pending_mixer_audio_refresh();
+                state.clear_output_command_errors();
             }
             sidebar_controls.status_label.set_text("Connecting to OBS…");
             set_status_class(&sidebar_controls.status_label, "obs-connecting");
@@ -308,6 +309,7 @@ fn apply_event(
                 state.stream_active_since = None;
                 state.record_active_since = None;
                 state.clear_pending_mixer_audio_refresh();
+                state.clear_output_command_errors();
             }
             sidebar_controls.status_label.set_text("Disconnected");
             set_status_class(&sidebar_controls.status_label, "obs-disconnected");
@@ -376,6 +378,7 @@ fn apply_event(
                 state.stream_active_since = None;
                 state.record_active_since = None;
                 state.clear_pending_mixer_audio_refresh();
+                state.clear_output_command_errors();
             }
             sidebar_controls
                 .status_label
@@ -499,17 +502,20 @@ fn apply_event(
         }
 
         AppEvent::StreamStatusUpdated(status) => {
-            let elapsed = {
+            let (elapsed, error) = {
                 let mut state = nav.state.borrow_mut();
                 update_active_since(status.active, &mut state.stream_active_since);
                 state.stream_status = status.clone();
-                state.stream_active_since.map(format_elapsed)
+                (
+                    state.stream_active_since.map(format_elapsed),
+                    state.last_stream_command_error.clone(),
+                )
             };
-            update_stream_status(live, &status, elapsed);
+            update_stream_status(live, &status, elapsed, error.as_deref());
         }
 
         AppEvent::RecordStatusUpdated(status) => {
-            let (elapsed, last_path) = {
+            let (elapsed, last_path, error) = {
                 let mut state = nav.state.borrow_mut();
                 update_active_since(status.active, &mut state.record_active_since);
                 if let Some(path) = status.detail.as_ref().filter(|path| !path.is_empty()) {
@@ -519,9 +525,107 @@ fn apply_event(
                 (
                     state.record_active_since.map(format_elapsed),
                     state.last_recording_path.clone(),
+                    state.last_record_command_error.clone(),
                 )
             };
-            update_record_status(live, &status, elapsed, last_path.as_deref());
+            update_record_status(
+                live,
+                &status,
+                elapsed,
+                last_path.as_deref(),
+                error.as_deref(),
+            );
+        }
+
+        AppEvent::StreamCommandPending(status) => {
+            let (elapsed, error) = {
+                let mut state = nav.state.borrow_mut();
+                update_active_since(status.active, &mut state.stream_active_since);
+                state.set_stream_command_pending(status.clone());
+                (
+                    state.stream_active_since.map(format_elapsed),
+                    state.last_stream_command_error.clone(),
+                )
+            };
+            update_stream_status(live, &status, elapsed, error.as_deref());
+        }
+
+        AppEvent::RecordCommandPending(status) => {
+            let (elapsed, last_path, error) = {
+                let mut state = nav.state.borrow_mut();
+                update_active_since(status.active, &mut state.record_active_since);
+                state.set_record_command_pending(status.clone());
+                (
+                    state.record_active_since.map(format_elapsed),
+                    state.last_recording_path.clone(),
+                    state.last_record_command_error.clone(),
+                )
+            };
+            update_record_status(
+                live,
+                &status,
+                elapsed,
+                last_path.as_deref(),
+                error.as_deref(),
+            );
+        }
+
+        AppEvent::StreamCommandSucceeded => {
+            let (status, elapsed) = {
+                let mut state = nav.state.borrow_mut();
+                state.set_stream_command_success();
+                (
+                    state.stream_status.clone(),
+                    state.stream_active_since.map(format_elapsed),
+                )
+            };
+            update_stream_status(live, &status, elapsed, None);
+        }
+
+        AppEvent::RecordCommandSucceeded => {
+            let (status, elapsed, last_path) = {
+                let mut state = nav.state.borrow_mut();
+                state.set_record_command_success();
+                (
+                    state.record_status.clone(),
+                    state.record_active_since.map(format_elapsed),
+                    state.last_recording_path.clone(),
+                )
+            };
+            update_record_status(live, &status, elapsed, last_path.as_deref(), None);
+        }
+
+        AppEvent::StreamCommandFailed(message) => {
+            let (status, elapsed, error) = {
+                let mut state = nav.state.borrow_mut();
+                state.set_stream_command_failure(message);
+                (
+                    state.stream_status.clone(),
+                    state.stream_active_since.map(format_elapsed),
+                    state.last_stream_command_error.clone(),
+                )
+            };
+            update_stream_status(live, &status, elapsed, error.as_deref());
+        }
+
+        AppEvent::RecordCommandFailed(message) => {
+            let (status, elapsed, last_path, error) = {
+                let mut state = nav.state.borrow_mut();
+                state.set_record_command_failure(message);
+                (
+                    state.record_status.clone(),
+                    state.record_active_since.map(format_elapsed),
+                    state.last_recording_path.clone(),
+                    state.last_record_command_error.clone(),
+                )
+            };
+            update_record_status(
+                live,
+                &status,
+                elapsed,
+                last_path.as_deref(),
+                error.as_deref(),
+            );
         }
 
         AppEvent::GraphUpdated(graph) => {

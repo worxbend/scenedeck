@@ -1502,3 +1502,106 @@ M  PLAN.md
 M  SCORES.jsonl
 M  docs/manual-test-runs.md
 M  src/ui/pages/mixer.rs
+2026-06-21T13:59:48Z iteration 17 started remaining=10223s
+2026-06-21T13:59:48Z iteration 17 preplanner effective budgets untracked_scan_max_bytes=536870912 untracked_scan_max_count=10000 snapshot_copy_max_bytes=536870912 snapshot_copy_max_count=10000 snapshot_copy_max_file_bytes=134217728
+2026-06-21T13:59:48Z iteration 17 disposable preplanner repo created path=/tmp/agent-loop-preplanner-repo-0idkzwc3/repo copied_entries=115
+2026-06-21T13:59:48Z iteration 17 ideator phase started count=3
+2026-06-21T13:59:48Z iteration 17 ideator phase concurrency workers=3
+2026-06-21T13:59:48Z iteration 17 ideator 1 role="the pragmatist" started
+2026-06-21T13:59:48Z iteration 17 ideator 2 role="the architect" started
+2026-06-21T13:59:48Z iteration 17 ideator 3 role="the contrarian" started
+2026-06-21T13:59:57Z iteration 17 ideator 2 role="the architect" completed status=0
+2026-06-21T13:59:57Z iteration 17 ideator 1 role="the pragmatist" completed status=0
+2026-06-21T14:00:14Z iteration 17 ideator 3 role="the contrarian" completed status=0
+2026-06-21T14:00:14Z iteration 17 ideator phase completed approaches=3
+2026-06-21T14:00:14Z iteration 17 selector started approaches=3
+2026-06-21T14:00:24Z iteration 17 selector completed status=0
+2026-06-21T14:00:24Z iteration 17 disposable preplanner repo cleanup path=/tmp/agent-loop-preplanner-repo-0idkzwc3/repo
+2026-06-21T14:00:24Z iteration 17 selector rejected alternative role="the architect" approach="Prerequisite-Gated Evidence Pivot: stop iterating on Mixer runtime claims until the environment is executable, and route the next planner toward independently verifiable P1 work..." reason="Strong overall, but selected as part of a hybrid because it is slightly too abstract about which independent P1 work should be preferred next."
+2026-06-21T14:00:24Z iteration 17 selector rejected alternative role="the pragmatist" approach="Evidence-Gated Progression: treat the Mixer runtime gap as an environment capability problem first, then deliberately pivot to independent P1 product work if that capability is..." reason="Strong and closely aligned, but selected as part of a hybrid because the final guidance should be firmer that the Planner should not rerun the Mixer checklist unless prerequisites are verified first."
+2026-06-21T14:00:24Z iteration 17 selector rejected alternative role="the contrarian" approach="Stop Chasing Mixer Evidence; Advance Independent Product Surfaces. Treat the focused Mixer runtime gap as an environment dependency, not the next implementation driver, and shif..." reason="Useful corrective against repeated blocked Mixer iterations, but too absolute in phrasing; the Mixer evidence gap should be gated and preserved, not simply demoted."
+2026-06-21T14:00:24Z iteration 17 selector alternatives persisted count=3
+2026-06-21T14:00:24Z iteration 17 selector structured alternatives persisted count=3
+2026-06-21T14:00:24Z iteration 17 planner started
+2026-06-21T14:00:46Z iteration 17 plan: 4 task(s) in 3 phase(s). This iteration pivots to independently verifiable P1 work by surfacing stream/record command errors, while keeping the Mixer runtime evidence gap open behind explicit prerequisites. Phase 3 tasks are independent because documentation and validation do not edit the same implementation files.
+2026-06-21T14:00:46Z iteration 17 phase 1 started parallel=False tasks=1
+2026-06-21T14:04:22Z iteration 17 task t1 ('Add output command error state') status=0
+2026-06-21T14:04:22Z iteration 17 phase 2 started parallel=False tasks=1
+2026-06-21T14:06:15Z iteration 17 task t2 ('Render output errors on Live page') status=0
+2026-06-21T14:06:15Z iteration 17 phase 3 started parallel=True tasks=2
+2026-06-21T14:06:34Z iteration 17 task t4 ('Run validation for output error slice') status=0
+2026-06-21T14:07:11Z iteration 17 task t3 ('Document focused Mixer evidence gate') status=0
+2026-06-21T14:07:11Z iteration 17 reviewer started
+
+## Review Summary - Iteration 17 - 2026-06-21
+
+### What Was Done
+
+- Added per-output command error state to `AppState` for stream and recording
+  failures.
+- Added stream/record command pending, succeeded, and failed events.
+- Routed command events through the Live page so stream and record controls can
+  show output-specific error labels.
+- Cleared output command errors on new pending command, command success, and
+  connection/session resets.
+- Added state tests for independent stream/record error ownership and
+  controller tests for no-client stream/record command failures.
+- Tightened the focused Mixer evidence gate in manual docs and run templates so
+  blocked prerequisites stop the checklist before runtime behavior claims.
+
+### What Was Found
+
+- Full validation passed in review:
+  `cargo fmt --all -- --check`, `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- The Live-page output label work is present and mostly correct: errors are
+  stream/record-specific, hidden when empty, and cleared independently on
+  pending/success.
+- High-priority gap: async OBS stream/record command failures still send
+  generic `AppEvent::Error` before the output-specific failure event. The UI
+  generic error handler marks OBS status as error, clears output command
+  errors, resets output controls, switches Live to the disconnected/error view,
+  and emits an OBS-error toast. This preserves the old "command failure looks
+  like connection failure" behavior for real OBS command errors.
+- The no-client paths are covered and correctly emit only output-specific
+  failure events, but there is no test seam for async `set_streaming` /
+  `set_recording` failures with a live client.
+- Long backend error text is rendered verbatim in the compact output banner;
+  this is acceptable as a first slice but should be improved when output cards
+  are extracted.
+
+### Top Improvement Proposals
+
+1. Stop sending generic `AppEvent::Error` for stream/record command failures
+   when the OBS session remains usable; use only output-specific failure events
+   plus status refresh.
+2. Add an injectable output-command test seam or fake OBS client path so async
+   stream/record command failures can be tested without collapsing into
+   connection-error behavior.
+3. Add event-sequence coverage proving command failure leaves OBS connected,
+   keeps Live visible, and preserves the other output's error state.
+4. Keep Mixer runtime evidence behind the documented OBS/fixture/control-path
+   prerequisites; do not add more blocked run entries from the same unavailable
+   environment.
+5. Improve output error presentation by showing concise banner copy with the
+   full backend error available in a tooltip/details area, ideally as part of
+   output control cards.
+2026-06-21T14:09:41Z iteration 17 reviewer completed status=0
+2026-06-21T14:09:41Z iteration 17 memory updated
+2026-06-21T14:09:41Z iteration 17 completed validation_status=0
+2026-06-21T14:09:41Z iteration 17 checkpoint started
+2026-06-21T14:09:41Z iteration 17 checkpoint status before commit:
+M  AGENT_LOG.md
+M  ALTERNATIVES.jsonl
+M  MEMORY.md
+M  PLAN.md
+M  SCORES.jsonl
+M  assets/scenedeck.css
+M  docs/manual-test-plan.md
+M  docs/manual-test-runs.md
+M  src/controller/app_controller.rs
+M  src/controller/event.rs
+M  src/controller/state.rs
+M  src/ui/pages/live.rs
+M  src/ui/window.rs

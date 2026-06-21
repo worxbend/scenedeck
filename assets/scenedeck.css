@@ -14,6 +14,10 @@
     min-width: 108px;
 }
 
+.output-command-error {
+    color: @error_color;
+}
+
 /* ── Header OBS selectors ──────────────────────────────────────────────────── */
 .header-selector {
     margin-left: 6px;

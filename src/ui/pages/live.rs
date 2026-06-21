@@ -47,8 +47,10 @@ struct OutputConfirmationDialog {
 pub(crate) struct LivePageHandle {
     pub(crate) root: Stack,
     pub(crate) stream_label: Label,
+    pub(crate) stream_error_label: Label,
     pub(crate) stream_btn: Button,
     pub(crate) record_label: Label,
+    pub(crate) record_error_label: Label,
     pub(crate) record_btn: Button,
     pub(crate) record_path_btn: Button,
     pub(crate) current_scene_label: Label,
@@ -134,6 +136,8 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
     stream_label.add_css_class("caption");
     stream_label.add_css_class("dim-label");
 
+    let stream_error_label = build_output_error_label();
+
     let record_btn = Button::builder()
         .label("Start Record")
         .valign(Align::Center)
@@ -171,6 +175,8 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
     record_label.add_css_class("caption");
     record_label.add_css_class("dim-label");
 
+    let record_error_label = build_output_error_label();
+
     let record_path_btn = Button::builder()
         .icon_name("edit-copy-symbolic")
         .tooltip_text("Copy last recording path")
@@ -192,8 +198,14 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
         }
     });
 
-    let stream_control = build_output_control(&stream_btn, &stream_label, None);
-    let record_control = build_output_control(&record_btn, &record_label, Some(&record_path_btn));
+    let stream_control =
+        build_output_control(&stream_btn, &stream_label, &stream_error_label, None);
+    let record_control = build_output_control(
+        &record_btn,
+        &record_label,
+        &record_error_label,
+        Some(&record_path_btn),
+    );
 
     banner_inner.append(&stream_control);
     banner_inner.append(&record_control);
@@ -293,8 +305,10 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
     LivePageHandle {
         root,
         stream_label,
+        stream_error_label,
         stream_btn,
         record_label,
+        record_error_label,
         record_btn,
         record_path_btn,
         current_scene_label: current_label,
@@ -324,10 +338,12 @@ pub(crate) fn update_stream_status(
     handle: &LivePageHandle,
     status: &OutputStatus,
     elapsed: Option<String>,
+    error: Option<&str>,
 ) {
     handle
         .stream_label
         .set_text(&output_label("Stream", status, elapsed.as_deref()));
+    update_output_error(&handle.stream_error_label, error);
     set_output_button(&handle.stream_btn, status, "Start Stream", "Stop Stream");
 }
 
@@ -336,10 +352,12 @@ pub(crate) fn update_record_status(
     status: &OutputStatus,
     elapsed: Option<String>,
     last_path: Option<&str>,
+    error: Option<&str>,
 ) {
     handle
         .record_label
         .set_text(&output_label("Record", status, elapsed.as_deref()));
+    update_output_error(&handle.record_error_label, error);
     handle.record_label.set_tooltip_text(last_path);
     handle.record_path_btn.set_sensitive(last_path.is_some());
     if let Some(path) = last_path {
@@ -357,6 +375,8 @@ pub(crate) fn update_record_status(
 pub(crate) fn reset_output_controls(handle: &LivePageHandle) {
     handle.stream_label.set_text("Stream: Inactive");
     handle.record_label.set_text("Record: Inactive");
+    update_output_error(&handle.stream_error_label, None);
+    update_output_error(&handle.record_error_label, None);
     handle.record_label.set_tooltip_text(None);
     handle.record_path_btn.set_sensitive(false);
     handle
@@ -370,19 +390,55 @@ pub(crate) fn reset_output_controls(handle: &LivePageHandle) {
     handle.record_btn.remove_css_class("destructive-action");
 }
 
-fn build_output_control(button: &Button, label: &Label, suffix: Option<&Button>) -> GtkBox {
+fn build_output_control(
+    button: &Button,
+    label: &Label,
+    error_label: &Label,
+    suffix: Option<&Button>,
+) -> GtkBox {
     let control = GtkBox::builder()
-        .orientation(Orientation::Horizontal)
+        .orientation(Orientation::Vertical)
         .spacing(6)
         .valign(Align::Center)
         .build();
     control.add_css_class("output-control");
-    control.append(button);
-    control.append(label);
+
+    let row = GtkBox::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(6)
+        .valign(Align::Center)
+        .build();
+    row.append(button);
+    row.append(label);
     if let Some(suffix) = suffix {
-        control.append(suffix);
+        row.append(suffix);
     }
+    control.append(&row);
+    control.append(error_label);
     control
+}
+
+fn build_output_error_label() -> Label {
+    let label = Label::builder()
+        .xalign(0.0)
+        .wrap(true)
+        .visible(false)
+        .build();
+    label.add_css_class("caption");
+    label.add_css_class("output-command-error");
+    label
+}
+
+fn update_output_error(label: &Label, error: Option<&str>) {
+    if let Some(error) = error.filter(|error| !error.is_empty()) {
+        label.set_text(error);
+        label.set_tooltip_text(Some(error));
+        label.set_visible(true);
+    } else {
+        label.set_text("");
+        label.set_tooltip_text(None);
+        label.set_visible(false);
+    }
 }
 
 fn build_disconnected_view() -> GtkBox {

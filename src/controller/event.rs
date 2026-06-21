@@ -54,6 +54,12 @@ pub enum AppEvent {
     // Outputs
     StreamStatusUpdated(OutputStatus),
     RecordStatusUpdated(OutputStatus),
+    StreamCommandPending(OutputStatus),
+    RecordCommandPending(OutputStatus),
+    StreamCommandSucceeded,
+    RecordCommandSucceeded,
+    StreamCommandFailed(String),
+    RecordCommandFailed(String),
 
     // Graph & diagnostics
     GraphUpdated(SceneGraph),

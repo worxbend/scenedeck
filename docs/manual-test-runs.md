@@ -10,6 +10,20 @@ Use this structure for both blocked and passed focused Mixer runs. Mark a case
 as passed only when the listed interaction was actually exercised against OBS
 and SceneDeck.
 
+Evidence gate:
+
+- Do not record a new focused Mixer run until OBS is running.
+- Verify OBS WebSocket reachability and authentication mode first; record the
+  host and port, but do not record secrets.
+- Verify or create a temporary fixture with at least two scenes, at least one
+  global audio input, and at least one scene-specific audio input present in
+  only one fixture scene.
+- Verify an interaction/control path that can switch Mixer modes, select Mixer
+  scenes, click Retry, and set Mixer search text.
+- If any gate item fails, record only a prerequisite-blocked entry and make no
+  pass/fail claims for ComboRow timing, Retry behavior, mute echoes, volume
+  echoes, stale cards, or rebuild churn.
+
 Status: Passed, Failed, or Blocked.
 
 Scope: focused Mixer interaction run for ComboRow mode and scene changes, Retry
@@ -30,12 +44,18 @@ Environment:
 
 Prerequisite result:
 
+- OBS running: pass/fail.
 - OBS WebSocket reachable: pass/fail.
+- OBS WebSocket authentication mode verified without recording secrets:
+  pass/fail.
 - At least two scenes: pass/fail.
 - Global audio inputs available: pass/fail.
 - Differing scene-specific audio input available between two scenes:
   pass/fail.
-- SceneDeck GTK ComboRows and visible Mixer cards inspectable: pass/fail.
+- Interaction/control path can switch Mixer modes, select scenes, click Retry,
+  and set search text: pass/fail.
+- SceneDeck GTK ComboRows and visible Mixer cards inspectable, when using an
+  interactive desktop path: pass/fail/skipped with reason.
 - Non-destructive selected/pinned refresh failure setup available: pass/fail or
   skipped with reason.
 
@@ -76,6 +96,18 @@ Status: Passed, Failed, Blocked, or Mixed.
 Scope: focused Mixer render-state inspection using the debug inspection path,
 optionally paired with interactive OBS and GTK observations.
 
+Evidence gate:
+
+- Do not start a focused inspection run until OBS is running, OBS WebSocket
+  reachability and authentication mode are verified, a temporary two-scene
+  fixture with global and scene-specific audio inputs exists, and an
+  interaction/control path can switch Mixer modes, select scenes, click Retry,
+  and set search text.
+- If the gate is not satisfied, record a prerequisite-blocked entry only. Do
+  not claim ComboRow timing, Retry behavior, mute/volume echoes, stale-card
+  behavior, or rebuild churn from source inspection or from an incomplete
+  environment probe.
+
 Inspection contract:
 
 - `SCENEDECK_MIXER_INSPECT=1` lines describe the rendered Mixer branch that
@@ -100,6 +132,7 @@ Inspection contract:
 Environment:
 
 - SceneDeck commit: `TODO`.
+- OBS running: `TODO`.
 - OBS version: `TODO`.
 - obs-websocket version: `TODO`.
 - WebSocket URL/auth mode: `TODO`; do not record secrets.
@@ -108,6 +141,8 @@ Environment:
 - Global input names: `TODO`.
 - Scene-specific input names: `TODO`; identify which fixture scene owns each
   scene-specific input.
+- Interaction/control path: `TODO`; must cover Mixer mode switching, scene
+  selection, Retry activation, and search text entry.
 - Inspection method: `SCENEDECK_MIXER_INSPECT=1` structured output,
   interactive desktop observation, UI automation, or a combination.
 - Captured structured inspection lines: paste the relevant lines or reference
