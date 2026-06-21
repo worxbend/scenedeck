@@ -80,11 +80,13 @@ status refresh logic is unified through a narrow `OutputStatusReader` helper
 shared by `ObsClient` and the output-command wrapper. Compact Live output error
 labels now show concise user-facing copy while preserving raw backend details in
 tooltips. The latest boundary cleanup removed `AppState` recovery constructors
-and narrowed the raw fallback helper to `pub(crate)`. The remaining output gaps
-are layout and final event-API cleanup: the compact banner still lacks stable
-output-card space, and `OutputCommandFailureRecovery::from_current_status`
-remains a public constructor that can derive command-recovery payloads from an
-arbitrary current status.
+and removed the broad `OutputCommandFailureRecovery::from_current_status`
+constructor. Fallback-state tests now live with the event contract rather than
+the reducer tests. The remaining output gaps are layout and payload invariant
+encapsulation: the compact banner still lacks stable output-card space, and the
+recovery payload's public fields allow direct construction of a transition
+fallback even though production controller paths use the normalizing
+constructor.
 
 ## Completed Phases
 
@@ -1042,6 +1044,42 @@ Review verdict:
   acceptable while controller and reducer tests cover the helper directly, but
   it should not become a general state utility.
 
+### Output Recovery Event API Narrowing
+
+Working tree, reviewed 2026-06-21:
+
+- Removed the public `OutputCommandFailureRecovery::from_current_status`
+  constructor from `controller::event`.
+- Moved focused fallback-state-machine tests from `controller::state` to
+  `controller::event`, keeping fallback calculation coverage with the event
+  contract.
+- Replaced state-test uses of command recovery constructors with explicit
+  `OutputCommandFailureRecovery` payloads so reducer tests prove only payload
+  application behavior.
+- Preserved focused output validation coverage:
+  `cargo test --workspace --all-features failed_output_command -- --nocapture`
+  and `cargo test --workspace --all-features command_failure -- --nocapture`.
+
+Review verdict:
+
+- The planned public-constructor cleanup is complete: `rg` shows no remaining
+  `from_current_status` references, and reducer tests no longer derive recovery
+  payloads from reducer-owned state.
+- Focused validation passed in review, and `git diff --check` was clean.
+- No production behavior regression was found. Localized stream/record command
+  failures still stay out of generic `AppEvent::Error`, and production
+  controller paths still construct normalized fallback payloads from the
+  synthetic pending command status.
+- Remaining API-boundary issue: `OutputCommandFailureRecovery` exposes public
+  `message` and `fallback_status` fields, while `AppState` intentionally
+  applies the exact carried payload. Any caller can therefore bypass
+  `with_fallback_status` and create a transition-state fallback that would
+  strand the UI again. Current production code does not do that, but the type
+  does not enforce its own event-boundary invariant.
+- The raw fallback helper remains `pub(crate)` for controller orchestration and
+  event tests. That is acceptable for now, but it should remain out of UI and
+  reducer code.
+
 ## Groomed Next Steps
 
 ### P1: Make Focused Mixer Evidence Executable
@@ -1132,32 +1170,37 @@ Tests:
 - Add GTK-level or widget-level coverage only if a test harness can inspect card
   updates without excessive brittleness.
 
-### P1: Narrow Output Recovery Event API
+### P1: Encapsulate Output Recovery Payload Invariants
 
 Problem:
 
 - `OutputCommandFailureRecovery` and
   `fallback_status_after_failed_output_command` now live with the controller
   event contract, which is the right broad boundary.
-- `AppState` no longer exposes reducer-side recovery constructors, so reducer
-  ownership is fixed.
-- `OutputCommandFailureRecovery::from_current_status` remains public and state
-  tests still use it. That constructor can make fallback derivation look like a
-  generic event convenience instead of controller command orchestration.
-- `fallback_status_after_failed_output_command` is now `pub(crate)`, but direct
-  calls should remain limited to controller orchestration and focused tests.
+- `AppState` no longer exposes reducer-side recovery constructors, and
+  `OutputCommandFailureRecovery::from_current_status` has been removed, so the
+  reducer ownership leak is fixed.
+- `AppState` now deliberately applies the exact recovery payload it receives.
+  That is the right reducer boundary, but it means event construction must
+  enforce the non-transitioning fallback invariant.
+- `OutputCommandFailureRecovery` still has public fields, so any crate or
+  downstream caller can bypass `with_fallback_status` and carry
+  `Starting`/`Stopping`/`Reconnecting` as the fallback status.
+- `fallback_status_after_failed_output_command` is `pub(crate)` for focused
+  tests and controller orchestration, but direct calls should remain limited to
+  event/command code.
 
 Plan:
 
-- Replace state-test uses of `OutputCommandFailureRecovery::from_current_status`
-  with explicit fallback payloads or helper-level event tests.
-- If production code does not need it, remove
-  `OutputCommandFailureRecovery::from_current_status`; otherwise narrow it to
-  `pub(crate)` and document that it is for controller command-failure
-  orchestration only.
-- Consider moving fallback helper tests from `controller::state` to
-  `controller::event` so helper visibility can be narrowed further without
-  keeping reducer tests coupled to command orchestration.
+- Make `OutputCommandFailureRecovery` fields private and expose read accessors
+  if needed by UI/controller tests.
+- Keep one normalizing constructor for production command orchestration, with a
+  name that makes fallback semantics explicit.
+- Add an event-level test proving constructing a recovery payload with a
+  transition status normalizes it before `AppState` applies it.
+- Keep reducer tests focused on exact payload application by using a
+  test-only constructor or accessor that does not make invalid production
+  construction easy.
 - Preserve current `failed_output_command` and `command_failure` coverage.
 
 Files:

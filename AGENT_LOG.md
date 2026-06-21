@@ -2094,3 +2094,91 @@ M  PLAN.md
 M  SCORES.jsonl
 M  src/controller/event.rs
 M  src/controller/state.rs
+2026-06-21T14:56:48Z iteration 23 started remaining=6802s
+2026-06-21T14:56:48Z iteration 23 preplanner effective budgets untracked_scan_max_bytes=536870912 untracked_scan_max_count=10000 snapshot_copy_max_bytes=536870912 snapshot_copy_max_count=10000 snapshot_copy_max_file_bytes=134217728
+2026-06-21T14:56:48Z iteration 23 disposable preplanner repo created path=/tmp/agent-loop-preplanner-repo-gwmd65kd/repo copied_entries=115
+2026-06-21T14:56:48Z iteration 23 ideator phase started count=3
+2026-06-21T14:56:48Z iteration 23 ideator phase concurrency workers=3
+2026-06-21T14:56:48Z iteration 23 ideator 1 role="the pragmatist" started
+2026-06-21T14:56:48Z iteration 23 ideator 2 role="the architect" started
+2026-06-21T14:56:48Z iteration 23 ideator 3 role="the contrarian" started
+2026-06-21T14:56:56Z iteration 23 ideator 1 role="the pragmatist" completed status=0
+2026-06-21T14:56:56Z iteration 23 ideator 2 role="the architect" completed status=0
+2026-06-21T14:56:57Z iteration 23 ideator 3 role="the contrarian" completed status=0
+2026-06-21T14:56:57Z iteration 23 ideator phase completed approaches=3
+2026-06-21T14:56:57Z iteration 23 selector started approaches=3
+2026-06-21T14:57:08Z iteration 23 selector completed status=0
+2026-06-21T14:57:08Z iteration 23 disposable preplanner repo cleanup path=/tmp/agent-loop-preplanner-repo-gwmd65kd/repo
+2026-06-21T14:57:08Z iteration 23 selector rejected alternative role="the pragmatist" approach="Boundary-First Stabilization: prioritize narrowing public APIs and stabilizing already-correct behavior before adding new UI surfaces or speculative optimizations." reason="Not rejected on substance; it is selected in spirit. As-is, it underemphasizes that the Planner should explicitly preserve the evidence gate and avoid spending another iteration on blocked Mixer run documentation."
+2026-06-21T14:57:08Z iteration 23 selector rejected alternative role="the architect" approach="Boundary-First Stabilization: prioritize tightening the remaining public output recovery API before any UI expansion, treating API shape as the next architectural constraint rat..." reason="Not rejected on substance; it correctly identifies the output recovery API as the best next architectural constraint. As-is, it is slightly too narrow because planning should also carry forward the runtime-evidence gate as a sequencing r..."
+2026-06-21T14:57:08Z iteration 23 selector rejected alternative role="the contrarian" approach="Boundary-First Stabilization: prioritize shrinking public contracts and isolating unfinished evidence surfaces before adding UI polish or performance work." reason="Not selected as-is because it broadens the scope to multiple ambiguity surfaces, including debug inspection evidence framing. The next Planner needs a tighter implementation compass: narrow the output recovery API first, and use evidence..."
+2026-06-21T14:57:08Z iteration 23 selector alternatives persisted count=3
+2026-06-21T14:57:08Z iteration 23 selector structured alternatives persisted count=3
+2026-06-21T14:57:08Z iteration 23 planner started
+2026-06-21T14:57:29Z iteration 23 plan: 3 task(s) in 2 phase(s). This iteration follows the Boundary-First Stabilization with Evidence Gating constraint. The highest-value slice is closing the remaining public output recovery constructor leak while preserving the already-validated localized command-failure behavior. Mixer evidence and rebuild optimization remain open but are intentionally excluded until OBS prerequisites and a real control path exist.
+2026-06-21T14:57:29Z iteration 23 phase 1 started parallel=False tasks=2
+2026-06-21T14:58:52Z iteration 23 task t1 ('Narrow output command recovery API') status=0
+2026-06-21T15:00:46Z iteration 23 task t2 ('Decouple reducer tests from recovery construction') status=0
+2026-06-21T15:00:46Z iteration 23 phase 2 started parallel=False tasks=1
+2026-06-21T15:00:57Z iteration 23 task t3 ('Run focused output recovery validation') status=0
+2026-06-21T15:00:57Z iteration 23 reviewer started
+
+## Review Summary - Iteration 23 - 2026-06-21
+
+### What Was Done
+
+- Removed `OutputCommandFailureRecovery::from_current_status` from
+  `src/controller/event.rs`.
+- Moved fallback-state-machine tests from `src/controller/state.rs` to
+  `src/controller/event.rs`, keeping command recovery fallback coverage with
+  the event contract.
+- Replaced reducer-test recovery-constructor usage with explicit
+  `OutputCommandFailureRecovery` payloads.
+- Preserved state tests proving the reducer applies the carried recovery
+  payload rather than deriving one from current reducer state.
+
+### What Was Found
+
+- Focused validation passed in review:
+  `git diff --check`,
+  `cargo test --workspace --all-features failed_output_command -- --nocapture`,
+  and `cargo test --workspace --all-features command_failure -- --nocapture`.
+- The planned public-constructor cleanup is complete: `rg` shows no remaining
+  `from_current_status` references.
+- No production regression was found. Production controller paths still use
+  normalized fallback payloads, localized stream/record command failures still
+  avoid generic `AppEvent::Error`, and fallback recovery still unblocks
+  synthetic pending states.
+- Remaining design issue: `OutputCommandFailureRecovery` has public fields, and
+  `AppState` now intentionally applies the exact carried payload. That makes
+  the event boundary responsible for invariant enforcement, but direct struct
+  construction can still bypass `with_fallback_status` and carry a transition
+  fallback status.
+- The implementation did not touch Live output layout or Mixer evidence. Those
+  gaps remain open and correctly gated behind separate work.
+
+### Top Improvement Proposals
+
+1. Make `OutputCommandFailureRecovery` fields private and expose only
+   invariant-preserving construction plus minimal read accessors.
+2. Add event-level tests proving transition-state fallback payload inputs are
+   normalized before reducer application.
+3. Keep reducer tests focused on exact payload application without making
+   invalid production construction easy.
+4. Build stable Live output control cards so pending state, elapsed time,
+   concise errors, backend details, and recording path have predictable space.
+5. Keep Mixer runtime evidence gated behind OBS/WebSocket, a temporary
+   fixture, and a real control path; do not repeat blocked runs in the same
+   unavailable environment.
+2026-06-21T15:03:35Z iteration 23 reviewer completed status=0
+2026-06-21T15:03:35Z iteration 23 memory updated
+2026-06-21T15:03:35Z iteration 23 completed validation_status=0
+2026-06-21T15:03:35Z iteration 23 checkpoint started
+2026-06-21T15:03:35Z iteration 23 checkpoint status before commit:
+M  AGENT_LOG.md
+M  ALTERNATIVES.jsonl
+M  MEMORY.md
+M  PLAN.md
+M  SCORES.jsonl
+M  src/controller/event.rs
+M  src/controller/state.rs
