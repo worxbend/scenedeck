@@ -2,6 +2,7 @@ pub mod appearance;
 pub mod audio;
 pub mod diagnostic;
 pub mod graph;
+pub mod mixer;
 pub mod obs;
 pub mod output;
 pub mod registry;

@@ -117,6 +117,12 @@ variant, and optional user CSS for the same effective side. `ThemeMode::System`
 continues to use libadwaita's system preference; custom themes must provide
 separate light and dark CSS paths when they need side-specific styling.
 
+The Mixer page lives in `src/ui/pages/mixer.rs`. Its mode, scene selection,
+search, and grouping controls are stored in `AppState` as a `MixerSelection`.
+The current foundation reuses the active-scene audio snapshot; selected and
+pinned scene-specific refresh commands should be added through the controller
+and `src/obs/` without letting GTK call OBS directly.
+
 ## Live Data Refresh
 
 Scene inventory refresh also triggers:

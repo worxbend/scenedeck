@@ -5,6 +5,7 @@ use crate::domain::appearance::ThemeMode;
 use crate::domain::audio::AudioInput;
 use crate::domain::diagnostic::Diagnostic;
 use crate::domain::graph::SceneGraph;
+use crate::domain::mixer::MixerSelection;
 use crate::domain::obs::ObsNamedList;
 use crate::domain::output::OutputStatus;
 use crate::domain::scene::SceneInventory;
@@ -14,6 +15,7 @@ use crate::domain::scene::SceneInventory;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     Live,
+    Mixer,
     Graph,
     Inventory,
     Doctor,
@@ -25,6 +27,7 @@ impl Page {
     pub const fn id(self) -> &'static str {
         match self {
             Self::Live => "live",
+            Self::Mixer => "mixer",
             Self::Graph => "graph",
             Self::Inventory => "inventory",
             Self::Doctor => "doctor",
@@ -35,6 +38,7 @@ impl Page {
     pub const fn title(self) -> &'static str {
         match self {
             Self::Live => "Live",
+            Self::Mixer => "Mixer",
             Self::Graph => "Graph",
             Self::Inventory => "Inventory",
             Self::Doctor => "Doctor",
@@ -46,6 +50,7 @@ impl Page {
     pub const fn icon_name(self) -> &'static str {
         match self {
             Self::Live => "media-record-symbolic",
+            Self::Mixer => "audio-volume-high-symbolic",
             Self::Graph => "view-grid-symbolic",
             Self::Inventory => "view-list-symbolic",
             Self::Doctor => "emblem-default-symbolic",
@@ -98,6 +103,7 @@ pub struct AppState {
     pub stream_status: OutputStatus,
     pub record_status: OutputStatus,
     pub audio_inputs: Vec<AudioInput>,
+    pub mixer: MixerSelection,
     pub diagnostics: Vec<Diagnostic>,
     /// Human-readable config-load notice shown once on the Settings page.
     pub startup_notice: Option<String>,
@@ -116,6 +122,7 @@ impl AppState {
             stream_status: OutputStatus::default(),
             record_status: OutputStatus::default(),
             audio_inputs: Vec::new(),
+            mixer: MixerSelection::default(),
             diagnostics: Vec::new(),
             startup_notice,
         }

@@ -204,6 +204,22 @@ Primary files for theme improvements:
 - `docs/user-guide.md`
 - `README.md`
 
+## Mixer Page Foundation
+
+The app now has a `Mixer` navigation page. The first implementation provides:
+
+- Active, Selected, and Pinned mode controls.
+- Scene selector.
+- Search field.
+- Grouping by scope, scene path, or no grouping.
+- Reuse of scoped audio cards with mute, lock, fader, dB readout, fine
+  adjustment, and reset controls.
+
+Current limitation: all modes display the existing active-scene audio snapshot.
+The next Mixer phase should add controller commands and OBS adapter calls for
+selected/pinned scene-specific audio refresh while keeping GTK out of direct OBS
+access.
+
 ## UI and Navigation Gaps
 
 The current shell uses `adw::NavigationSplitView`, a sidebar, a content stack,
@@ -212,7 +228,7 @@ base for adding a Mixer page.
 
 Known gaps:
 
-- No `Mixer` sidebar item or page.
+- Selected/pinned Mixer modes need dedicated OBS refresh support.
 - Live page output controls are compact utility controls, not operational cards.
 - Live page lacks a top status strip with consolidated OBS/profile/collection/
   output state.

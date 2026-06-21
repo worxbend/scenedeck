@@ -32,8 +32,9 @@ use crate::ui::theme::ThemeManager;
 const DEFAULT_WIDTH: i32 = 1100;
 const DEFAULT_HEIGHT: i32 = 740;
 
-const NAV_PAGES: [Page; 5] = [
+const NAV_PAGES: [Page; 6] = [
     Page::Live,
+    Page::Mixer,
     Page::Graph,
     Page::Inventory,
     Page::Doctor,
@@ -75,12 +76,14 @@ pub fn build_main_window(
 
     // Build pages — live returns a handle; others return (widget, refresh_fn).
     let live_handle = crate::ui::pages::live::build(nav.clone());
+    let (mixer_widget, mixer_refresh) = crate::ui::pages::mixer::build(nav.clone());
     let (graph_widget, graph_refresh) = crate::ui::pages::graph::build(nav.clone());
     let (inventory_widget, inventory_refresh) = crate::ui::pages::inventory::build(nav.clone());
     let (doctor_widget, doctor_refresh) = crate::ui::pages::doctor::build(nav.clone());
     let (settings_widget, settings_refresh) = crate::ui::pages::settings::build(nav.clone());
 
     content_stack.add_titled(&live_handle.root, Some(Page::Live.id()), Page::Live.title());
+    content_stack.add_titled(&mixer_widget, Some(Page::Mixer.id()), Page::Mixer.title());
     content_stack.add_titled(&graph_widget, Some(Page::Graph.id()), Page::Graph.title());
     content_stack.add_titled(
         &inventory_widget,
@@ -99,6 +102,7 @@ pub fn build_main_window(
     );
 
     let refreshers = PageRefreshers {
+        mixer: mixer_refresh,
         graph: graph_refresh,
         inventory: inventory_refresh,
         doctor: doctor_refresh,
@@ -301,7 +305,7 @@ fn apply_event(
             rebuild_scene_cards(live, &inventory, nav);
             // Refresh pages that display inventory data if they're currently visible.
             let page = nav.state.borrow().current_page;
-            if matches!(page, Page::Inventory | Page::Doctor) {
+            if matches!(page, Page::Mixer | Page::Inventory | Page::Doctor) {
                 refreshers.call(page);
             }
         }
@@ -325,6 +329,9 @@ fn apply_event(
                 state.scene_inventory.clone()
             };
             rebuild_scene_cards(live, &inventory, nav);
+            if nav.state.borrow().current_page == Page::Mixer {
+                refreshers.call(Page::Mixer);
+            }
         }
 
         AppEvent::Error(err) => {
@@ -360,6 +367,9 @@ fn apply_event(
         AppEvent::AudioInputsUpdated(inputs) => {
             nav.state.borrow_mut().audio_inputs = inputs.clone();
             rebuild_audio_cards(live, &inputs, nav);
+            if nav.state.borrow().current_page == Page::Mixer {
+                refreshers.call(Page::Mixer);
+            }
         }
 
         AppEvent::InputMuteChanged { input, muted } => {
@@ -667,6 +677,7 @@ struct SidebarControls {
 
 #[derive(Clone)]
 struct PageRefreshers {
+    mixer: RefreshFn,
     graph: RefreshFn,
     inventory: RefreshFn,
     doctor: RefreshFn,
@@ -678,6 +689,7 @@ impl PageRefreshers {
     /// Live page is always kept current by `apply_event`, so it is a no-op here.
     fn call(&self, page: Page) {
         match page {
+            Page::Mixer => (self.mixer)(),
             Page::Graph => (self.graph)(),
             Page::Inventory => (self.inventory)(),
             Page::Doctor => (self.doctor)(),

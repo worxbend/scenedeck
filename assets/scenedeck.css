@@ -130,6 +130,15 @@
     margin-bottom: 0;
 }
 
+/* ── Mixer page ─────────────────────────────────────────────────────────────── */
+.mixer-page {
+    background-color: @window_bg_color;
+}
+
+.mixer-section {
+    margin-top: 6px;
+}
+
 /* ── Doctor diagnostics ─────────────────────────────────────────────────────── */
 .diag-error   { color: @error_color; }
 .diag-warning { color: @warning_color; }
