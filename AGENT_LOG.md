@@ -1802,3 +1802,102 @@ M  src/controller/app_controller.rs
 M  src/controller/event.rs
 M  src/controller/state.rs
 M  src/ui/window.rs
+2026-06-21T14:33:44Z iteration 20 started remaining=8186s
+2026-06-21T14:33:44Z iteration 20 preplanner effective budgets untracked_scan_max_bytes=536870912 untracked_scan_max_count=10000 snapshot_copy_max_bytes=536870912 snapshot_copy_max_count=10000 snapshot_copy_max_file_bytes=134217728
+2026-06-21T14:33:44Z iteration 20 disposable preplanner repo created path=/tmp/agent-loop-preplanner-repo-udgf3ucm/repo copied_entries=115
+2026-06-21T14:33:44Z iteration 20 ideator phase started count=3
+2026-06-21T14:33:44Z iteration 20 ideator phase concurrency workers=3
+2026-06-21T14:33:44Z iteration 20 ideator 1 role="the pragmatist" started
+2026-06-21T14:33:44Z iteration 20 ideator 2 role="the architect" started
+2026-06-21T14:33:44Z iteration 20 ideator 3 role="the contrarian" started
+2026-06-21T14:33:53Z iteration 20 ideator 2 role="the architect" completed status=0
+2026-06-21T14:33:54Z iteration 20 ideator 3 role="the contrarian" completed status=0
+2026-06-21T14:33:57Z iteration 20 ideator 1 role="the pragmatist" completed status=0
+2026-06-21T14:33:57Z iteration 20 ideator phase completed approaches=3
+2026-06-21T14:33:57Z iteration 20 selector started approaches=3
+2026-06-21T14:34:10Z iteration 20 selector completed status=0
+2026-06-21T14:34:10Z iteration 20 disposable preplanner repo cleanup path=/tmp/agent-loop-preplanner-repo-udgf3ucm/repo
+2026-06-21T14:34:10Z iteration 20 selector rejected alternative role="the architect" approach="Contract-First Output Semantics Cleanup: stabilize the stream/record failure model before touching presentation or broader UI work, treating event names, fallback status semanti..." reason="Selected in substance, but not as-is because it slightly over-centers refresh-helper unification as part of one architectural correction. That cleanup is valuable, but the Planner should treat fallback semantics as the primary contract a..."
+2026-06-21T14:34:10Z iteration 20 selector rejected alternative role="the contrarian" approach="Contract-First Debt Burn-Down: pause new UI surface work and spend the next planner cycle tightening the semantics around output failure recovery before returning to Mixer evide..." reason="Selected in spirit, but not as-is because it frames the work as a general debt burn-down. The better planning guide is more operational: prioritize the executable output contract work and explicitly gate environment-dependent Mixer evide..."
+2026-06-21T14:34:10Z iteration 20 selector rejected alternative role="the pragmatist" approach="Evidence-Gated Output Hardening: prioritize the self-contained output-command semantics work while treating Mixer runtime evidence as blocked until prerequisites are real, not a..." reason="This is the closest fit and provides the gating discipline needed now. It was synthesized with the architect and contrarian emphasis on event-boundary semantics so the Planner treats naming, fallback status meaning, and reducer invariant..."
+2026-06-21T14:34:10Z iteration 20 selector alternatives persisted count=3
+2026-06-21T14:34:10Z iteration 20 selector structured alternatives persisted count=3
+2026-06-21T14:34:10Z iteration 20 planner started
+2026-06-21T14:34:33Z iteration 20 plan: 4 task(s) in 4 phase(s). This decomposition follows the selected contract-first output hardening slice. The tasks are ordered because the event/state type change must land before controller/UI wiring, and the refresh-helper refactor should happen after the failure payload semantics are stable. Mixer evidence and visible UI redesign are intentionally deferred because they require external prerequisites or broader layout work.
+2026-06-21T14:34:33Z iteration 20 phase 1 started parallel=False tasks=1
+2026-06-21T14:37:14Z iteration 20 task t1 ('Clarify output command failure recovery contract') status=0
+2026-06-21T14:37:14Z iteration 20 phase 2 started parallel=False tasks=1
+2026-06-21T14:38:18Z iteration 20 task t2 ('Wire clarified fallback recovery through controller and UI') status=0
+2026-06-21T14:38:18Z iteration 20 phase 3 started parallel=False tasks=1
+2026-06-21T14:39:48Z iteration 20 task t3 ('Unify output status refresh helper logic') status=0
+2026-06-21T14:39:48Z iteration 20 phase 4 started parallel=False tasks=1
+2026-06-21T14:41:51Z iteration 20 task t4 ('Add focused output failure recovery tests') status=0
+2026-06-21T14:41:51Z iteration 20 reviewer started
+
+## Review Summary - Iteration 20 - 2026-06-21
+
+### What Was Done
+
+- Renamed the stream/record command failure payload to
+  `OutputCommandFailureRecovery` and renamed the status field to
+  `fallback_status`, making the local recovery semantics explicit.
+- Added `fallback_status_after_failed_output_command` and wired stream/record
+  command failures to compute fallback states directly from synthetic pending
+  statuses.
+- Added focused reducer tests for every `OutputRunState`, including
+  transition-state normalization and `Unknown`/`Paused` passthrough.
+- Unified duplicated output status refresh logic through one
+  `refresh_output_statuses` helper over a private `OutputStatusReader` trait
+  implemented by both `ObsClient` and `OutputCommandClient`.
+- Updated command-failure tests to assert fallback payloads and continued
+  connection-state preservation.
+
+### What Was Found
+
+- Full validation passed in review:
+  `cargo fmt --all -- --check`, `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- Focused validation also passed:
+  `cargo test --workspace --all-features command_failure -- --nocapture` and
+  `cargo test --workspace --all-features failed_output_command -- --nocapture`.
+- The completed work satisfies the planned output recovery contract cleanup:
+  fallback status is now named as a fallback, the state-machine rule is directly
+  tested, and command failures still do not emit generic `AppEvent::Error`.
+- The refresh helper unification is behavior-preserving. It keeps the existing
+  stream-then-record refresh order and warning-only handling for ordinary
+  output-status refresh failures.
+- No functional regression was found in the changed source paths.
+- Minor design debt remains: the recovery payload and fallback helper live in
+  `controller::state` even though they model an event/command boundary. This is
+  acceptable for now but should be tightened if more output command contracts
+  are added.
+- Output error presentation remains basic: full backend text is still rendered
+  in the compact Live banner.
+
+### Top Improvement Proposals
+
+1. Improve Live output error presentation with concise visible copy and full
+   backend details in a tooltip or details affordance.
+2. If output command event types grow, move or narrow
+   `OutputCommandFailureRecovery` and
+   `fallback_status_after_failed_output_command` so command orchestration rules
+   do not accumulate in reducer state.
+3. Keep Mixer runtime evidence gated behind real OBS/WebSocket, temporary
+   fixture, and control-path prerequisites; do not add more blocked Mixer runs
+   from the same unavailable environment.
+4. Add Settings persistence feedback for output safety toggles so failed writes
+   do not silently leave safety preferences uncertain.
+2026-06-21T14:44:45Z iteration 20 reviewer completed status=0
+2026-06-21T14:44:45Z iteration 20 memory updated
+2026-06-21T14:44:45Z iteration 20 completed validation_status=0
+2026-06-21T14:44:45Z iteration 20 checkpoint started
+2026-06-21T14:44:45Z iteration 20 checkpoint status before commit:
+M  AGENT_LOG.md
+M  ALTERNATIVES.jsonl
+M  MEMORY.md
+M  PLAN.md
+M  SCORES.jsonl
+M  src/controller/app_controller.rs
+M  src/controller/event.rs
+M  src/controller/state.rs

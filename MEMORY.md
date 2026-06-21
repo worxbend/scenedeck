@@ -19,3 +19,4 @@
 [anti-pattern] Command-scoped failures should not reuse connection-level error events; generic session error handlers can reset UI state and make localized operation failures look like disconnections.
 [learning] Localized async command failures still need an explicit non-transitioning recovery state when follow-up status refresh fails; otherwise pending UI can remain disabled without a connection error.
 [pattern] Command-failure recovery events should carry an explicit reducer-visible fallback state so best-effort status refresh failures cannot strand controls in synthetic pending states.
+[learning] Naming command recovery state as fallback status protects future code from treating a local UI unblocking value as an authoritative OBS status read.
