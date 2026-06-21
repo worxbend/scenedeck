@@ -15,3 +15,4 @@
 [learning] Debug inspection output is only useful evidence when it is emitted from the same rendered branch as the UI; pre-dispatch snapshots can contradict loading placeholders.
 [anti-pattern] Duplicating presentation formatters in debug inspection creates false evidence; structured labels must share the same display formatter as rendered widgets.
 [pattern] Keep debug inspection DTOs raw where possible and derive display labels at the UI/serialization boundary with the same helpers used by rendered widgets.
+[learning] Repeating blocked runtime evidence runs without first restoring OBS prerequisites and a UI control path only adds log volume; convert the blocker into an executable-environment task.

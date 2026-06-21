@@ -551,19 +551,13 @@ fn format_mixer_inspection_line(
     let cards: Vec<_> = visible_cards
         .iter()
         .map(|input| {
-            let volume_db = snapshot
-                .inputs
-                .iter()
-                .find(|snapshot_input| snapshot_input.name == input.name.as_str())
-                .map(|snapshot_input| snapshot_input.volume_db)
-                .unwrap_or(input.volume_db);
             serde_json::json!({
                 "name": input.name,
                 "display_name": input.display_name,
                 "muted": input.muted,
                 "volume_mul": input.volume_mul,
                 "volume_db": input.volume_db,
-                "volume_label": AudioService::format_db(volume_db),
+                "volume_label": AudioService::format_db(input.volume_db),
             })
         })
         .collect();
@@ -1048,6 +1042,29 @@ mod tests {
                 "inspection label should match rendered audio-card formatter for {name}"
             );
         }
+    }
+
+    #[test]
+    fn mixer_inspection_line_volume_label_uses_visible_card_volume() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::ActiveScene;
+        state.scene_inventory.current_id = Some("Program".to_string());
+        state.audio_inputs = vec![input("Mic", false, 1.0, -120.0)];
+        let snapshot = state.mixer_inspection_snapshot();
+        let visible_cards = vec![input("Mic", false, 0.5, -6.24)];
+
+        let json = inspection_json(&format_mixer_inspection_line(
+            &snapshot,
+            MixerInspectionStatus::LoadedWithVisibleInputCards,
+            &visible_cards,
+            MixerRetryInspection::HIDDEN,
+        ));
+
+        let cards = json["visible_cards"].as_array().unwrap();
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0]["name"], "Mic");
+        assert_eq!(cards[0]["volume_db"], -6.24);
+        assert_eq!(cards[0]["volume_label"], "-6.2 dB");
     }
 
     #[test]

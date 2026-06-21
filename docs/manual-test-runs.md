@@ -158,6 +158,111 @@ Non-claims:
   output, explicitly state that it does not prove pointer interaction success,
   visual layout quality, or perceived rebuild churn.
 
+## 2026-06-21 - Focused Mixer Inspection Run (iteration 16)
+
+Status: Blocked.
+
+Scope: focused Mixer render-state inspection using the opt-in
+`SCENEDECK_MIXER_INSPECT=1` debug path, intended to cover Active, Selected,
+Pinned, Retry, OBS mute echo, OBS volume echo, loaded-empty, filtered-empty,
+stale visible cards, and rebuild churn observations.
+
+Environment:
+
+- SceneDeck commit: `9a9fe36`; version `0.1.3`. The working tree already had
+  uncommitted changes in `src/ui/pages/mixer.rs`, `AGENT_LOG.md`, and
+  `ALTERNATIVES.jsonl` before this run entry was added.
+- Host: Ubuntu 26.04 LTS, Linux `7.0.0-22-generic` x86_64.
+- Desktop/session type: GNOME on Wayland (`XDG_SESSION_TYPE=wayland`,
+  `XDG_CURRENT_DESKTOP=ubuntu:GNOME`, `DISPLAY=:0`,
+  `WAYLAND_DISPLAY=wayland-0`).
+- Inspection method attempted: WebSocket prerequisite probe for
+  `SCENEDECK_MIXER_INSPECT=1`; SceneDeck was not run against OBS because the
+  verified OBS WebSocket setup was unavailable.
+- OBS process: unavailable in this session; `pgrep -a obs` returned no process.
+- OBS version: unavailable; no `obs` binary was found in `PATH`, and WebSocket
+  `GetVersion` could not be requested.
+- obs-websocket version: unavailable; WebSocket connection to
+  `ws://127.0.0.1:4455` failed with `ConnectionRefusedError [Errno 111]`.
+- WebSocket URL/auth mode: configured local endpoint `127.0.0.1:4455`; not
+  reachable, so authentication state was not observed and no secret was
+  recorded.
+- Fixture scene names: unavailable; no scene inventory could be read.
+- Global input names: unavailable; no input inventory could be read.
+- Scene-specific input names: unavailable; no temporary
+  `SceneDeck Test ...` fixture could be verified or prepared because OBS
+  WebSocket was not reachable.
+- Captured structured inspection lines: none. No
+  `scenedeck_mixer_inspect` JSON lines were emitted because the app was not run
+  against a verified OBS setup and the Mixer page could not be driven.
+
+Prerequisite result:
+
+- OBS WebSocket reachable: fail. Python WebSocket probe to
+  `ws://127.0.0.1:4455` returned `ConnectionRefusedError [Errno 111]`.
+- At least two scenes: blocked. Scene list was not queried because WebSocket was
+  unreachable.
+- Global audio inputs available: blocked. Input list was not queried because
+  WebSocket was unreachable.
+- Differing scene-specific audio input available between two scenes: blocked.
+  The required fixture was not present or creatable from this session because
+  OBS/WebSocket was unavailable.
+- SceneDeck GTK ComboRows and visible Mixer cards inspectable: fail for this
+  non-interactive session. `xdotool` and `ydotool` were unavailable; only
+  `gapplication`/`gdbus` were present, and the application exposes no documented
+  action for switching to Mixer or selecting Mixer ComboRows.
+- Non-destructive selected/pinned refresh failure setup available: blocked. No
+  temporary OBS fixture existed and no WebSocket control path was available to
+  create one.
+
+Per-case results:
+
+| Case | Result | Explicit reason and evidence |
+| --- | --- | --- |
+| Active mode following | blocked | OBS WebSocket was unreachable and the Mixer page could not be driven or inspected. No inspection line was captured. |
+| No Active scene-specific refresh target | blocked | No rendered Active-mode Mixer inspection line was captured. |
+| Selected direct | blocked | No verified fixture scene or ComboRow/control path was available. |
+| Selected fallback | blocked | No rendered Selected-mode fallback inspection line was captured. |
+| Pinned direct | blocked | No verified pinned fixture target or ComboRow/control path was available. |
+| Pinned fallback | blocked | No rendered Pinned-mode fallback inspection line was captured. |
+| Missing to automatic loading/requested placeholder | blocked | No scene-specific target could be selected and no automatic refresh branch was observed. |
+| Retry after failure | blocked | No non-destructive temporary failure fixture was available and Retry could not be clicked or inspected. |
+| Loaded with no audio sources | blocked | No empty fixture scene could be verified or created. |
+| Loaded with no matching audio sources | blocked | Search entry could not be driven and no loaded scene was rendered for inspection. |
+| OBS mute echo | blocked | No visible Mixer source was rendered, and OBS input events could not be produced. |
+| OBS volume echo | blocked | No visible Mixer source was rendered, and OBS input events could not be produced. |
+| Stale visible cards | blocked | Mute/volume echo and scene-change cases were not exercised, so stale-card behavior was not observed. |
+| Rebuild churn | blocked | No interactive observation or instrumentation ran during repeated volume echoes. |
+
+Inspection evidence captured:
+
+- Mode, selected scene, and pinned scene: none captured.
+- Scene-specific refresh target and fallback reason: none captured.
+- Render source kind and rendered status: none captured.
+- Visible card input names: none captured.
+- Mute states: none captured.
+- Volume values and labels: none captured; this run did not produce structured
+  card-data evidence despite the build containing the shared rendered audio-card
+  dB formatter path.
+- Retry visible/enabled state: none captured.
+
+Observed issues:
+
+- No stale cards, retry issues, ComboRow timing problems, or rebuild churn were
+  observed because none of the relevant interaction or inspection cases could
+  execute.
+
+Non-claims:
+
+- This blocked run does not claim pass/fail behavior for Active mode scene
+  following, absence of Active-mode scene-specific refresh dispatches, Selected
+  direct or fallback rendering, Pinned direct or fallback rendering, Retry after
+  selected/pinned refresh failure, loaded-empty state, filtered-empty state,
+  OBS mute echoes, OBS volume echoes, stale visible cards, ComboRow timing, or
+  perceived rebuild churn.
+- No `SCENEDECK_MIXER_INSPECT=1` JSON output was captured, so this entry is
+  prerequisite evidence only, not Mixer rendered-state evidence.
+
 ## 2026-06-21 - Focused Mixer Refresh Contract (iteration 10)
 
 Status: Blocked.

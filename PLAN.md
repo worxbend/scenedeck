@@ -52,10 +52,14 @@ opt-in Mixer debug inspection path, and rendered-branch inspection status
 alignment. The debug path now distinguishes loading placeholders, error
 placeholders, missing no-target state, loaded visible cards, loaded empty audio,
 and filtered-empty audio, and structured `volume_label` values are derived with
-the same `AudioService::format_db` helper used by rendered audio cards. Focused
-manual Mixer interaction evidence is still not complete. No pass/fail behavior
-is claimed yet for ComboRow timing, Retry activation, OBS mute/volume echoes,
-stale visible cards, or runtime rebuild churn.
+the same `AudioService::format_db` helper used by rendered audio cards from the
+same visible-card `volume_db` value emitted in JSON. Focused manual Mixer
+interaction evidence is still not complete. The latest focused run was blocked
+because OBS was not running, `127.0.0.1:4455` refused WebSocket connections,
+no temporary fixture could be verified, and the non-interactive session had no
+control path for GTK ComboRows or Retry. No pass/fail behavior is claimed yet
+for ComboRow timing, Retry activation, OBS mute/volume echoes, stale visible
+cards, or runtime rebuild churn.
 
 ## Completed Phases
 
@@ -716,74 +720,101 @@ Review verdict:
   label/value relationship simpler and avoid a future mismatch if inspection
   callers ever pass a filtered or transformed visible-card list.
 
+### Mixer Inspection Card Serialization And Blocked Evidence
+
+Working tree, reviewed 2026-06-21:
+
+- Simplified `format_mixer_inspection_line` so each visible card's
+  `volume_label` is formatted directly from the same `input.volume_db` value
+  emitted as that card's `volume_db`.
+- Added a focused regression test that constructs a snapshot with one volume
+  and passes a transformed visible card with a different volume, proving the
+  JSON label follows the visible card rather than a same-name snapshot input.
+- Recorded `docs/manual-test-runs.md` entry
+  `2026-06-21 - Focused Mixer Inspection Run (iteration 16)`.
+
+Manual evidence:
+
+- Status: blocked.
+- OBS was not running in the reviewed session, no `obs` binary was found in
+  `PATH`, and a WebSocket probe to `ws://127.0.0.1:4455` failed with
+  `ConnectionRefusedError [Errno 111]`.
+- No OBS version, obs-websocket version, scene inventory, global input
+  inventory, scene-specific fixture input, or `scenedeck_mixer_inspect` JSON
+  lines were captured.
+- The non-interactive session still had no documented control path for
+  switching to Mixer, selecting ComboRows, clicking Retry, or driving search;
+  `xdotool` and `ydotool` were unavailable.
+- No pass/fail behavior is claimed for Active/Selected/Pinned rendering,
+  fallback behavior, Retry, loaded-empty, filtered-empty, mute echo, volume
+  echo, stale-card behavior, ComboRow timing, or perceived rebuild churn.
+
+Review verdict:
+
+- Scoped validation passed in review: `git diff --check` and
+  `cargo test --workspace --all-features mixer_inspection -- --nocapture`.
+- The inspection card serialization cleanup is correct and closes the prior
+  minor evidence-contract issue: `volume_db` and `volume_label` can no longer
+  be sourced from different per-card volume values.
+- The manual evidence task did not produce runtime evidence. It only documents
+  that this environment cannot currently execute the focused Mixer inspection
+  run.
+- Repeating the focused run in the same environment is unlikely to add value
+  until OBS/WebSocket, a temporary fixture, and an interaction or control path
+  are available.
+
 ## Groomed Next Steps
 
-### P1: Run Focused Mixer Inspection Evidence
+### P1: Make Focused Mixer Evidence Executable
 
 Problem:
 
 - The focused Mixer interaction contract still has no passing or failing
   runtime evidence.
-- The debug inspection path is now branch-aligned and uses the rendered
-  audio-card dB formatter, so it is ready to support rendered-state and
-  card-data evidence.
-- The OBS fixture still needs a scene-specific input present in only one test
-  scene before Selected/Pinned scene-specific behavior can be proven.
-- Pointer interaction, layout quality, and perceived rebuild churn still
-  require an interactive desktop observation even when structured inspection
-  lines are captured.
+- The debug inspection path is now branch-aligned and internally consistent:
+  visible card `volume_db` and `volume_label` are serialized from the same card
+  value with the rendered audio-card formatter.
+- The latest run was blocked earlier than prior runs: OBS was not running,
+  the configured WebSocket refused connections, no fixture inventory could be
+  queried, and no `scenedeck_mixer_inspect` lines were captured.
+- The environment still lacks a reliable way to drive or inspect GTK Mixer
+  controls non-interactively. Structured inspection helps with rendered state
+  and card data, but not pointer interaction, visual layout quality, or
+  perceived rebuild churn.
 
 Plan:
 
+- First establish prerequisites instead of rerunning the checklist blindly:
+  verify an OBS process, WebSocket reachability, auth mode, OBS version, and
+  obs-websocket version.
 - Prepare or verify a temporary OBS fixture with at least two scenes, global
-  audio inputs, and one scene-specific audio input present in only one fixture
-  scene.
-- Run SceneDeck with `SCENEDECK_MIXER_INSPECT=1` against the verified OBS
-  WebSocket setup.
-- Use an interactive desktop session or a documented automation/control path
-  to exercise Active, Selected, Pinned, Retry, mute echo, volume echo, empty,
-  and filtered-empty cases from `docs/manual-test-plan.md`.
-- Record OBS version, SceneDeck build/commit, pass/fail/blocked results,
-  skipped cases, relevant structured lines, and any stale-card, retry, or
-  rebuild-churn observations in `docs/manual-test-runs.md`.
-- Keep blocked entries explicit if any prerequisite remains unavailable; do not
-  convert pure-test confidence or structured inspection outside its limits into
-  manual pass claims.
+  audio inputs, and one scene-specific input present in only one fixture scene.
+- Choose one executable control path:
+  an interactive desktop run, a documented automation tool, or a narrow
+  debug-only app/control hook that can switch Mixer modes, select scenes, click
+  Retry, set search text, and trigger page renders without becoming production
+  UI.
+- Only after those prerequisites pass, run SceneDeck with
+  `SCENEDECK_MIXER_INSPECT=1` and record Active, Selected, Pinned, Retry,
+  mute echo, volume echo, loaded-empty, filtered-empty, stale-card, and rebuild
+  churn results in `docs/manual-test-runs.md`.
+- If OBS or a control path remains unavailable, stop adding near-identical
+  blocked Mixer entries and move to independent P1 work while preserving the
+  open runtime-evidence gap.
 
 Files:
 
 - `docs/manual-test-plan.md`
 - `docs/manual-test-runs.md`
+- possible narrow debug/control code in `src/ui/` only if an interactive run is
+  not available and the hook remains opt-in
 
 Tests:
 
 - Manual evidence run, with `SCENEDECK_MIXER_INSPECT=1` output attached or
   pasted for the exercised cases.
-
-### P1: Simplify Mixer Inspection Card Serialization
-
-Problem:
-
-- `format_mixer_inspection_line` currently emits `volume_db` from the visible
-  card but derives `volume_label` by first looking up the matching snapshot
-  input by name.
-- Normal Mixer rendering passes visible cards cloned from the same snapshot, so
-  behavior is currently correct, but the extra lookup makes the evidence path
-  harder to reason about and could create mismatched `volume_db`/`volume_label`
-  pairs if a future caller passes transformed visible-card data.
-
-Plan:
-
-- Format `volume_label` directly from `input.volume_db`, the same value emitted
-  as the visible card's `volume_db`.
-- Keep any reducer snapshot fields for render-source/status evidence only, not
-  for per-card presentation values already available from visible cards.
-- Add a focused test that would fail if `volume_db` and `volume_label` are
-  sourced from different card values.
-
-Files:
-
-- `src/ui/pages/mixer.rs`
+- Any debug/control hook should have pure or focused integration coverage for
+  command parsing and no-op behavior when disabled.
 
 ### P1: Reduce Mixer Page Rebuild Cost For High-Frequency Input Events
 

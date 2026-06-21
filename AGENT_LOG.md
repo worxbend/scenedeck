@@ -1420,3 +1420,85 @@ M  docs/manual-test-plan.md
 M  docs/manual-test-runs.md
 M  src/controller/state.rs
 M  src/ui/pages/mixer.rs
+2026-06-21T13:53:08Z iteration 16 started remaining=10622s
+2026-06-21T13:53:08Z iteration 16 preplanner effective budgets untracked_scan_max_bytes=536870912 untracked_scan_max_count=10000 snapshot_copy_max_bytes=536870912 snapshot_copy_max_count=10000 snapshot_copy_max_file_bytes=134217728
+2026-06-21T13:53:08Z iteration 16 disposable preplanner repo created path=/tmp/agent-loop-preplanner-repo-svxfod_r/repo copied_entries=115
+2026-06-21T13:53:08Z iteration 16 ideator phase started count=3
+2026-06-21T13:53:08Z iteration 16 ideator phase concurrency workers=3
+2026-06-21T13:53:08Z iteration 16 ideator 1 role="the pragmatist" started
+2026-06-21T13:53:08Z iteration 16 ideator 2 role="the architect" started
+2026-06-21T13:53:08Z iteration 16 ideator 3 role="the contrarian" started
+2026-06-21T13:53:18Z iteration 16 ideator 1 role="the pragmatist" completed status=0
+2026-06-21T13:53:19Z iteration 16 ideator 3 role="the contrarian" completed status=0
+2026-06-21T13:53:24Z iteration 16 ideator 2 role="the architect" completed status=0
+2026-06-21T13:53:24Z iteration 16 ideator phase completed approaches=3
+2026-06-21T13:53:24Z iteration 16 selector started approaches=3
+2026-06-21T13:53:36Z iteration 16 selector completed status=0
+2026-06-21T13:53:36Z iteration 16 disposable preplanner repo cleanup path=/tmp/agent-loop-preplanner-repo-svxfod_r/repo
+2026-06-21T13:53:36Z iteration 16 selector rejected alternative role="the pragmatist" approach="Evidence-First Narrowing: treat the Mixer inspection path as the next decision gate, using it to either retire runtime uncertainty or justify targeted optimization only where ob..." reason="Strong overall direction, but selected as-is it underweights the small inspection serialization cleanup that could make the evidence stream simpler and less fragile before relying on it."
+2026-06-21T13:53:36Z iteration 16 selector rejected alternative role="the contrarian" approach="Evidence-First Freeze: treat the Mixer implementation as functionally frozen until runtime evidence changes the priority order, and spend the next planning cycle on proving or f..." reason="The freeze is directionally right but too rigid. It risks blocking even low-cost evidence-path hardening that directly supports the validation goal."
+2026-06-21T13:53:36Z iteration 16 selector rejected alternative role="the architect" approach="Evidence-First Debug Path Hardening: prioritize making the opt-in Mixer inspection stream internally simple and trustworthy before attempting broader manual validation or UI per..." reason="The inspection hardening is useful, but making it the center of the next cycle could defer the more important runtime evidence gap yet again."
+2026-06-21T13:53:36Z iteration 16 selector alternatives persisted count=3
+2026-06-21T13:53:36Z iteration 16 selector structured alternatives persisted count=3
+2026-06-21T13:53:36Z iteration 16 planner started
+2026-06-21T13:54:03Z iteration 16 plan: 2 task(s) in 2 phase(s). This iteration follows the evidence-first constraint. The only code task is narrow inspection hardening that improves trust in the runtime evidence stream. The manual evidence run depends on that serialization fix, so it is sequenced afterward rather than parallelized. Broader Mixer optimization and output UI work should wait until the focused run produces concrete evidence or a precise blocker.
+2026-06-21T13:54:03Z iteration 16 phase 1 started parallel=False tasks=1
+2026-06-21T13:54:49Z iteration 16 task t1 ('Simplify Mixer inspection card serialization') status=0
+2026-06-21T13:54:49Z iteration 16 phase 2 started parallel=False tasks=1
+2026-06-21T13:57:41Z iteration 16 task t2 ('Run focused Mixer inspection evidence') status=0
+2026-06-21T13:57:41Z iteration 16 reviewer started
+
+## Review Summary - Iteration 16 - 2026-06-21
+
+### What Was Done
+
+- Simplified Mixer inspection card serialization so each visible card's
+  `volume_label` is formatted directly from that same card's `volume_db`.
+- Added a focused regression test proving a same-name reducer snapshot input
+  with a different volume no longer influences the visible card label.
+- Recorded a focused Mixer inspection run entry for iteration 16 with explicit
+  blocked prerequisites and non-claims.
+
+### What Was Found
+
+- Scoped validation passed in review: `git diff --check` and
+  `cargo test --workspace --all-features mixer_inspection -- --nocapture`.
+- The serialization cleanup is correct and removes the previous risk of
+  mismatched `volume_db` and `volume_label` values in inspection JSON.
+- The focused Mixer inspection run did not execute. OBS was not running, no
+  `obs` binary was available in `PATH`, and the WebSocket probe to
+  `127.0.0.1:4455` failed with `ConnectionRefusedError [Errno 111]`.
+- No `scenedeck_mixer_inspect` lines were captured, no fixture inventory was
+  read, and no pass/fail claims can be made for Active/Selected/Pinned
+  rendering, Retry, mute/volume echoes, stale cards, ComboRow timing, or
+  rebuild churn.
+- The current Mixer runtime-evidence blocker is prerequisite readiness and
+  control-path availability, not another known static serialization defect.
+
+### Top Improvement Proposals
+
+1. Make the focused Mixer evidence path executable before rerunning it: verify
+   OBS/WebSocket availability, create or verify the temporary fixture, and
+   choose an interactive or documented control path for Mixer controls.
+2. If an interactive desktop run is unavailable, consider a narrow opt-in
+   debug/control hook for switching Mixer modes, selecting targets, clicking
+   Retry, setting search text, and forcing renders; keep it out of production
+   UI and cover its disabled/no-op behavior.
+3. Keep full-page Mixer rebuild optimization deferred until a completed run
+   captures volume-echo behavior and either observes or rules out visible
+   churn.
+4. Stop adding near-identical blocked Mixer run entries from the same
+   unavailable environment; move to independent P1 work such as output command
+   errors or Settings persistence feedback until prerequisites can pass.
+2026-06-21T13:59:48Z iteration 16 reviewer completed status=0
+2026-06-21T13:59:48Z iteration 16 memory updated
+2026-06-21T13:59:48Z iteration 16 completed validation_status=0
+2026-06-21T13:59:48Z iteration 16 checkpoint started
+2026-06-21T13:59:48Z iteration 16 checkpoint status before commit:
+M  AGENT_LOG.md
+M  ALTERNATIVES.jsonl
+M  MEMORY.md
+M  PLAN.md
+M  SCORES.jsonl
+M  docs/manual-test-runs.md
+M  src/ui/pages/mixer.rs
