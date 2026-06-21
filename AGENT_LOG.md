@@ -1901,3 +1901,102 @@ M  SCORES.jsonl
 M  src/controller/app_controller.rs
 M  src/controller/event.rs
 M  src/controller/state.rs
+2026-06-21T14:44:45Z iteration 21 started remaining=7526s
+2026-06-21T14:44:45Z iteration 21 preplanner effective budgets untracked_scan_max_bytes=536870912 untracked_scan_max_count=10000 snapshot_copy_max_bytes=536870912 snapshot_copy_max_count=10000 snapshot_copy_max_file_bytes=134217728
+2026-06-21T14:44:45Z iteration 21 disposable preplanner repo created path=/tmp/agent-loop-preplanner-repo-nw6a9jva/repo copied_entries=115
+2026-06-21T14:44:45Z iteration 21 ideator phase started count=3
+2026-06-21T14:44:45Z iteration 21 ideator phase concurrency workers=3
+2026-06-21T14:44:45Z iteration 21 ideator 1 role="the pragmatist" started
+2026-06-21T14:44:45Z iteration 21 ideator 2 role="the architect" started
+2026-06-21T14:44:45Z iteration 21 ideator 3 role="the contrarian" started
+2026-06-21T14:44:53Z iteration 21 ideator 2 role="the architect" completed status=0
+2026-06-21T14:44:54Z iteration 21 ideator 1 role="the pragmatist" completed status=0
+2026-06-21T14:44:55Z iteration 21 ideator 3 role="the contrarian" completed status=0
+2026-06-21T14:44:55Z iteration 21 ideator phase completed approaches=3
+2026-06-21T14:44:55Z iteration 21 selector started approaches=3
+2026-06-21T14:45:05Z iteration 21 selector completed status=0
+2026-06-21T14:45:05Z iteration 21 disposable preplanner repo cleanup path=/tmp/agent-loop-preplanner-repo-nw6a9jva/repo
+2026-06-21T14:45:05Z iteration 21 selector rejected alternative role="the architect" approach="Contract-first cleanup before new UI surface area: prioritize tightening the output failure boundary and presentation copy while leaving Mixer runtime optimization gated behind..." reason="Selected in spirit, but as-is it combines boundary cleanup and presentation copy without making the environment-readiness gate explicit enough for Mixer. The planner needs a clear instruction not to spend another iteration rerunning bloc..."
+2026-06-21T14:45:05Z iteration 21 selector rejected alternative role="the pragmatist" approach="Evidence-Gated Boundary Cleanup: prioritize independent output-contract cleanup while treating Mixer runtime validation as an environment-readiness gate, not an implementation l..." reason="Strong foundation and closest to the selected strategy, but it underweights the user-facing output error presentation gap. The next planning direction should include both the contract-boundary cleanup and the compact Live error-copy impr..."
+2026-06-21T14:45:05Z iteration 21 selector rejected alternative role="the contrarian" approach="Boundary-First Debt Retirement: prioritize shrinking misplaced contracts and noisy UI surfaces before adding new evidence or feature hooks, treating the next iteration as a cont..." reason="Also directionally correct, but it frames the work too broadly as debt retirement. The planner should stay narrower: preserve behavior, avoid broad refactors, and use existing command-failure tests as guardrails."
+2026-06-21T14:45:05Z iteration 21 selector alternatives persisted count=3
+2026-06-21T14:45:05Z iteration 21 selector structured alternatives persisted count=3
+2026-06-21T14:45:05Z iteration 21 planner started
+2026-06-21T14:45:31Z iteration 21 plan: 3 task(s) in 2 phase(s). This iteration deliberately chooses output cleanup because it is executable without OBS or GTK interaction prerequisites. The contract-placement task and Live presentation task touch separate files and preserve existing behavior, so they can proceed in parallel. Mixer runtime evidence and Mixer rebuild optimization remain gated until a real OBS fixture and reliable control path are available.
+2026-06-21T14:45:31Z iteration 21 phase 1 started parallel=True tasks=2
+2026-06-21T14:46:53Z iteration 21 task t1 ('Move output failure recovery contract out of reducer state') status=0
+2026-06-21T14:46:54Z iteration 21 task t2 ('Show concise Live output command error copy') status=0
+2026-06-21T14:46:54Z iteration 21 phase 2 started parallel=False tasks=1
+2026-06-21T14:47:23Z iteration 21 task t3 ('Run focused and full validation') status=0
+2026-06-21T14:47:23Z iteration 21 reviewer started
+
+## Review Summary - Iteration 21 - 2026-06-21
+
+### What Was Done
+
+- Moved `OutputCommandFailureRecovery` and
+  `fallback_status_after_failed_output_command` from `controller::state` to
+  `controller::event`, matching the stream/record failure event boundary.
+- Updated controller and reducer imports so `AppState` applies the recovery
+  event payload instead of defining the payload type.
+- Changed Live stream/record command error labels to concise visible copy:
+  `Stream command failed` and `Recording command failed`.
+- Preserved full backend error text in the command error label tooltip.
+- Added helper-level tests for stream error copy, recording error copy, and
+  empty/absent error suppression.
+- Added a small CSS width hint for output command error labels.
+
+### What Was Found
+
+- Full validation passed in review:
+  `cargo fmt --all -- --check`, `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- Focused output validation also passed:
+  `cargo test --workspace --all-features command_failure -- --nocapture` and
+  `cargo test --workspace --all-features failed_output_command -- --nocapture`.
+- No functional regression was found. Localized output command failures still
+  avoid generic `AppEvent::Error`, preserve OBS connection state, and recover
+  out of synthetic pending statuses.
+- The event-boundary move is mostly complete, but `AppState` still exposes
+  `recover_stream_command_failure_from_current` and
+  `recover_record_command_failure_from_current`. These are currently
+  test-oriented convenience methods, but they keep command-recovery derivation
+  vocabulary in reducer state.
+- The concise Live copy is implemented, but output presentation is still a
+  compact row rather than stable output cards. The CSS `max-width` hint should
+  not be treated as proof of final GTK layout quality.
+- No plan item was skipped. The output failure contract-placement task was
+  partially completed in the intended direction, with smaller follow-up
+  visibility/helper cleanup remaining.
+
+### Top Improvement Proposals
+
+1. Remove or `#[cfg(test)]`-gate the `AppState::recover_*_from_current`
+   helpers so reducer state only applies output recovery events instead of
+   deriving them.
+2. Narrow `fallback_status_after_failed_output_command` visibility if module
+   boundaries allow it; the helper is an internal command/event contract, not a
+   broad public API.
+3. Build stable Live output cards so state, elapsed time, pending state, last
+   error, recording path, and full backend details have predictable space.
+4. Verify long output error details in a GTK render/manual check; concise label
+   helper tests do not prove layout or tooltip behavior.
+5. Keep Mixer runtime evidence gated behind real OBS/WebSocket, temporary
+   fixture, and control-path prerequisites; do not add more blocked Mixer runs
+   from the same unavailable environment.
+2026-06-21T14:50:08Z iteration 21 reviewer completed status=0
+2026-06-21T14:50:08Z iteration 21 memory updated
+2026-06-21T14:50:08Z iteration 21 completed validation_status=0
+2026-06-21T14:50:08Z iteration 21 checkpoint started
+2026-06-21T14:50:08Z iteration 21 checkpoint status before commit:
+M  AGENT_LOG.md
+M  ALTERNATIVES.jsonl
+M  MEMORY.md
+M  PLAN.md
+M  SCORES.jsonl
+M  assets/scenedeck.css
+M  src/controller/app_controller.rs
+M  src/controller/event.rs
+M  src/controller/state.rs
+M  src/ui/pages/live.rs

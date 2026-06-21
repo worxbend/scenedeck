@@ -16,6 +16,7 @@
 
 .output-command-error {
     color: @error_color;
+    max-width: 220px;
 }
 
 /* ── Header OBS selectors ──────────────────────────────────────────────────── */

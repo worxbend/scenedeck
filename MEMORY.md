@@ -20,3 +20,5 @@
 [learning] Localized async command failures still need an explicit non-transitioning recovery state when follow-up status refresh fails; otherwise pending UI can remain disabled without a connection error.
 [pattern] Command-failure recovery events should carry an explicit reducer-visible fallback state so best-effort status refresh failures cannot strand controls in synthetic pending states.
 [learning] Naming command recovery state as fallback status protects future code from treating a local UI unblocking value as an authoritative OBS status read.
+[pattern] Compact operational error UI should show stable, user-facing failure labels while preserving raw backend detail in a tooltip or details affordance.
+[learning] Moving a command contract type out of reducer state is incomplete if reducer helpers still construct command-recovery payloads from current state.

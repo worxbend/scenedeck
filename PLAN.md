@@ -71,17 +71,18 @@ cards, or runtime rebuild churn.
 Output command errors now have per-output state fields, Live-page labels, async
 failure coverage through a test-only output-command client, and no longer emit
 generic `AppEvent::Error` for localized stream/record command failures. Failed
-stream/record commands now carry an explicit reducer-visible
+stream/record commands carry an explicit event-boundary
 `OutputCommandFailureRecovery { fallback_status }`, so failed starts fall back
 to inactive and failed stops fall back to active even when one or both follow-up
 output-status refresh calls fail. The fallback calculation is covered for every
 `OutputRunState`, including `Unknown` and `Paused` passthrough behavior. Output
-status refresh logic is now unified through a narrow `OutputStatusReader`
-helper shared by `ObsClient` and the output-command wrapper. The remaining
-output gaps are presentational and boundary-cleanup issues rather than
-stuck-control correctness: compact Live error labels still render full backend
-text, and the output failure recovery payload/helper still live in
-`controller::state` even though they model an event contract.
+status refresh logic is unified through a narrow `OutputStatusReader` helper
+shared by `ObsClient` and the output-command wrapper. Compact Live output error
+labels now show concise user-facing copy while preserving raw backend details in
+tooltips. The remaining output gaps are layout and API-boundary cleanup issues:
+the compact banner still lacks stable output-card space, and `AppState` still
+exposes test-oriented recovery convenience methods that encode command-recovery
+semantics inside reducer state.
 
 ## Completed Phases
 
@@ -962,6 +963,44 @@ Review verdict:
   high-value output slice is still concise visible error copy with full backend
   details available separately.
 
+### Output Failure Contract Move And Concise Live Error Copy
+
+Working tree, reviewed 2026-06-21:
+
+- Moved `OutputCommandFailureRecovery` and
+  `fallback_status_after_failed_output_command` from `controller::state` to
+  `controller::event`, where the stream/record failure events are defined.
+- Updated controller and reducer imports so `AppState` consumes the recovery
+  event payload instead of owning the payload type.
+- Changed Live stream/record command error labels to show concise visible copy:
+  `Stream command failed` and `Recording command failed`.
+- Preserved the full backend error text in each label tooltip.
+- Added helper-level Live tests for stream copy, recording copy, and absent or
+  empty errors.
+- Added a small CSS width hint for compact output command error labels.
+
+Review verdict:
+
+- Full validation passed in review:
+  `cargo fmt --all -- --check`, `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- Focused output tests also passed:
+  `cargo test --workspace --all-features command_failure -- --nocapture` and
+  `cargo test --workspace --all-features failed_output_command -- --nocapture`.
+- No functional regression was found in the changed source paths. Localized
+  output failures still stay out of generic `AppEvent::Error`, preserve OBS
+  connection state, and recover out of synthetic transition states.
+- The event-boundary move is mostly complete, but `AppState` still exposes
+  `recover_stream_command_failure_from_current` and
+  `recover_record_command_failure_from_current`. Those methods are currently
+  test-oriented convenience APIs and keep a small amount of command-recovery
+  orchestration vocabulary in reducer state.
+- The concise visible-copy slice is implemented, but the compact Live output
+  row still does not provide a stable card/details layout for pending state,
+  elapsed time, recording path, and last error. The CSS `max-width` hint should
+  not be treated as proof of final layout quality without a GTK render check.
+
 ## Groomed Next Steps
 
 ### P1: Make Focused Mixer Evidence Executable
@@ -1052,62 +1091,77 @@ Tests:
 - Add GTK-level or widget-level coverage only if a test harness can inspect card
   updates without excessive brittleness.
 
-### P1: Improve Output Error Presentation
-
-Problem:
-
-- Output errors are displayed in the compact banner beneath the stream/record
-  row.
-- Backend error strings can be long and technical, which can make the banner
-  visually noisy before output cards exist.
-
-Plan:
-
-- Keep full error text in a tooltip or details affordance.
-- Show concise user-facing text in the banner, e.g. "Stream command failed" or
-  "Recording command failed", with detailed text available on hover/details.
-- Revisit this when extracting output control cards so pending state, elapsed
-  time, last error, and recording path all have stable space.
-
-Files:
-
-- `src/ui/pages/live.rs`
-- `assets/scenedeck.css`
-
-### P1: Tighten Output Failure Contract Placement
+### P1: Finish Output Recovery Boundary Cleanup
 
 Problem:
 
 - `OutputCommandFailureRecovery` and
-  `fallback_status_after_failed_output_command` now communicate fallback
-  semantics clearly, but they live in `src/controller/state.rs` and the helper
-  is public because `app_controller.rs` needs it.
-- The type is an event/command contract, not intrinsic long-lived app state.
-  Keeping it in state is serviceable, but future output-command work could
-  spread command orchestration concepts through reducer state.
+  `fallback_status_after_failed_output_command` now live with the controller
+  event contract, which is the right broad boundary.
+- `AppState` still exposes `recover_stream_command_failure_from_current` and
+  `recover_record_command_failure_from_current`. They are useful in tests, but
+  they let reducer state construct command-recovery events from current output
+  status.
+- `fallback_status_after_failed_output_command` is public from
+  `controller::event` even though only controller/state internals and tests
+  need to call it directly.
 
 Plan:
 
-- Move the recovery payload and fallback helper closer to the controller event
-  or command orchestration boundary, or narrow their visibility if Rust module
-  layout allows it without adding churn.
-- Keep `AppState` as the reducer consumer of the payload, not the owner of
-  output command orchestration rules.
-- Preserve current tests for every `OutputRunState` mapping and localized
-  failure event sequencing.
+- Remove or `#[cfg(test)]`-gate the `recover_*_from_current` AppState helpers
+  if production code does not need them.
+- Narrow `fallback_status_after_failed_output_command` visibility to
+  `pub(crate)` or `pub(super)` if Rust module boundaries and tests allow it.
+- Keep `AppState` focused on applying `OutputCommandFailureRecovery`, not
+  deriving command-recovery payloads.
+- Preserve current `failed_output_command` and `command_failure` coverage.
 
 Files:
 
 - `src/controller/event.rs`
 - `src/controller/state.rs`
-- `src/controller/app_controller.rs`
 
 Tests:
 
-- Existing `failed_output_command` and `command_failure` tests should continue
-  to pass.
-- Add a narrow compile-time or unit-level check only if the move changes
-  visibility or ownership boundaries materially.
+- `cargo test --workspace --all-features failed_output_command -- --nocapture`
+- `cargo test --workspace --all-features command_failure -- --nocapture`
+
+### P1: Build Stable Output Control Cards
+
+Problem:
+
+- Stream/record controls are still compact row controls.
+- The latest slice made visible command errors concise and preserved backend
+  details in tooltips, but there is still no stable layout area for pending
+  state, elapsed time, last error, and recording path.
+- The current `.output-command-error { max-width: 220px; }` hint may not be a
+  reliable GTK layout constraint by itself and should not be the final answer
+  for output error presentation.
+
+Plan:
+
+- Extract reusable output card widgets or a card-like helper inside
+  `src/ui/pages/live.rs`.
+- Give each output a stable area for state, elapsed time, command progress,
+  last concise error, and full error details via tooltip/details affordance.
+- Preserve current command-failure behavior: controller duplicate-operation
+  guards remain authoritative, failures remain localized, and fallback statuses
+  keep buttons out of synthetic pending states.
+- Verify with a GTK render/manual check that long backend error details do not
+  stretch or overlap the compact Live output area.
+
+Files:
+
+- `src/ui/pages/live.rs`
+- possible new `src/ui/widgets/output_card.rs`
+- `assets/scenedeck.css`
+
+Tests:
+
+- Keep existing helper tests for concise error copy.
+- Add pure helper tests for any output-card display model.
+- Add manual or screenshot evidence for long tooltip/error-detail strings when
+  a GTK control path is available.
 
 ### P1: Settings Persistence Feedback
 
@@ -1127,25 +1181,6 @@ Plan:
 Files:
 
 - `src/ui/pages/settings.rs`
-
-### P1: Output Control Cards
-
-Problem:
-
-- Stream/record controls are still compact banner controls.
-
-Plan:
-
-- Extract reusable output card widgets.
-- Show state, elapsed time, pending state, last error, and recording path action.
-- Keep duplicate-operation guards in the controller and clear pending state on
-  success, failure, and disconnect.
-
-Files:
-
-- `src/ui/pages/live.rs`
-- possible new `src/ui/widgets/output_card.rs`
-- `assets/scenedeck.css`
 
 ### P1: Full Manual Test Plan Execution Record
 

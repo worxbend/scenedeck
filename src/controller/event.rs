@@ -1,9 +1,8 @@
-use crate::controller::state::OutputCommandFailureRecovery;
 use crate::domain::audio::{AudioInput, InputId};
 use crate::domain::diagnostic::Diagnostic;
 use crate::domain::graph::SceneGraph;
 use crate::domain::obs::ObsNamedList;
-use crate::domain::output::OutputStatus;
+use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::domain::scene::{SceneId, SceneInventory};
 use crate::infra::error::AppError;
 
@@ -11,6 +10,48 @@ use crate::infra::error::AppError;
 pub struct ConnectionInfo {
     pub obs_version: String,
     pub websocket_version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputCommandFailureRecovery {
+    pub message: String,
+    pub fallback_status: OutputStatus,
+}
+
+impl OutputCommandFailureRecovery {
+    pub fn with_fallback_status(message: String, fallback_status: OutputStatus) -> Self {
+        Self {
+            message,
+            fallback_status: fallback_status_after_failed_output_command(&fallback_status),
+        }
+    }
+
+    pub fn from_current_status(message: String, current_status: &OutputStatus) -> Self {
+        Self::with_fallback_status(
+            message,
+            fallback_status_after_failed_output_command(current_status),
+        )
+    }
+}
+
+pub fn fallback_status_after_failed_output_command(status: &OutputStatus) -> OutputStatus {
+    let fallback_state = match (status.active, status.state) {
+        (
+            true,
+            OutputRunState::Starting | OutputRunState::Stopping | OutputRunState::Reconnecting,
+        ) => OutputRunState::Active,
+        (
+            false,
+            OutputRunState::Starting | OutputRunState::Stopping | OutputRunState::Reconnecting,
+        ) => OutputRunState::Inactive,
+        (_, state) => state,
+    };
+
+    OutputStatus {
+        active: status.active,
+        state: fallback_state,
+        detail: status.detail.clone(),
+    }
 }
 
 #[derive(Debug, Clone)]

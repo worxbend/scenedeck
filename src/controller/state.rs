@@ -1,13 +1,14 @@
 //! Runtime application state — the single source of truth held inside an
 //! `Rc<RefCell<AppState>>` on the GTK main thread.
 
+use crate::controller::event::OutputCommandFailureRecovery;
 use crate::domain::appearance::ThemeMode;
 use crate::domain::audio::AudioInput;
 use crate::domain::diagnostic::Diagnostic;
 use crate::domain::graph::SceneGraph;
 use crate::domain::mixer::{MixerMode, MixerSelection};
 use crate::domain::obs::ObsNamedList;
-use crate::domain::output::{OutputRunState, OutputStatus};
+use crate::domain::output::OutputStatus;
 use crate::domain::scene::{SceneId, SceneInventory};
 use crate::storage::config::OutputConfig;
 use std::time::Instant;
@@ -183,48 +184,6 @@ pub struct MixerInspectionSnapshot<'a> {
     pub scene: Option<&'a str>,
     pub status: MixerInspectionStatus<'a>,
     pub inputs: Vec<MixerInspectionInput<'a>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OutputCommandFailureRecovery {
-    pub message: String,
-    pub fallback_status: OutputStatus,
-}
-
-impl OutputCommandFailureRecovery {
-    pub fn with_fallback_status(message: String, fallback_status: OutputStatus) -> Self {
-        Self {
-            message,
-            fallback_status: fallback_status_after_failed_output_command(&fallback_status),
-        }
-    }
-
-    pub fn from_current_status(message: String, current_status: &OutputStatus) -> Self {
-        Self::with_fallback_status(
-            message,
-            fallback_status_after_failed_output_command(current_status),
-        )
-    }
-}
-
-pub fn fallback_status_after_failed_output_command(status: &OutputStatus) -> OutputStatus {
-    let fallback_state = match (status.active, status.state) {
-        (
-            true,
-            OutputRunState::Starting | OutputRunState::Stopping | OutputRunState::Reconnecting,
-        ) => OutputRunState::Active,
-        (
-            false,
-            OutputRunState::Starting | OutputRunState::Stopping | OutputRunState::Reconnecting,
-        ) => OutputRunState::Inactive,
-        (_, state) => state,
-    };
-
-    OutputStatus {
-        active: status.active,
-        state: fallback_state,
-        detail: status.detail.clone(),
-    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -652,6 +611,7 @@ fn mixer_inspection_inputs(inputs: &[AudioInput]) -> Vec<MixerInspectionInput<'_
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::controller::event::fallback_status_after_failed_output_command;
     use crate::domain::output::OutputRunState;
 
     fn input(id: &str) -> AudioInput {

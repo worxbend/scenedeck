@@ -35,6 +35,12 @@ enum OutputConfirmationAppearance {
     Destructive,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct OutputCommandErrorDisplay<'a> {
+    label: &'static str,
+    tooltip: &'a str,
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 struct OutputConfirmationDialog {
     heading: &'static str,
@@ -343,7 +349,7 @@ pub(crate) fn update_stream_status(
     handle
         .stream_label
         .set_text(&output_label("Stream", status, elapsed.as_deref()));
-    update_output_error(&handle.stream_error_label, error);
+    update_output_error(&handle.stream_error_label, OutputKind::Stream, error);
     set_output_button(&handle.stream_btn, status, "Start Stream", "Stop Stream");
 }
 
@@ -357,7 +363,7 @@ pub(crate) fn update_record_status(
     handle
         .record_label
         .set_text(&output_label("Record", status, elapsed.as_deref()));
-    update_output_error(&handle.record_error_label, error);
+    update_output_error(&handle.record_error_label, OutputKind::Recording, error);
     handle.record_label.set_tooltip_text(last_path);
     handle.record_path_btn.set_sensitive(last_path.is_some());
     if let Some(path) = last_path {
@@ -375,8 +381,8 @@ pub(crate) fn update_record_status(
 pub(crate) fn reset_output_controls(handle: &LivePageHandle) {
     handle.stream_label.set_text("Stream: Inactive");
     handle.record_label.set_text("Record: Inactive");
-    update_output_error(&handle.stream_error_label, None);
-    update_output_error(&handle.record_error_label, None);
+    update_output_error(&handle.stream_error_label, OutputKind::Stream, None);
+    update_output_error(&handle.record_error_label, OutputKind::Recording, None);
     handle.record_label.set_tooltip_text(None);
     handle.record_path_btn.set_sensitive(false);
     handle
@@ -429,16 +435,29 @@ fn build_output_error_label() -> Label {
     label
 }
 
-fn update_output_error(label: &Label, error: Option<&str>) {
-    if let Some(error) = error.filter(|error| !error.is_empty()) {
-        label.set_text(error);
-        label.set_tooltip_text(Some(error));
+fn update_output_error(label: &Label, kind: OutputKind, error: Option<&str>) {
+    if let Some(display) = output_command_error_display(kind, error) {
+        label.set_text(display.label);
+        label.set_tooltip_text(Some(display.tooltip));
         label.set_visible(true);
     } else {
         label.set_text("");
         label.set_tooltip_text(None);
         label.set_visible(false);
     }
+}
+
+fn output_command_error_display(
+    kind: OutputKind,
+    error: Option<&str>,
+) -> Option<OutputCommandErrorDisplay<'_>> {
+    let tooltip = error.filter(|error| !error.is_empty())?;
+    let label = match kind {
+        OutputKind::Stream => "Stream command failed",
+        OutputKind::Recording => "Recording command failed",
+    };
+
+    Some(OutputCommandErrorDisplay { label, tooltip })
 }
 
 fn build_disconnected_view() -> GtkBox {
@@ -798,5 +817,39 @@ mod tests {
     fn active_state_maps_to_output_action() {
         assert_eq!(output_action_for_active_state(false), OutputAction::Start);
         assert_eq!(output_action_for_active_state(true), OutputAction::Stop);
+    }
+
+    #[test]
+    fn stream_command_error_display_uses_concise_label_and_raw_tooltip() {
+        assert_eq!(
+            output_command_error_display(OutputKind::Stream, Some("OBS said no: backend details")),
+            Some(OutputCommandErrorDisplay {
+                label: "Stream command failed",
+                tooltip: "OBS said no: backend details",
+            })
+        );
+    }
+
+    #[test]
+    fn recording_command_error_display_uses_concise_label_and_raw_tooltip() {
+        assert_eq!(
+            output_command_error_display(
+                OutputKind::Recording,
+                Some("recording output unavailable")
+            ),
+            Some(OutputCommandErrorDisplay {
+                label: "Recording command failed",
+                tooltip: "recording output unavailable",
+            })
+        );
+    }
+
+    #[test]
+    fn command_error_display_ignores_absent_or_empty_errors() {
+        assert_eq!(output_command_error_display(OutputKind::Stream, None), None);
+        assert_eq!(
+            output_command_error_display(OutputKind::Recording, Some("")),
+            None
+        );
     }
 }

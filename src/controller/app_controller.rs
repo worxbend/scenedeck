@@ -36,9 +36,8 @@ use tokio::task::JoinHandle;
 
 use crate::controller::command::AppCommand;
 use crate::controller::dependencies::ControllerDependencies;
-use crate::controller::event::AppEvent;
-use crate::controller::state::{
-    fallback_status_after_failed_output_command, OutputCommandFailureRecovery,
+use crate::controller::event::{
+    fallback_status_after_failed_output_command, AppEvent, OutputCommandFailureRecovery,
 };
 use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::infra::error::AppError;
