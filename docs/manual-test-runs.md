@@ -12,17 +12,23 @@ and SceneDeck.
 
 Evidence gate:
 
-- Do not record a new focused Mixer run until OBS is running.
+- Treat this as an environment-readiness gate before it is a focused Mixer
+  interaction run. Do not record a new focused Mixer run until every gate item
+  passes.
+- Verify OBS is running.
 - Verify OBS WebSocket reachability and authentication mode first; record the
   host and port, but do not record secrets.
+- Record OBS and obs-websocket versions from the environment used for the run.
 - Verify or create a temporary fixture with at least two scenes, at least one
   global audio input, and at least one scene-specific audio input present in
   only one fixture scene.
 - Verify an interaction/control path that can switch Mixer modes, select Mixer
-  scenes, click Retry, and set Mixer search text.
-- If any gate item fails, record only a prerequisite-blocked entry and make no
-  pass/fail claims for ComboRow timing, Retry behavior, mute echoes, volume
-  echoes, stale cards, or rebuild churn.
+  scenes, click Retry, set Mixer search text, and trigger page renders for the
+  exercised cases.
+- If any gate item fails, record only a readiness-blocked prerequisite entry
+  instead of rerunning the interaction checklist. Make no pass/fail claims for
+  ComboRow timing, Retry behavior, mute echoes, volume echoes, stale cards,
+  visual layout, or rebuild churn.
 
 Status: Passed, Failed, or Blocked.
 
@@ -48,12 +54,14 @@ Prerequisite result:
 - OBS WebSocket reachable: pass/fail.
 - OBS WebSocket authentication mode verified without recording secrets:
   pass/fail.
+- OBS version recorded: pass/fail.
+- obs-websocket version recorded: pass/fail.
 - At least two scenes: pass/fail.
 - Global audio inputs available: pass/fail.
 - Differing scene-specific audio input available between two scenes:
   pass/fail.
 - Interaction/control path can switch Mixer modes, select scenes, click Retry,
-  and set search text: pass/fail.
+  set search text, and trigger renders: pass/fail.
 - SceneDeck GTK ComboRows and visible Mixer cards inspectable, when using an
   interactive desktop path: pass/fail/skipped with reason.
 - Non-destructive selected/pinned refresh failure setup available: pass/fail or
@@ -80,7 +88,7 @@ Non-claims:
 
 - State every behavior that was not exercised. For blocked runs, explicitly say
   no pass/fail behavior is claimed for unexecuted ComboRow changes, Retry,
-  mute echoes, volume echoes, stale cards, or rebuild churn.
+  mute echoes, volume echoes, stale cards, visual layout, or rebuild churn.
 
 ## Focused Mixer Inspection Run Template
 
@@ -99,14 +107,15 @@ optionally paired with interactive OBS and GTK observations.
 Evidence gate:
 
 - Do not start a focused inspection run until OBS is running, OBS WebSocket
-  reachability and authentication mode are verified, a temporary two-scene
-  fixture with global and scene-specific audio inputs exists, and an
-  interaction/control path can switch Mixer modes, select scenes, click Retry,
-  and set search text.
-- If the gate is not satisfied, record a prerequisite-blocked entry only. Do
-  not claim ComboRow timing, Retry behavior, mute/volume echoes, stale-card
-  behavior, or rebuild churn from source inspection or from an incomplete
-  environment probe.
+  reachability and authentication mode are verified, OBS and obs-websocket
+  versions are recorded, a temporary two-scene fixture with global and
+  scene-specific audio inputs exists, and an interaction/control path can
+  switch Mixer modes, select scenes, click Retry, set search text, and trigger
+  renders.
+- If the gate is not satisfied, record a readiness-blocked prerequisite entry
+  only instead of rerunning the inspection cases. Do not claim ComboRow timing,
+  Retry behavior, mute/volume echoes, stale-card behavior, visual layout, or
+  rebuild churn from source inspection or from an incomplete environment probe.
 
 Inspection contract:
 
@@ -142,7 +151,7 @@ Environment:
 - Scene-specific input names: `TODO`; identify which fixture scene owns each
   scene-specific input.
 - Interaction/control path: `TODO`; must cover Mixer mode switching, scene
-  selection, Retry activation, and search text entry.
+  selection, Retry activation, search text entry, and render triggering.
 - Inspection method: `SCENEDECK_MIXER_INSPECT=1` structured output,
   interactive desktop observation, UI automation, or a combination.
 - Captured structured inspection lines: paste the relevant lines or reference
@@ -191,7 +200,9 @@ Non-claims:
 
 - List any behavior not exercised. If this run used only structured inspection
   output, explicitly state that it does not prove pointer interaction success,
-  visual layout quality, or perceived rebuild churn.
+  visual layout quality, or perceived rebuild churn. For readiness-blocked
+  runs, also explicitly preserve non-claims for ComboRow timing, Retry
+  behavior, mute/volume echoes, stale cards, visual layout, and rebuild churn.
 
 ## 2026-06-21 - Focused Mixer Inspection Run (iteration 16)
 
@@ -283,9 +294,9 @@ Inspection evidence captured:
 
 Observed issues:
 
-- No stale cards, retry issues, ComboRow timing problems, or rebuild churn were
-  observed because none of the relevant interaction or inspection cases could
-  execute.
+- No stale cards, retry issues, ComboRow timing problems, visual layout issues,
+  or rebuild churn were observed because none of the relevant interaction or
+  inspection cases could execute.
 
 Non-claims:
 
@@ -294,7 +305,7 @@ Non-claims:
   direct or fallback rendering, Pinned direct or fallback rendering, Retry after
   selected/pinned refresh failure, loaded-empty state, filtered-empty state,
   OBS mute echoes, OBS volume echoes, stale visible cards, ComboRow timing, or
-  perceived rebuild churn.
+  visual layout quality, or perceived rebuild churn.
 - No `SCENEDECK_MIXER_INSPECT=1` JSON output was captured, so this entry is
   prerequisite evidence only, not Mixer rendered-state evidence.
 
@@ -358,7 +369,8 @@ Non-claims:
 
 - This run does not claim pass/fail behavior for ComboRow mode changes,
   ComboRow scene changes, Retry after failed selected/pinned refresh, OBS mute
-  echoes, OBS volume echoes, stale visible cards, or perceived rebuild churn.
+  echoes, OBS volume echoes, stale visible cards, visual layout quality, or
+  perceived rebuild churn.
 - The reachable WebSocket/version/inventory checks only describe environment
   readiness; they are not evidence that the Mixer UI interactions passed.
 
@@ -430,7 +442,7 @@ Non-claims:
 - This run does not claim pass/fail behavior for ComboRow mode changes,
   ComboRow scene changes, Selected or Pinned fallback behavior, Retry after
   selected/pinned refresh failure, OBS mute echoes, OBS volume echoes, stale
-  visible cards, or perceived rebuild churn.
+  visible cards, visual layout quality, or perceived rebuild churn.
 
 ## 2026-06-21 - Focused Mixer Refresh Contract (iteration 12)
 
@@ -528,7 +540,8 @@ Non-claims:
 - This run does not claim pass/fail behavior for Active mode scene following,
   absence of Active-mode scene-specific refresh dispatches, Selected fallback,
   Pinned fallback, Retry after failed selected/pinned refresh, OBS mute echoes,
-  OBS volume echoes, stale visible cards, or perceived rebuild churn.
+  OBS volume echoes, stale visible cards, visual layout quality, or perceived
+  rebuild churn.
 - The reachable WebSocket/version/inventory checks only prove the OBS endpoint
   and partial fixture readiness. They are not manual evidence that the focused
   Mixer interaction contract passed.

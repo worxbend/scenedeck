@@ -134,8 +134,10 @@ selection.
 
 Evidence gate:
 
-Do not record a new focused Mixer run until all gate prerequisites below pass.
-If any item fails, record only the missing prerequisite in
+Treat the focused Mixer runtime evidence gap as an environment-readiness gate
+first, not as another checklist to rerun while prerequisites are absent. Do not
+record a new focused Mixer run until all gate prerequisites below pass. If any
+item fails, record only the missing prerequisite as a readiness-blocked entry in
 `docs/manual-test-runs.md` and do not proceed through the interaction
 checklist.
 
@@ -144,18 +146,22 @@ Prerequisites:
 - OBS is running.
 - OBS WebSocket is reachable from SceneDeck with the configured host, port, and
   authentication mode verified and recorded without secrets.
+- OBS version and obs-websocket version are recorded from the same environment
+  that will run the focused Mixer test.
 - A temporary fixture exists in a throwaway OBS profile or clearly temporary
   `SceneDeck Test ...` scenes. The fixture has at least two scenes, at least
   one global audio input visible in the OBS Audio Mixer, and at least one
   scene-specific audio input present in only one fixture scene.
 - A chosen interaction/control path is available and can switch Mixer modes,
-  select Mixer scenes, click the Mixer Retry button, and set Mixer search text.
-  For the interactive desktop path, the tester can also inspect the visible
-  Mixer cards directly. For the debug inspection path, the tester can run
-  SceneDeck with `SCENEDECK_MIXER_INSPECT=1` and capture the structured Mixer
-  inspection lines after the interaction/control path drives each case.
-- Record OBS version, obs-websocket version, SceneDeck build or commit, and any
-  skipped cases in `docs/manual-test-runs.md`.
+  select Mixer scenes, click the Mixer Retry button, set Mixer search text, and
+  trigger page renders for each exercised case. For the interactive desktop
+  path, the tester can also inspect the visible Mixer cards directly. For the
+  debug inspection path, the tester can run SceneDeck with
+  `SCENEDECK_MIXER_INSPECT=1` and capture the structured Mixer inspection lines
+  after the interaction/control path drives each case and causes the page to
+  render.
+- Record SceneDeck build or commit and any skipped cases in
+  `docs/manual-test-runs.md`.
 
 Fixture setup:
 
@@ -185,14 +191,15 @@ Fixture setup:
 Execution path:
 
 Use one of these paths before recording pass/fail results. If neither path is
-available, record the run as blocked instead of repeating the interaction
-checklist.
+available, record only the readiness blocker instead of repeating the
+interaction checklist.
 
 - Interactive desktop path: run SceneDeck in a desktop session where the tester
   can operate GTK ComboRows, click the Mixer Retry button, and inspect visible
-  Mixer cards directly. This path can validate pointer interaction, visible
-  card contents, Retry behavior, stale visible cards, visual layout quality, and
-  perceived rebuild churn.
+  Mixer cards directly while each mode, scene, Retry, search, and OBS echo case
+  causes the page to render. This path can validate pointer interaction,
+  visible card contents, Retry behavior, stale visible cards, visual layout
+  quality, and perceived rebuild churn.
 - Debug inspection path: run SceneDeck with `SCENEDECK_MIXER_INSPECT=1` and
   capture the structured Mixer inspection lines emitted while exercising the
   cases below. This path can prove rendered Mixer state, visible input names,
@@ -297,7 +304,9 @@ Structured inspection can support rendered state and card-data claims only; it
 still cannot prove pointer interaction success, visual layout quality, or
 perceived rebuild churn without interactive observation. If any prerequisite or
 interaction path is unavailable, record the case as blocked or skipped and make
-no pass/fail claim for that behavior.
+no pass/fail claim for that behavior. Until the relevant cases are actually
+executed, preserve explicit non-claims for ComboRow timing, Retry behavior,
+mute/volume echoes, stale cards, visual layout, and rebuild churn.
 
 ### Volume and Mute Sync: SceneDeck to OBS
 

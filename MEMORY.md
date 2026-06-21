@@ -24,3 +24,4 @@
 [learning] Moving a command contract type out of reducer state is incomplete if reducer helpers still construct command-recovery payloads from current state.
 [learning] Public event constructors can preserve orchestration leakage even after reducer helpers are removed; narrow constructors as well as state APIs.
 [pattern] Event payloads with reducer-visible invariants need private fields or invariant-preserving constructors; otherwise direct struct literals bypass the boundary.
+[learning] GTK layout stability is not proven by CSS width hints or helper-string tests; long operational text needs widget-level bounds plus render evidence.

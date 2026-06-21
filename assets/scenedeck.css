@@ -14,9 +14,47 @@
     min-width: 108px;
 }
 
+.output-card {
+    min-width: 260px;
+    min-height: 132px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background-color: alpha(@card_fg_color, 0.04);
+}
+
+.output-card-title {
+    color: @dim_label_color;
+    font-weight: 700;
+}
+
+.output-card label {
+    max-width: 230px;
+}
+
+.output-card button.circular {
+    min-width: 32px;
+    min-height: 32px;
+    padding: 0;
+}
+
+.output-progress,
+.output-detail,
+.output-command-error {
+    min-height: 1.35em;
+    max-width: 230px;
+}
+
+.output-progress {
+    color: @dim_label_color;
+}
+
+.output-detail {
+    color: @dim_label_color;
+}
+
 .output-command-error {
     color: @error_color;
-    max-width: 220px;
+    font-weight: 700;
 }
 
 /* ── Header OBS selectors ──────────────────────────────────────────────────── */

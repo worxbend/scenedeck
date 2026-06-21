@@ -81,10 +81,12 @@ output-status refresh calls fail. The fallback calculation is covered for every
 event-level tests prove transition fallback inputs are normalized before
 storage. Output status refresh logic is unified through a narrow
 `OutputStatusReader` helper shared by `ObsClient` and the output-command
-wrapper. Compact Live output error labels now show concise user-facing copy
-while preserving raw backend details in tooltips. The remaining output gap is
-layout: the compact banner still lacks stable output-card space for pending
-state, elapsed time, recording path, concise errors, and full backend details.
+wrapper. Live output controls now render as two output cards with stable slots
+for state/elapsed copy, pending command progress, concise errors, and the last
+recording path. Backend error details remain in tooltips. The remaining output
+layout gap is proof and truncation: the visible recording path is still the raw
+path string, and no GTK render/manual check has proved that long paths cannot
+stretch or destabilize the card.
 
 ## Completed Phases
 
@@ -1117,6 +1119,48 @@ Review verdict:
   this helper inside controller/event orchestration rather than making it a
   general UI or reducer utility.
 
+### Stable Live Output Cards And Mixer Evidence Gate
+
+Working tree, reviewed 2026-06-21:
+
+- Replaced the compact stream/record output row with two card-like Live output
+  controls in `src/ui/pages/live.rs`.
+- Added stable card slots for title, button/state row, pending progress copy,
+  command error copy, and recording-path detail.
+- Kept concise visible command errors and raw backend details in tooltips.
+- Added pending-state copy for stream and recording `Starting`, `Stopping`, and
+  `Reconnecting` states.
+- Added recording-path display helper and helper-level tests for pending copy,
+  elapsed-time copy, and path display behavior.
+- Added CSS for `.output-card`, progress/detail/error rows, and compact icon
+  button sizing.
+- Tightened focused Mixer evidence docs so future entries treat the Mixer
+  runtime gap as an environment-readiness gate and preserve non-claims for
+  visual layout and rebuild churn.
+
+Review verdict:
+
+- Focused validation passed in review:
+  `git diff --check` and
+  `cargo test --workspace --all-features output -- --nocapture`.
+- The planned card helper and display-model tests are present. Pending state,
+  concise error copy, elapsed active-state copy, and last-recording-path copy
+  are covered at the pure-helper level.
+- No output command behavior regression was found in the touched code paths;
+  command failure handling, fallback recovery, and connection-error separation
+  were not changed.
+- The card implementation is only partially proven as layout work. CSS
+  `max-width` hints and wrapped labels do not prove GTK allocation behavior,
+  and the visible recording-path detail currently renders the full raw path.
+  Long unbroken paths can still plausibly increase card height or width until
+  a bounded/ellipsized display helper and render/manual check prove otherwise.
+- The Stream card has one fewer detail row than Recording. The minimum height
+  masks some difference, but there is no render evidence that both cards remain
+  visually aligned across themes, window widths, long error tooltips, and long
+  recording paths.
+- The Mixer documentation change is appropriate: no new blocked runtime run was
+  added, and the evidence gate remains explicit.
+
 ## Groomed Next Steps
 
 ### P1: Make Focused Mixer Evidence Executable
@@ -1207,43 +1251,51 @@ Tests:
 - Add GTK-level or widget-level coverage only if a test harness can inspect card
   updates without excessive brittleness.
 
-### P1: Build Stable Output Control Cards
+### P1: Prove And Tighten Live Output Card Layout
 
 Problem:
 
-- Stream/record controls are still compact row controls.
-- The latest slices made visible command errors concise, preserved backend
-  details in tooltips, and sealed the recovery payload invariant, but there is
-  still no stable layout area for pending state, elapsed time, last error, and
-  recording path.
-- The current `.output-command-error { max-width: 220px; }` hint may not be a
-  reliable GTK layout constraint by itself and should not be the final answer
-  for output error presentation.
+- Stream/record controls now render as cards with stable slots, but layout
+  stability has not been proven by GTK rendering.
+- The recording card shows the full raw recording path as visible text. Long
+  unbroken paths can still plausibly wrap poorly, increase card height, or
+  push allocation despite CSS `max-width` hints.
+- The Stream and Recording cards have different row counts, with card
+  alignment depending on current minimum-height CSS rather than an explicit
+  shared display model.
+- Current tests cover helper strings, not GTK widget allocation, truncation,
+  tooltip behavior, or theme-specific rendering.
 
 Plan:
 
-- Extract reusable output card widgets or a card-like helper inside
-  `src/ui/pages/live.rs`.
-- Give each output a stable area for state, elapsed time, command progress,
-  last concise error, and full error details via tooltip/details affordance.
+- Add a bounded recording-path display helper that keeps the raw path in the
+  tooltip/copy button but shows a concise visible label, basename, or
+  middle-ellipsized path in the card.
+- Add widget-level constraints where GTK actually honors them, such as
+  `ellipsize`, `max_width_chars`, consistent `halign`, or explicit row
+  placeholders, instead of relying only on CSS `max-width`.
+- Make the stream and recording card row structure intentionally consistent or
+  document/test why their different row counts remain visually stable.
 - Preserve current command-failure behavior: controller duplicate-operation
   guards remain authoritative, failures remain localized, and fallback statuses
   keep buttons out of synthetic pending states.
-- Verify with a GTK render/manual check that long backend error details do not
-  stretch or overlap the compact Live output area.
+- Verify with a GTK render/manual check that long backend error details and
+  long recording paths do not stretch, overlap, or destabilize the Live output
+  area in narrow and normal window widths.
 
 Files:
 
 - `src/ui/pages/live.rs`
-- possible new `src/ui/widgets/output_card.rs`
 - `assets/scenedeck.css`
 
 Tests:
 
 - Keep existing helper tests for concise error copy.
-- Add pure helper tests for any output-card display model.
-- Add manual or screenshot evidence for long tooltip/error-detail strings when
-  a GTK control path is available.
+- Add pure helper tests for the bounded recording-path visible copy, including
+  empty paths, short paths, long slash-separated paths, and long unbroken
+  filenames.
+- Add manual or screenshot evidence for long tooltip/error-detail/path strings
+  when a GTK control path is available.
 
 ### P1: Keep Output Recovery Helper Scope Narrow
 

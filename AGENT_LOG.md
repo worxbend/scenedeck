@@ -2277,3 +2277,100 @@ M  SCORES.jsonl
 M  src/controller/app_controller.rs
 M  src/controller/event.rs
 M  src/controller/state.rs
+2026-06-21T15:11:59Z iteration 25 started remaining=5892s
+2026-06-21T15:11:59Z iteration 25 preplanner effective budgets untracked_scan_max_bytes=536870912 untracked_scan_max_count=10000 snapshot_copy_max_bytes=536870912 snapshot_copy_max_count=10000 snapshot_copy_max_file_bytes=134217728
+2026-06-21T15:11:59Z iteration 25 disposable preplanner repo created path=/tmp/agent-loop-preplanner-repo-eomxj8r6/repo copied_entries=115
+2026-06-21T15:11:59Z iteration 25 ideator phase started count=3
+2026-06-21T15:11:59Z iteration 25 ideator phase concurrency workers=3
+2026-06-21T15:11:59Z iteration 25 ideator 1 role="the pragmatist" started
+2026-06-21T15:11:59Z iteration 25 ideator 2 role="the architect" started
+2026-06-21T15:11:59Z iteration 25 ideator 3 role="the contrarian" started
+2026-06-21T15:12:07Z iteration 25 ideator 1 role="the pragmatist" completed status=0
+2026-06-21T15:12:08Z iteration 25 ideator 2 role="the architect" completed status=0
+2026-06-21T15:12:08Z iteration 25 ideator 3 role="the contrarian" completed status=0
+2026-06-21T15:12:08Z iteration 25 ideator phase completed approaches=3
+2026-06-21T15:12:08Z iteration 25 selector started approaches=3
+2026-06-21T15:12:18Z iteration 25 selector completed status=0
+2026-06-21T15:12:18Z iteration 25 disposable preplanner repo cleanup path=/tmp/agent-loop-preplanner-repo-eomxj8r6/repo
+2026-06-21T15:12:18Z iteration 25 selector rejected alternative role="the pragmatist" approach="Output Layout Stabilization First: prioritize the Live output control cards as an independent, high-confidence P1 slice while leaving Mixer runtime evidence explicitly blocked u..." reason="Selected in substance, but too light on the evidence-gate framing. The Planner should explicitly prevent the Mixer gap from becoming either forgotten or repeatedly re-run without prerequisites."
+2026-06-21T15:12:18Z iteration 25 selector rejected alternative role="the architect" approach="Evidence-Gated UX Hardening: prioritize stable, locally testable Live output layout work while treating Mixer runtime validation as an environment-readiness gate rather than ano..." reason="Very close to the selected strategy, but the synthesized version makes the sequencing rule sharper: output layout is the next executable slice, while Mixer is gated on environment readiness rather than planned as implementation work."
+2026-06-21T15:12:18Z iteration 25 selector rejected alternative role="the contrarian" approach="Evidence-First Freeze: pause new Mixer and output UI feature work until the project can produce one trustworthy runtime evidence path, then let that evidence decide the next slice." reason="The evidence concern is valid, but a full feature freeze would waste a strong, independent output-layout opportunity that can be advanced with existing contracts and focused tests. Runtime evidence should gate claims and Mixer optimizati..."
+2026-06-21T15:12:18Z iteration 25 selector alternatives persisted count=3
+2026-06-21T15:12:18Z iteration 25 selector structured alternatives persisted count=3
+2026-06-21T15:12:18Z iteration 25 planner started
+2026-06-21T15:12:42Z iteration 25 plan: 4 task(s) in 3 phase(s). The first phase establishes the Live output-card structure before styling or tests depend on its classes and helper shape. Phase 2 can run in parallel because CSS and Mixer documentation touch disjoint files and do not depend on each other. The final phase adds focused coverage after the display model exists. Mixer runtime execution and Mixer rebuild optimization are intentionally excluded from implementation until the documented environment gate is satisfied.
+2026-06-21T15:12:42Z iteration 25 phase 1 started parallel=False tasks=1
+2026-06-21T15:14:37Z iteration 25 task t1 ('Create Stable Live Output Cards') status=0
+2026-06-21T15:14:37Z iteration 25 phase 2 started parallel=True tasks=2
+2026-06-21T15:15:44Z iteration 25 task t2 ('Style Output Cards') status=0
+2026-06-21T15:16:13Z iteration 25 task t3 ('Document Mixer Evidence Gate') status=0
+2026-06-21T15:16:13Z iteration 25 phase 3 started parallel=False tasks=1
+2026-06-21T15:17:40Z iteration 25 task t4 ('Add Output Card Display Tests') status=0
+2026-06-21T15:17:40Z iteration 25 reviewer started
+
+## Review Summary - Iteration 25 - 2026-06-21
+
+### What Was Done
+
+- Replaced the compact Live stream/record output row with two card-like output
+  controls.
+- Added stable card slots for title, button/state row, pending progress copy,
+  concise command error copy, and recording-path detail.
+- Kept raw backend command-error text in tooltips while showing concise visible
+  stream/record failure labels.
+- Added CSS for output cards, progress/detail/error rows, and compact copy
+  button sizing.
+- Tightened focused Mixer evidence docs so future Mixer runs are gated on
+  environment readiness and preserve non-claims for visual layout and rebuild
+  churn.
+- Added helper-level Live tests for stream/record pending progress copy,
+  elapsed active-state copy, and recording-path display behavior.
+
+### What Was Found
+
+- Focused validation passed in review: `git diff --check` and
+  `cargo test --workspace --all-features output -- --nocapture`.
+- The output-card structure is implemented and the display helpers are covered
+  at the pure-helper level.
+- No output command behavior regression was found in the touched paths; this
+  iteration did not change controller command-failure recovery or connection
+  error separation.
+- Layout stability is not fully proven. The recording card visibly renders the
+  full raw recording path, and CSS `max-width` plus wrapped labels is not enough
+  evidence that long unbroken paths cannot increase card height or width under
+  real GTK allocation.
+- The Stream and Recording cards have different row counts. Minimum height may
+  mask the difference, but there is no render evidence that they remain aligned
+  across themes, narrow widths, long paths, and long backend error tooltips.
+- The Mixer evidence-gate documentation update is appropriate and avoids
+  adding another blocked runtime run without prerequisites.
+
+### Top Improvement Proposals
+
+1. Add bounded visible recording-path copy, keeping the raw path in the tooltip
+   and copy action while showing a basename or middle-ellipsized path in the
+   card.
+2. Add GTK-level widget constraints that are honored by labels, such as
+   `ellipsize`, `max_width_chars`, consistent row placeholders, and explicit
+   alignment, rather than relying only on CSS `max-width`.
+3. Capture manual or screenshot evidence for long path/error strings at narrow
+   and normal Live-page widths before considering the output-card layout done.
+4. Keep Mixer runtime evidence gated behind OBS/WebSocket, a temporary fixture,
+   and a real control path; do not repeat blocked runs in the same unavailable
+   environment.
+5. Add Settings persistence feedback for output safety toggles once the
+   output-card layout proof is complete.
+2026-06-21T15:20:10Z iteration 25 reviewer completed status=0
+2026-06-21T15:20:10Z iteration 25 memory updated
+2026-06-21T15:20:10Z iteration 25 completed validation_status=0
+2026-06-21T15:20:10Z iteration 25 checkpoint started
+2026-06-21T15:20:10Z iteration 25 checkpoint status before commit:
+M  AGENT_LOG.md
+M  ALTERNATIVES.jsonl
+M  MEMORY.md
+M  PLAN.md
+M  SCORES.jsonl
+M  assets/scenedeck.css
+M  docs/manual-test-plan.md
+M  docs/manual-test-runs.md
+M  src/ui/pages/live.rs
