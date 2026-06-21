@@ -82,6 +82,8 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
         .hexpand(true)
         .transition_type(StackTransitionType::Crossfade)
         .build();
+    root.add_css_class("app-page");
+    root.add_css_class("live-page");
 
     let disconnected = build_disconnected_view();
     root.add_named(&disconnected, Some("disconnected"));

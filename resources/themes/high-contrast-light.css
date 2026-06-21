@@ -1,4 +1,9 @@
 @define-color scenedeck_accent #000000;
+@define-color scenedeck_window #ffffff;
+@define-color scenedeck_sidebar #f0f0f0;
+@define-color scenedeck_header #e0e0e0;
+@define-color scenedeck_surface #ffffff;
+@define-color scenedeck_card #ffffff;
 
 .scene-card,
 .audio-card {
@@ -12,4 +17,3 @@
 .audio-card-controls button {
   border: 1px solid @window_fg_color;
 }
-

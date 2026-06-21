@@ -1,4 +1,8 @@
 @define-color scenedeck_accent #d72638;
+@define-color scenedeck_window #fff7f7;
+@define-color scenedeck_sidebar #ffe8ea;
+@define-color scenedeck_header #ffd9de;
+@define-color scenedeck_surface #ffffff;
 @define-color scenedeck_card #fff8f8;
 
 .scene-card,
@@ -15,4 +19,3 @@
 .scene-card-status-live {
   background-color: @scenedeck_accent;
 }
-

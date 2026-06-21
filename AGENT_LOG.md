@@ -2378,3 +2378,4 @@ M  src/ui/pages/live.rs
 2026-06-21T15:20:10Z iteration final-25 checkpoint started
 2026-06-21T15:20:10Z iteration final-25 checkpoint status before commit:
 M  AGENT_LOG.md
+2026-06-21T15:20:10Z orchestrator finished iterations_run=25 iterations_attempted=25 iterations_completed_successfully=25 had_nonfatal_failures=false nonfatal_failure_count=0 last_nonfatal_exit_code=0 last_nonfatal_failure_reason=none loop_exit_code=0 process_exit_code=0 fatal=false terminal_reason=iterations_complete final_checkpoint_behavior=source_and_telemetry

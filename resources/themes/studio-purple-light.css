@@ -1,4 +1,8 @@
 @define-color scenedeck_accent #6c4ee6;
+@define-color scenedeck_window #fbf9ff;
+@define-color scenedeck_sidebar #eee8ff;
+@define-color scenedeck_header #e4dcff;
+@define-color scenedeck_surface #ffffff;
 @define-color scenedeck_card #faf8ff;
 
 .scene-card,
@@ -9,4 +13,3 @@
 .scene-card-active {
   outline-color: @scenedeck_accent;
 }
-

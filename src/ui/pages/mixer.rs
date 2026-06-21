@@ -60,6 +60,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         .hexpand(true)
         .build();
     root.add_css_class("mixer-page");
+    root.add_css_class("app-page");
 
     let refresh_tracker = Rc::new(RefCell::new(None));
 
@@ -113,6 +114,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
         .vexpand(true)
         .hexpand(true)
         .build();
+    page.add_css_class("app-preferences-page");
 
     let controls = PreferencesGroup::builder()
         .title("Mixer Controls")
@@ -250,6 +252,7 @@ fn build_mode_row(
         .model(&model)
         .selected(mode_to_index(selected))
         .build();
+    row.add_css_class("scenedeck-combo-row");
 
     row.connect_selected_notify({
         let nav = nav.clone();
@@ -291,6 +294,7 @@ fn build_scene_row(
         .model(&model)
         .selected(selected)
         .build();
+    row.add_css_class("scenedeck-combo-row");
 
     row.connect_selected_notify({
         let nav = nav.clone();
@@ -325,6 +329,7 @@ fn build_grouping_row(nav: &NavigationContext, selected: MixerGrouping) -> Combo
         .model(&model)
         .selected(grouping_to_index(selected))
         .build();
+    row.add_css_class("scenedeck-combo-row");
 
     row.connect_selected_notify({
         let nav = nav.clone();

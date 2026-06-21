@@ -1,4 +1,10 @@
 /* Adwaita Default: light variant intentionally stays close to libadwaita. */
+@define-color scenedeck_window #fafafa;
+@define-color scenedeck_sidebar #f6f5f4;
+@define-color scenedeck_header #ebebeb;
+@define-color scenedeck_surface #ffffff;
+@define-color scenedeck_card #ffffff;
+@define-color scenedeck_accent #3584e4;
+
 .scenedeck-root {
 }
-

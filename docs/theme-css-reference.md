@@ -6,6 +6,12 @@ stable classes listed here.
 ## Stable Classes
 
 - `.scenedeck-root`: top-level application window.
+- `.scenedeck-content-header`, `.scenedeck-content-stack`, `.scenedeck-sidebar`,
+  `.scenedeck-sidebar-list`: main shell surfaces.
+- `.scenedeck-dropdown`: OBS profile and scene collection dropdown selectors.
+- `.scenedeck-about-window`: About window surface.
+- `.app-page`, `.app-preferences-page`, `.live-page`, `.mixer-page`,
+  `.graph-page`, `.inventory-page`, `.doctor-page`, `.settings-page`: page roots.
 - `.scene-card`: Live page scene card.
 - `.scene-card-active`: current program scene card.
 - `.scene-card-status-live`: live scene status pill.
@@ -47,4 +53,3 @@ Use `@define-color` for theme-local colors:
 - Keep critical buttons at comfortable click sizes.
 - Test both light and dark variants.
 - Keep custom CSS as an overlay; avoid broad selectors like `*`.
-

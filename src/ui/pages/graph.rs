@@ -37,6 +37,8 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         .vexpand(true)
         .hexpand(true)
         .build();
+    container.add_css_class("app-page");
+    container.add_css_class("graph-page");
 
     populate(&container, &nav);
 

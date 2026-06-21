@@ -52,13 +52,14 @@ pub(super) fn install(
 }
 
 fn show_about(parent: &adw::ApplicationWindow) {
-    adw::AboutWindow::builder()
+    let about = adw::AboutWindow::builder()
         .application_name(APP_NAME)
         .application_icon(APP_ID)
         .version(APP_VERSION)
         .developer_name("worxbend")
         .license_type(gtk4::License::MitX11)
         .transient_for(parent)
-        .build()
-        .present();
+        .build();
+    about.add_css_class("scenedeck-about-window");
+    about.present();
 }

@@ -175,7 +175,7 @@ fn install_css_provider(css: &str, label: &str, warnings: &mut Vec<String>) {
     ACTIVE_PROVIDERS.with(|providers| providers.borrow_mut().push(provider));
 }
 
-const BUILT_IN_THEMES: [BuiltInTheme; 10] = [
+const BUILT_IN_THEMES: [BuiltInTheme; 11] = [
     BuiltInTheme {
         id: "adwaita-default",
         name: "Adwaita Default",
@@ -255,5 +255,13 @@ const BUILT_IN_THEMES: [BuiltInTheme; 10] = [
         swatches: &["#7c5cff", "#f7f5ff", "#1c1828"],
         light_css: include_str!("../../resources/themes/studio-purple-light.css"),
         dark_css: include_str!("../../resources/themes/studio-purple-dark.css"),
+    },
+    BuiltInTheme {
+        id: "ubuntu-violet",
+        name: "Ubuntu Violet",
+        description: "Ubuntu-inspired violet surfaces with a warm live accent.",
+        swatches: &["#77216f", "#e95420", "#2c1830"],
+        light_css: include_str!("../../resources/themes/ubuntu-violet-light.css"),
+        dark_css: include_str!("../../resources/themes/ubuntu-violet-dark.css"),
     },
 ];

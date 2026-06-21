@@ -19,6 +19,8 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         .orientation(Orientation::Vertical)
         .vexpand(true)
         .build();
+    container.add_css_class("app-page");
+    container.add_css_class("doctor-page");
 
     populate(&container, &nav);
 
@@ -67,6 +69,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
         .title("Doctor")
         .vexpand(true)
         .build();
+    page.add_css_class("app-preferences-page");
 
     // ── Summary / re-run ──────────────────────────────────────────────────────
     let errors = count(&diagnostics, DiagnosticSeverity::Error);

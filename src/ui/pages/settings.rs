@@ -23,6 +23,9 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         .title("Settings")
         .icon_name("preferences-system-symbolic")
         .build();
+    page.add_css_class("app-page");
+    page.add_css_class("settings-page");
+    page.add_css_class("app-preferences-page");
 
     // ── Appearance ────────────────────────────────────────────────────────────
     let appearance_group = PreferencesGroup::builder()
@@ -44,6 +47,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         .model(&theme_options)
         .selected(current_index)
         .build();
+    theme_row.add_css_class("scenedeck-combo-row");
 
     theme_row.connect_selected_notify({
         let nav = nav.clone();
@@ -85,6 +89,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         .model(&theme_model)
         .selected(selected_theme_index)
         .build();
+    family_row.add_css_class("scenedeck-combo-row");
 
     let theme_status_row = ActionRow::builder()
         .title("Theme Status")

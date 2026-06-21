@@ -1,3 +1,99 @@
+@define-color scenedeck_window @window_bg_color;
+@define-color scenedeck_sidebar @view_bg_color;
+@define-color scenedeck_header @headerbar_bg_color;
+@define-color scenedeck_surface @view_bg_color;
+@define-color scenedeck_card @card_bg_color;
+@define-color scenedeck_accent @accent_bg_color;
+
+/* ── Application shell ─────────────────────────────────────────────────────── */
+.scenedeck-root,
+.scenedeck-toast-overlay,
+.scenedeck-split {
+    background-color: @scenedeck_window;
+}
+
+.scenedeck-content-toolbar,
+.scenedeck-content-stack,
+.app-page,
+.app-preferences-page {
+    background-color: @scenedeck_surface;
+}
+
+.scenedeck-content-header {
+    background-color: @scenedeck_header;
+}
+
+.scenedeck-sidebar-toolbar,
+.scenedeck-sidebar,
+.scenedeck-sidebar-list {
+    background-color: @scenedeck_sidebar;
+}
+
+.scenedeck-sidebar-list row:selected {
+    background-color: alpha(@scenedeck_accent, 0.22);
+}
+
+.scenedeck-sidebar-list row:hover {
+    background-color: alpha(@scenedeck_accent, 0.12);
+}
+
+.live-disconnected-view {
+    background-color: @scenedeck_surface;
+}
+
+.scenedeck-root .card,
+.scenedeck-root preferencesgroup row {
+    background-color: @scenedeck_card;
+}
+
+.scenedeck-combo-row {
+    background-color: @scenedeck_card;
+    color: @window_fg_color;
+}
+
+.scenedeck-combo-row popover,
+.scenedeck-combo-row popover contents,
+.scenedeck-combo-row popover scrolledwindow,
+.scenedeck-combo-row popover list,
+.scenedeck-combo-row popover listview {
+    background-color: @scenedeck_card;
+    color: @window_fg_color;
+}
+
+.scenedeck-combo-row popover contents {
+    border: 1px solid alpha(@scenedeck_accent, 0.35);
+    border-radius: 12px;
+    padding: 6px;
+}
+
+.scenedeck-combo-row popover list row,
+.scenedeck-combo-row popover listview row {
+    background-color: transparent;
+    color: @window_fg_color;
+    border-radius: 6px;
+    margin: 0;
+}
+
+.scenedeck-combo-row popover list row:hover,
+.scenedeck-combo-row popover listview row:hover {
+    background-color: alpha(@scenedeck_accent, 0.12);
+}
+
+.scenedeck-combo-row popover list row:selected,
+.scenedeck-combo-row popover listview row:selected {
+    background-color: alpha(@scenedeck_accent, 0.22);
+}
+
+.scenedeck-root button.suggested-action,
+.scenedeck-root .role-primary,
+.scenedeck-root .role-secondary,
+.scenedeck-root .role-module,
+.scenedeck-root .role-raw,
+.scenedeck-root .role-debug,
+.scenedeck-root .role-archive {
+    background-color: @scenedeck_accent;
+}
+
 /* ── OBS connection status ──────────────────────────────────────────────────── */
 .obs-connected    { color: @success_color; }
 .obs-connecting   { color: @warning_color; }
@@ -70,6 +166,53 @@
 
 .header-selector dropdown {
     min-width: 150px;
+}
+
+.scenedeck-dropdown,
+.scenedeck-dropdown button {
+    background-color: @scenedeck_card;
+    color: @window_fg_color;
+}
+
+.scenedeck-dropdown button {
+    border-color: alpha(@scenedeck_accent, 0.35);
+}
+
+.scenedeck-dropdown button:hover {
+    background-color: alpha(@scenedeck_accent, 0.10);
+}
+
+.scenedeck-dropdown popover,
+.scenedeck-dropdown popover contents,
+.scenedeck-dropdown listview,
+.scenedeck-dropdown listview row {
+    background-color: @scenedeck_card;
+    color: @window_fg_color;
+}
+
+.scenedeck-dropdown listview row:hover {
+    background-color: alpha(@scenedeck_accent, 0.12);
+}
+
+.scenedeck-dropdown listview row:selected {
+    background-color: alpha(@scenedeck_accent, 0.22);
+}
+
+/* ── About window ──────────────────────────────────────────────────────────── */
+window.scenedeck-about-window,
+window.scenedeck-about-window viewport,
+window.scenedeck-about-window preferencespage {
+    background-color: @scenedeck_surface;
+    color: @window_fg_color;
+}
+
+window.scenedeck-about-window headerbar {
+    background-color: @scenedeck_header;
+}
+
+window.scenedeck-about-window .card,
+window.scenedeck-about-window preferencesgroup row {
+    background-color: @scenedeck_card;
 }
 
 /* ── Scene role badges ──────────────────────────────────────────────────────── */

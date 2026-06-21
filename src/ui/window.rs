@@ -74,6 +74,7 @@ pub fn build_main_window(
         .hexpand(true)
         .transition_type(StackTransitionType::Crossfade)
         .build();
+    content_stack.add_css_class("scenedeck-content-stack");
 
     let nav = NavigationContext::new(state.clone(), content_stack.clone(), controller);
 
@@ -189,6 +190,7 @@ pub fn build_main_window(
     // ── Content header bar ────────────────────────────────────────────────────
     let content_header = adw::HeaderBar::new();
     content_header.add_css_class("flat");
+    content_header.add_css_class("scenedeck-content-header");
 
     let about_btn = gtk4::Button::builder()
         .icon_name("help-about-symbolic")
@@ -220,6 +222,7 @@ pub fn build_main_window(
     content_header.pack_start(&header_selectors.profiles.root);
 
     let content_toolbar = adw::ToolbarView::new();
+    content_toolbar.add_css_class("scenedeck-content-toolbar");
     content_toolbar.add_top_bar(&content_header);
     content_toolbar.set_content(Some(&content_stack));
 
@@ -230,9 +233,11 @@ pub fn build_main_window(
 
     // ── Navigation split view ─────────────────────────────────────────────────
     let split = adw::NavigationSplitView::new();
+    split.add_css_class("scenedeck-split");
     split.set_sidebar(Some(&sidebar_page));
     split.set_content(Some(&content_page));
 
+    toast_overlay.add_css_class("scenedeck-toast-overlay");
     toast_overlay.set_child(Some(&split));
     window.set_content(Some(&toast_overlay));
 
@@ -771,6 +776,7 @@ fn build_named_selector(label: &str, tooltip: &str) -> NamedSelector {
         .selected(gtk4::INVALID_LIST_POSITION)
         .sensitive(false)
         .build();
+    dropdown.add_css_class("scenedeck-dropdown");
     dropdown.set_tooltip_text(Some(tooltip));
     dropdown.set_enable_search(true);
     dropdown.set_width_request(170);
@@ -814,6 +820,7 @@ fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, Side
         .vexpand(true)
         .build();
     list.add_css_class("navigation-sidebar");
+    list.add_css_class("scenedeck-sidebar-list");
 
     for page in NAV_PAGES {
         let icon = gtk4::Image::from_icon_name(page.icon_name());
@@ -874,11 +881,14 @@ fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, Side
         .vexpand(true)
         .hexpand(true)
         .build();
+    sidebar_content.add_css_class("scenedeck-sidebar");
     sidebar_content.append(&list);
     sidebar_content.append(&footer);
 
     let sidebar_header = adw::HeaderBar::builder().show_title(false).build();
+    sidebar_header.add_css_class("scenedeck-sidebar-header");
     let sidebar_toolbar = adw::ToolbarView::new();
+    sidebar_toolbar.add_css_class("scenedeck-sidebar-toolbar");
     sidebar_toolbar.add_top_bar(&sidebar_header);
     sidebar_toolbar.set_content(Some(&sidebar_content));
 
@@ -899,15 +909,16 @@ fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, Side
 
 fn show_about(parent: &adw::ApplicationWindow) {
     use crate::app_info::{APP_ID, APP_NAME, APP_VERSION};
-    adw::AboutWindow::builder()
+    let about = adw::AboutWindow::builder()
         .application_name(APP_NAME)
         .application_icon(APP_ID)
         .version(APP_VERSION)
         .developer_name("worxbend")
         .license_type(gtk4::License::MitX11)
         .transient_for(parent)
-        .build()
-        .present();
+        .build();
+    about.add_css_class("scenedeck-about-window");
+    about.present();
 }
 
 // ── Per-page refresh callbacks ─────────────────────────────────────────────────

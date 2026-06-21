@@ -26,6 +26,7 @@ has a light and dark CSS file. The current built-in theme families are:
 - `high-contrast`
 - `stream-red`
 - `studio-purple`
+- `ubuntu-violet`
 
 The built-in CSS is intentionally an overlay on top of libadwaita and the base
 SceneDeck CSS. It should not replace GTK fundamentals such as accessible focus
@@ -84,4 +85,3 @@ Starter files live in `examples/themes/`:
 
 For a complete theme, copy an example into separate light and dark files and
 adjust colors for each side.
-

@@ -50,6 +50,8 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         .orientation(Orientation::Vertical)
         .vexpand(true)
         .build();
+    container.add_css_class("app-page");
+    container.add_css_class("inventory-page");
 
     populate(&container, &nav);
 
@@ -96,6 +98,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
         .title("Inventory")
         .vexpand(true)
         .build();
+    page.add_css_class("app-preferences-page");
 
     // ── OBS Scenes group ──────────────────────────────────────────────────────
 
@@ -131,6 +134,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
             .model(&role_model)
             .selected(role_to_index(current_role))
             .build();
+        combo_row.add_css_class("scenedeck-combo-row");
 
         combo_row.connect_selected_notify({
             let scene_id = scene.id.clone();
