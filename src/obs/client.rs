@@ -9,7 +9,7 @@ use std::sync::Arc;
 use obws::Client;
 
 use crate::controller::event::ConnectionInfo;
-use crate::domain::audio::AudioInput;
+use crate::domain::audio::{AudioInput, AudioSourceScope};
 use crate::domain::graph::SceneGraph;
 use crate::domain::obs::ObsNamedList;
 use crate::domain::output::{OutputRunState, OutputStatus};
@@ -266,17 +266,20 @@ impl ObsClient {
     /// successfully expose audio mute and volume state are returned. Otherwise
     /// `filter` is used directly as the explicit name list.
     pub async fn get_audio_inputs(&self, filter: &[String]) -> Result<Vec<AudioInput>, AppError> {
-        let names: Vec<String> = if filter.is_empty() {
+        let names: Vec<AudioInputSource> = if filter.is_empty() {
             self.inner
                 .inputs()
                 .list(None)
                 .await
                 .map_err(|e| AppError::Request(e.to_string()))?
                 .into_iter()
-                .map(|input| input.id.name)
+                .map(|input| AudioInputSource::active_scene(input.id.name, Vec::new()))
                 .collect()
         } else {
-            filter.to_vec()
+            filter
+                .iter()
+                .map(|name| AudioInputSource::active_scene(name.clone(), Vec::new()))
+                .collect()
         };
 
         self.get_audio_inputs_by_name(names).await
@@ -295,13 +298,17 @@ impl ObsClient {
 
         let filter: HashSet<&str> = filter.iter().map(String::as_str).collect();
         let mut seen_inputs = HashSet::new();
-        let mut names = Vec::new();
+        let mut sources = Vec::new();
 
         match self.get_global_audio_input_names().await {
             Ok(global_names) => {
                 for name in global_names {
                     if seen_inputs.insert(name.clone()) {
-                        names.push(name);
+                        sources.push(AudioInputSource {
+                            name,
+                            scope: AudioSourceScope::Global,
+                            parent_scene_path: Vec::new(),
+                        });
                     }
                 }
             }
@@ -309,30 +316,41 @@ impl ObsClient {
         }
 
         let mut visited_containers = HashSet::new();
-        let mut pending = vec![(scene_name.to_string(), false, true)];
+        let mut pending = vec![SceneAudioContainer {
+            name: scene_name.to_string(),
+            is_group: false,
+            required: true,
+            path: vec![scene_name.to_string()],
+            scope: AudioSourceScope::ActiveScene,
+        }];
 
-        while let Some((container, is_group, required)) = pending.pop() {
-            if !visited_containers.insert((container.clone(), is_group)) {
+        while let Some(container) = pending.pop() {
+            if !visited_containers.insert((container.name.clone(), container.is_group)) {
                 continue;
             }
 
-            let items = if is_group {
+            let items = if container.is_group {
                 self.inner
                     .scene_items()
-                    .list_group(obws::requests::scenes::SceneId::Name(&container))
+                    .list_group(obws::requests::scenes::SceneId::Name(&container.name))
                     .await
             } else {
                 self.inner
                     .scene_items()
-                    .list(obws::requests::scenes::SceneId::Name(&container))
+                    .list(obws::requests::scenes::SceneId::Name(&container.name))
                     .await
             };
 
             let items = match items {
                 Ok(items) => items,
-                Err(e) if required => return Err(AppError::Request(e.to_string())),
+                Err(e) if container.required => return Err(AppError::Request(e.to_string())),
                 Err(e) => {
-                    tracing::debug!(%e, container, is_group, "nested scene audio scan skipped");
+                    tracing::debug!(
+                        %e,
+                        container = container.name,
+                        is_group = container.is_group,
+                        "nested scene audio scan skipped"
+                    );
                     continue;
                 }
             };
@@ -341,7 +359,10 @@ impl ObsClient {
                 let enabled = self
                     .inner
                     .scene_items()
-                    .enabled(obws::requests::scenes::SceneId::Name(&container), item.id)
+                    .enabled(
+                        obws::requests::scenes::SceneId::Name(&container.name),
+                        item.id,
+                    )
                     .await
                     .unwrap_or(true);
                 if !enabled {
@@ -354,18 +375,35 @@ impl ObsClient {
                             continue;
                         }
                         if seen_inputs.insert(item.source_name.clone()) {
-                            names.push(item.source_name);
+                            sources.push(AudioInputSource {
+                                name: item.source_name,
+                                scope: container.scope,
+                                parent_scene_path: container.path.clone(),
+                            });
                         }
                     }
                     SourceType::Scene => {
-                        pending.push((item.source_name, item.is_group.unwrap_or(false), false));
+                        let is_group = item.is_group.unwrap_or(false);
+                        let mut path = container.path.clone();
+                        path.push(item.source_name.clone());
+                        pending.push(SceneAudioContainer {
+                            name: item.source_name,
+                            is_group,
+                            required: false,
+                            path,
+                            scope: if is_group {
+                                AudioSourceScope::Group
+                            } else {
+                                AudioSourceScope::NestedScene
+                            },
+                        });
                     }
                     _ => {}
                 }
             }
         }
 
-        self.get_audio_inputs_by_name(names).await
+        self.get_audio_inputs_by_name(sources).await
     }
 
     async fn get_global_audio_input_names(&self) -> Result<Vec<String>, AppError> {
@@ -391,14 +429,14 @@ impl ObsClient {
 
     async fn get_audio_inputs_by_name(
         &self,
-        names: Vec<String>,
+        sources: Vec<AudioInputSource>,
     ) -> Result<Vec<AudioInput>, AppError> {
         let mut result = Vec::new();
-        for name in names {
+        for source in sources {
             let muted = match self
                 .inner
                 .inputs()
-                .muted(obws::requests::inputs::InputId::Name(&name))
+                .muted(obws::requests::inputs::InputId::Name(&source.name))
                 .await
             {
                 Ok(m) => m,
@@ -408,22 +446,43 @@ impl ObsClient {
             let vol = match self
                 .inner
                 .inputs()
-                .volume(obws::requests::inputs::InputId::Name(&name))
+                .volume(obws::requests::inputs::InputId::Name(&source.name))
                 .await
             {
                 Ok(v) => v,
                 Err(_) => continue,
             };
 
-            result.push(AudioInput {
-                id: name.clone(),
-                name: name.clone(),
-                muted,
-                volume_mul: vol.mul as f64,
-                volume_db: vol.db as f64,
-            });
+            result.push(
+                AudioInput::new(source.name, muted, vol.mul as f64, vol.db as f64)
+                    .with_source_context(source.scope, source.parent_scene_path),
+            );
         }
 
         Ok(result)
     }
+}
+
+struct AudioInputSource {
+    name: String,
+    scope: AudioSourceScope,
+    parent_scene_path: Vec<String>,
+}
+
+impl AudioInputSource {
+    fn active_scene(name: String, parent_scene_path: Vec<String>) -> Self {
+        Self {
+            name,
+            scope: AudioSourceScope::ActiveScene,
+            parent_scene_path,
+        }
+    }
+}
+
+struct SceneAudioContainer {
+    name: String,
+    is_group: bool,
+    required: bool,
+    path: Vec<String>,
+    scope: AudioSourceScope,
 }

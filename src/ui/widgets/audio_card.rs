@@ -1,10 +1,11 @@
 //! Audio input card for the Live page mixer.
 
 use adw::prelude::*;
-use gtk4::{Align, Box as GtkBox, Label, Orientation, Scale, ToggleButton};
+use gtk4::{Align, Box as GtkBox, Button, Label, Orientation, Scale, ToggleButton};
 
 use crate::controller::command::AppCommand;
 use crate::domain::audio::AudioInput;
+use crate::services::audio_service::AudioService;
 use crate::ui::navigation::NavigationContext;
 
 // ── Public handle ─────────────────────────────────────────────────────────────
@@ -33,7 +34,7 @@ impl AudioCardHandle {
         self.vol_scale.block_signal(&self.vol_signal_id);
         self.vol_scale.set_value(mul);
         self.vol_scale.unblock_signal(&self.vol_signal_id);
-        self.db_label.set_text(&format_db(db));
+        self.db_label.set_text(&AudioService::format_db(db));
     }
 }
 
@@ -61,7 +62,7 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
 
     // ── Name label ────────────────────────────────────────────────────────────
     let name_label = Label::builder()
-        .label(&input.name)
+        .label(&input.display_name)
         .xalign(0.0)
         .halign(Align::Fill)
         .hexpand(true)
@@ -70,6 +71,18 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         .ellipsize(gtk4::pango::EllipsizeMode::End)
         .build();
     name_label.add_css_class("audio-card-title");
+    if let Some(path) = input.source_path_label() {
+        name_label.set_tooltip_text(Some(&format!("{}: {path}", input.source_scope.label())));
+    } else {
+        name_label.set_tooltip_text(Some(input.source_scope.label()));
+    }
+
+    let scope_badge = Label::builder()
+        .label(input.source_scope.label())
+        .halign(Align::Start)
+        .build();
+    scope_badge.add_css_class("audio-source-badge");
+    scope_badge.add_css_class(input.source_scope.css_class());
 
     // ── Volume scale ──────────────────────────────────────────────────────────
     let vol_scale = Scale::with_range(Orientation::Vertical, 0.0, 1.0, 0.01);
@@ -80,6 +93,7 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
     vol_scale.set_height_request(90);
     vol_scale.set_width_request(24);
     vol_scale.add_mark(1.0, gtk4::PositionType::Right, None);
+    vol_scale.set_tooltip_text(Some("Volume fader"));
 
     let vol_signal_id = {
         let nav = nav.clone();
@@ -95,6 +109,7 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
     // ── Lock control ─────────────────────────────────────────────────────────
     let lock_btn = ToggleButton::builder()
         .icon_name("changes-prevent-symbolic")
+        .active(input.locked_locally)
         .build();
     lock_btn.set_tooltip_text(Some("Lock volume slider"));
     lock_btn.add_css_class("flat");
@@ -102,9 +117,12 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
     lock_btn.connect_toggled({
         let vol_scale = vol_scale.clone();
         move |btn| {
-            vol_scale.set_sensitive(!btn.is_active());
+            let locked = btn.is_active();
+            vol_scale.set_sensitive(!locked);
+            apply_lock_style(btn, locked);
         }
     });
+    apply_lock_style(&lock_btn, input.locked_locally);
 
     let controls = GtkBox::builder()
         .orientation(Orientation::Vertical)
@@ -118,7 +136,7 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
 
     // ── dB label ──────────────────────────────────────────────────────────────
     let db_label = Label::builder()
-        .label(format_db(input.volume_db))
+        .label(AudioService::format_db(input.volume_db))
         .width_chars(8)
         .xalign(0.5)
         .halign(Align::Center)
@@ -136,6 +154,8 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
     slider_col.append(&vol_scale);
     slider_col.append(&db_label);
 
+    let fine_controls = build_fine_controls(input, &vol_scale, nav.clone());
+
     let body = GtkBox::builder()
         .orientation(Orientation::Horizontal)
         .spacing(7)
@@ -144,6 +164,7 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         .build();
     body.append(&controls);
     body.append(&slider_col);
+    body.append(&fine_controls);
 
     // ── Card ─────────────────────────────────────────────────────────────────
     let root = GtkBox::builder()
@@ -156,6 +177,7 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
     root.add_css_class("card");
     root.add_css_class("audio-card");
 
+    root.append(&scope_badge);
     root.append(&name_label);
     root.append(&body);
 
@@ -172,14 +194,6 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn format_db(db: f64) -> String {
-    if db <= -100.0 || !db.is_finite() {
-        "-∞ dB".to_string()
-    } else {
-        format!("{db:.1} dB")
-    }
-}
-
 fn apply_mute_style(btn: &ToggleButton, muted: bool) {
     if muted {
         btn.set_icon_name("audio-volume-muted-symbolic");
@@ -193,4 +207,73 @@ fn apply_mute_style(btn: &ToggleButton, muted: bool) {
     if !btn.has_css_class("circular") {
         btn.add_css_class("circular");
     }
+}
+
+fn apply_lock_style(btn: &ToggleButton, locked: bool) {
+    if locked {
+        btn.add_css_class("suggested-action");
+    } else {
+        btn.remove_css_class("suggested-action");
+    }
+}
+
+fn build_fine_controls(input: &AudioInput, vol_scale: &Scale, nav: NavigationContext) -> GtkBox {
+    let controls = GtkBox::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(4)
+        .halign(Align::Center)
+        .valign(Align::Center)
+        .build();
+    controls.add_css_class("audio-fine-controls");
+
+    let plus = Button::builder().label("+").tooltip_text("+1 dB").build();
+    let reset = Button::builder()
+        .icon_name("edit-undo-symbolic")
+        .tooltip_text("Reset to 0.0 dB")
+        .build();
+    let minus = Button::builder().label("-").tooltip_text("-1 dB").build();
+
+    for button in [&plus, &reset, &minus] {
+        button.add_css_class("flat");
+        button.add_css_class("circular");
+    }
+
+    plus.connect_clicked({
+        let nav = nav.clone();
+        let input_id = input.id.clone();
+        let vol_scale = vol_scale.clone();
+        move |_| dispatch_db_adjust(&nav, &input_id, vol_scale.value(), 1.0)
+    });
+
+    reset.connect_clicked({
+        let nav = nav.clone();
+        let input_id = input.id.clone();
+        move |_| {
+            nav.dispatch(AppCommand::SetInputVolume {
+                input: input_id.clone(),
+                volume_mul: 1.0,
+            });
+        }
+    });
+
+    minus.connect_clicked({
+        let nav = nav.clone();
+        let input_id = input.id.clone();
+        let vol_scale = vol_scale.clone();
+        move |_| dispatch_db_adjust(&nav, &input_id, vol_scale.value(), -1.0)
+    });
+
+    controls.append(&plus);
+    controls.append(&reset);
+    controls.append(&minus);
+    controls
+}
+
+fn dispatch_db_adjust(nav: &NavigationContext, input_id: &str, current_mul: f64, delta_db: f64) {
+    let current_db = AudioService::volume_mul_to_db(current_mul);
+    let next_db = AudioService::adjust_volume_db(current_db, delta_db);
+    nav.dispatch(AppCommand::SetInputVolume {
+        input: input_id.to_string(),
+        volume_mul: AudioService::volume_db_to_mul(next_db),
+    });
 }

@@ -100,26 +100,30 @@ audio-capable active-scene inputs including nested scenes and groups.
 
 - input id
 - display name
+- source scope: global, active scene, nested scene, or group-derived
+- parent scene path when known
 - muted
 - OBS linear volume multiplier
 - OBS volume in dB
+- local lock flag placeholder
 
 `src/ui/widgets/audio_card.rs` renders compact Live page cards with:
 
 - input name
+- source scope badge and source path tooltip
 - mute/unmute toggle
 - local lock button that disables the slider
 - inverted vertical volume scale
 - dB readout
+- +/- fine adjustment buttons
+- reset-to-0 dB button
 
 OBS mute and volume events update only matching `AudioCardHandle`s, so the app
 already avoids rebuilding the whole audio panel for every input event.
 
 Known gaps:
 
-- Audio source scope and parent scene path are not represented in the domain.
 - Slider changes dispatch on every value change without throttling.
-- There are no fine-adjust buttons or reset-to-0 dB controls.
 - The local lock state is widget-local and not represented in app/domain state.
 - There is no dedicated Mixer page, scene selector, search/filter, or grouping.
 
