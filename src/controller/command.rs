@@ -39,8 +39,15 @@ pub enum AppCommand {
     },
 
     // Outputs
+    StartStreaming,
+    StopStreaming,
+    ToggleStreaming,
     SetStreaming(bool),
+    StartRecording,
+    StopRecording,
+    ToggleRecording,
     SetRecording(bool),
+    RefreshOutputStatus,
 
     // Diagnostics
     RunDoctor,

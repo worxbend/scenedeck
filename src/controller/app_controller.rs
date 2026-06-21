@@ -49,6 +49,13 @@ pub struct AppController {
     /// Shared slot written by the session task once connected, read by
     /// per-command tasks.  `None` while disconnected.
     client_slot: Arc<Mutex<Option<ObsClient>>>,
+    output_pending: Arc<Mutex<OutputPending>>,
+}
+
+#[derive(Debug, Default)]
+struct OutputPending {
+    stream: bool,
+    record: bool,
 }
 
 impl AppController {
@@ -67,6 +74,7 @@ impl AppController {
             dependencies,
             session: None,
             client_slot: Arc::new(Mutex::new(None)),
+            output_pending: Arc::new(Mutex::new(OutputPending::default())),
         }
     }
 
@@ -166,40 +174,22 @@ impl AppController {
                 });
             }
 
-            AppCommand::SetStreaming(active) => {
-                self.with_client(|c, tx, rt| {
-                    rt.spawn(async move {
-                        match c.set_streaming(active).await {
-                            Ok(()) => refresh_output_statuses(&c, &tx).await,
-                            Err(e) => {
-                                let _ = tx.send(AppEvent::Error(e));
-                            }
-                        }
-                    });
-                });
-            }
+            AppCommand::StartStreaming => self.set_streaming(true),
+            AppCommand::StopStreaming => self.set_streaming(false),
+            AppCommand::ToggleStreaming => self.with_client(|_c, _tx, _rt| {
+                // Kept for future state-aware controller routing. The current
+                // Live page dispatches explicit start/stop based on AppState.
+                tracing::warn!("toggle streaming command ignored without controller-side state");
+            }),
+            AppCommand::SetStreaming(active) => self.set_streaming(active),
 
-            AppCommand::SetRecording(active) => {
-                self.with_client(|c, tx, rt| {
-                    rt.spawn(async move {
-                        match c.set_recording(active).await {
-                            Ok(path) => {
-                                refresh_output_statuses(&c, &tx).await;
-                                if let Some(path) = path {
-                                    let _ = tx.send(AppEvent::RecordStatusUpdated(OutputStatus {
-                                        active: false,
-                                        state: OutputRunState::Inactive,
-                                        detail: Some(path),
-                                    }));
-                                }
-                            }
-                            Err(e) => {
-                                let _ = tx.send(AppEvent::Error(e));
-                            }
-                        }
-                    });
-                });
-            }
+            AppCommand::StartRecording => self.set_recording(true),
+            AppCommand::StopRecording => self.set_recording(false),
+            AppCommand::ToggleRecording => self.with_client(|_c, _tx, _rt| {
+                tracing::warn!("toggle recording command ignored without controller-side state");
+            }),
+            AppCommand::SetRecording(active) => self.set_recording(active),
+            AppCommand::RefreshOutputStatus => self.refresh_output_status(),
 
             AppCommand::RefreshData => self.refresh_data(),
 
@@ -286,12 +276,113 @@ impl AppController {
         });
     }
 
+    fn refresh_output_status(&self) {
+        self.with_client(|c, tx, rt| {
+            rt.spawn(async move {
+                refresh_output_statuses(&c, &tx).await;
+            });
+        });
+    }
+
+    fn set_streaming(&self, active: bool) {
+        if !mark_stream_pending(&self.output_pending) {
+            tracing::warn!(
+                active,
+                "stream command ignored while previous operation is pending"
+            );
+            return;
+        }
+
+        let Some(client) = self.client_slot.lock().ok().and_then(|s| s.clone()) else {
+            clear_stream_pending(&self.output_pending);
+            tracing::warn!("stream command ignored — not connected to OBS");
+            return;
+        };
+
+        let tx = self.event_tx.clone();
+        let pending = Arc::clone(&self.output_pending);
+        let transition_state = if active {
+            OutputRunState::Starting
+        } else {
+            OutputRunState::Stopping
+        };
+        let _ = tx.send(AppEvent::StreamStatusUpdated(OutputStatus {
+            active: !active,
+            state: transition_state,
+            detail: None,
+        }));
+
+        self.runtime.spawn(async move {
+            match client.set_streaming(active).await {
+                Ok(()) => refresh_output_statuses(&client, &tx).await,
+                Err(e) => {
+                    let _ = tx.send(AppEvent::Error(e));
+                    refresh_output_statuses(&client, &tx).await;
+                }
+            }
+            clear_stream_pending(&pending);
+        });
+    }
+
+    fn set_recording(&self, active: bool) {
+        if !mark_record_pending(&self.output_pending) {
+            tracing::warn!(
+                active,
+                "record command ignored while previous operation is pending"
+            );
+            return;
+        }
+
+        let Some(client) = self.client_slot.lock().ok().and_then(|s| s.clone()) else {
+            clear_record_pending(&self.output_pending);
+            tracing::warn!("record command ignored — not connected to OBS");
+            return;
+        };
+
+        let tx = self.event_tx.clone();
+        let pending = Arc::clone(&self.output_pending);
+        let transition_state = if active {
+            OutputRunState::Starting
+        } else {
+            OutputRunState::Stopping
+        };
+        let _ = tx.send(AppEvent::RecordStatusUpdated(OutputStatus {
+            active: !active,
+            state: transition_state,
+            detail: None,
+        }));
+
+        self.runtime.spawn(async move {
+            match client.set_recording(active).await {
+                Ok(path) => {
+                    refresh_output_statuses(&client, &tx).await;
+                    if let Some(path) = path {
+                        let _ = tx.send(AppEvent::RecordStatusUpdated(OutputStatus {
+                            active: false,
+                            state: OutputRunState::Inactive,
+                            detail: Some(path),
+                        }));
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::Error(e));
+                    refresh_output_statuses(&client, &tx).await;
+                }
+            }
+            clear_record_pending(&pending);
+        });
+    }
+
     fn disconnect(&mut self) {
         if let Some(h) = self.session.take() {
             h.abort();
         }
         if let Ok(mut slot) = self.client_slot.lock() {
             *slot = None;
+        }
+        if let Ok(mut pending) = self.output_pending.lock() {
+            pending.stream = false;
+            pending.record = false;
         }
         let _ = self.event_tx.send(AppEvent::Disconnected);
     }
@@ -305,6 +396,40 @@ impl AppController {
             Some(client) => f(client, self.event_tx.clone(), self.runtime.clone()),
             None => tracing::warn!("command ignored — not connected to OBS"),
         }
+    }
+}
+
+fn mark_stream_pending(pending: &Arc<Mutex<OutputPending>>) -> bool {
+    let Ok(mut pending) = pending.lock() else {
+        return false;
+    };
+    if pending.stream {
+        return false;
+    }
+    pending.stream = true;
+    true
+}
+
+fn clear_stream_pending(pending: &Arc<Mutex<OutputPending>>) {
+    if let Ok(mut pending) = pending.lock() {
+        pending.stream = false;
+    }
+}
+
+fn mark_record_pending(pending: &Arc<Mutex<OutputPending>>) -> bool {
+    let Ok(mut pending) = pending.lock() else {
+        return false;
+    };
+    if pending.record {
+        return false;
+    }
+    pending.record = true;
+    true
+}
+
+fn clear_record_pending(pending: &Arc<Mutex<OutputPending>>) {
+    if let Ok(mut pending) = pending.lock() {
+        pending.record = false;
     }
 }
 

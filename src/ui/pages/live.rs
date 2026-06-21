@@ -79,7 +79,11 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
         let nav = nav.clone();
         move |_| {
             let active = nav.state.borrow().stream_status.active;
-            nav.dispatch(AppCommand::SetStreaming(!active));
+            nav.dispatch(if active {
+                AppCommand::StopStreaming
+            } else {
+                AppCommand::StartStreaming
+            });
         }
     });
 
@@ -100,7 +104,11 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
         let nav = nav.clone();
         move |_| {
             let active = nav.state.borrow().record_status.active;
-            nav.dispatch(AppCommand::SetRecording(!active));
+            nav.dispatch(if active {
+                AppCommand::StopRecording
+            } else {
+                AppCommand::StartRecording
+            });
         }
     });
 
@@ -242,13 +250,7 @@ pub(crate) fn update_stream_status(handle: &LivePageHandle, status: &OutputStatu
     handle
         .stream_label
         .set_text(&format!("Stream: {}", status.state.label()));
-    handle.stream_btn.set_sensitive(true);
-    set_output_button(
-        &handle.stream_btn,
-        status.active,
-        "Start Stream",
-        "Stop Stream",
-    );
+    set_output_button(&handle.stream_btn, status, "Start Stream", "Stop Stream");
 }
 
 pub(crate) fn update_record_status(handle: &LivePageHandle, status: &OutputStatus) {
@@ -258,13 +260,7 @@ pub(crate) fn update_record_status(handle: &LivePageHandle, status: &OutputStatu
     handle
         .record_label
         .set_tooltip_text(status.detail.as_deref().filter(|path| !path.is_empty()));
-    handle.record_btn.set_sensitive(true);
-    set_output_button(
-        &handle.record_btn,
-        status.active,
-        "Start Record",
-        "Stop Record",
-    );
+    set_output_button(&handle.record_btn, status, "Start Record", "Stop Record");
 }
 
 pub(crate) fn reset_output_controls(handle: &LivePageHandle) {
@@ -321,12 +317,27 @@ fn build_disconnected_view() -> GtkBox {
     view
 }
 
-fn set_output_button(button: &Button, active: bool, start_label: &str, stop_label: &str) {
-    if active {
+fn set_output_button(button: &Button, status: &OutputStatus, start_label: &str, stop_label: &str) {
+    if status.state.is_transitioning() {
+        button.set_label(match status.state {
+            crate::domain::output::OutputRunState::Starting => "Starting…",
+            crate::domain::output::OutputRunState::Stopping => "Stopping…",
+            crate::domain::output::OutputRunState::Reconnecting => "Reconnecting…",
+            _ => "Working…",
+        });
+        button.set_sensitive(false);
+        if status.active {
+            button.add_css_class("destructive-action");
+        } else {
+            button.remove_css_class("destructive-action");
+        }
+    } else if status.active {
         button.set_label(stop_label);
+        button.set_sensitive(true);
         button.add_css_class("destructive-action");
     } else {
         button.set_label(start_label);
+        button.set_sensitive(true);
         button.remove_css_class("destructive-action");
     }
 }

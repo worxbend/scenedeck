@@ -21,6 +21,10 @@ impl OutputRunState {
             Self::Unknown => "Unknown",
         }
     }
+
+    pub const fn is_transitioning(self) -> bool {
+        matches!(self, Self::Starting | Self::Stopping | Self::Reconnecting)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,5 +41,19 @@ impl Default for OutputStatus {
             state: OutputRunState::Inactive,
             detail: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transition_states_are_identified() {
+        assert!(OutputRunState::Starting.is_transitioning());
+        assert!(OutputRunState::Stopping.is_transitioning());
+        assert!(OutputRunState::Reconnecting.is_transitioning());
+        assert!(!OutputRunState::Active.is_transitioning());
+        assert!(!OutputRunState::Inactive.is_transitioning());
     }
 }
