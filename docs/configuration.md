@@ -16,13 +16,13 @@ Fallback path:
 $HOME/.config/scenedeck/config.json
 ```
 
-Current schema version: `1`.
+Current schema version: `2`.
 
 Example:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "obs": {
     "host": "127.0.0.1",
     "port": 4455
@@ -32,7 +32,15 @@ Example:
     "audio_inputs": [],
     "allow_switching_only": ["primary"]
   },
-  "theme_mode": "system"
+  "appearance": {
+    "mode": "system",
+    "theme": "adwaita-default",
+    "ui_density": "comfortable",
+    "custom_css": {
+      "enabled": false,
+      "path": null
+    }
+  }
 }
 ```
 
@@ -46,10 +54,34 @@ Fields:
   Empty means discover all active scene audio inputs.
 - `live.allow_switching_only`: roles intended for scene switching. Current Live
   switching uses scenes whose role is `Primary`.
-- `theme_mode`: `system`, `light`, or `dark`.
+- `appearance.mode`: `system`, `light`, or `dark`.
+- `appearance.theme`: selected built-in theme id. `adwaita-default` is the
+  fallback. Theme selection UI and built-in theme files are planned for the
+  custom theme work.
+- `appearance.ui_density`: `comfortable` or `compact`. Density-specific UI
+  styling is planned for the custom theme work.
+- `appearance.custom_css.enabled`: whether a user CSS file should be loaded.
+- `appearance.custom_css.path`: optional path to a user CSS file.
 
 Unknown or missing fields fall back through Serde defaults. If the app cannot
 read or parse the config, it starts with defaults and reports a startup notice.
+
+## Config Migration
+
+Schema version `1` stored the color preference as a top-level `theme_mode`
+field:
+
+```json
+{
+  "version": 1,
+  "theme_mode": "dark"
+}
+```
+
+On load, SceneDeck automatically migrates version `1` configs to version `2` by
+moving that value to `appearance.mode`, preserving the existing color
+preference. The migrated config is written back to disk. Unknown old or new
+theme values fall back to `system`.
 
 ## Registry File
 

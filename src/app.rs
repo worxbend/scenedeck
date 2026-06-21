@@ -66,7 +66,7 @@ fn build_ui(
     event_rx: mpsc::Receiver<AppEvent>,
 ) {
     let loaded = read_config();
-    let theme_mode = loaded.config.theme_mode;
+    let theme_mode = loaded.config.appearance.mode;
     let notice = loaded.startup_notice.map(|n| n.user_message());
 
     let state = Rc::new(RefCell::new(AppState::new(theme_mode, notice)));

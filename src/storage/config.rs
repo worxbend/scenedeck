@@ -10,7 +10,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::appearance::ThemeMode;
+use crate::domain::appearance::{ThemeMode, ThemePreference};
 use crate::storage::xdg;
 
 // ── Config structs ────────────────────────────────────────────────────────────
@@ -24,7 +24,9 @@ pub struct AppConfig {
     #[serde(default)]
     pub live: LiveConfig,
     #[serde(default)]
-    pub theme_mode: ThemeMode,
+    pub appearance: ThemePreference,
+    #[serde(default, rename = "theme_mode", skip_serializing)]
+    pub(crate) legacy_theme_mode: Option<ThemeMode>,
 }
 
 impl Default for AppConfig {
@@ -33,7 +35,8 @@ impl Default for AppConfig {
             version: default_version(),
             obs: ObsConfig::default(),
             live: LiveConfig::default(),
-            theme_mode: ThemeMode::default(),
+            appearance: ThemePreference::default(),
+            legacy_theme_mode: None,
         }
     }
 }
@@ -71,10 +74,10 @@ pub struct LiveConfig {
 // ── Defaults ──────────────────────────────────────────────────────────────────
 
 /// Current on-disk config schema version.  Bump when adding a migration.
-pub const CURRENT_VERSION: u32 = 1;
+pub const CURRENT_VERSION: u32 = 2;
 
 fn default_version() -> u32 {
-    1
+    CURRENT_VERSION
 }
 fn default_obs_host() -> String {
     "127.0.0.1".to_string()
@@ -151,14 +154,6 @@ pub fn read_config_from_path(path: &Path) -> LoadedConfig {
 /// (so the caller can re-persist).  Each arm handles one version step.
 fn migrate(config: &mut AppConfig) -> bool {
     let mut changed = false;
-    // Example of the migration pattern for future schema bumps:
-    //   while config.version < CURRENT_VERSION {
-    //       match config.version {
-    //           1 => { /* migrate v1 → v2 */ config.version = 2; }
-    //           _ => break,
-    //       }
-    //       changed = true;
-    //   }
     if config.version > CURRENT_VERSION {
         // Config written by a newer build; clamp so we don't loop, but keep
         // the user's data as-is.
@@ -166,9 +161,22 @@ fn migrate(config: &mut AppConfig) -> bool {
             version = config.version,
             "config is newer than this build supports"
         );
-    } else if config.version < CURRENT_VERSION {
-        config.version = CURRENT_VERSION;
-        changed = true;
+    } else {
+        while config.version < CURRENT_VERSION {
+            match config.version {
+                0 | 1 => {
+                    if let Some(mode) = config.legacy_theme_mode.take() {
+                        config.appearance.mode = mode;
+                    }
+                    config.version = 2;
+                    changed = true;
+                }
+                _ => {
+                    config.version = CURRENT_VERSION;
+                    changed = true;
+                }
+            }
+        }
     }
     changed
 }
@@ -194,10 +202,11 @@ mod tests {
     #[test]
     fn empty_object_uses_defaults() {
         let c: AppConfig = serde_json::from_str("{}").unwrap();
-        assert_eq!(c.version, 1);
+        assert_eq!(c.version, CURRENT_VERSION);
         assert_eq!(c.obs.host, "127.0.0.1");
         assert_eq!(c.obs.port, 4455);
-        assert_eq!(c.theme_mode, ThemeMode::System);
+        assert_eq!(c.appearance.mode, ThemeMode::System);
+        assert_eq!(c.appearance.selected_theme_id(), "adwaita-default");
     }
 
     #[test]
@@ -209,18 +218,59 @@ mod tests {
                 port: 4455,
             },
             live: LiveConfig::default(),
-            theme_mode: ThemeMode::Dark,
+            appearance: ThemePreference {
+                mode: ThemeMode::Dark,
+                ..ThemePreference::default()
+            },
+            ..AppConfig::default()
         };
         let json = serde_json::to_string(&config).unwrap();
         let parsed: AppConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.obs.host, "192.168.1.10");
-        assert_eq!(parsed.theme_mode, ThemeMode::Dark);
+        assert_eq!(parsed.appearance.mode, ThemeMode::Dark);
     }
 
     #[test]
     fn unknown_theme_mode_uses_system_fallback() {
-        let parsed: AppConfig = serde_json::from_str(r#"{"theme_mode":"future"}"#).unwrap();
+        let parsed: AppConfig =
+            serde_json::from_str(r#"{"appearance":{"mode":"future"}}"#).unwrap();
 
-        assert_eq!(parsed.theme_mode, ThemeMode::System);
+        assert_eq!(parsed.appearance.mode, ThemeMode::System);
+    }
+
+    #[test]
+    fn migrates_v1_theme_mode_to_v2_appearance() {
+        let path = std::env::temp_dir().join(format!(
+            "scenedeck-config-migration-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(
+            &path,
+            r#"{
+              "version": 1,
+              "obs": { "host": "127.0.0.1", "port": 4455 },
+              "live": {
+                "show_roles": ["primary"],
+                "audio_inputs": [],
+                "allow_switching_only": ["primary"]
+              },
+              "theme_mode": "dark"
+            }"#,
+        )
+        .unwrap();
+
+        let loaded = read_config_from_path(&path);
+        let persisted = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(path);
+
+        assert_eq!(loaded.config.version, CURRENT_VERSION);
+        assert_eq!(loaded.config.appearance.mode, ThemeMode::Dark);
+        assert!(persisted.contains(r#""version": 2"#));
+        assert!(persisted.contains(r#""appearance""#));
+        assert!(!persisted.contains(r#""theme_mode""#));
     }
 }

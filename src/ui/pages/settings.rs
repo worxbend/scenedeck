@@ -181,6 +181,6 @@ fn obs_status_text(nav: &NavigationContext) -> String {
 fn persist_config(nav: &NavigationContext) -> Result<(), std::io::Error> {
     let model = nav.state.borrow();
     let mut cfg = crate::storage::config::read_config().config;
-    cfg.theme_mode = model.theme_mode;
+    cfg.appearance.mode = model.theme_mode;
     write_config(&cfg)
 }

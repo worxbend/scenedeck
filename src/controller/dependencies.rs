@@ -72,7 +72,7 @@ impl ObsPasswordProvider for KeyringObsPasswordProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::appearance::ThemeMode;
+    use crate::domain::appearance::{ThemeMode, ThemePreference};
     use crate::storage::config::{LiveConfig, ObsConfig};
 
     struct StaticConfigProvider(AppConfig);
@@ -103,7 +103,11 @@ mod tests {
                 audio_inputs: vec!["Mic".to_string()],
                 ..Default::default()
             },
-            theme_mode: ThemeMode::Dark,
+            appearance: ThemePreference {
+                mode: ThemeMode::Dark,
+                ..ThemePreference::default()
+            },
+            ..AppConfig::default()
         };
 
         let dependencies = ControllerDependencies::new(
