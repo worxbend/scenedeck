@@ -37,6 +37,7 @@ pub enum AppCommand {
         input: InputId,
         volume_mul: f64,
     },
+    RefreshMixerSceneAudio(SceneId),
 
     // Outputs
     StartStreaming,

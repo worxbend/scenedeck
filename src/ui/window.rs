@@ -372,11 +372,31 @@ fn apply_event(
             }
         }
 
+        AppEvent::MixerAudioInputsUpdated { scene, inputs } => {
+            {
+                let mut state = nav.state.borrow_mut();
+                state.mixer_audio_scene = Some(scene);
+                state.mixer_audio_inputs = inputs;
+            }
+            if nav.state.borrow().current_page == Page::Mixer {
+                refreshers.call(Page::Mixer);
+            }
+        }
+
         AppEvent::InputMuteChanged { input, muted } => {
             if let Some(a) = nav
                 .state
                 .borrow_mut()
                 .audio_inputs
+                .iter_mut()
+                .find(|a| a.id == input)
+            {
+                a.muted = muted;
+            }
+            if let Some(a) = nav
+                .state
+                .borrow_mut()
+                .mixer_audio_inputs
                 .iter_mut()
                 .find(|a| a.id == input)
             {
@@ -399,6 +419,16 @@ fn apply_event(
                 .state
                 .borrow_mut()
                 .audio_inputs
+                .iter_mut()
+                .find(|a| a.id == input)
+            {
+                a.volume_mul = volume_mul;
+                a.volume_db = volume_db;
+            }
+            if let Some(a) = nav
+                .state
+                .borrow_mut()
+                .mixer_audio_inputs
                 .iter_mut()
                 .find(|a| a.id == input)
             {

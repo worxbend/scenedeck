@@ -119,9 +119,10 @@ separate light and dark CSS paths when they need side-specific styling.
 
 The Mixer page lives in `src/ui/pages/mixer.rs`. Its mode, scene selection,
 search, and grouping controls are stored in `AppState` as a `MixerSelection`.
-The current foundation reuses the active-scene audio snapshot; selected and
-pinned scene-specific refresh commands should be added through the controller
-and `src/obs/` without letting GTK call OBS directly.
+Active mode uses the active-scene audio snapshot that also feeds Live. Selected
+and Pinned modes dispatch `RefreshMixerSceneAudio` through the controller and
+receive a separate `MixerAudioInputsUpdated` snapshot. GTK never calls OBS
+directly.
 
 ## Live Data Refresh
 

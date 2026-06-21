@@ -11,6 +11,7 @@ use std::rc::Rc;
 use adw::{prelude::*, ComboRow, EntryRow, PreferencesGroup, PreferencesPage, StatusPage};
 use gtk4::{Box as GtkBox, FlowBox, Label, Orientation, PolicyType, ScrolledWindow, StringList};
 
+use crate::controller::command::AppCommand;
 use crate::domain::audio::AudioInput;
 use crate::domain::mixer::{MixerGrouping, MixerMode};
 use crate::ui::navigation::NavigationContext;
@@ -52,6 +53,12 @@ fn populate(root: &GtkBox, nav: &NavigationContext) {
     let inventory = state.scene_inventory;
     let mixer = state.mixer;
     let active_scene = inventory.current_id.clone();
+    let target_scene = mixer_target_scene(
+        mixer.mode,
+        active_scene.as_deref(),
+        mixer.selected_scene.as_deref(),
+        mixer.pinned_scene.as_deref(),
+    );
 
     if inventory.scenes.is_empty() {
         let empty = StatusPage::builder()
@@ -91,7 +98,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext) {
         .subtitle(source_summary(
             mixer.mode,
             active_scene.as_deref(),
-            mixer.selected_scene.as_deref(),
+            target_scene.as_deref(),
         ))
         .build();
     summary_group.add(&summary);
@@ -99,7 +106,14 @@ fn populate(root: &GtkBox, nav: &NavigationContext) {
 
     root.append(&page);
 
-    let inputs = filter_inputs(&state.audio_inputs, &mixer.search);
+    let source_inputs = if mixer.mode == MixerMode::ActiveScene {
+        state.audio_inputs
+    } else if state.mixer_audio_scene.as_deref() == target_scene.as_deref() {
+        state.mixer_audio_inputs
+    } else {
+        Vec::new()
+    };
+    let inputs = filter_inputs(&source_inputs, &mixer.search);
     append_mixer_inputs(root, nav, &inputs, mixer.grouping);
 }
 
@@ -116,7 +130,21 @@ fn build_mode_row(nav: &NavigationContext, selected: MixerMode) -> ComboRow {
         let nav = nav.clone();
         move |row| {
             let mode = index_to_mode(row.selected());
-            nav.state.borrow_mut().mixer.mode = mode;
+            let target_scene = {
+                let mut state = nav.state.borrow_mut();
+                state.mixer.mode = mode;
+                mixer_target_scene(
+                    mode,
+                    state.scene_inventory.current_id.as_deref(),
+                    state.mixer.selected_scene.as_deref(),
+                    state.mixer.pinned_scene.as_deref(),
+                )
+            };
+            if mode != MixerMode::ActiveScene {
+                if let Some(scene) = target_scene {
+                    nav.dispatch(AppCommand::RefreshMixerSceneAudio(scene));
+                }
+            }
             nav.switch_to_page(crate::controller::state::Page::Mixer);
         }
     });
@@ -151,6 +179,20 @@ fn build_scene_row(
                 state.mixer.selected_scene = Some(scene_id.clone());
                 if state.mixer.mode == MixerMode::PinnedScene {
                     state.mixer.pinned_scene = Some(scene_id.clone());
+                }
+            }
+            let target_scene = {
+                let state = nav.state.borrow();
+                mixer_target_scene(
+                    state.mixer.mode,
+                    state.scene_inventory.current_id.as_deref(),
+                    state.mixer.selected_scene.as_deref(),
+                    state.mixer.pinned_scene.as_deref(),
+                )
+            };
+            if let Some(scene) = target_scene {
+                if nav.state.borrow().mixer.mode != MixerMode::ActiveScene {
+                    nav.dispatch(AppCommand::RefreshMixerSceneAudio(scene));
                 }
             }
             nav.switch_to_page(crate::controller::state::Page::Mixer);
@@ -208,7 +250,9 @@ fn append_mixer_inputs(
         let empty = StatusPage::builder()
             .icon_name("audio-volume-muted-symbolic")
             .title("No Matching Audio Sources")
-            .description("Adjust the search filter or switch scenes in OBS.")
+            .description(
+                "Adjust the search filter, choose a scene, or refresh after connecting to OBS.",
+            )
             .build();
         root.append(&empty);
         return;
@@ -312,7 +356,7 @@ fn filter_inputs(inputs: &[AudioInput], search: &str) -> Vec<AudioInput> {
 fn source_summary(
     mode: MixerMode,
     active_scene: Option<&str>,
-    selected_scene: Option<&str>,
+    target_scene: Option<&str>,
 ) -> String {
     match mode {
         MixerMode::ActiveScene => {
@@ -324,16 +368,27 @@ fn source_summary(
         MixerMode::SelectedScene => {
             format!(
                 "Selected scene: {}",
-                selected_scene.unwrap_or("none selected")
+                target_scene.unwrap_or("none selected")
             )
         }
         MixerMode::PinnedScene => {
-            format!(
-                "Pinned scene: {}",
-                selected_scene.unwrap_or("none selected")
-            )
+            format!("Pinned scene: {}", target_scene.unwrap_or("none selected"))
         }
     }
+}
+
+fn mixer_target_scene(
+    mode: MixerMode,
+    active_scene: Option<&str>,
+    selected_scene: Option<&str>,
+    pinned_scene: Option<&str>,
+) -> Option<String> {
+    match mode {
+        MixerMode::ActiveScene => active_scene,
+        MixerMode::SelectedScene => selected_scene.or(active_scene),
+        MixerMode::PinnedScene => pinned_scene.or(selected_scene).or(active_scene),
+    }
+    .map(str::to_string)
 }
 
 fn mode_to_index(mode: MixerMode) -> u32 {

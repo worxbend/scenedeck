@@ -103,6 +103,8 @@ pub struct AppState {
     pub stream_status: OutputStatus,
     pub record_status: OutputStatus,
     pub audio_inputs: Vec<AudioInput>,
+    pub mixer_audio_scene: Option<String>,
+    pub mixer_audio_inputs: Vec<AudioInput>,
     pub mixer: MixerSelection,
     pub diagnostics: Vec<Diagnostic>,
     /// Human-readable config-load notice shown once on the Settings page.
@@ -122,6 +124,8 @@ impl AppState {
             stream_status: OutputStatus::default(),
             record_status: OutputStatus::default(),
             audio_inputs: Vec::new(),
+            mixer_audio_scene: None,
+            mixer_audio_inputs: Vec::new(),
             mixer: MixerSelection::default(),
             diagnostics: Vec::new(),
             startup_notice,

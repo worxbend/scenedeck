@@ -48,18 +48,17 @@ When disconnected, it shows a placeholder message. After connection, it shows:
 ## Mixer Page
 
 The Mixer page is a dedicated audio control surface. It shows the same scoped
-audio sources SceneDeck discovers for the current active scene, with controls
-for mode, scene selection, grouping, and search.
+audio source controls as Live, with mode, scene selection, grouping, and search.
 
 Modes:
 
 - Active: follows the OBS program scene.
-- Selected: keeps the selected scene in the page controls.
-- Pinned: keeps the selected scene as the intended stable mixer target.
+- Selected: loads audio for the selected scene without following OBS program
+  scene changes.
+- Pinned: keeps the selected scene as the stable mixer target.
 
-The current implementation uses the active-scene audio snapshot for all modes
-while the selected/pinned scene-specific OBS refresh path is being built. Source
-badges identify global, active scene, nested scene, and group-derived audio.
+Source badges identify global, active scene, nested scene, and group-derived
+audio.
 
 ### Scene Cards
 

@@ -173,6 +173,7 @@ impl AppController {
                     });
                 });
             }
+            AppCommand::RefreshMixerSceneAudio(scene) => self.refresh_mixer_scene_audio(scene),
 
             AppCommand::StartStreaming => self.set_streaming(true),
             AppCommand::StopStreaming => self.set_streaming(false),
@@ -280,6 +281,25 @@ impl AppController {
         self.with_client(|c, tx, rt| {
             rt.spawn(async move {
                 refresh_output_statuses(&c, &tx).await;
+            });
+        });
+    }
+
+    fn refresh_mixer_scene_audio(&self, scene: String) {
+        let config = self.dependencies.load_config();
+        self.with_client(|c, tx, rt| {
+            rt.spawn(async move {
+                match c
+                    .get_scene_audio_inputs(&scene, &config.live.audio_inputs)
+                    .await
+                {
+                    Ok(inputs) => {
+                        let _ = tx.send(AppEvent::MixerAudioInputsUpdated { scene, inputs });
+                    }
+                    Err(e) => {
+                        let _ = tx.send(AppEvent::Error(e));
+                    }
+                }
             });
         });
     }

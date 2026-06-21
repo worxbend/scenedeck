@@ -214,11 +214,12 @@ The app now has a `Mixer` navigation page. The first implementation provides:
 - Grouping by scope, scene path, or no grouping.
 - Reuse of scoped audio cards with mute, lock, fader, dB readout, fine
   adjustment, and reset controls.
+- Scene-specific audio refresh for Selected and Pinned modes through controller
+  command/event routing.
 
-Current limitation: all modes display the existing active-scene audio snapshot.
-The next Mixer phase should add controller commands and OBS adapter calls for
-selected/pinned scene-specific audio refresh while keeping GTK out of direct OBS
-access.
+Next Mixer phases should persist pinned scene preference, add stronger empty
+states while scene audio is loading, and broaden tests around mixer mode
+transitions.
 
 ## UI and Navigation Gaps
 
@@ -228,7 +229,7 @@ base for adding a Mixer page.
 
 Known gaps:
 
-- Selected/pinned Mixer modes need dedicated OBS refresh support.
+- Pinned Mixer mode should persist the preferred scene in config.
 - Live page output controls are compact utility controls, not operational cards.
 - Live page lacks a top status strip with consolidated OBS/profile/collection/
   output state.
