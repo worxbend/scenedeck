@@ -69,12 +69,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
     let inventory = state.scene_inventory.clone();
     let mixer = state.mixer.clone();
     let active_scene = inventory.current_id.clone();
-    let target_scene = mixer_target_scene(
-        mixer.mode,
-        active_scene.as_deref(),
-        mixer.selected_scene.as_deref(),
-        mixer.pinned_scene.as_deref(),
-    );
+    let target_scene = state.visible_mixer_target_scene().map(str::to_string);
 
     if inventory.scenes.is_empty() {
         let empty = StatusPage::builder()
@@ -159,10 +154,9 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
                 inputs.to_vec()
             }
             MixerVisibleAudioStatus::Missing => {
-                request_mixer_scene_audio(
+                request_visible_mixer_scene_audio(
                     nav,
                     refresh_tracker,
-                    scene,
                     MixerRefreshRequestIntent::Automatic,
                 );
                 append_mixer_status(
@@ -205,26 +199,15 @@ fn build_mode_row(
         let refresh_tracker = refresh_tracker.clone();
         move |row| {
             let mode = index_to_mode(row.selected());
-            let target_scene = {
+            {
                 let mut state = nav.state.borrow_mut();
                 state.mixer.mode = mode;
-                mixer_target_scene(
-                    mode,
-                    state.scene_inventory.current_id.as_deref(),
-                    state.mixer.selected_scene.as_deref(),
-                    state.mixer.pinned_scene.as_deref(),
-                )
-            };
-            if mode != MixerMode::ActiveScene {
-                if let Some(scene) = target_scene {
-                    request_mixer_scene_audio(
-                        &nav,
-                        &refresh_tracker,
-                        &scene,
-                        MixerRefreshRequestIntent::Explicit,
-                    );
-                }
             }
+            request_visible_mixer_scene_audio(
+                &nav,
+                &refresh_tracker,
+                MixerRefreshRequestIntent::Explicit,
+            );
             persist_mixer_selection(&nav);
             nav.switch_to_page(crate::controller::state::Page::Mixer);
         }
@@ -264,25 +247,11 @@ fn build_scene_row(
                     state.mixer.pinned_scene = Some(scene_id.clone());
                 }
             }
-            let target_scene = {
-                let state = nav.state.borrow();
-                mixer_target_scene(
-                    state.mixer.mode,
-                    state.scene_inventory.current_id.as_deref(),
-                    state.mixer.selected_scene.as_deref(),
-                    state.mixer.pinned_scene.as_deref(),
-                )
-            };
-            if let Some(scene) = target_scene {
-                if nav.state.borrow().mixer.mode != MixerMode::ActiveScene {
-                    request_mixer_scene_audio(
-                        &nav,
-                        &refresh_tracker,
-                        &scene,
-                        MixerRefreshRequestIntent::Explicit,
-                    );
-                }
-            }
+            request_visible_mixer_scene_audio(
+                &nav,
+                &refresh_tracker,
+                MixerRefreshRequestIntent::Explicit,
+            );
             persist_mixer_selection(&nav);
             nav.switch_to_page(crate::controller::state::Page::Mixer);
         }
@@ -425,12 +394,10 @@ fn append_mixer_error_status(
     retry_btn.connect_clicked({
         let nav = nav.clone();
         let refresh_tracker = refresh_tracker.clone();
-        let scene = scene.to_string();
         move |_| {
-            request_mixer_scene_audio(
+            request_visible_mixer_scene_audio(
                 &nav,
                 &refresh_tracker,
-                &scene,
                 MixerRefreshRequestIntent::Explicit,
             );
         }
@@ -525,18 +492,20 @@ fn source_summary(
     }
 }
 
-fn mixer_target_scene(
-    mode: MixerMode,
-    active_scene: Option<&str>,
-    selected_scene: Option<&str>,
-    pinned_scene: Option<&str>,
-) -> Option<String> {
-    match mode {
-        MixerMode::ActiveScene => active_scene,
-        MixerMode::SelectedScene => selected_scene.or(active_scene),
-        MixerMode::PinnedScene => pinned_scene.or(selected_scene).or(active_scene),
+fn request_visible_mixer_scene_audio(
+    nav: &NavigationContext,
+    refresh_tracker: &MixerRefreshTracker,
+    intent: MixerRefreshRequestIntent,
+) {
+    let target_scene = nav
+        .state
+        .borrow()
+        .visible_mixer_target_scene()
+        .map(str::to_string);
+
+    if let Some(scene) = target_scene {
+        request_mixer_scene_audio(nav, refresh_tracker, &scene, intent);
     }
-    .map(str::to_string)
 }
 
 fn request_mixer_scene_audio(

@@ -42,8 +42,10 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 Status: all passed on 2026-06-21 after the mixer refresh contract, optimistic
 audio update, output confirmation decision-helper work, mixer retry-intent fix,
 reducer-owned mixer input mirror containment, selected/pinned and Active-mode
-Mixer input-event reconciliation, Mixer render-source reconciliation, and legacy
-Mixer mirror state removal. The current review reran the full validation rule.
+Mixer input-event reconciliation, Mixer render-source reconciliation, legacy
+Mixer mirror state removal, hidden snapshot invariant restoration, and shared
+Mixer scene-specific target resolution. The current review reran the full
+validation rule.
 
 ## Completed Phases
 
@@ -363,68 +365,49 @@ Review verdict:
 - Rebuilding the whole Mixer page on every relevant OBS input event remains
   correct but may be too expensive for high-frequency OBS volume echo events.
 
+### Mixer Target-Scene Contract Consolidation
+
+Working tree, reviewed 2026-06-21:
+
+- Restored reducer tests that directly inspect the hidden
+  `mixer_audio_refresh.loaded` snapshot after mute and volume input updates
+  followed by same-scene loading and failure transitions.
+- Made `AppState::visible_mixer_target_scene` public as the shared
+  scene-specific refresh target contract for Selected and Pinned Mixer modes.
+- Changed Active Mixer mode to report no scene-specific target through that
+  helper, preventing shared request paths from dispatching scene-refresh
+  commands while Active mode is rendering live `audio_inputs`.
+- Removed the Mixer page's local `mixer_target_scene` fallback helper.
+- Refactored summary text, automatic missing-state refresh, mode changes,
+  scene changes, and retry dispatch to resolve scene-specific targets through
+  `AppState::visible_mixer_target_scene`.
+- Added pure tests for Active, Selected, and Pinned target resolution,
+  including Selected fallback to current scene and Pinned fallback to
+  selected/current scene.
+
+Review verdict:
+
+- Static validation passed: `cargo fmt --all -- --check`,
+  `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- The two planned Mixer contract gaps are closed: hidden reducer snapshots are
+  again covered directly, and scene-specific request targets are no longer
+  re-derived inside `src/ui/pages/mixer.rs`.
+- No functional regression was found in the changed source paths.
+- Residual risk: the helper name `visible_mixer_target_scene` is easy to read
+  as "the visible Mixer scene" even though it intentionally returns `None` for
+  Active mode because it means "scene-specific refresh target." Future work
+  should either rename it or add a parallel display-source helper before more
+  Mixer UI code consumes it.
+- The Mixer page still rebuilds all controls and audio cards for every relevant
+  OBS input event; correctness is good, but large scenes and high-frequency
+  volume echoes may need in-place card reconciliation.
+- Retry and target-resolution behavior is covered by pure tests, but there is
+  still no GTK/manual interaction record proving the controls, retry button,
+  and mode changes behave correctly against a real OBS instance.
+
 ## Groomed Next Steps
-
-### P1: Restore Mixer Hidden Snapshot Invariant Coverage
-
-Problem:
-
-- Iteration 7 correctly removed the legacy mirror fields, but the replacement
-  tests weakened one invariant.
-- Same-scene loading and failure intentionally hide a loaded snapshot behind
-  loading/error status without mutating that snapshot.
-- The current tests prove the visible status behavior, but they no longer
-  directly prove that `update_mixer_input_mute` and
-  `update_mixer_input_volume` changes remain stored in
-  `mixer_audio_refresh.loaded` across same-scene loading/failure transitions.
-
-Plan:
-
-- Add small reducer tests or local helper assertions that inspect the loaded
-  snapshot directly after same-scene loading and failure.
-- Keep visible-status tests as-is so loading/error precedence stays covered.
-- Name the tests around the intended hidden-snapshot invariant rather than the
-  removed mirror behavior.
-
-Files:
-
-- `src/controller/state.rs`
-
-Tests:
-
-- Add focused tests for mute and volume updates surviving hidden loaded snapshot
-  preservation across same-scene loading/failure.
-
-### P1: Consolidate Mixer Target-Scene Fallback Logic
-
-Problem:
-
-- `should_rebuild_visible_mixer_for_input_event` now consumes
-  `visible_mixer_render_source`, but `src/ui/pages/mixer.rs` still has a local
-  `mixer_target_scene` helper that duplicates the Selected/Pinned fallback
-  chain for summary text, scene-refresh dispatch, and empty-state labels.
-- The behavior is currently correct, but duplicated target resolution is the
-  same drift class that previously caused Mixer reconciliation gaps.
-
-Plan:
-
-- Expose an AppState-level target-scene helper or extend
-  `MixerVisibleRenderSource` with enough metadata for Mixer page controls to
-  derive summary and request targets without duplicating fallback order.
-- Refactor Mixer mode/scene callbacks and summary text to use that shared
-  contract.
-- Keep Active mode from dispatching scene-specific mixer refreshes.
-
-Files:
-
-- `src/controller/state.rs`
-- `src/ui/pages/mixer.rs`
-
-Tests:
-
-- Add pure tests for selected-scene fallback to current scene and pinned-scene
-  fallback to selected/current scene through the shared helper.
-- Preserve existing retry/request-dedupe tests.
 
 ### P1: Reduce Mixer Page Rebuild Cost For High-Frequency Input Events
 
@@ -453,6 +436,65 @@ Tests:
 - Pure predicate coverage remains.
 - Add GTK-level or widget-level coverage only if a test harness can inspect card
   updates without excessive brittleness.
+
+### P1: Clarify Mixer Target And Display Source Naming
+
+Problem:
+
+- `AppState::visible_mixer_target_scene` is now the shared scene-specific
+  refresh target contract and intentionally returns `None` in Active mode.
+- The name can be mistaken for the scene currently displayed by the Mixer,
+  because Active mode still visibly follows `scene_inventory.current_id`.
+- Future Mixer UI work could accidentally use the helper for display copy or
+  active-scene behavior and reintroduce semantic drift.
+
+Plan:
+
+- Rename the helper to make the refresh-only contract explicit, or add a small
+  documented display-source helper that separates Active display copy from
+  Selected/Pinned refresh targets.
+- Update tests and call sites so request dispatch cannot accidentally target
+  Active mode.
+- Keep `visible_mixer_render_source` as the authoritative render contract.
+
+Files:
+
+- `src/controller/state.rs`
+- `src/ui/pages/mixer.rs`
+
+Tests:
+
+- Preserve current target-resolution tests.
+- Add a test, if a display helper is introduced, proving Active display uses
+  the current scene while scene-specific refresh target remains `None`.
+
+### P1: Manual Mixer Contract Interaction Run
+
+Problem:
+
+- Mixer target resolution, retry intent, and input-event reconciliation are now
+  well covered by pure tests, but no manual or GTK-level record proves the
+  actual ComboRows, Retry button, and local rebuild behavior together.
+- The highest-risk interactions depend on GTK signal timing and OBS event
+  ordering, which unit tests approximate rather than execute end to end.
+
+Plan:
+
+- Run a focused manual test against OBS with at least two scenes and multiple
+  audio inputs.
+- Record results for Active, Selected fallback, Pinned fallback, failed refresh
+  retry, mute echo, and volume echo behavior.
+- Capture any observed rebuild churn or stale-card behavior as concrete follow
+  up work.
+
+Files:
+
+- `docs/manual-test-plan.md`
+- possible `docs/manual-test-runs.md`
+
+Tests:
+
+- Manual execution record; optional GTK coverage only if practical.
 
 ### P1: Surface Output Command Errors In Output UI
 

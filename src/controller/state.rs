@@ -308,9 +308,9 @@ impl AppState {
         }
     }
 
-    fn visible_mixer_target_scene(&self) -> Option<&str> {
+    pub fn visible_mixer_target_scene(&self) -> Option<&str> {
         match self.mixer.mode {
-            MixerMode::ActiveScene => self.scene_inventory.current_id.as_deref(),
+            MixerMode::ActiveScene => None,
             MixerMode::SelectedScene => self
                 .mixer
                 .selected_scene
@@ -397,6 +397,21 @@ mod tests {
             .iter()
             .find(|input| input.id == id)
             .expect("visible mixer input")
+    }
+
+    fn hidden_loaded_input<'a>(state: &'a AppState, scene: &str, id: &str) -> &'a AudioInput {
+        let snapshot = state
+            .mixer_audio_refresh
+            .loaded
+            .as_ref()
+            .expect("loaded mixer snapshot");
+
+        assert_eq!(snapshot.scene, scene);
+        snapshot
+            .inputs
+            .iter()
+            .find(|input| input.id == id)
+            .expect("loaded mixer input")
     }
 
     #[test]
@@ -737,6 +752,82 @@ mod tests {
     }
 
     #[test]
+    fn visible_mixer_target_scene_active_mode_has_no_scene_specific_target() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::ActiveScene;
+        state.scene_inventory.current_id = Some("Active".to_string());
+        state.mixer.selected_scene = Some("Selected".to_string());
+        state.mixer.pinned_scene = Some("Pinned".to_string());
+
+        assert_eq!(state.visible_mixer_target_scene(), None);
+    }
+
+    #[test]
+    fn visible_mixer_target_scene_selected_mode_uses_selected_scene() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::SelectedScene;
+        state.scene_inventory.current_id = Some("Active".to_string());
+        state.mixer.selected_scene = Some("Selected".to_string());
+
+        assert_eq!(state.visible_mixer_target_scene(), Some("Selected"));
+    }
+
+    #[test]
+    fn visible_mixer_target_scene_selected_mode_falls_back_to_current_scene() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::SelectedScene;
+        state.scene_inventory.current_id = Some("Active".to_string());
+
+        assert_eq!(state.visible_mixer_target_scene(), Some("Active"));
+    }
+
+    #[test]
+    fn visible_mixer_target_scene_selected_mode_reports_none_without_selected_or_current_scene() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::SelectedScene;
+
+        assert_eq!(state.visible_mixer_target_scene(), None);
+    }
+
+    #[test]
+    fn visible_mixer_target_scene_pinned_mode_uses_pinned_scene() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::PinnedScene;
+        state.scene_inventory.current_id = Some("Active".to_string());
+        state.mixer.selected_scene = Some("Selected".to_string());
+        state.mixer.pinned_scene = Some("Pinned".to_string());
+
+        assert_eq!(state.visible_mixer_target_scene(), Some("Pinned"));
+    }
+
+    #[test]
+    fn visible_mixer_target_scene_pinned_mode_falls_back_to_selected_scene() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::PinnedScene;
+        state.scene_inventory.current_id = Some("Active".to_string());
+        state.mixer.selected_scene = Some("Selected".to_string());
+
+        assert_eq!(state.visible_mixer_target_scene(), Some("Selected"));
+    }
+
+    #[test]
+    fn visible_mixer_target_scene_pinned_mode_falls_back_to_current_scene() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::PinnedScene;
+        state.scene_inventory.current_id = Some("Active".to_string());
+
+        assert_eq!(state.visible_mixer_target_scene(), Some("Active"));
+    }
+
+    #[test]
+    fn visible_mixer_target_scene_pinned_mode_reports_none_without_any_fallback_scene() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::PinnedScene;
+
+        assert_eq!(state.visible_mixer_target_scene(), None);
+    }
+
+    #[test]
     fn mixer_input_mute_update_changes_visible_loaded_snapshot() {
         let mut state = app_state();
         state.set_mixer_audio_loading("Scene A".to_string());
@@ -766,6 +857,66 @@ mod tests {
         );
         assert_eq!(
             visible_loaded_input(&state, "Scene A", "Mic").volume_mul,
+            1.0
+        );
+    }
+
+    #[test]
+    fn mixer_input_mute_update_preserves_hidden_loaded_snapshot_invariant() {
+        let mut state = app_state();
+        state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_success("Scene A".to_string(), vec![input("Mic"), input("Music")]);
+
+        assert!(state.update_mixer_input_mute("Mic", true));
+
+        let transition = state.set_mixer_audio_loading("Scene A".to_string());
+        assert_eq!(transition, MixerAudioRefreshTransition::Loading);
+        assert!(hidden_loaded_input(&state, "Scene A", "Mic").muted);
+        assert!(!hidden_loaded_input(&state, "Scene A", "Music").muted);
+
+        let transition =
+            state.set_mixer_audio_failure("Scene A".to_string(), "OBS failed".to_string());
+        assert_eq!(transition, MixerAudioRefreshTransition::Failure);
+        assert!(hidden_loaded_input(&state, "Scene A", "Mic").muted);
+        assert!(!hidden_loaded_input(&state, "Scene A", "Music").muted);
+    }
+
+    #[test]
+    fn mixer_input_volume_update_preserves_hidden_loaded_snapshot_invariant() {
+        let mut state = app_state();
+        state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_success("Scene A".to_string(), vec![input("Mic"), input("Music")]);
+
+        assert!(state.update_mixer_input_volume("Music", 0.42, -7.5));
+
+        let transition = state.set_mixer_audio_loading("Scene A".to_string());
+        assert_eq!(transition, MixerAudioRefreshTransition::Loading);
+        assert_eq!(
+            hidden_loaded_input(&state, "Scene A", "Music").volume_mul,
+            0.42
+        );
+        assert_eq!(
+            hidden_loaded_input(&state, "Scene A", "Music").volume_db,
+            -7.5
+        );
+        assert_eq!(
+            hidden_loaded_input(&state, "Scene A", "Mic").volume_mul,
+            1.0
+        );
+
+        let transition =
+            state.set_mixer_audio_failure("Scene A".to_string(), "OBS failed".to_string());
+        assert_eq!(transition, MixerAudioRefreshTransition::Failure);
+        assert_eq!(
+            hidden_loaded_input(&state, "Scene A", "Music").volume_mul,
+            0.42
+        );
+        assert_eq!(
+            hidden_loaded_input(&state, "Scene A", "Music").volume_db,
+            -7.5
+        );
+        assert_eq!(
+            hidden_loaded_input(&state, "Scene A", "Mic").volume_mul,
             1.0
         );
     }

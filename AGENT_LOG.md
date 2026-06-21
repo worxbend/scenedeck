@@ -674,3 +674,100 @@ M  PLAN.md
 M  SCORES.jsonl
 M  src/controller/state.rs
 M  src/ui/window.rs
+2026-06-21T12:50:12Z iteration 8 started remaining=14398s
+2026-06-21T12:50:12Z iteration 8 preplanner effective budgets untracked_scan_max_bytes=536870912 untracked_scan_max_count=10000 snapshot_copy_max_bytes=536870912 snapshot_copy_max_count=10000 snapshot_copy_max_file_bytes=134217728
+2026-06-21T12:50:12Z iteration 8 disposable preplanner repo created path=/tmp/agent-loop-preplanner-repo-b714irdi/repo copied_entries=114
+2026-06-21T12:50:12Z iteration 8 ideator phase started count=3
+2026-06-21T12:50:12Z iteration 8 ideator phase concurrency workers=3
+2026-06-21T12:50:12Z iteration 8 ideator 1 role="the pragmatist" started
+2026-06-21T12:50:12Z iteration 8 ideator 2 role="the architect" started
+2026-06-21T12:50:12Z iteration 8 ideator 3 role="the contrarian" started
+2026-06-21T12:50:20Z iteration 8 ideator 2 role="the architect" completed status=0
+2026-06-21T12:50:21Z iteration 8 ideator 1 role="the pragmatist" completed status=0
+2026-06-21T12:50:22Z iteration 8 ideator 3 role="the contrarian" completed status=0
+2026-06-21T12:50:22Z iteration 8 ideator phase completed approaches=3
+2026-06-21T12:50:22Z iteration 8 selector started approaches=3
+2026-06-21T12:50:33Z iteration 8 selector completed status=0
+2026-06-21T12:50:33Z iteration 8 disposable preplanner repo cleanup path=/tmp/agent-loop-preplanner-repo-b714irdi/repo
+2026-06-21T12:50:33Z iteration 8 selector rejected alternative role="the architect" approach="Contract-First Consolidation: stabilize the Mixer state/render contract before adding new output UI features, using reducer-owned invariants as the sequencing anchor." reason="Selected in spirit, but it is slightly too tied to the named backlog sequence. The synthesized strategy keeps the contract-first emphasis while making the planning principle clearer: eliminate duplicated visibility and ownership boundari..."
+2026-06-21T12:50:33Z iteration 8 selector rejected alternative role="the pragmatist" approach="Contract-First Consolidation: stabilize the Mixer state contract before adding broader UI features, treating reducer helpers as the source of truth and letting UI code consume s..." reason="Also very strong, but not selected as-is because it frames the next move mostly around reducer helpers as source of truth. The better guide is broader: shared state contracts should cover rendering, dispatch targets, labels, retry semant..."
+2026-06-21T12:50:33Z iteration 8 selector rejected alternative role="the contrarian" approach="Contract-First Stabilization: pause visible feature expansion and treat the next iteration as a boundary-hardening pass, using small public state contracts as the unit of progre..." reason="Useful framing around boundary hardening, but too expansive if applied to output confirmation metadata and output error ownership in the same pass. The immediate planning focus should stay tighter around the incomplete Mixer contract mig..."
+2026-06-21T12:50:33Z iteration 8 selector alternatives persisted count=3
+2026-06-21T12:50:33Z iteration 8 selector structured alternatives persisted count=3
+2026-06-21T12:50:33Z iteration 8 planner started
+2026-06-21T12:50:55Z iteration 8 plan: 4 task(s) in 4 phase(s). This iteration closes the current Mixer contract migration before broader output or layout work. The phases are sequential because the UI refactor depends on the new AppState target-scene helper, and all implementation tasks touch src/controller/state.rs or depend on its new API, so there is no safe parallel split.
+2026-06-21T12:50:55Z iteration 8 phase 1 started parallel=False tasks=1
+2026-06-21T12:52:12Z iteration 8 task t1 ('Restore hidden Mixer snapshot invariant tests') status=0
+2026-06-21T12:52:12Z iteration 8 phase 2 started parallel=False tasks=1
+2026-06-21T12:53:20Z iteration 8 task t2 ('Expose shared Mixer target-scene contract') status=0
+2026-06-21T12:53:20Z iteration 8 phase 3 started parallel=False tasks=1
+2026-06-21T12:55:27Z iteration 8 task t3 ('Refactor Mixer page target resolution') status=0
+2026-06-21T12:55:27Z iteration 8 phase 4 started parallel=False tasks=1
+2026-06-21T12:55:40Z iteration 8 task t4 ('Run Mixer contract validation') status=0
+2026-06-21T12:55:40Z iteration 8 reviewer started
+
+## Review Summary - Iteration 8 - 2026-06-21
+
+### What Was Done
+
+- Restored hidden Mixer snapshot invariant coverage by adding reducer tests
+  that inspect `mixer_audio_refresh.loaded` after mute and volume input updates
+  survive same-scene loading and failure transitions.
+- Exposed `AppState::visible_mixer_target_scene` as the shared scene-specific
+  target contract for Selected and Pinned Mixer modes.
+- Changed Active Mixer mode to return no scene-specific refresh target, while
+  keeping Active rendering on live `audio_inputs` through
+  `visible_mixer_render_source`.
+- Removed the Mixer page's local `mixer_target_scene` fallback helper.
+- Refactored Mixer summary text, automatic refresh dispatch, mode/scene
+  callbacks, and Retry dispatch to resolve targets through AppState.
+- Added pure target-resolution tests for Active, Selected, and Pinned fallback
+  behavior.
+
+### What Was Found
+
+- Static validation passed: `cargo fmt --all -- --check`,
+  `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- The intended Mixer contract work is complete: hidden loaded snapshots are
+  directly covered again, and `src/ui/pages/mixer.rs` no longer duplicates the
+  Selected/Pinned target fallback chain.
+- No functional regression was found in the changed source paths.
+- Residual design risk: `visible_mixer_target_scene` now intentionally means
+  "scene-specific refresh target" and returns `None` in Active mode, which can
+  be misread as "the scene visibly shown by Mixer." That should be clarified
+  before more UI code consumes it.
+- The known performance risk remains: relevant OBS mute/volume events rebuild
+  the whole Mixer page instead of updating the affected visible card in place.
+- The behavior is covered by pure tests, but there is still no manual or GTK
+  interaction record proving the ComboRows, Retry button, and OBS event echoes
+  together against a real OBS instance.
+
+### Top Improvement Proposals
+
+1. Measure high-frequency OBS volume echo behavior on a populated Mixer page;
+   if rebuild churn is visible, track Mixer audio card handles and update the
+   affected card directly.
+2. Rename or document `visible_mixer_target_scene` so the API clearly expresses
+   scene-specific refresh target semantics and cannot be confused with Active
+   display source semantics.
+3. Run and record a focused manual Mixer interaction pass covering Active,
+   Selected fallback, Pinned fallback, failed refresh retry, mute echo, and
+   volume echo behavior.
+4. Surface stream/record command failures in the Live output UI separately from
+   generic OBS connection errors.
+5. Refine output confirmation dialog metadata so only stop stream/record
+   confirmations use destructive response styling.
+2026-06-21T12:58:55Z iteration 8 reviewer completed status=0
+2026-06-21T12:58:55Z iteration 8 memory updated
+2026-06-21T12:58:56Z iteration 8 completed validation_status=0
+2026-06-21T12:58:56Z iteration 8 checkpoint started
+2026-06-21T12:58:56Z iteration 8 checkpoint status before commit:
+M  AGENT_LOG.md
+M  ALTERNATIVES.jsonl
+M  MEMORY.md
+M  PLAN.md
+M  SCORES.jsonl
+M  src/controller/state.rs
+M  src/ui/pages/mixer.rs
