@@ -11,6 +11,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::appearance::{ThemeMode, ThemePreference};
+use crate::domain::mixer::MixerSelection;
 use crate::storage::xdg;
 
 // ── Config structs ────────────────────────────────────────────────────────────
@@ -25,6 +26,8 @@ pub struct AppConfig {
     pub live: LiveConfig,
     #[serde(default)]
     pub appearance: ThemePreference,
+    #[serde(default)]
+    pub mixer: MixerSelection,
     #[serde(default, rename = "theme_mode", skip_serializing)]
     pub(crate) legacy_theme_mode: Option<ThemeMode>,
 }
@@ -36,6 +39,7 @@ impl Default for AppConfig {
             obs: ObsConfig::default(),
             live: LiveConfig::default(),
             appearance: ThemePreference::default(),
+            mixer: MixerSelection::default(),
             legacy_theme_mode: None,
         }
     }
@@ -207,6 +211,7 @@ mod tests {
         assert_eq!(c.obs.port, 4455);
         assert_eq!(c.appearance.mode, ThemeMode::System);
         assert_eq!(c.appearance.selected_theme_id(), "adwaita-default");
+        assert_eq!(c.mixer, MixerSelection::default());
     }
 
     #[test]

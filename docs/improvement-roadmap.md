@@ -216,10 +216,10 @@ The app now has a `Mixer` navigation page. The first implementation provides:
   adjustment, and reset controls.
 - Scene-specific audio refresh for Selected and Pinned modes through controller
   command/event routing.
+- Persistence for Mixer mode, selected scene, pinned scene, and grouping.
 
-Next Mixer phases should persist pinned scene preference, add stronger empty
-states while scene audio is loading, and broaden tests around mixer mode
-transitions.
+Next Mixer phases should add stronger empty states while scene audio is loading
+and broaden tests around mixer mode transitions.
 
 ## UI and Navigation Gaps
 
@@ -229,7 +229,8 @@ base for adding a Mixer page.
 
 Known gaps:
 
-- Pinned Mixer mode should persist the preferred scene in config.
+- Mixer loading states can be clearer while selected/pinned scene audio is
+  being fetched.
 - Live page output controls are compact utility controls, not operational cards.
 - Live page lacks a top status strip with consolidated OBS/profile/collection/
   output state.

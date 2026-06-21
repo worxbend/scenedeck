@@ -13,7 +13,8 @@ use gtk4::{Box as GtkBox, FlowBox, Label, Orientation, PolicyType, ScrolledWindo
 
 use crate::controller::command::AppCommand;
 use crate::domain::audio::AudioInput;
-use crate::domain::mixer::{MixerGrouping, MixerMode};
+use crate::domain::mixer::{MixerGrouping, MixerMode, MixerSelection};
+use crate::storage::config::write_config;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::widgets::audio_card;
 
@@ -145,6 +146,7 @@ fn build_mode_row(nav: &NavigationContext, selected: MixerMode) -> ComboRow {
                     nav.dispatch(AppCommand::RefreshMixerSceneAudio(scene));
                 }
             }
+            persist_mixer_selection(&nav);
             nav.switch_to_page(crate::controller::state::Page::Mixer);
         }
     });
@@ -195,6 +197,7 @@ fn build_scene_row(
                     nav.dispatch(AppCommand::RefreshMixerSceneAudio(scene));
                 }
             }
+            persist_mixer_selection(&nav);
             nav.switch_to_page(crate::controller::state::Page::Mixer);
         }
     });
@@ -215,6 +218,7 @@ fn build_grouping_row(nav: &NavigationContext, selected: MixerGrouping) -> Combo
         let nav = nav.clone();
         move |row| {
             nav.state.borrow_mut().mixer.grouping = index_to_grouping(row.selected());
+            persist_mixer_selection(&nav);
             nav.switch_to_page(crate::controller::state::Page::Mixer);
         }
     });
@@ -421,4 +425,17 @@ fn index_to_grouping(index: u32) -> MixerGrouping {
         2 => MixerGrouping::None,
         _ => MixerGrouping::Scope,
     }
+}
+
+fn persist_mixer_selection(nav: &NavigationContext) {
+    let selection = nav.state.borrow().mixer.clone();
+    if let Err(err) = write_mixer_selection(selection) {
+        tracing::warn!(%err, "failed to save mixer preference");
+    }
+}
+
+fn write_mixer_selection(selection: MixerSelection) -> Result<(), std::io::Error> {
+    let mut cfg = crate::storage::config::read_config().config;
+    cfg.mixer = selection;
+    write_config(&cfg)
 }

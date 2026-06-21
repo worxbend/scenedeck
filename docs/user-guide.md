@@ -60,6 +60,9 @@ Modes:
 Source badges identify global, active scene, nested scene, and group-derived
 audio.
 
+SceneDeck saves the Mixer mode, selected scene, pinned scene, and grouping
+preference in the local config file. The search field is session-only.
+
 ### Scene Cards
 
 SceneDeck shows scene cards for OBS scenes that are marked as `Primary` in the

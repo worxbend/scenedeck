@@ -112,7 +112,11 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(theme_mode: ThemeMode, startup_notice: Option<String>) -> Self {
+    pub fn new(
+        theme_mode: ThemeMode,
+        mixer: MixerSelection,
+        startup_notice: Option<String>,
+    ) -> Self {
         Self {
             current_page: Page::Live,
             theme_mode,
@@ -126,7 +130,7 @@ impl AppState {
             audio_inputs: Vec::new(),
             mixer_audio_scene: None,
             mixer_audio_inputs: Vec::new(),
-            mixer: MixerSelection::default(),
+            mixer,
             diagnostics: Vec::new(),
             startup_notice,
         }

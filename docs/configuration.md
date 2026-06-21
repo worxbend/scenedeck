@@ -41,6 +41,12 @@ Example:
       "light_path": null,
       "dark_path": null
     }
+  },
+  "mixer": {
+    "mode": "active",
+    "selected_scene": null,
+    "pinned_scene": null,
+    "grouping": "scope"
   }
 }
 ```
@@ -66,6 +72,10 @@ Fields:
   when the effective color scheme is light.
 - `appearance.custom_css.dark_path`: optional path to a user CSS file used when
   the effective color scheme is dark.
+- `mixer.mode`: `active`, `selected`, or `pinned`.
+- `mixer.selected_scene`: optional scene name used by Selected mode.
+- `mixer.pinned_scene`: optional scene name remembered by Pinned mode.
+- `mixer.grouping`: `scope`, `scene_path`, or `none`.
 
 Themes are light/dark-aware theme families. If `appearance.mode` is `system`,
 SceneDeck follows the effective libadwaita/system color preference and applies
