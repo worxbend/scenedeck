@@ -338,7 +338,7 @@ impl AppController {
         let Some(client) = self.output_command_client() else {
             clear_stream_pending(&self.output_pending);
             tracing::warn!("stream command ignored — not connected to OBS");
-            let failure = OutputCommandFailureRecovery::with_fallback_status(
+            let failure = OutputCommandFailureRecovery::with_failed_command_fallback_status(
                 "Not connected to OBS".to_string(),
                 OutputStatus {
                     active: false,
@@ -374,7 +374,7 @@ impl AppController {
                 Err(e) => {
                     let message = e.to_string();
                     tracing::warn!(%e, active, "stream command failed");
-                    let failure = OutputCommandFailureRecovery::with_fallback_status(
+                    let failure = OutputCommandFailureRecovery::with_failed_command_fallback_status(
                         message,
                         fallback_failure_status,
                     );
@@ -398,7 +398,7 @@ impl AppController {
         let Some(client) = self.output_command_client() else {
             clear_record_pending(&self.output_pending);
             tracing::warn!("record command ignored — not connected to OBS");
-            let failure = OutputCommandFailureRecovery::with_fallback_status(
+            let failure = OutputCommandFailureRecovery::with_failed_command_fallback_status(
                 "Not connected to OBS".to_string(),
                 OutputStatus {
                     active: false,
@@ -441,7 +441,7 @@ impl AppController {
                 Err(e) => {
                     let message = e.to_string();
                     tracing::warn!(%e, active, "record command failed");
-                    let failure = OutputCommandFailureRecovery::with_fallback_status(
+                    let failure = OutputCommandFailureRecovery::with_failed_command_fallback_status(
                         message,
                         fallback_failure_status,
                     );
@@ -1090,8 +1090,8 @@ mod tests {
         let AppEvent::StreamCommandFailed(failure) = event else {
             panic!("expected stream command failure event");
         };
-        assert_eq!(failure.message, "Not connected to OBS");
-        assert_eq!(failure.fallback_status, inactive_status());
+        assert_eq!(failure.message(), "Not connected to OBS");
+        assert_eq!(failure.fallback_status(), &inactive_status());
         assert!(rx.try_recv().is_err());
     }
 
@@ -1105,8 +1105,8 @@ mod tests {
         let AppEvent::RecordCommandFailed(failure) = event else {
             panic!("expected record command failure event");
         };
-        assert_eq!(failure.message, "Not connected to OBS");
-        assert_eq!(failure.fallback_status, inactive_status());
+        assert_eq!(failure.message(), "Not connected to OBS");
+        assert_eq!(failure.fallback_status(), &inactive_status());
         assert!(rx.try_recv().is_err());
     }
 
@@ -1131,8 +1131,8 @@ mod tests {
         let AppEvent::StreamCommandFailed(failure) = &events[1] else {
             panic!("expected stream command failure after pending event");
         };
-        assert!(failure.message.contains("stream backend refused"));
-        assert_eq!(failure.fallback_status, inactive_status());
+        assert!(failure.message().contains("stream backend refused"));
+        assert_eq!(failure.fallback_status(), &inactive_status());
 
         assert!(matches!(
             events[2],
@@ -1182,8 +1182,8 @@ mod tests {
         let AppEvent::RecordCommandFailed(failure) = &events[1] else {
             panic!("expected record command failure after pending event");
         };
-        assert!(failure.message.contains("record backend refused"));
-        assert_eq!(failure.fallback_status, inactive_status());
+        assert!(failure.message().contains("record backend refused"));
+        assert_eq!(failure.fallback_status(), &inactive_status());
 
         assert!(matches!(
             events[2],
@@ -1237,8 +1237,8 @@ mod tests {
         let AppEvent::StreamCommandFailed(failure) = &events[1] else {
             panic!("expected stream command failure after pending event");
         };
-        assert!(failure.message.contains("stream backend refused"));
-        assert_eq!(failure.fallback_status, inactive_status());
+        assert!(failure.message().contains("stream backend refused"));
+        assert_eq!(failure.fallback_status(), &inactive_status());
         assert!(matches!(events[2], AppEvent::RecordStatusUpdated(_)));
         assert!(
             !events
@@ -1294,8 +1294,8 @@ mod tests {
         let AppEvent::RecordCommandFailed(failure) = &events[1] else {
             panic!("expected record command failure after pending event");
         };
-        assert!(failure.message.contains("record backend refused"));
-        assert_eq!(failure.fallback_status, inactive_status());
+        assert!(failure.message().contains("record backend refused"));
+        assert_eq!(failure.fallback_status(), &inactive_status());
         assert!(matches!(events[2], AppEvent::StreamStatusUpdated(_)));
         assert!(
             !events
@@ -1351,10 +1351,10 @@ mod tests {
         let AppEvent::StreamCommandFailed(failure) = &events[1] else {
             panic!("expected stream command failure after pending event");
         };
-        assert!(failure.message.contains("stream backend refused"));
+        assert!(failure.message().contains("stream backend refused"));
         assert_eq!(
-            failure.fallback_status,
-            OutputStatus {
+            failure.fallback_status(),
+            &OutputStatus {
                 active: true,
                 state: OutputRunState::Active,
                 detail: None
@@ -1417,10 +1417,10 @@ mod tests {
         let AppEvent::RecordCommandFailed(failure) = &events[1] else {
             panic!("expected record command failure after pending event");
         };
-        assert!(failure.message.contains("record backend refused"));
+        assert!(failure.message().contains("record backend refused"));
         assert_eq!(
-            failure.fallback_status,
-            OutputStatus {
+            failure.fallback_status(),
+            &OutputStatus {
                 active: true,
                 state: OutputRunState::Active,
                 detail: None

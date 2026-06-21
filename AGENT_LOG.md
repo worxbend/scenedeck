@@ -2182,3 +2182,98 @@ M  PLAN.md
 M  SCORES.jsonl
 M  src/controller/event.rs
 M  src/controller/state.rs
+2026-06-21T15:03:35Z iteration 24 started remaining=6396s
+2026-06-21T15:03:35Z iteration 24 preplanner effective budgets untracked_scan_max_bytes=536870912 untracked_scan_max_count=10000 snapshot_copy_max_bytes=536870912 snapshot_copy_max_count=10000 snapshot_copy_max_file_bytes=134217728
+2026-06-21T15:03:35Z iteration 24 disposable preplanner repo created path=/tmp/agent-loop-preplanner-repo-7sad2rqv/repo copied_entries=115
+2026-06-21T15:03:35Z iteration 24 ideator phase started count=3
+2026-06-21T15:03:35Z iteration 24 ideator phase concurrency workers=3
+2026-06-21T15:03:35Z iteration 24 ideator 1 role="the pragmatist" started
+2026-06-21T15:03:35Z iteration 24 ideator 2 role="the architect" started
+2026-06-21T15:03:35Z iteration 24 ideator 3 role="the contrarian" started
+2026-06-21T15:03:43Z iteration 24 ideator 1 role="the pragmatist" completed status=0
+2026-06-21T15:03:45Z iteration 24 ideator 3 role="the contrarian" completed status=0
+2026-06-21T15:03:48Z iteration 24 ideator 2 role="the architect" completed status=0
+2026-06-21T15:03:48Z iteration 24 ideator phase completed approaches=3
+2026-06-21T15:03:48Z iteration 24 selector started approaches=3
+2026-06-21T15:03:58Z iteration 24 selector completed status=0
+2026-06-21T15:03:58Z iteration 24 disposable preplanner repo cleanup path=/tmp/agent-loop-preplanner-repo-7sad2rqv/repo
+2026-06-21T15:03:58Z iteration 24 selector rejected alternative role="the pragmatist" approach="Invariant-First Boundary Tightening: prioritize small changes that make invalid states unrepresentable before touching broader UI behavior, starting with the output recovery eve..." reason="Not rejected substantively; selected in synthesis. Its framing is strong, but the planner should emphasize the event-boundary invariant specifically rather than treating layout or manual evidence as optional follow-ons in the same slice."
+2026-06-21T15:03:58Z iteration 24 selector rejected alternative role="the contrarian" approach="Invariant-First Hardening: prioritize sealing the output recovery event boundary before adding UI surface or chasing blocked Mixer evidence. Treat the next slice as a contract-h..." reason="Not rejected substantively; selected in synthesis. Its argument correctly avoids blocked Mixer evidence, but the final strategy should be less reactive and more explicitly tied to the documented payload invariant and reducer boundary."
+2026-06-21T15:03:58Z iteration 24 selector rejected alternative role="the architect" approach="Invariant-First Boundary Hardening: prioritize making the output recovery event contract impossible to misuse before taking on UI layout or manual-evidence work, using the compi..." reason="Not rejected substantively; selected in synthesis. Its compiler-guardrail framing is the cleanest, but the planner should avoid expanding into unrelated renames or architecture cleanup beyond enforcing the recovery payload invariant."
+2026-06-21T15:03:58Z iteration 24 selector alternatives persisted count=3
+2026-06-21T15:03:58Z iteration 24 selector structured alternatives persisted count=3
+2026-06-21T15:03:58Z iteration 24 planner started
+2026-06-21T15:04:17Z iteration 24 plan: 4 task(s) in 3 phase(s). This iteration focuses on the highest-value independent slice: making the output command recovery invariant unrepresentable through the public event API. The work is intentionally sequential because `state.rs` and tests depend on the finalized `event.rs` constructor/accessor shape, and validation depends on both code changes.
+2026-06-21T15:04:17Z iteration 24 phase 1 started parallel=False tasks=1
+2026-06-21T15:07:47Z iteration 24 task t1 ('Seal output recovery payload construction') status=0
+2026-06-21T15:07:47Z iteration 24 phase 2 started parallel=False tasks=2
+2026-06-21T15:08:12Z iteration 24 task t2 ('Update reducer usage for private recovery fields') status=0
+2026-06-21T15:09:15Z iteration 24 task t3 ('Move recovery tests behind invariant-preserving API') status=0
+2026-06-21T15:09:15Z iteration 24 phase 3 started parallel=False tasks=1
+2026-06-21T15:09:44Z iteration 24 task t4 ('Run focused output recovery validation') status=0
+2026-06-21T15:09:44Z iteration 24 reviewer started
+
+## Review Summary - Iteration 24 - 2026-06-21
+
+### What Was Done
+
+- Made `OutputCommandFailureRecovery` fields private and replaced direct
+  payload reads with `message()` and `fallback_status()` accessors.
+- Renamed the normalizing constructor to
+  `with_failed_command_fallback_status`, clarifying that construction stores a
+  local command-failure fallback rather than an authoritative OBS status read.
+- Updated stream/record controller command-failure paths and tests to use the
+  renamed constructor and accessors.
+- Added event-level coverage proving transition fallback inputs
+  (`Starting`, `Stopping`, `Reconnecting`) are normalized before the recovery
+  payload stores them.
+- Added a `#[cfg(test)]` unchecked recovery constructor so reducer tests can
+  continue proving that `AppState` applies carried payloads exactly without
+  exposing invalid production construction.
+
+### What Was Found
+
+- Focused validation passed in review:
+  `git diff --check`,
+  `cargo test --workspace --all-features failed_output_command -- --nocapture`,
+  and `cargo test --workspace --all-features command_failure -- --nocapture`.
+- The planned invariant seal is complete for production code. Direct struct
+  literals can no longer bypass normalization, and all production failure
+  emissions use the invariant-preserving constructor.
+- No production behavior regression was found. Localized stream/record command
+  failures still stay out of generic `AppEvent::Error`, keep OBS connection
+  state intact, and leave synthetic pending states through fallback payloads
+  even when status refreshes fail.
+- Reducer tests deliberately retain exact-payload coverage through a test-only
+  unchecked constructor. That is acceptable and avoids weakening the production
+  API.
+- Minor residual design debt remains: `fallback_status_after_failed_output_command`
+  is still `pub(crate)`. It is currently only used by event tests and controller
+  command orchestration, but it should stay out of UI and reducer code if more
+  output-event paths are added.
+
+### Top Improvement Proposals
+
+1. Build stable Live output control cards so pending state, elapsed time,
+   concise errors, backend details, and recording path have predictable layout
+   space.
+2. Preserve the output recovery helper as an event/command orchestration rule;
+   if new output events are added, audit that reducers keep applying explicit
+   payloads rather than deriving recovery state.
+3. Keep Mixer runtime evidence gated behind OBS/WebSocket, a temporary fixture,
+   and a real control path; do not repeat blocked runs in the same unavailable
+   environment.
+4. Add Settings persistence feedback for output safety toggles so failed writes
+   do not silently leave safety preferences uncertain.
+2026-06-21T15:11:59Z iteration 24 reviewer completed status=0
+2026-06-21T15:11:59Z iteration 24 memory updated
+2026-06-21T15:11:59Z iteration 24 completed validation_status=0
+2026-06-21T15:11:59Z iteration 24 checkpoint started
+2026-06-21T15:11:59Z iteration 24 checkpoint status before commit:
+M  AGENT_LOG.md
+M  ALTERNATIVES.jsonl
+M  PLAN.md
+M  SCORES.jsonl
+M  src/controller/app_controller.rs
+M  src/controller/event.rs
+M  src/controller/state.rs

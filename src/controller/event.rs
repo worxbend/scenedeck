@@ -14,15 +14,34 @@ pub struct ConnectionInfo {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutputCommandFailureRecovery {
-    pub message: String,
-    pub fallback_status: OutputStatus,
+    message: String,
+    fallback_status: OutputStatus,
 }
 
 impl OutputCommandFailureRecovery {
-    pub fn with_fallback_status(message: String, fallback_status: OutputStatus) -> Self {
+    pub fn with_failed_command_fallback_status(
+        message: String,
+        fallback_status: OutputStatus,
+    ) -> Self {
         Self {
             message,
             fallback_status: fallback_status_after_failed_output_command(&fallback_status),
+        }
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    pub fn fallback_status(&self) -> &OutputStatus {
+        &self.fallback_status
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test_unchecked(message: String, fallback_status: OutputStatus) -> Self {
+        Self {
+            message,
+            fallback_status,
         }
     }
 }
@@ -139,6 +158,35 @@ mod tests {
 
                 assert_eq!(fallback, output_status(active, state));
                 assert_non_transitioning(&fallback);
+            }
+        }
+    }
+
+    #[test]
+    fn failed_output_command_recovery_normalizes_transition_fallback_before_storing() {
+        for active in [false, true] {
+            let expected_state = if active {
+                OutputRunState::Active
+            } else {
+                OutputRunState::Inactive
+            };
+
+            for transition_state in [
+                OutputRunState::Starting,
+                OutputRunState::Stopping,
+                OutputRunState::Reconnecting,
+            ] {
+                let recovery = OutputCommandFailureRecovery::with_failed_command_fallback_status(
+                    "stream failed".to_string(),
+                    output_status(active, transition_state),
+                );
+
+                assert_eq!(recovery.message(), "stream failed");
+                assert_eq!(
+                    recovery.fallback_status(),
+                    &output_status(active, expected_state)
+                );
+                assert_non_transitioning(recovery.fallback_status());
             }
         }
     }

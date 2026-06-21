@@ -72,21 +72,19 @@ Output command errors now have per-output state fields, Live-page labels, async
 failure coverage through a test-only output-command client, and no longer emit
 generic `AppEvent::Error` for localized stream/record command failures. Failed
 stream/record commands carry an explicit event-boundary
-`OutputCommandFailureRecovery { fallback_status }`, so failed starts fall back
-to inactive and failed stops fall back to active even when one or both follow-up
+`OutputCommandFailureRecovery` payload with private fields and accessor-only
+reads, so production construction must pass through the normalizing
+`with_failed_command_fallback_status` constructor. Failed starts fall back to
+inactive and failed stops fall back to active even when one or both follow-up
 output-status refresh calls fail. The fallback calculation is covered for every
-`OutputRunState`, including `Unknown` and `Paused` passthrough behavior. Output
-status refresh logic is unified through a narrow `OutputStatusReader` helper
-shared by `ObsClient` and the output-command wrapper. Compact Live output error
-labels now show concise user-facing copy while preserving raw backend details in
-tooltips. The latest boundary cleanup removed `AppState` recovery constructors
-and removed the broad `OutputCommandFailureRecovery::from_current_status`
-constructor. Fallback-state tests now live with the event contract rather than
-the reducer tests. The remaining output gaps are layout and payload invariant
-encapsulation: the compact banner still lacks stable output-card space, and the
-recovery payload's public fields allow direct construction of a transition
-fallback even though production controller paths use the normalizing
-constructor.
+`OutputRunState`, including `Unknown` and `Paused` passthrough behavior, and
+event-level tests prove transition fallback inputs are normalized before
+storage. Output status refresh logic is unified through a narrow
+`OutputStatusReader` helper shared by `ObsClient` and the output-command
+wrapper. Compact Live output error labels now show concise user-facing copy
+while preserving raw backend details in tooltips. The remaining output gap is
+layout: the compact banner still lacks stable output-card space for pending
+state, elapsed time, recording path, concise errors, and full backend details.
 
 ## Completed Phases
 
@@ -1080,6 +1078,45 @@ Review verdict:
   event tests. That is acceptable for now, but it should remain out of UI and
   reducer code.
 
+### Output Recovery Payload Invariant Sealing
+
+Working tree, reviewed 2026-06-21:
+
+- Made `OutputCommandFailureRecovery` fields private in
+  `src/controller/event.rs`.
+- Replaced direct field reads with `message()` and `fallback_status()`
+  accessors in reducer and controller tests.
+- Renamed the normalizing constructor to
+  `with_failed_command_fallback_status`, making the command-failure fallback
+  semantics explicit at call sites.
+- Added an event-level test proving transition fallback inputs are normalized
+  before they are stored in the recovery payload.
+- Added a `#[cfg(test)]` unchecked constructor so reducer tests can still prove
+  `AppState` applies the carried event payload exactly, without exposing invalid
+  production construction.
+
+Review verdict:
+
+- Focused validation passed in review:
+  `git diff --check`,
+  `cargo test --workspace --all-features failed_output_command -- --nocapture`,
+  and `cargo test --workspace --all-features command_failure -- --nocapture`.
+- The planned invariant encapsulation is complete for production API usage:
+  direct struct literals can no longer create transition-state fallback payloads
+  outside `controller::event`, and production stream/record failure paths use
+  the normalizing constructor.
+- No functional regression was found. Localized stream/record command failures
+  still avoid generic `AppEvent::Error`, preserve OBS connection state, and
+  recover out of synthetic pending states when follow-up status refreshes fail.
+- Reducer tests intentionally use a test-only unchecked constructor for exact
+  payload-application coverage. That keeps the reducer boundary honest while
+  avoiding a production escape hatch.
+- Minor API cleanup opportunity: `fallback_status_after_failed_output_command`
+  remains `pub(crate)` because controller orchestration and event tests use it.
+  It is acceptable at current scope, but future output event work should keep
+  this helper inside controller/event orchestration rather than making it a
+  general UI or reducer utility.
+
 ## Groomed Next Steps
 
 ### P1: Make Focused Mixer Evidence Executable
@@ -1170,57 +1207,15 @@ Tests:
 - Add GTK-level or widget-level coverage only if a test harness can inspect card
   updates without excessive brittleness.
 
-### P1: Encapsulate Output Recovery Payload Invariants
-
-Problem:
-
-- `OutputCommandFailureRecovery` and
-  `fallback_status_after_failed_output_command` now live with the controller
-  event contract, which is the right broad boundary.
-- `AppState` no longer exposes reducer-side recovery constructors, and
-  `OutputCommandFailureRecovery::from_current_status` has been removed, so the
-  reducer ownership leak is fixed.
-- `AppState` now deliberately applies the exact recovery payload it receives.
-  That is the right reducer boundary, but it means event construction must
-  enforce the non-transitioning fallback invariant.
-- `OutputCommandFailureRecovery` still has public fields, so any crate or
-  downstream caller can bypass `with_fallback_status` and carry
-  `Starting`/`Stopping`/`Reconnecting` as the fallback status.
-- `fallback_status_after_failed_output_command` is `pub(crate)` for focused
-  tests and controller orchestration, but direct calls should remain limited to
-  event/command code.
-
-Plan:
-
-- Make `OutputCommandFailureRecovery` fields private and expose read accessors
-  if needed by UI/controller tests.
-- Keep one normalizing constructor for production command orchestration, with a
-  name that makes fallback semantics explicit.
-- Add an event-level test proving constructing a recovery payload with a
-  transition status normalizes it before `AppState` applies it.
-- Keep reducer tests focused on exact payload application by using a
-  test-only constructor or accessor that does not make invalid production
-  construction easy.
-- Preserve current `failed_output_command` and `command_failure` coverage.
-
-Files:
-
-- `src/controller/event.rs`
-- `src/controller/state.rs`
-
-Tests:
-
-- `cargo test --workspace --all-features failed_output_command -- --nocapture`
-- `cargo test --workspace --all-features command_failure -- --nocapture`
-
 ### P1: Build Stable Output Control Cards
 
 Problem:
 
 - Stream/record controls are still compact row controls.
-- The latest slice made visible command errors concise and preserved backend
-  details in tooltips, but there is still no stable layout area for pending
-  state, elapsed time, last error, and recording path.
+- The latest slices made visible command errors concise, preserved backend
+  details in tooltips, and sealed the recovery payload invariant, but there is
+  still no stable layout area for pending state, elapsed time, last error, and
+  recording path.
 - The current `.output-command-error { max-width: 220px; }` hint may not be a
   reliable GTK layout constraint by itself and should not be the final answer
   for output error presentation.
@@ -1249,6 +1244,41 @@ Tests:
 - Add pure helper tests for any output-card display model.
 - Add manual or screenshot evidence for long tooltip/error-detail strings when
   a GTK control path is available.
+
+### P1: Keep Output Recovery Helper Scope Narrow
+
+Problem:
+
+- `OutputCommandFailureRecovery` construction is now sealed, but
+  `fallback_status_after_failed_output_command` remains `pub(crate)` for
+  controller orchestration and event-level tests.
+- The helper is an event/command contract rule, not a general reducer or UI
+  utility. Future output work could accidentally reuse it in places that should
+  apply an explicit event payload or a fresh OBS status reading instead.
+
+Plan:
+
+- Leave the helper in `controller::event` unless a new command orchestration
+  module emerges.
+- If more output command event types are added, consider wrapping fallback
+  construction in a narrower event/command builder so only controller
+  orchestration can call the raw helper.
+- Do not call the helper from UI code or reducer methods; reducers should keep
+  applying explicit carried payloads.
+- Add an `rg`/test audit if new output recovery events are introduced.
+
+Files:
+
+- `src/controller/event.rs`
+- `src/controller/app_controller.rs`
+- `src/controller/state.rs`
+
+Tests:
+
+- Existing `failed_output_command` and `command_failure` focused tests remain
+  the guardrail.
+- Add focused tests only when new output command event construction paths are
+  added.
 
 ### P1: Settings Persistence Feedback
 
