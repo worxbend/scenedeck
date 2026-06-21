@@ -126,7 +126,7 @@ pub fn read_config_from_path(path: &Path) -> LoadedConfig {
         Ok(raw) => match serde_json::from_str::<AppConfig>(&raw) {
             Ok(mut config) => {
                 // Apply any schema migrations and persist if the version changed.
-                if migrate(&mut config) {
+                if migrate(&mut config) || config.appearance.migrate_legacy_custom_css_path() {
                     let _ = write_config_to_path(path, &config);
                 }
                 LoadedConfig {

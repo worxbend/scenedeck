@@ -8,6 +8,10 @@ This directory contains the detailed SceneDeck documentation.
   Inventory, Graph, Doctor, Settings, and troubleshooting.
 - [Configuration](configuration.md): config files, registry files, keyring
   storage, and local scene roles.
+- [Custom themes](custom-themes.md): built-in theme families, custom light/dark
+  CSS files, fallback behavior, and reset instructions.
+- [Theme CSS reference](theme-css-reference.md): stable CSS classes and safe
+  theming patterns.
 
 ## For Developers
 

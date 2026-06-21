@@ -1,17 +1,20 @@
 //! Settings page: appearance and OBS connection.
 
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use adw::{
     prelude::*, ActionRow, ComboRow, EntryRow, PasswordEntryRow, PreferencesGroup, PreferencesPage,
+    SwitchRow,
 };
 use gtk4::StringList;
 
 use crate::controller::state::ObsStatus;
-use crate::domain::appearance::ThemeMode;
+use crate::domain::appearance::{ThemeId, ThemeMode};
 use crate::storage::config::write_config;
 use crate::storage::secret;
 use crate::ui::navigation::NavigationContext;
+use crate::ui::theme::ThemeManager;
 
 use super::super::window::apply_color_scheme;
 
@@ -26,6 +29,8 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         .title("Appearance")
         .description("GNOME apps should follow the system style by default.")
         .build();
+
+    let cfg = crate::storage::config::read_config().config;
 
     let theme_options = StringList::new(&["System", "Light", "Dark"]);
     let current_index = match nav.state.borrow().theme_mode {
@@ -53,13 +58,131 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
             if let Err(err) = persist_config(&nav) {
                 tracing::warn!(%err, "failed to save theme preference");
             }
+            let report =
+                ThemeManager::apply(&crate::storage::config::read_config().config.appearance);
+            for warning in report.warnings {
+                tracing::warn!(%warning, "theme warning");
+            }
         }
     });
 
     appearance_group.add(&theme_row);
 
+    let themes = ThemeManager::built_in_themes();
+    let theme_names: Vec<&str> = themes.iter().map(|theme| theme.name).collect();
+    let selected_theme_index = themes
+        .iter()
+        .position(|theme| theme.id == cfg.appearance.selected_theme_id())
+        .unwrap_or(0) as u32;
+    let theme_model = StringList::new(&theme_names);
+    let selected_theme = themes
+        .get(selected_theme_index as usize)
+        .copied()
+        .unwrap_or(themes[0]);
+    let family_row = ComboRow::builder()
+        .title("Theme")
+        .subtitle(theme_subtitle(selected_theme))
+        .model(&theme_model)
+        .selected(selected_theme_index)
+        .build();
+
+    let theme_status_row = ActionRow::builder()
+        .title("Theme Status")
+        .subtitle("Theme loaded.")
+        .build();
+
+    family_row.connect_selected_notify({
+        let theme_status_row = theme_status_row.clone();
+        move |row| {
+            let selected = row.selected() as usize;
+            let Some(theme) = ThemeManager::built_in_themes().get(selected).copied() else {
+                return;
+            };
+
+            let mut cfg = crate::storage::config::read_config().config;
+            cfg.appearance.selected_theme = Some(ThemeId::new(theme.id));
+            match write_config(&cfg) {
+                Ok(()) => {
+                    let report = ThemeManager::apply(&cfg.appearance);
+                    row.set_subtitle(&theme_subtitle(theme));
+                    theme_status_row.set_subtitle(&theme_report_text(&report));
+                }
+                Err(err) => theme_status_row.set_subtitle(&format!("Failed to save: {err}")),
+            }
+        }
+    });
+
+    appearance_group.add(&family_row);
+
+    let custom_css_row = SwitchRow::builder()
+        .title("Custom CSS")
+        .subtitle("Load separate user CSS files for light and dark mode")
+        .active(cfg.appearance.custom_css.enabled)
+        .build();
+
+    let light_css_row = EntryRow::builder()
+        .title("Custom Light CSS Path")
+        .text(path_text(cfg.appearance.custom_css.light_path.as_ref()))
+        .show_apply_button(true)
+        .build();
+
+    let dark_css_row = EntryRow::builder()
+        .title("Custom Dark CSS Path")
+        .text(path_text(cfg.appearance.custom_css.dark_path.as_ref()))
+        .show_apply_button(true)
+        .build();
+
+    custom_css_row.connect_active_notify({
+        let theme_status_row = theme_status_row.clone();
+        move |row| {
+            let mut cfg = crate::storage::config::read_config().config;
+            cfg.appearance.custom_css.enabled = row.is_active();
+            match write_config(&cfg) {
+                Ok(()) => {
+                    let report = ThemeManager::apply(&cfg.appearance);
+                    theme_status_row.set_subtitle(&theme_report_text(&report));
+                }
+                Err(err) => theme_status_row.set_subtitle(&format!("Failed to save: {err}")),
+            }
+        }
+    });
+
+    light_css_row.connect_apply({
+        let theme_status_row = theme_status_row.clone();
+        move |row| save_custom_css_path(row, CssPathKind::Light, &theme_status_row)
+    });
+
+    dark_css_row.connect_apply({
+        let theme_status_row = theme_status_row.clone();
+        move |row| save_custom_css_path(row, CssPathKind::Dark, &theme_status_row)
+    });
+
+    let reload_css_row = ActionRow::builder()
+        .title("Reload Custom CSS")
+        .subtitle("Reapply the selected theme and the matching light/dark custom CSS file.")
+        .build();
+    let reload_btn = gtk4::Button::builder()
+        .label("Reload")
+        .valign(gtk4::Align::Center)
+        .build();
+    reload_btn.add_css_class("flat");
+    reload_btn.connect_clicked({
+        let theme_status_row = theme_status_row.clone();
+        move |_| {
+            let cfg = crate::storage::config::read_config().config;
+            let report = ThemeManager::apply(&cfg.appearance);
+            theme_status_row.set_subtitle(&theme_report_text(&report));
+        }
+    });
+    reload_css_row.add_suffix(&reload_btn);
+
+    appearance_group.add(&custom_css_row);
+    appearance_group.add(&light_css_row);
+    appearance_group.add(&dark_css_row);
+    appearance_group.add(&reload_css_row);
+    appearance_group.add(&theme_status_row);
+
     // ── OBS Connection ────────────────────────────────────────────────────────
-    let cfg = crate::storage::config::read_config().config;
 
     let obs_group = PreferencesGroup::builder()
         .title("OBS Connection")
@@ -183,4 +306,56 @@ fn persist_config(nav: &NavigationContext) -> Result<(), std::io::Error> {
     let mut cfg = crate::storage::config::read_config().config;
     cfg.appearance.mode = model.theme_mode;
     write_config(&cfg)
+}
+
+fn theme_subtitle(theme: crate::ui::theme::BuiltInTheme) -> String {
+    format!(
+        "{} Swatches: {}",
+        theme.description,
+        theme.swatches.join(", ")
+    )
+}
+
+fn theme_report_text(report: &crate::ui::theme::ThemeApplyReport) -> String {
+    if report.is_ok() {
+        format!("Loaded {} ({:?}).", report.theme_id, report.variant)
+    } else {
+        report
+            .user_message()
+            .unwrap_or_else(|| "Theme loaded with warnings.".to_string())
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CssPathKind {
+    Light,
+    Dark,
+}
+
+fn save_custom_css_path(row: &EntryRow, kind: CssPathKind, status_row: &ActionRow) {
+    let text = row.text().trim().to_string();
+    let mut cfg = crate::storage::config::read_config().config;
+    let path = if text.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(text))
+    };
+
+    match kind {
+        CssPathKind::Light => cfg.appearance.custom_css.light_path = path,
+        CssPathKind::Dark => cfg.appearance.custom_css.dark_path = path,
+    }
+
+    match write_config(&cfg) {
+        Ok(()) => {
+            let report = ThemeManager::apply(&cfg.appearance);
+            status_row.set_subtitle(&theme_report_text(&report));
+        }
+        Err(err) => status_row.set_subtitle(&format!("Failed to save: {err}")),
+    }
+}
+
+fn path_text(path: Option<&PathBuf>) -> String {
+    path.map(|path| path.display().to_string())
+        .unwrap_or_default()
 }

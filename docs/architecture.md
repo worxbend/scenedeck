@@ -111,6 +111,12 @@ lowercase string on disk but is represented as `ThemeMode` in Rust.
 `src/ui/` owns GTK widget construction, CSS loading, page layout, navigation,
 and action registration.
 
+Theme loading is handled by `src/ui/theme.rs`. `ThemeManager` applies the base
+SceneDeck CSS, the selected built-in theme family's effective light or dark
+variant, and optional user CSS for the same effective side. `ThemeMode::System`
+continues to use libadwaita's system preference; custom themes must provide
+separate light and dark CSS paths when they need side-specific styling.
+
 ## Live Data Refresh
 
 Scene inventory refresh also triggers:

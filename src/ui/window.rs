@@ -26,7 +26,8 @@ use crate::domain::appearance::ThemeMode;
 use crate::domain::obs::ObsNamedList;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::pages::live::LivePageHandle;
-use crate::ui::{load_css, register_resources};
+use crate::ui::register_resources;
+use crate::ui::theme::ThemeManager;
 
 const DEFAULT_WIDTH: i32 = 1100;
 const DEFAULT_HEIGHT: i32 = 740;
@@ -49,7 +50,11 @@ pub fn build_main_window(
     apply_color_scheme(&style_manager, state.borrow().theme_mode);
 
     register_resources();
-    load_css();
+    let theme_report =
+        ThemeManager::apply(&crate::storage::config::read_config().config.appearance);
+    for warning in &theme_report.warnings {
+        tracing::warn!(%warning, "theme warning");
+    }
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
@@ -57,6 +62,7 @@ pub fn build_main_window(
         .default_width(DEFAULT_WIDTH)
         .default_height(DEFAULT_HEIGHT)
         .build();
+    window.add_css_class("scenedeck-root");
 
     // ── Content stack ─────────────────────────────────────────────────────────
     let content_stack = Stack::builder()

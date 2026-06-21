@@ -29,6 +29,8 @@ keep local metadata about how scenes are used.
 - Store OBS host and port in the config file and the OBS password in the system
   Secret Service keyring.
 - Follow the system color scheme or force light/dark mode.
+- Choose a built-in light/dark-aware theme family and optionally load separate
+  custom CSS files for light and dark mode.
 
 ## Requirements
 
@@ -85,6 +87,8 @@ developer docs are available in:
 - [docs/codebase-overview.md](docs/codebase-overview.md)
 - [docs/obs-websocket.md](docs/obs-websocket.md)
 - [docs/configuration.md](docs/configuration.md)
+- [docs/custom-themes.md](docs/custom-themes.md)
+- [docs/theme-css-reference.md](docs/theme-css-reference.md)
 - [packaging/flatpak/README.md](packaging/flatpak/README.md)
 
 The core development rule is to keep protocol access, orchestration, domain

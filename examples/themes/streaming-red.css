@@ -1,0 +1,15 @@
+@define-color scenedeck_live #d72638;
+
+.scene-card-active {
+  outline: 2px solid @scenedeck_live;
+}
+
+.scene-card-status-live {
+  background-color: @scenedeck_live;
+  color: white;
+}
+
+.output-control button.destructive-action {
+  background-color: @scenedeck_live;
+}
+

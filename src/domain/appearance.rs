@@ -137,7 +137,11 @@ pub struct CustomCssPreference {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
-    pub path: Option<PathBuf>,
+    pub light_path: Option<PathBuf>,
+    #[serde(default)]
+    pub dark_path: Option<PathBuf>,
+    #[serde(default, rename = "path", skip_serializing)]
+    legacy_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,7 +180,44 @@ impl ThemePreference {
     }
 
     pub fn custom_css_path(&self) -> Option<&PathBuf> {
-        self.custom_css.path.as_ref()
+        self.custom_css
+            .light_path
+            .as_ref()
+            .or(self.custom_css.dark_path.as_ref())
+            .or(self.custom_css.legacy_path.as_ref())
+    }
+
+    pub fn custom_css_path_for_mode(&self, mode: ThemeMode) -> Option<&PathBuf> {
+        match mode {
+            ThemeMode::Light => self
+                .custom_css
+                .light_path
+                .as_ref()
+                .or(self.custom_css.legacy_path.as_ref()),
+            ThemeMode::Dark => self
+                .custom_css
+                .dark_path
+                .as_ref()
+                .or(self.custom_css.legacy_path.as_ref()),
+            ThemeMode::System => self.custom_css_path(),
+        }
+    }
+
+    pub fn migrate_legacy_custom_css_path(&mut self) -> bool {
+        let Some(path) = self.custom_css.legacy_path.take() else {
+            return false;
+        };
+
+        let mut changed = false;
+        if self.custom_css.light_path.is_none() {
+            self.custom_css.light_path = Some(path.clone());
+            changed = true;
+        }
+        if self.custom_css.dark_path.is_none() {
+            self.custom_css.dark_path = Some(path);
+            changed = true;
+        }
+        changed
     }
 }
 
@@ -220,5 +261,28 @@ mod tests {
         assert_eq!(preference.selected_theme_id(), "adwaita-default");
         assert_eq!(preference.ui_density, UiDensity::Comfortable);
         assert!(!preference.custom_css_enabled());
+    }
+
+    #[test]
+    fn legacy_custom_css_path_migrates_to_light_and_dark_paths() {
+        let mut preference: ThemePreference = serde_json::from_str(
+            r#"{
+              "custom_css": {
+                "enabled": true,
+                "path": "/tmp/scenedeck.css"
+              }
+            }"#,
+        )
+        .unwrap();
+
+        assert!(preference.migrate_legacy_custom_css_path());
+        assert_eq!(
+            preference.custom_css.light_path.as_deref(),
+            Some(std::path::Path::new("/tmp/scenedeck.css"))
+        );
+        assert_eq!(
+            preference.custom_css.dark_path.as_deref(),
+            Some(std::path::Path::new("/tmp/scenedeck.css"))
+        );
     }
 }

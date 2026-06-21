@@ -38,7 +38,8 @@ Example:
     "ui_density": "comfortable",
     "custom_css": {
       "enabled": false,
-      "path": null
+      "light_path": null,
+      "dark_path": null
     }
   }
 }
@@ -61,7 +62,16 @@ Fields:
 - `appearance.ui_density`: `comfortable` or `compact`. Density-specific UI
   styling is planned for the custom theme work.
 - `appearance.custom_css.enabled`: whether a user CSS file should be loaded.
-- `appearance.custom_css.path`: optional path to a user CSS file.
+- `appearance.custom_css.light_path`: optional path to a user CSS file used
+  when the effective color scheme is light.
+- `appearance.custom_css.dark_path`: optional path to a user CSS file used when
+  the effective color scheme is dark.
+
+Themes are light/dark-aware theme families. If `appearance.mode` is `system`,
+SceneDeck follows the effective libadwaita/system color preference and applies
+the selected theme family's light or dark variant. If `appearance.mode` is
+`light` or `dark`, SceneDeck forces that side of the selected theme family.
+Custom CSS follows the same rule by loading `light_path` or `dark_path`.
 
 Unknown or missing fields fall back through Serde defaults. If the app cannot
 read or parse the config, it starts with defaults and reports a startup notice.

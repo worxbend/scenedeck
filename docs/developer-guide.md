@@ -90,6 +90,15 @@ Add a symbolic icon:
 3. Add a `cargo:rerun-if-changed` line in `build.rs` if needed.
 4. Use the icon name without `.svg` in GTK.
 
+Add a built-in theme:
+
+1. Add both light and dark CSS files under `resources/themes/`.
+2. Register the theme family in `src/ui/theme.rs` with one `BuiltInTheme`
+   entry that points to both files.
+3. Keep CSS as a narrow overlay on stable SceneDeck classes.
+4. Update `docs/custom-themes.md` and `docs/theme-css-reference.md` if new
+   stable classes or semantics are introduced.
+
 ## Manual OBS Test Checklist
 
 - Connect with no password.

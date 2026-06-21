@@ -1,0 +1,15 @@
+@define-color scenedeck_focus #ffffff;
+
+.scene-card,
+.audio-card {
+  border: 2px solid @window_fg_color;
+}
+
+.scene-card-active {
+  outline: 3px solid @scenedeck_focus;
+}
+
+.audio-card-controls button {
+  border: 1px solid @window_fg_color;
+}
+

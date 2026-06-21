@@ -1,0 +1,12 @@
+@define-color scenedeck_accent #79a8ff;
+@define-color scenedeck_card #20242c;
+
+.scene-card,
+.audio-card {
+  background-color: @scenedeck_card;
+}
+
+.scene-card-active {
+  outline-color: @scenedeck_accent;
+}
+

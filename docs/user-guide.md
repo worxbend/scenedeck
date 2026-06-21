@@ -136,6 +136,15 @@ relationships that invert the intended hierarchy.
 
 Settings controls appearance and OBS connection settings.
 
+Color Scheme can follow the system preference or force light/dark mode. Themes
+are light/dark-aware families, so the selected theme applies its light or dark
+variant based on the effective color scheme.
+
+Custom CSS supports separate light and dark file paths. In System mode,
+SceneDeck loads the custom file matching the current libadwaita/system side.
+Use Reload Custom CSS after editing a file. See
+[custom-themes.md](custom-themes.md) for examples and reset instructions.
+
 OBS host and port are stored in:
 
 ```text
