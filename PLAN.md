@@ -44,9 +44,13 @@ audio update, output confirmation decision-helper work, mixer retry-intent fix,
 reducer-owned mixer input mirror containment, selected/pinned and Active-mode
 Mixer input-event reconciliation, Mixer render-source reconciliation, legacy
 Mixer mirror state removal, hidden snapshot invariant restoration, shared
-Mixer scene-specific target resolution, and refresh-target naming cleanup. The
-focused manual Mixer interaction run was recorded as blocked because a verified
-OBS WebSocket session with the required scenes and inputs was unavailable.
+Mixer scene-specific target resolution, refresh-target naming cleanup,
+fallback-aware Mixer summary copy, and output confirmation dialog appearance
+metadata. Focused manual Mixer interaction evidence is still blocked: OBS
+WebSocket was reachable and version/inventory data was recorded, but the OBS
+scene setup lacked verified differing scene-specific audio inputs and the
+non-interactive environment could not safely drive GTK ComboRows or inspect the
+Mixer UI.
 
 ## Completed Phases
 
@@ -462,22 +466,69 @@ Review verdict:
   refresh target for Selected/Pinned modes, so fallback states can read like a
   direct selection instead of making the fallback source explicit.
 
+### Mixer Fallback Copy, Output Dialog Semantics, And Evidence Gate
+
+Working tree, reviewed 2026-06-21:
+
+- Added `MixerSceneRefreshTargetReason` and `MixerSceneRefreshTarget` so
+  `AppState::mixer_scene_refresh_target_details` reports both the effective
+  scene-specific refresh target and the fallback rule that selected it.
+- Updated Mixer summary copy to distinguish direct selected/pinned targets from
+  selected-current, pinned-selected, and pinned-current fallback cases.
+- Kept `mixer_scene_refresh_target` as the dispatch-facing string helper and
+  `visible_mixer_render_source` as the display-source contract.
+- Added output confirmation dialog metadata for action copy and response
+  appearance.
+- Changed start stream/start recording confirmations to suggested appearance
+  while leaving stop stream/stop recording destructive.
+- Recorded a second blocked focused Mixer run with better environment evidence:
+  OBS WebSocket at `127.0.0.1:4455` was reachable without authentication, OBS
+  `32.1.2` and obs-websocket `5.7.3` were observed, and two scenes/two global
+  audio inputs were found.
+- Preserved the evidence gate for Mixer input-event optimization; no in-place
+  card update path was added because repeated echo/rebuild churn was not
+  observed.
+
+Review verdict:
+
+- Static validation passed in review:
+  `cargo fmt --all -- --check`, `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- Output confirmation semantics are complete for the scoped task and have pure
+  tests covering all stream/record start/stop metadata.
+- Mixer fallback copy is functionally implemented, but there are no direct
+  tests for `source_summary`/`scene_target_summary`; the target reason contract
+  is tested in `AppState`, while the final user-facing strings are not.
+- The manual run remains blocked for interaction evidence. It improved the
+  environment record but still produced no pass/fail claims for ComboRow timing,
+  Retry behavior, mute/volume echoes, stale cards, or rebuild churn.
+- The conditional optimization task was correctly skipped because the manual
+  evidence gate did not show runtime cost.
+
 ## Groomed Next Steps
 
 ### P1: Complete Focused Mixer Contract Manual Run
 
 Problem:
 
-- The focused 2026-06-21 Mixer run was recorded, but blocked before any
+- Two focused 2026-06-21 Mixer runs were recorded, but both were blocked before
   interaction cases executed.
+- The latest run verified WebSocket reachability, OBS version, obs-websocket
+  version, scenes, and global audio inputs, but did not have differing
+  scene-specific audio inputs and could not safely drive/inspect GTK controls
+  from the non-interactive session.
 - The unverified areas are exactly the ones unit tests approximate poorly:
   GTK ComboRow timing, Retry button behavior, OBS event echoes, and perceived
   rebuild churn.
 
 Plan:
 
-- Run SceneDeck against a verified OBS WebSocket setup with known credentials,
-  at least two scenes, and multiple audio inputs.
+- Run SceneDeck against a verified OBS WebSocket setup with at least two scenes,
+  global audio inputs, and at least one scene-specific audio input that differs
+  between scenes.
+- Use an interactive desktop session or an available UI automation path that
+  can select ComboRows, click Retry, and inspect visible Mixer cards.
 - Execute `Focused Mixer Refresh Contract` from
   `docs/manual-test-plan.md`.
 - Record OBS version, SceneDeck build/commit, pass/fail results, skipped cases,
@@ -518,34 +569,32 @@ Files:
 
 Tests:
 
-- Pure predicate coverage remains.
+- Existing pure predicate coverage remains.
 - Add GTK-level or widget-level coverage only if a test harness can inspect card
   updates without excessive brittleness.
 
-### P1: Clarify Mixer Fallback Summary Copy
+### P1: Add Direct Mixer Summary Copy Tests
 
 Problem:
 
-- `mixer_scene_refresh_target` correctly returns the effective refresh target,
-  including Selected fallback to current scene and Pinned fallback to selected
-  or current scene.
-- `source_summary` currently labels that effective target as `Selected scene`
-  or `Pinned scene`, which can hide whether the value is a direct user choice
-  or a fallback.
+- Fallback-aware Mixer summary copy is implemented and backed by
+  `MixerSceneRefreshTargetReason`.
+- The reducer tests prove target reasons, but the final user-facing strings in
+  `source_summary` and `scene_target_summary` are not directly tested.
+- A future copy edit could accidentally flatten fallback wording back into
+  direct `Selected scene` / `Pinned scene` labels without breaking the state
+  tests.
 
 Plan:
 
-- Add a small AppState helper or UI helper that returns both the effective
-  Mixer scene-specific refresh target and its reason: selected, pinned,
-  selected fallback, or current-scene fallback.
-- Update Mixer summary copy to distinguish direct targets from fallbacks without
-  changing dispatch behavior.
-- Add pure tests for summary/fallback metadata so copy remains aligned with
-  `mixer_scene_refresh_target`.
+- Add focused pure tests in `src/ui/pages/mixer.rs` for Active summary,
+  direct Selected, direct Pinned, Selected current-scene fallback, Pinned
+  selected-scene fallback, Pinned current-scene fallback, and no-target copy.
+- Keep the tests at helper level; avoid GTK widget tests unless the summary
+  moves into a reusable widget.
 
 Files:
 
-- `src/controller/state.rs`
 - `src/ui/pages/mixer.rs`
 
 ### P1: Surface Output Command Errors In Output UI
@@ -569,27 +618,6 @@ Files:
 - `src/controller/app_controller.rs`
 - `src/ui/pages/live.rs`
 - `src/ui/window.rs`
-
-### P1: Refine Output Confirmation Dialog Semantics
-
-Problem:
-
-- `requires_output_confirmation` is tested, but the dialog presentation is still
-  generic.
-- Start stream/start recording confirmations use destructive styling even
-  though they are not destructive in the same sense as stop actions.
-
-Plan:
-
-- Add a small helper that maps output kind/action to dialog copy and response
-  appearance.
-- Keep stop stream/stop recording as destructive.
-- Use neutral or suggested styling for start stream/start recording.
-- Add pure tests for action-to-dialog metadata.
-
-Files:
-
-- `src/ui/pages/live.rs`
 
 ### P1: Settings Persistence Feedback
 

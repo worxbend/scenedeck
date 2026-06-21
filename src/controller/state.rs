@@ -132,6 +132,21 @@ pub enum MixerVisibleRenderSource<'a> {
     MissingScene,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MixerSceneRefreshTargetReason {
+    DirectSelectedScene,
+    DirectPinnedScene,
+    SelectedModeCurrentSceneFallback,
+    PinnedModeSelectedSceneFallback,
+    PinnedModeCurrentSceneFallback,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MixerSceneRefreshTarget<'a> {
+    pub scene: &'a str,
+    pub reason: MixerSceneRefreshTargetReason,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct MixerAudioRefreshState {
     /// Scene-level freshness marker for the currently pending mixer snapshot.
@@ -313,19 +328,50 @@ impl AppState {
     /// Active mode renders live active-scene audio and must not dispatch a
     /// scene-specific Mixer refresh, so it intentionally has no target here.
     pub fn mixer_scene_refresh_target(&self) -> Option<&str> {
+        self.mixer_scene_refresh_target_details()
+            .map(|target| target.scene)
+    }
+
+    /// Scene target for OBS scene-specific Mixer refresh requests, annotated
+    /// with the selected/pinned/fallback rule that produced it.
+    pub fn mixer_scene_refresh_target_details(&self) -> Option<MixerSceneRefreshTarget<'_>> {
         match self.mixer.mode {
             MixerMode::ActiveScene => None,
-            MixerMode::SelectedScene => self
-                .mixer
-                .selected_scene
-                .as_deref()
-                .or(self.scene_inventory.current_id.as_deref()),
-            MixerMode::PinnedScene => self
-                .mixer
-                .pinned_scene
-                .as_deref()
-                .or(self.mixer.selected_scene.as_deref())
-                .or(self.scene_inventory.current_id.as_deref()),
+            MixerMode::SelectedScene => {
+                if let Some(scene) = self.mixer.selected_scene.as_deref() {
+                    Some(MixerSceneRefreshTarget {
+                        scene,
+                        reason: MixerSceneRefreshTargetReason::DirectSelectedScene,
+                    })
+                } else {
+                    self.scene_inventory.current_id.as_deref().map(|scene| {
+                        MixerSceneRefreshTarget {
+                            scene,
+                            reason: MixerSceneRefreshTargetReason::SelectedModeCurrentSceneFallback,
+                        }
+                    })
+                }
+            }
+            MixerMode::PinnedScene => {
+                if let Some(scene) = self.mixer.pinned_scene.as_deref() {
+                    Some(MixerSceneRefreshTarget {
+                        scene,
+                        reason: MixerSceneRefreshTargetReason::DirectPinnedScene,
+                    })
+                } else if let Some(scene) = self.mixer.selected_scene.as_deref() {
+                    Some(MixerSceneRefreshTarget {
+                        scene,
+                        reason: MixerSceneRefreshTargetReason::PinnedModeSelectedSceneFallback,
+                    })
+                } else {
+                    self.scene_inventory.current_id.as_deref().map(|scene| {
+                        MixerSceneRefreshTarget {
+                            scene,
+                            reason: MixerSceneRefreshTargetReason::PinnedModeCurrentSceneFallback,
+                        }
+                    })
+                }
+            }
         }
     }
 
@@ -774,6 +820,13 @@ mod tests {
         state.mixer.selected_scene = Some("Selected".to_string());
 
         assert_eq!(state.mixer_scene_refresh_target(), Some("Selected"));
+        assert_eq!(
+            state.mixer_scene_refresh_target_details(),
+            Some(MixerSceneRefreshTarget {
+                scene: "Selected",
+                reason: MixerSceneRefreshTargetReason::DirectSelectedScene,
+            })
+        );
     }
 
     #[test]
@@ -783,6 +836,13 @@ mod tests {
         state.scene_inventory.current_id = Some("Active".to_string());
 
         assert_eq!(state.mixer_scene_refresh_target(), Some("Active"));
+        assert_eq!(
+            state.mixer_scene_refresh_target_details(),
+            Some(MixerSceneRefreshTarget {
+                scene: "Active",
+                reason: MixerSceneRefreshTargetReason::SelectedModeCurrentSceneFallback,
+            })
+        );
     }
 
     #[test]
@@ -791,6 +851,7 @@ mod tests {
         state.mixer.mode = MixerMode::SelectedScene;
 
         assert_eq!(state.mixer_scene_refresh_target(), None);
+        assert_eq!(state.mixer_scene_refresh_target_details(), None);
     }
 
     #[test]
@@ -802,6 +863,13 @@ mod tests {
         state.mixer.pinned_scene = Some("Pinned".to_string());
 
         assert_eq!(state.mixer_scene_refresh_target(), Some("Pinned"));
+        assert_eq!(
+            state.mixer_scene_refresh_target_details(),
+            Some(MixerSceneRefreshTarget {
+                scene: "Pinned",
+                reason: MixerSceneRefreshTargetReason::DirectPinnedScene,
+            })
+        );
     }
 
     #[test]
@@ -812,6 +880,13 @@ mod tests {
         state.mixer.selected_scene = Some("Selected".to_string());
 
         assert_eq!(state.mixer_scene_refresh_target(), Some("Selected"));
+        assert_eq!(
+            state.mixer_scene_refresh_target_details(),
+            Some(MixerSceneRefreshTarget {
+                scene: "Selected",
+                reason: MixerSceneRefreshTargetReason::PinnedModeSelectedSceneFallback,
+            })
+        );
     }
 
     #[test]
@@ -821,6 +896,13 @@ mod tests {
         state.scene_inventory.current_id = Some("Active".to_string());
 
         assert_eq!(state.mixer_scene_refresh_target(), Some("Active"));
+        assert_eq!(
+            state.mixer_scene_refresh_target_details(),
+            Some(MixerSceneRefreshTarget {
+                scene: "Active",
+                reason: MixerSceneRefreshTargetReason::PinnedModeCurrentSceneFallback,
+            })
+        );
     }
 
     #[test]
@@ -829,6 +911,7 @@ mod tests {
         state.mixer.mode = MixerMode::PinnedScene;
 
         assert_eq!(state.mixer_scene_refresh_target(), None);
+        assert_eq!(state.mixer_scene_refresh_target_details(), None);
     }
 
     #[test]

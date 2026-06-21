@@ -860,3 +860,98 @@ M  docs/manual-test-plan.md
 A  docs/manual-test-runs.md
 M  src/controller/state.rs
 M  src/ui/pages/mixer.rs
+2026-06-21T13:05:17Z iteration 10 started remaining=13493s
+2026-06-21T13:05:17Z iteration 10 preplanner effective budgets untracked_scan_max_bytes=536870912 untracked_scan_max_count=10000 snapshot_copy_max_bytes=536870912 snapshot_copy_max_count=10000 snapshot_copy_max_file_bytes=134217728
+2026-06-21T13:05:17Z iteration 10 disposable preplanner repo created path=/tmp/agent-loop-preplanner-repo-_r6ucwf7/repo copied_entries=115
+2026-06-21T13:05:17Z iteration 10 ideator phase started count=3
+2026-06-21T13:05:17Z iteration 10 ideator phase concurrency workers=3
+2026-06-21T13:05:17Z iteration 10 ideator 1 role="the pragmatist" started
+2026-06-21T13:05:17Z iteration 10 ideator 2 role="the architect" started
+2026-06-21T13:05:17Z iteration 10 ideator 3 role="the contrarian" started
+2026-06-21T13:05:28Z iteration 10 ideator 1 role="the pragmatist" completed status=0
+2026-06-21T13:05:29Z iteration 10 ideator 2 role="the architect" completed status=0
+2026-06-21T13:05:32Z iteration 10 ideator 3 role="the contrarian" completed status=0
+2026-06-21T13:05:32Z iteration 10 ideator phase completed approaches=3
+2026-06-21T13:05:32Z iteration 10 selector started approaches=3
+2026-06-21T13:05:41Z iteration 10 selector completed status=0
+2026-06-21T13:05:41Z iteration 10 disposable preplanner repo cleanup path=/tmp/agent-loop-preplanner-repo-_r6ucwf7/repo
+2026-06-21T13:05:41Z iteration 10 selector rejected alternative role="the pragmatist" approach="Evidence-Gated UX Hardening: prioritize runtime evidence before optimizing, then address only the highest-confidence user-facing gaps with narrow, contract-preserving changes." reason="Strong overall, but as written it depends too heavily on obtaining the OBS environment and needs a clearer fallback path for productive work if manual testing remains blocked."
+2026-06-21T13:05:41Z iteration 10 selector rejected alternative role="the architect" approach="Evidence-Gated UX Hardening: prioritize runtime evidence before optimizing, then apply the smallest user-visible refinement that reduces uncertainty without disturbing the now-s..." reason="Also strong, but it is slightly too broad across runtime UX areas; the Planner needs a sharper priority order that treats the focused Mixer evidence gap as the first decision gate."
+2026-06-21T13:05:41Z iteration 10 selector rejected alternative role="the contrarian" approach="Evidence-Gated UX Debt Triage: treat the next iteration as a validation and prioritization pass, not another implementation sprint. Run or unblock the focused Mixer/manual evide..." reason="Its caution is useful, but making the iteration primarily a validation pass could stall if OBS prerequisites are still unavailable; the selected hybrid preserves that caution while allowing deterministic polish work when evidence collect..."
+2026-06-21T13:05:41Z iteration 10 selector alternatives persisted count=3
+2026-06-21T13:05:41Z iteration 10 selector structured alternatives persisted count=3
+2026-06-21T13:05:41Z iteration 10 planner started
+2026-06-21T13:06:05Z iteration 10 plan: 4 task(s) in 3 phase(s). The first phase preserves the evidence gate around Mixer runtime behavior. The second phase proceeds in parallel with deterministic UX polish that touches separate files and does not depend on OBS availability. The final Mixer optimization is intentionally conditional and sequenced after the manual evidence because the current full-page rebuild is correct and should only be replaced if runtime observations justify the extra UI bookkeeping.
+2026-06-21T13:06:05Z iteration 10 phase 1 started parallel=False tasks=1
+2026-06-21T13:08:53Z iteration 10 task t1 ('Record focused Mixer manual evidence') status=0
+2026-06-21T13:08:53Z iteration 10 phase 2 started parallel=True tasks=2
+2026-06-21T13:10:33Z iteration 10 task t3 ('Refine output confirmation dialog semantics') status=0
+2026-06-21T13:10:48Z iteration 10 task t2 ('Clarify Mixer fallback summary copy') status=0
+2026-06-21T13:10:48Z iteration 10 phase 3 started parallel=False tasks=1
+2026-06-21T13:11:31Z iteration 10 task t4 ('Optimize Mixer input-event updates only if manual evidence shows churn') status=0
+2026-06-21T13:11:31Z iteration 10 reviewer started
+
+## Review Summary - Iteration 10 - 2026-06-21
+
+### What Was Done
+
+- Added Mixer refresh-target reason metadata so Selected/Pinned summaries can
+  distinguish direct targets from selected/current-scene fallbacks.
+- Updated Mixer summary copy for direct selected, direct pinned, selected
+  current-scene fallback, pinned selected-scene fallback, and pinned
+  current-scene fallback cases.
+- Added output confirmation dialog metadata for copy and response appearance.
+- Changed start stream/start recording confirmations to suggested appearance
+  while keeping stop stream/stop recording destructive.
+- Recorded a second focused Mixer manual run entry with better OBS WebSocket
+  evidence: OBS `32.1.2`, obs-websocket `5.7.3`, reachable local WebSocket, two
+  scenes, and two global audio inputs.
+- Preserved the Mixer optimization gate; no in-place card update work was done
+  because the required mute/volume echo interaction cases were not executed.
+
+### What Was Found
+
+- Static validation passed:
+  `cargo fmt --all -- --check`, `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- The output confirmation semantics task is complete and covered by pure tests
+  for all four stream/record start/stop metadata cases.
+- The Mixer fallback summary behavior is implemented, and the underlying target
+  reason contract is tested in `AppState`.
+- Gap: `src/ui/pages/mixer.rs` has no direct tests for the final
+  `source_summary` / `scene_target_summary` strings, so user-facing fallback
+  copy can regress without failing the current state tests.
+- The manual evidence remains blocked for actual interaction behavior. The run
+  verified WebSocket access and OBS inventory, but the available OBS setup
+  lacked differing scene-specific audio inputs and the non-interactive session
+  could not safely drive or inspect GTK ComboRows.
+- The conditional Mixer input-event optimization was correctly skipped because
+  no runtime evidence showed full-page rebuild churn.
+
+### Top Improvement Proposals
+
+1. Add focused pure tests for Mixer summary strings covering Active, direct
+   Selected/Pinned, all fallback reasons, and no-target copy.
+2. Complete the focused Mixer manual run in an interactive OBS setup with
+   differing scene-specific audio inputs and record real pass/fail results.
+3. Keep Mixer full-page input-event rebuilds until manual evidence shows
+   visible churn; only then add tracked Mixer card handles for in-place updates.
+4. Surface stream/record command failures in the Live output UI separately from
+   generic OBS connection errors.
+5. Add Settings persistence feedback for output safety toggles so failed writes
+   do not silently leave users with uncertain safety preferences.
+2026-06-21T13:14:09Z iteration 10 reviewer completed status=0
+2026-06-21T13:14:09Z iteration 10 memory updated
+2026-06-21T13:14:09Z iteration 10 completed validation_status=0
+2026-06-21T13:14:09Z iteration 10 checkpoint started
+2026-06-21T13:14:09Z iteration 10 checkpoint status before commit:
+M  AGENT_LOG.md
+M  ALTERNATIVES.jsonl
+M  MEMORY.md
+M  PLAN.md
+M  SCORES.jsonl
+M  docs/manual-test-runs.md
+M  src/controller/state.rs
+M  src/ui/pages/live.rs
+M  src/ui/pages/mixer.rs

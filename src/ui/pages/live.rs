@@ -23,6 +23,26 @@ enum OutputKind {
     Recording,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum OutputAction {
+    Start,
+    Stop,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum OutputConfirmationAppearance {
+    Suggested,
+    Destructive,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct OutputConfirmationDialog {
+    heading: &'static str,
+    body: &'static str,
+    confirm_label: &'static str,
+    appearance: OutputConfirmationAppearance,
+}
+
 /// Widget handles that `ui::window` updates when `AppEvent`s arrive.
 pub(crate) struct LivePageHandle {
     pub(crate) root: Stack,
@@ -98,26 +118,9 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
                 &nav.state.borrow().output_confirmations,
             );
             if should_confirm {
-                confirm_output_action(
-                    button,
-                    if active {
-                        "Stop Stream?"
-                    } else {
-                        "Start Stream?"
-                    },
-                    if active {
-                        "OBS will stop sending the live stream."
-                    } else {
-                        "OBS will start sending the live stream."
-                    },
-                    if active {
-                        "Stop Stream"
-                    } else {
-                        "Start Stream"
-                    },
-                    command,
-                    nav.clone(),
-                );
+                let action = output_action_for_active_state(active);
+                let dialog = output_confirmation_dialog(OutputKind::Stream, action);
+                confirm_output_action(button, dialog, command, nav.clone());
             } else {
                 nav.dispatch(command);
             }
@@ -152,26 +155,9 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
                 &nav.state.borrow().output_confirmations,
             );
             if should_confirm {
-                confirm_output_action(
-                    button,
-                    if active {
-                        "Stop Recording?"
-                    } else {
-                        "Start Recording?"
-                    },
-                    if active {
-                        "OBS will stop the current recording."
-                    } else {
-                        "OBS will start a new recording."
-                    },
-                    if active {
-                        "Stop Recording"
-                    } else {
-                        "Start Recording"
-                    },
-                    command,
-                    nav.clone(),
-                );
+                let action = output_action_for_active_state(active);
+                let dialog = output_confirmation_dialog(OutputKind::Recording, action);
+                confirm_output_action(button, dialog, command, nav.clone());
             } else {
                 nav.dispatch(command);
             }
@@ -470,23 +456,69 @@ fn requires_output_confirmation(kind: OutputKind, active: bool, config: &OutputC
     }
 }
 
+fn output_action_for_active_state(active: bool) -> OutputAction {
+    if active {
+        OutputAction::Stop
+    } else {
+        OutputAction::Start
+    }
+}
+
+fn output_confirmation_dialog(kind: OutputKind, action: OutputAction) -> OutputConfirmationDialog {
+    match (kind, action) {
+        (OutputKind::Stream, OutputAction::Start) => OutputConfirmationDialog {
+            heading: "Start Stream?",
+            body: "OBS will start sending the live stream.",
+            confirm_label: "Start Stream",
+            appearance: OutputConfirmationAppearance::Suggested,
+        },
+        (OutputKind::Stream, OutputAction::Stop) => OutputConfirmationDialog {
+            heading: "Stop Stream?",
+            body: "OBS will stop sending the live stream.",
+            confirm_label: "Stop Stream",
+            appearance: OutputConfirmationAppearance::Destructive,
+        },
+        (OutputKind::Recording, OutputAction::Start) => OutputConfirmationDialog {
+            heading: "Start Recording?",
+            body: "OBS will start a new recording.",
+            confirm_label: "Start Recording",
+            appearance: OutputConfirmationAppearance::Suggested,
+        },
+        (OutputKind::Recording, OutputAction::Stop) => OutputConfirmationDialog {
+            heading: "Stop Recording?",
+            body: "OBS will stop the current recording.",
+            confirm_label: "Stop Recording",
+            appearance: OutputConfirmationAppearance::Destructive,
+        },
+    }
+}
+
+fn to_adw_response_appearance(appearance: OutputConfirmationAppearance) -> adw::ResponseAppearance {
+    match appearance {
+        OutputConfirmationAppearance::Suggested => adw::ResponseAppearance::Suggested,
+        OutputConfirmationAppearance::Destructive => adw::ResponseAppearance::Destructive,
+    }
+}
+
 fn confirm_output_action(
     parent: &impl IsA<gtk4::Widget>,
-    heading: &str,
-    body: &str,
-    confirm_label: &str,
+    metadata: OutputConfirmationDialog,
     command: AppCommand,
     nav: NavigationContext,
 ) {
     let parent_window = parent
         .root()
         .and_then(|root| root.downcast::<gtk4::Window>().ok());
-    let dialog = adw::MessageDialog::new(parent_window.as_ref(), Some(heading), Some(body));
+    let dialog = adw::MessageDialog::new(
+        parent_window.as_ref(),
+        Some(metadata.heading),
+        Some(metadata.body),
+    );
     dialog.add_response("cancel", "Cancel");
-    dialog.add_response("confirm", confirm_label);
+    dialog.add_response("confirm", metadata.confirm_label);
     dialog.set_default_response(Some("cancel"));
     dialog.set_close_response("cancel");
-    dialog.set_response_appearance("confirm", adw::ResponseAppearance::Destructive);
+    dialog.set_response_appearance("confirm", to_adw_response_appearance(metadata.appearance));
     dialog.connect_response(None, move |dialog, response| {
         if response == "confirm" {
             nav.dispatch(command.clone());
@@ -652,5 +684,63 @@ mod tests {
             false,
             &config
         ));
+    }
+
+    #[test]
+    fn stream_start_confirmation_metadata_is_suggested() {
+        assert_eq!(
+            output_confirmation_dialog(OutputKind::Stream, OutputAction::Start),
+            OutputConfirmationDialog {
+                heading: "Start Stream?",
+                body: "OBS will start sending the live stream.",
+                confirm_label: "Start Stream",
+                appearance: OutputConfirmationAppearance::Suggested,
+            }
+        );
+    }
+
+    #[test]
+    fn stream_stop_confirmation_metadata_is_destructive() {
+        assert_eq!(
+            output_confirmation_dialog(OutputKind::Stream, OutputAction::Stop),
+            OutputConfirmationDialog {
+                heading: "Stop Stream?",
+                body: "OBS will stop sending the live stream.",
+                confirm_label: "Stop Stream",
+                appearance: OutputConfirmationAppearance::Destructive,
+            }
+        );
+    }
+
+    #[test]
+    fn recording_start_confirmation_metadata_is_suggested() {
+        assert_eq!(
+            output_confirmation_dialog(OutputKind::Recording, OutputAction::Start),
+            OutputConfirmationDialog {
+                heading: "Start Recording?",
+                body: "OBS will start a new recording.",
+                confirm_label: "Start Recording",
+                appearance: OutputConfirmationAppearance::Suggested,
+            }
+        );
+    }
+
+    #[test]
+    fn recording_stop_confirmation_metadata_is_destructive() {
+        assert_eq!(
+            output_confirmation_dialog(OutputKind::Recording, OutputAction::Stop),
+            OutputConfirmationDialog {
+                heading: "Stop Recording?",
+                body: "OBS will stop the current recording.",
+                confirm_label: "Stop Recording",
+                appearance: OutputConfirmationAppearance::Destructive,
+            }
+        );
+    }
+
+    #[test]
+    fn active_state_maps_to_output_action() {
+        assert_eq!(output_action_for_active_state(false), OutputAction::Start);
+        assert_eq!(output_action_for_active_state(true), OutputAction::Stop);
     }
 }

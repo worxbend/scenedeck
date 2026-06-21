@@ -15,7 +15,10 @@ use gtk4::{
 };
 
 use crate::controller::command::AppCommand;
-use crate::controller::state::{MixerVisibleAudioStatus, MixerVisibleRenderSource};
+use crate::controller::state::{
+    MixerSceneRefreshTarget, MixerSceneRefreshTargetReason, MixerVisibleAudioStatus,
+    MixerVisibleRenderSource,
+};
 use crate::domain::audio::AudioInput;
 use crate::domain::mixer::{MixerGrouping, MixerMode, MixerSelection};
 use crate::storage::config::write_config;
@@ -70,6 +73,9 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
     let mixer = state.mixer.clone();
     let active_scene = inventory.current_id.clone();
     let target_scene = state.mixer_scene_refresh_target().map(str::to_string);
+    let target_details = state
+        .mixer_scene_refresh_target_details()
+        .map(|target| (target.scene.to_string(), target.reason));
 
     if inventory.scenes.is_empty() {
         let empty = StatusPage::builder()
@@ -114,7 +120,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
         .subtitle(source_summary(
             mixer.mode,
             active_scene.as_deref(),
-            target_scene.as_deref(),
+            target_details,
         ))
         .build();
     summary_group.add(&summary);
@@ -471,7 +477,7 @@ fn filter_inputs(inputs: &[AudioInput], search: &str) -> Vec<AudioInput> {
 fn source_summary(
     mode: MixerMode,
     active_scene: Option<&str>,
-    target_scene: Option<&str>,
+    target: Option<(String, MixerSceneRefreshTargetReason)>,
 ) -> String {
     match mode {
         MixerMode::ActiveScene => {
@@ -480,14 +486,43 @@ fn source_summary(
                 active_scene.unwrap_or("-")
             )
         }
-        MixerMode::SelectedScene => {
+        MixerMode::SelectedScene | MixerMode::PinnedScene => target
+            .map(|(scene, reason)| {
+                let target = MixerSceneRefreshTarget {
+                    scene: scene.as_str(),
+                    reason,
+                };
+                scene_target_summary(target)
+            })
+            .unwrap_or_else(|| "No scene selected".to_string()),
+    }
+}
+
+fn scene_target_summary(target: MixerSceneRefreshTarget<'_>) -> String {
+    match target.reason {
+        MixerSceneRefreshTargetReason::DirectSelectedScene => {
+            format!("Selected scene: {}", target.scene)
+        }
+        MixerSceneRefreshTargetReason::DirectPinnedScene => {
+            format!("Pinned scene: {}", target.scene)
+        }
+        MixerSceneRefreshTargetReason::SelectedModeCurrentSceneFallback => {
             format!(
-                "Selected scene: {}",
-                target_scene.unwrap_or("none selected")
+                "Selected scene not set; using active OBS scene: {}",
+                target.scene
             )
         }
-        MixerMode::PinnedScene => {
-            format!("Pinned scene: {}", target_scene.unwrap_or("none selected"))
+        MixerSceneRefreshTargetReason::PinnedModeSelectedSceneFallback => {
+            format!(
+                "Pinned scene not set; using selected scene: {}",
+                target.scene
+            )
+        }
+        MixerSceneRefreshTargetReason::PinnedModeCurrentSceneFallback => {
+            format!(
+                "Pinned and selected scenes not set; using active OBS scene: {}",
+                target.scene
+            )
         }
     }
 }
