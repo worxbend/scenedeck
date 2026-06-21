@@ -296,7 +296,7 @@ impl AppState {
         match self.mixer.mode {
             MixerMode::ActiveScene => MixerVisibleRenderSource::ActiveScene(&self.audio_inputs),
             MixerMode::SelectedScene | MixerMode::PinnedScene => {
-                let Some(scene) = self.visible_mixer_target_scene() else {
+                let Some(scene) = self.mixer_scene_refresh_target() else {
                     return MixerVisibleRenderSource::MissingScene;
                 };
 
@@ -308,7 +308,11 @@ impl AppState {
         }
     }
 
-    pub fn visible_mixer_target_scene(&self) -> Option<&str> {
+    /// Scene target for OBS scene-specific Mixer refresh requests.
+    ///
+    /// Active mode renders live active-scene audio and must not dispatch a
+    /// scene-specific Mixer refresh, so it intentionally has no target here.
+    pub fn mixer_scene_refresh_target(&self) -> Option<&str> {
         match self.mixer.mode {
             MixerMode::ActiveScene => None,
             MixerMode::SelectedScene => self
@@ -752,79 +756,79 @@ mod tests {
     }
 
     #[test]
-    fn visible_mixer_target_scene_active_mode_has_no_scene_specific_target() {
+    fn mixer_scene_refresh_target_active_mode_has_no_scene_specific_target() {
         let mut state = app_state();
         state.mixer.mode = MixerMode::ActiveScene;
         state.scene_inventory.current_id = Some("Active".to_string());
         state.mixer.selected_scene = Some("Selected".to_string());
         state.mixer.pinned_scene = Some("Pinned".to_string());
 
-        assert_eq!(state.visible_mixer_target_scene(), None);
+        assert_eq!(state.mixer_scene_refresh_target(), None);
     }
 
     #[test]
-    fn visible_mixer_target_scene_selected_mode_uses_selected_scene() {
+    fn mixer_scene_refresh_target_selected_mode_uses_selected_scene() {
         let mut state = app_state();
         state.mixer.mode = MixerMode::SelectedScene;
         state.scene_inventory.current_id = Some("Active".to_string());
         state.mixer.selected_scene = Some("Selected".to_string());
 
-        assert_eq!(state.visible_mixer_target_scene(), Some("Selected"));
+        assert_eq!(state.mixer_scene_refresh_target(), Some("Selected"));
     }
 
     #[test]
-    fn visible_mixer_target_scene_selected_mode_falls_back_to_current_scene() {
+    fn mixer_scene_refresh_target_selected_mode_falls_back_to_current_scene() {
         let mut state = app_state();
         state.mixer.mode = MixerMode::SelectedScene;
         state.scene_inventory.current_id = Some("Active".to_string());
 
-        assert_eq!(state.visible_mixer_target_scene(), Some("Active"));
+        assert_eq!(state.mixer_scene_refresh_target(), Some("Active"));
     }
 
     #[test]
-    fn visible_mixer_target_scene_selected_mode_reports_none_without_selected_or_current_scene() {
+    fn mixer_scene_refresh_target_selected_mode_reports_none_without_selected_or_current_scene() {
         let mut state = app_state();
         state.mixer.mode = MixerMode::SelectedScene;
 
-        assert_eq!(state.visible_mixer_target_scene(), None);
+        assert_eq!(state.mixer_scene_refresh_target(), None);
     }
 
     #[test]
-    fn visible_mixer_target_scene_pinned_mode_uses_pinned_scene() {
+    fn mixer_scene_refresh_target_pinned_mode_uses_pinned_scene() {
         let mut state = app_state();
         state.mixer.mode = MixerMode::PinnedScene;
         state.scene_inventory.current_id = Some("Active".to_string());
         state.mixer.selected_scene = Some("Selected".to_string());
         state.mixer.pinned_scene = Some("Pinned".to_string());
 
-        assert_eq!(state.visible_mixer_target_scene(), Some("Pinned"));
+        assert_eq!(state.mixer_scene_refresh_target(), Some("Pinned"));
     }
 
     #[test]
-    fn visible_mixer_target_scene_pinned_mode_falls_back_to_selected_scene() {
+    fn mixer_scene_refresh_target_pinned_mode_falls_back_to_selected_scene() {
         let mut state = app_state();
         state.mixer.mode = MixerMode::PinnedScene;
         state.scene_inventory.current_id = Some("Active".to_string());
         state.mixer.selected_scene = Some("Selected".to_string());
 
-        assert_eq!(state.visible_mixer_target_scene(), Some("Selected"));
+        assert_eq!(state.mixer_scene_refresh_target(), Some("Selected"));
     }
 
     #[test]
-    fn visible_mixer_target_scene_pinned_mode_falls_back_to_current_scene() {
+    fn mixer_scene_refresh_target_pinned_mode_falls_back_to_current_scene() {
         let mut state = app_state();
         state.mixer.mode = MixerMode::PinnedScene;
         state.scene_inventory.current_id = Some("Active".to_string());
 
-        assert_eq!(state.visible_mixer_target_scene(), Some("Active"));
+        assert_eq!(state.mixer_scene_refresh_target(), Some("Active"));
     }
 
     #[test]
-    fn visible_mixer_target_scene_pinned_mode_reports_none_without_any_fallback_scene() {
+    fn mixer_scene_refresh_target_pinned_mode_reports_none_without_any_fallback_scene() {
         let mut state = app_state();
         state.mixer.mode = MixerMode::PinnedScene;
 
-        assert_eq!(state.visible_mixer_target_scene(), None);
+        assert_eq!(state.mixer_scene_refresh_target(), None);
     }
 
     #[test]

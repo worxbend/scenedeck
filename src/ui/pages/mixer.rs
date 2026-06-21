@@ -69,7 +69,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
     let inventory = state.scene_inventory.clone();
     let mixer = state.mixer.clone();
     let active_scene = inventory.current_id.clone();
-    let target_scene = state.visible_mixer_target_scene().map(str::to_string);
+    let target_scene = state.mixer_scene_refresh_target().map(str::to_string);
 
     if inventory.scenes.is_empty() {
         let empty = StatusPage::builder()
@@ -500,7 +500,7 @@ fn request_visible_mixer_scene_audio(
     let target_scene = nav
         .state
         .borrow()
-        .visible_mixer_target_scene()
+        .mixer_scene_refresh_target()
         .map(str::to_string);
 
     if let Some(scene) = target_scene {

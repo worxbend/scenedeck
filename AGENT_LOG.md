@@ -771,3 +771,92 @@ M  PLAN.md
 M  SCORES.jsonl
 M  src/controller/state.rs
 M  src/ui/pages/mixer.rs
+2026-06-21T12:58:56Z iteration 9 started remaining=13875s
+2026-06-21T12:58:56Z iteration 9 preplanner effective budgets untracked_scan_max_bytes=536870912 untracked_scan_max_count=10000 snapshot_copy_max_bytes=536870912 snapshot_copy_max_count=10000 snapshot_copy_max_file_bytes=134217728
+2026-06-21T12:58:56Z iteration 9 disposable preplanner repo created path=/tmp/agent-loop-preplanner-repo-tbpu91v9/repo copied_entries=114
+2026-06-21T12:58:56Z iteration 9 ideator phase started count=3
+2026-06-21T12:58:56Z iteration 9 ideator phase concurrency workers=3
+2026-06-21T12:58:56Z iteration 9 ideator 1 role="the pragmatist" started
+2026-06-21T12:58:56Z iteration 9 ideator 2 role="the architect" started
+2026-06-21T12:58:56Z iteration 9 ideator 3 role="the contrarian" started
+2026-06-21T12:59:04Z iteration 9 ideator 2 role="the architect" completed status=0
+2026-06-21T12:59:04Z iteration 9 ideator 3 role="the contrarian" completed status=0
+2026-06-21T12:59:05Z iteration 9 ideator 1 role="the pragmatist" completed status=0
+2026-06-21T12:59:05Z iteration 9 ideator phase completed approaches=3
+2026-06-21T12:59:05Z iteration 9 selector started approaches=3
+2026-06-21T12:59:14Z iteration 9 selector completed status=0
+2026-06-21T12:59:14Z iteration 9 disposable preplanner repo cleanup path=/tmp/agent-loop-preplanner-repo-tbpu91v9/repo
+2026-06-21T12:59:14Z iteration 9 selector rejected alternative role="the architect" approach="Contract-First UX Hardening: stabilize the semantic boundaries around Mixer and output controls before adding broader UI surface area, using naming clarity, manual interaction e..." reason="Strong overall direction, but it spreads attention across Mixer and output confirmation semantics. The next planner should keep the center of gravity on the freshly changed Mixer contract before expanding to output controls."
+2026-06-21T12:59:14Z iteration 9 selector rejected alternative role="the contrarian" approach="Evidence-First Friction Audit: pause feature expansion and use the next iteration to stress the newly consolidated Mixer contracts through real interaction evidence before optim..." reason="The evidence-first instinct is useful, but selected as-is it delays fixing a known semantic naming risk that the project already identified and that could affect any further Mixer work."
+2026-06-21T12:59:14Z iteration 9 selector rejected alternative role="the pragmatist" approach="Contract-first naming cleanup: stabilize the Mixer semantic boundary before adding performance or UX work, by making refresh-target versus display-source concepts unmistakable a..." reason="The contract-first naming cleanup is the right first move, but selected alone it underweights the lack of real GTK/OBS interaction evidence and could lead to polished APIs without confirming user-visible behavior."
+2026-06-21T12:59:14Z iteration 9 selector alternatives persisted count=3
+2026-06-21T12:59:14Z iteration 9 selector structured alternatives persisted count=3
+2026-06-21T12:59:14Z iteration 9 planner started
+2026-06-21T12:59:39Z iteration 9 plan: 3 task(s) in 3 phase(s). This iteration first removes semantic ambiguity in the Mixer contract, then gathers GTK/OBS interaction evidence, then uses that evidence to choose the next narrow implementation pressure. The phases are sequential because the manual run and plan update should use the clarified refresh-target vocabulary.
+2026-06-21T12:59:39Z iteration 9 phase 1 started parallel=False tasks=1
+2026-06-21T13:01:00Z iteration 9 task t1 ('Clarify Mixer Refresh Target Naming') status=0
+2026-06-21T13:01:00Z iteration 9 phase 2 started parallel=False tasks=1
+2026-06-21T13:02:02Z iteration 9 task t2 ('Record Focused Mixer Contract Manual Run') status=0
+2026-06-21T13:02:02Z iteration 9 phase 3 started parallel=False tasks=1
+2026-06-21T13:03:19Z iteration 9 task t3 ('Update Plan From Mixer Evidence') status=0
+2026-06-21T13:03:19Z iteration 9 reviewer started
+
+## Review Summary - Iteration 9 - 2026-06-21
+
+### What Was Done
+
+- Renamed the scene-specific Mixer refresh target helper from
+  `visible_mixer_target_scene` to `mixer_scene_refresh_target`.
+- Updated Mixer render-source selection, summary/dispatch call sites, and
+  target-resolution tests to use the clearer refresh-target name.
+- Added `docs/manual-test-plan.md` coverage for a focused Mixer refresh
+  contract run.
+- Added `docs/manual-test-runs.md` with a blocked 2026-06-21 focused Mixer run
+  entry and explicit non-claims for unexecuted OBS/GTK interaction behavior.
+- Updated `PLAN.md` to mark the naming cleanup complete and carry forward
+  evidence-gated Mixer follow-up work.
+
+### What Was Found
+
+- Static validation passed:
+  `cargo fmt --all -- --check`, `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- The production code change is mechanically complete: no source references to
+  `visible_mixer_target_scene` remain, and Active mode still has no
+  scene-specific Mixer refresh target.
+- The manual run log is honest and correctly blocked; it does not claim pass or
+  fail behavior without a verified OBS WebSocket setup.
+- No functional regression was found in the changed source paths.
+- The main remaining Mixer risk is still unmeasured rebuild cost from repeated
+  OBS volume echoes.
+- Minor UX/design gap: Mixer summary copy uses the effective refresh target for
+  Selected/Pinned modes, so fallback cases can read like direct selected or
+  pinned scenes.
+
+### Top Improvement Proposals
+
+1. Complete the focused Mixer refresh contract run against a verified OBS setup
+   and record real results in `docs/manual-test-runs.md`.
+2. Observe high-frequency volume echo behavior during that run before replacing
+   full Mixer page rebuilds with in-place card updates.
+3. Add fallback-aware Mixer summary metadata/copy so direct selected/pinned
+   targets are distinguishable from selected/current-scene fallbacks.
+4. Surface stream/record command failures in the Live output UI separately
+   from generic OBS connection errors.
+5. Refine output confirmation dialog metadata so only stop stream/record
+   confirmations use destructive response styling.
+2026-06-21T13:05:17Z iteration 9 reviewer completed status=0
+2026-06-21T13:05:17Z iteration 9 memory updated
+2026-06-21T13:05:17Z iteration 9 completed validation_status=0
+2026-06-21T13:05:17Z iteration 9 checkpoint started
+2026-06-21T13:05:17Z iteration 9 checkpoint status before commit:
+M  AGENT_LOG.md
+M  ALTERNATIVES.jsonl
+M  MEMORY.md
+M  PLAN.md
+M  SCORES.jsonl
+M  docs/manual-test-plan.md
+A  docs/manual-test-runs.md
+M  src/controller/state.rs
+M  src/ui/pages/mixer.rs

@@ -130,6 +130,34 @@ Expected result: the pinned Mixer target remains unchanged, displayed audio
 stays scoped to the pinned scene, and navigation does not clear the pinned
 selection.
 
+### Focused Mixer Refresh Contract
+
+Prerequisite: OBS has at least two scenes and multiple audio inputs, with at
+least one scene-specific audio input that differs between the two scenes.
+
+1. Open Mixer and select Active mode.
+2. Change the current OBS program scene from OBS and from SceneDeck Live.
+3. Confirm Active mode follows the current scene without sending
+   scene-specific Mixer refresh requests.
+4. Switch to Selected mode with no selected scene configured.
+5. Confirm Selected mode falls back to the current scene and refreshes that
+   scene-specific target.
+6. Switch to Pinned mode and test fallback order by clearing or invalidating
+   the pinned scene, then the selected scene.
+7. Confirm Pinned mode resolves pinned scene first, then selected scene, then
+   current scene.
+8. Force a selected or pinned scene refresh failure, such as by removing the
+   target scene in OBS before refresh.
+9. Use the Mixer Retry button after the failure.
+10. In OBS Audio Mixer, toggle mute for a visible Mixer source.
+11. In OBS Audio Mixer, move volume for a visible Mixer source repeatedly.
+
+Expected result: Active mode visibly follows the current scene but does not
+dispatch scene-specific refreshes, Selected and Pinned mode fallbacks match the
+documented order, Retry dispatches after a failed selected or pinned refresh,
+OBS mute and volume echo events update the visible Mixer card, and repeated
+volume echoes do not cause noticeable full-page rebuild churn.
+
 ### Volume and Mute Sync: SceneDeck to OBS
 
 1. In Live or Mixer, change an audio source volume with the slider.

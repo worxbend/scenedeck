@@ -8,3 +8,4 @@
 [pattern] A single visible render-source helper keeps Mixer rendering decisions explicit across modes, but event predicates must consume the same helper to avoid duplicated fallback logic.
 [learning] When deleting mirror state, replacement tests should assert both the public visible contract and any intentional hidden reducer state that must survive masked loading/error views.
 [learning] Scene-specific refresh-target helpers should be named distinctly from display-source helpers; Active mode can visibly follow a scene while still having no scene-refresh target.
+[learning] Blocked manual runs are useful evidence only when they preserve non-claims; keep runtime risks open until a verified environment executes the interaction cases.

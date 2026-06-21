@@ -43,9 +43,10 @@ Status: all passed on 2026-06-21 after the mixer refresh contract, optimistic
 audio update, output confirmation decision-helper work, mixer retry-intent fix,
 reducer-owned mixer input mirror containment, selected/pinned and Active-mode
 Mixer input-event reconciliation, Mixer render-source reconciliation, legacy
-Mixer mirror state removal, hidden snapshot invariant restoration, and shared
-Mixer scene-specific target resolution. The current review reran the full
-validation rule.
+Mixer mirror state removal, hidden snapshot invariant restoration, shared
+Mixer scene-specific target resolution, and refresh-target naming cleanup. The
+focused manual Mixer interaction run was recorded as blocked because a verified
+OBS WebSocket session with the required scenes and inputs was unavailable.
 
 ## Completed Phases
 
@@ -407,7 +408,88 @@ Review verdict:
   still no GTK/manual interaction record proving the controls, retry button,
   and mode changes behave correctly against a real OBS instance.
 
+### Mixer Refresh-Target Naming And Manual Evidence
+
+Working tree, reviewed 2026-06-21:
+
+- Renamed `AppState::visible_mixer_target_scene` to
+  `AppState::mixer_scene_refresh_target` so the helper explicitly describes
+  its scene-specific refresh dispatch role.
+- Kept `visible_mixer_render_source` as the authoritative Mixer display/render
+  contract.
+- Preserved the Active-mode invariant: Active mode visibly renders live
+  active-scene audio but has no scene-specific Mixer refresh target.
+- Updated Mixer page summary text, automatic missing-state refresh, mode
+  changes, scene changes, and Retry dispatch to use
+  `mixer_scene_refresh_target`.
+- Added reducer tests proving Active has no scene-specific refresh target,
+  Selected targets selected/current-scene fallback, and Pinned targets
+  pinned/selected/current-scene fallback in that order.
+- Recorded `docs/manual-test-runs.md` entry `2026-06-21 - Focused Mixer
+  Refresh Contract` for the planned real-OBS interaction run.
+
+Manual evidence:
+
+- Status: blocked, not executed.
+- Environment record: SceneDeck `0.1.3`, git commit `73bb5bc`, Linux
+  `ubuntu` 7.0.0-22-generic x86_64, OBS process detected, OBS version not
+  recorded because `obs --version` produced no output.
+- Blocking prerequisite: the non-interactive run did not have a verified OBS
+  WebSocket session with known credentials, at least two configured scenes, and
+  multiple audio inputs.
+- No pass/fail behavior is claimed for Active no-refresh dispatch, Selected
+  fallback, Pinned fallback, Retry after failed selected/pinned refresh, OBS
+  mute echoes, OBS volume echoes, stale-card behavior, retry problems, or
+  full-page rebuild churn.
+
+Review verdict:
+
+- Static validation passed in review:
+  `cargo fmt --all -- --check`, `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- The naming ambiguity called out in the previous review is resolved:
+  `mixer_scene_refresh_target` now describes refresh dispatch semantics, and
+  Active mode cannot accidentally be treated as a scene-specific refresh
+  target by shared Mixer request paths.
+- The focused manual run did not produce runtime evidence of stale cards,
+  retry failure, or rebuild churn because it was blocked by missing OBS
+  prerequisites.
+- With retry and target behavior covered by pure tests and no runtime evidence
+  of a retry/target defect, the main groomed Mixer implementation risk remains
+  potential cost from whole-page rebuilds on high-frequency OBS input events.
+- Remaining UX risk: Mixer summary copy uses the effective scene-specific
+  refresh target for Selected/Pinned modes, so fallback states can read like a
+  direct selection instead of making the fallback source explicit.
+
 ## Groomed Next Steps
+
+### P1: Complete Focused Mixer Contract Manual Run
+
+Problem:
+
+- The focused 2026-06-21 Mixer run was recorded, but blocked before any
+  interaction cases executed.
+- The unverified areas are exactly the ones unit tests approximate poorly:
+  GTK ComboRow timing, Retry button behavior, OBS event echoes, and perceived
+  rebuild churn.
+
+Plan:
+
+- Run SceneDeck against a verified OBS WebSocket setup with known credentials,
+  at least two scenes, and multiple audio inputs.
+- Execute `Focused Mixer Refresh Contract` from
+  `docs/manual-test-plan.md`.
+- Record OBS version, SceneDeck build/commit, pass/fail results, skipped cases,
+  and any stale-card, retry, or rebuild-churn observations in
+  `docs/manual-test-runs.md`.
+- Keep blocked entries explicit if any prerequisite remains unavailable; do not
+  convert pure-test confidence into manual pass claims.
+
+Files:
+
+- `docs/manual-test-plan.md`
+- `docs/manual-test-runs.md`
 
 ### P1: Reduce Mixer Page Rebuild Cost For High-Frequency Input Events
 
@@ -417,13 +499,16 @@ Problem:
 - The current reconciliation path rebuilds the entire Mixer page when a visible
   Mixer input changes. This is simple and correct, but it recreates controls,
   groups, and scroll content rather than updating the affected card in place.
+- The focused 2026-06-21 manual run was blocked before the volume-echo case, so
+  no real OBS evidence currently proves whether this churn is noticeable.
 
 Plan:
 
-- Measure or manually exercise volume-change echo behavior with a populated
-  Mixer page.
+- Use the focused manual run to observe repeated visible volume echoes before
+  optimizing.
 - If rebuild churn is noticeable, track visible Mixer audio cards like Live
-  tracks `live.audio_cards` and update mute/volume on the matching card.
+  tracks `live.audio_cards` and update mute/volume on the matching card in
+  place.
 - Keep the full rebuild fallback for grouping/search/scene mode changes.
 
 Files:
@@ -437,64 +522,31 @@ Tests:
 - Add GTK-level or widget-level coverage only if a test harness can inspect card
   updates without excessive brittleness.
 
-### P1: Clarify Mixer Target And Display Source Naming
+### P1: Clarify Mixer Fallback Summary Copy
 
 Problem:
 
-- `AppState::visible_mixer_target_scene` is now the shared scene-specific
-  refresh target contract and intentionally returns `None` in Active mode.
-- The name can be mistaken for the scene currently displayed by the Mixer,
-  because Active mode still visibly follows `scene_inventory.current_id`.
-- Future Mixer UI work could accidentally use the helper for display copy or
-  active-scene behavior and reintroduce semantic drift.
+- `mixer_scene_refresh_target` correctly returns the effective refresh target,
+  including Selected fallback to current scene and Pinned fallback to selected
+  or current scene.
+- `source_summary` currently labels that effective target as `Selected scene`
+  or `Pinned scene`, which can hide whether the value is a direct user choice
+  or a fallback.
 
 Plan:
 
-- Rename the helper to make the refresh-only contract explicit, or add a small
-  documented display-source helper that separates Active display copy from
-  Selected/Pinned refresh targets.
-- Update tests and call sites so request dispatch cannot accidentally target
-  Active mode.
-- Keep `visible_mixer_render_source` as the authoritative render contract.
+- Add a small AppState helper or UI helper that returns both the effective
+  Mixer scene-specific refresh target and its reason: selected, pinned,
+  selected fallback, or current-scene fallback.
+- Update Mixer summary copy to distinguish direct targets from fallbacks without
+  changing dispatch behavior.
+- Add pure tests for summary/fallback metadata so copy remains aligned with
+  `mixer_scene_refresh_target`.
 
 Files:
 
 - `src/controller/state.rs`
 - `src/ui/pages/mixer.rs`
-
-Tests:
-
-- Preserve current target-resolution tests.
-- Add a test, if a display helper is introduced, proving Active display uses
-  the current scene while scene-specific refresh target remains `None`.
-
-### P1: Manual Mixer Contract Interaction Run
-
-Problem:
-
-- Mixer target resolution, retry intent, and input-event reconciliation are now
-  well covered by pure tests, but no manual or GTK-level record proves the
-  actual ComboRows, Retry button, and local rebuild behavior together.
-- The highest-risk interactions depend on GTK signal timing and OBS event
-  ordering, which unit tests approximate rather than execute end to end.
-
-Plan:
-
-- Run a focused manual test against OBS with at least two scenes and multiple
-  audio inputs.
-- Record results for Active, Selected fallback, Pinned fallback, failed refresh
-  retry, mute echo, and volume echo behavior.
-- Capture any observed rebuild churn or stale-card behavior as concrete follow
-  up work.
-
-Files:
-
-- `docs/manual-test-plan.md`
-- possible `docs/manual-test-runs.md`
-
-Tests:
-
-- Manual execution record; optional GTK coverage only if practical.
 
 ### P1: Surface Output Command Errors In Output UI
 
@@ -577,22 +629,23 @@ Files:
 - possible new `src/ui/widgets/output_card.rs`
 - `assets/scenedeck.css`
 
-### P1: Manual Test Plan Execution Record
+### P1: Full Manual Test Plan Execution Record
 
 Problem:
 
-- `docs/manual-test-plan.md` exists, but no run log captures manual execution
-  results against a real OBS instance.
+- `docs/manual-test-runs.md` now exists for focused Mixer evidence, but the
+  broader `docs/manual-test-plan.md` still has no complete pass/fail run
+  against a real OBS instance.
 
 Plan:
 
-- Add a dated manual test result section or separate release checklist entry.
+- Add a dated full-plan manual test result entry.
 - Record OBS version, SceneDeck build, skipped streaming cases, and failures.
 
 Files:
 
 - `docs/manual-test-plan.md`
-- possible `docs/manual-test-runs.md`
+- `docs/manual-test-runs.md`
 
 ### P1: UI Density
 
