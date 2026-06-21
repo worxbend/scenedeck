@@ -132,31 +132,62 @@ selection.
 
 ### Focused Mixer Refresh Contract
 
-Prerequisite: OBS has at least two scenes and multiple audio inputs, with at
-least one scene-specific audio input that differs between the two scenes.
+Prerequisites:
 
-1. Open Mixer and select Active mode.
+- OBS WebSocket is reachable from SceneDeck with the configured host, port, and
+  password state recorded.
+- OBS has at least two scenes.
+- OBS has global audio inputs available in the OBS Audio Mixer.
+- At least one scene has a scene-specific audio input, and that scene-specific
+  input differs between two test scenes.
+- The tester can interact with SceneDeck GTK ComboRows and inspect the visible
+  Mixer cards.
+- Record OBS version, obs-websocket version, SceneDeck build or commit, and any
+  skipped cases in `docs/manual-test-runs.md`.
+
+1. Open Mixer and select Active mode with the mode ComboRow.
 2. Change the current OBS program scene from OBS and from SceneDeck Live.
-3. Confirm Active mode follows the current scene without sending
-   scene-specific Mixer refresh requests.
-4. Switch to Selected mode with no selected scene configured.
-5. Confirm Selected mode falls back to the current scene and refreshes that
-   scene-specific target.
-6. Switch to Pinned mode and test fallback order by clearing or invalidating
-   the pinned scene, then the selected scene.
-7. Confirm Pinned mode resolves pinned scene first, then selected scene, then
-   current scene.
-8. Force a selected or pinned scene refresh failure, such as by removing the
-   target scene in OBS before refresh.
-9. Use the Mixer Retry button after the failure.
-10. In OBS Audio Mixer, toggle mute for a visible Mixer source.
-11. In OBS Audio Mixer, move volume for a visible Mixer source repeatedly.
+3. Record whether Active mode follows the current scene and whether any
+   unexpected selected/pinned scene refresh is observed.
+4. Switch to Selected mode with the mode ComboRow and no selected scene
+   configured.
+5. Record whether the summary copy identifies the current-scene fallback and
+   whether the visible cards match that fallback scene.
+6. Choose an explicit scene with the scene ComboRow.
+7. Record whether the selected-scene summary and visible cards follow the
+   explicit scene after additional OBS program-scene changes.
+8. Switch to Pinned mode with the mode ComboRow.
+9. Test pinned fallback order by using an explicit pinned scene, then a missing
+   pinned scene with a selected scene available, then no pinned or selected
+   scene with a current scene available.
+10. Record the summary copy and visible card target for each pinned case.
+11. Force a selected or pinned scene refresh failure with a non-destructive
+    setup, such as selecting a temporary test scene and then removing or
+    renaming only that temporary scene in OBS.
+12. Use the Mixer Retry button after the failure.
+13. Record whether Retry sends a new refresh attempt and whether the error,
+    loading, and visible-card states recover or remain failed.
+14. In OBS Audio Mixer, toggle mute for a visible Mixer source in Active,
+    Selected, and Pinned modes where the source is present.
+15. Record whether each OBS mute echo updates the visible Mixer card without a
+    manual page change.
+16. In OBS Audio Mixer, move volume for a visible Mixer source repeatedly in
+    Active, Selected, and Pinned modes where the source is present.
+17. Record whether each OBS volume echo updates the visible Mixer card without a
+    manual page change.
+18. After mute and volume echoes, check for stale visible cards by comparing the
+    SceneDeck mute state and dB readout with OBS.
+19. During repeated volume echoes, record perceived rebuild churn: visible
+    flicker, scroll position jumps, focus loss, control resets, or no noticeable
+    churn.
 
-Expected result: Active mode visibly follows the current scene but does not
-dispatch scene-specific refreshes, Selected and Pinned mode fallbacks match the
-documented order, Retry dispatches after a failed selected or pinned refresh,
-OBS mute and volume echo events update the visible Mixer card, and repeated
-volume echoes do not cause noticeable full-page rebuild churn.
+Expected result: cases are marked passed only when exercised. A complete pass
+shows ComboRow mode and scene changes selecting the expected Mixer target,
+Retry recovering or retrying after a failed selected or pinned refresh, OBS mute
+and volume echoes updating visible Mixer cards, no stale visible cards after
+echoes, and no noticeable rebuild churn under repeated volume echoes. If any
+prerequisite or interaction path is unavailable, record the case as blocked or
+skipped and make no pass/fail claim for that behavior.
 
 ### Volume and Mute Sync: SceneDeck to OBS
 

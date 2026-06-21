@@ -955,3 +955,85 @@ M  docs/manual-test-runs.md
 M  src/controller/state.rs
 M  src/ui/pages/live.rs
 M  src/ui/pages/mixer.rs
+2026-06-21T13:14:09Z iteration 11 started remaining=12961s
+2026-06-21T13:14:09Z iteration 11 preplanner effective budgets untracked_scan_max_bytes=536870912 untracked_scan_max_count=10000 snapshot_copy_max_bytes=536870912 snapshot_copy_max_count=10000 snapshot_copy_max_file_bytes=134217728
+2026-06-21T13:14:09Z iteration 11 disposable preplanner repo created path=/tmp/agent-loop-preplanner-repo-viemway9/repo copied_entries=115
+2026-06-21T13:14:09Z iteration 11 ideator phase started count=3
+2026-06-21T13:14:09Z iteration 11 ideator phase concurrency workers=3
+2026-06-21T13:14:09Z iteration 11 ideator 1 role="the pragmatist" started
+2026-06-21T13:14:09Z iteration 11 ideator 2 role="the architect" started
+2026-06-21T13:14:09Z iteration 11 ideator 3 role="the contrarian" started
+2026-06-21T13:14:19Z iteration 11 ideator 1 role="the pragmatist" completed status=0
+2026-06-21T13:14:21Z iteration 11 ideator 3 role="the contrarian" completed status=0
+2026-06-21T13:14:26Z iteration 11 ideator 2 role="the architect" completed status=0
+2026-06-21T13:14:26Z iteration 11 ideator phase completed approaches=3
+2026-06-21T13:14:26Z iteration 11 selector started approaches=3
+2026-06-21T13:14:36Z iteration 11 selector completed status=0
+2026-06-21T13:14:36Z iteration 11 disposable preplanner repo cleanup path=/tmp/agent-loop-preplanner-repo-viemway9/repo
+2026-06-21T13:14:36Z iteration 11 selector rejected alternative role="the pragmatist" approach="Evidence-Led Hardening: prioritize the smallest high-confidence code change that protects an already identified behavioral contract, while keeping runtime-only optimizations gat..." reason="Strong on choosing the smallest high-confidence test gap first, but too narrow as-is because it underemphasizes making the manual evidence gate a first-class planning constraint."
+2026-06-21T13:14:36Z iteration 11 selector rejected alternative role="the contrarian" approach="Evidence-First Freeze: pause feature expansion and treat the next iteration as a validation and contract-hardening pass, only allowing code changes that either prove current beh..." reason="Useful discipline against premature feature work, but too freeze-oriented as-is; the Planner can still make meaningful progress with focused helper-level tests without waiting for an interactive OBS environment."
+2026-06-21T13:14:36Z iteration 11 selector rejected alternative role="the architect" approach="Evidence-Gated UX Hardening: treat the next cycle as a confidence-building pass that prioritizes proving real Mixer behavior before adding more UI machinery, then use the smalle..." reason="Best overall framing for evidence-gated UX work, but as-is it risks prioritizing manual validation before the cheap summary-copy contract tests that are already known to be missing."
+2026-06-21T13:14:36Z iteration 11 selector alternatives persisted count=3
+2026-06-21T13:14:36Z iteration 11 selector structured alternatives persisted count=3
+2026-06-21T13:14:36Z iteration 11 planner started
+2026-06-21T13:14:57Z iteration 11 plan: 3 task(s) in 2 phase(s). This slice follows the evidence-gated contract-hardening approach: protect the highest-risk untested Mixer fallback copy with narrow pure tests, improve the manual evidence path without making runtime claims, and defer in-place Mixer card optimization until real OBS/GTK interaction shows rebuild churn.
+2026-06-21T13:14:57Z iteration 11 phase 1 started parallel=True tasks=2
+2026-06-21T13:16:16Z iteration 11 task t1 ('Add Mixer summary copy tests') status=0
+2026-06-21T13:16:18Z iteration 11 task t2 ('Tighten focused Mixer manual evidence instructions') status=0
+2026-06-21T13:16:18Z iteration 11 phase 2 started parallel=False tasks=1
+2026-06-21T13:16:44Z iteration 11 task t3 ('Run scoped validation') status=0
+2026-06-21T13:16:44Z iteration 11 reviewer started
+
+## Review Summary - Iteration 11 - 2026-06-21
+
+### What Was Done
+
+- Added helper-level Mixer summary copy tests for Active mode, direct Selected,
+  direct Pinned, Selected current-scene fallback, Pinned selected-scene
+  fallback, Pinned current-scene fallback, and no-target copy.
+- Tightened the focused Mixer refresh contract instructions in
+  `docs/manual-test-plan.md` so prerequisites, observations, skipped cases, and
+  non-claims are explicit.
+- Added a reusable focused Mixer run template to `docs/manual-test-runs.md` and
+  expanded existing blocked entries with skipped cases and non-claims.
+
+### What Was Found
+
+- The implementation matches the scoped tasks. The final user-facing
+  `source_summary` copy path is now directly protected by seven tests.
+- Scoped validation passed: `git diff --check` and
+  `cargo test --workspace --all-features summary -- --nocapture`.
+- No production behavior changed in this iteration; changes were tests and
+  documentation.
+- The focused manual evidence remains blocked. The new template improves future
+  evidence quality, but it does not prove GTK ComboRow behavior, Retry
+  behavior, OBS mute/volume echoes, stale-card behavior, or rebuild churn.
+- No regression was found in the touched source path. The main residual risk is
+  still runtime-only Mixer behavior that pure tests cannot exercise.
+
+### Top Improvement Proposals
+
+1. Complete the focused Mixer manual run in an interactive or automatable OBS
+   setup with differing scene-specific audio inputs, using the new template to
+   record each pass/fail/blocked case.
+2. Make the focused Mixer run reproducible by documenting a small temporary OBS
+   fixture and a safe failure/retry setup that does not mutate a real profile.
+3. Keep the full Mixer page rebuild path until manual evidence shows visible
+   volume-echo churn; only then add tracked Mixer card handles for in-place
+   updates.
+4. Surface stream/record command failures in the Live output UI separately from
+   generic OBS connection errors.
+5. Add Settings persistence feedback for output safety toggles so failed writes
+   do not silently leave safety preferences uncertain.
+2026-06-21T13:18:46Z iteration 11 reviewer completed status=0
+2026-06-21T13:18:46Z iteration 11 memory updated
+2026-06-21T13:18:46Z iteration 11 completed validation_status=0
+2026-06-21T13:18:46Z iteration 11 checkpoint started
+2026-06-21T13:18:46Z iteration 11 checkpoint status before commit:
+M  AGENT_LOG.md
+M  ALTERNATIVES.jsonl
+M  PLAN.md
+M  SCORES.jsonl
+M  docs/manual-test-plan.md
+M  docs/manual-test-runs.md
+M  src/ui/pages/mixer.rs

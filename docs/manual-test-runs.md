@@ -4,6 +4,64 @@ Record manual validation against a real OBS instance here. Use blocked entries
 when a prerequisite is unavailable; do not infer results from unit tests or
 source inspection.
 
+## Focused Mixer Refresh Contract Entry Template
+
+Use this structure for both blocked and passed focused Mixer runs. Mark a case
+as passed only when the listed interaction was actually exercised against OBS
+and SceneDeck.
+
+Status: Passed, Failed, or Blocked.
+
+Scope: focused Mixer interaction run for ComboRow mode and scene changes, Retry
+after selected/pinned refresh failures, OBS mute and volume echo reconciliation,
+stale visible cards, and perceived rebuild churn.
+
+Environment:
+
+- SceneDeck build: version and git commit.
+- Host: OS and desktop/session type.
+- Run context: interactive desktop, UI automation, or non-interactive session.
+- OBS version: exact version and how it was collected.
+- obs-websocket version: exact version and how it was collected.
+- OBS WebSocket: host, port, reachability, and authentication state without
+  recording secrets.
+- OBS inventory: scene names/count, global audio inputs, and the differing
+  scene-specific audio inputs used for the run.
+
+Prerequisite result:
+
+- OBS WebSocket reachable: pass/fail.
+- At least two scenes: pass/fail.
+- Global audio inputs available: pass/fail.
+- Differing scene-specific audio input available between two scenes:
+  pass/fail.
+- SceneDeck GTK ComboRows and visible Mixer cards inspectable: pass/fail.
+- Non-destructive selected/pinned refresh failure setup available: pass/fail or
+  skipped with reason.
+
+Executed observations:
+
+- ComboRow Active mode changes and scene following: pass/fail with notes.
+- ComboRow Selected mode fallback and explicit scene changes: pass/fail with
+  notes.
+- ComboRow Pinned mode explicit target and fallback order: pass/fail with
+  notes.
+- Retry after failed selected/pinned refresh: pass/fail with notes.
+- OBS mute echoes updating visible Mixer cards: pass/fail with notes.
+- OBS volume echoes updating visible Mixer cards: pass/fail with notes.
+- Stale visible cards after OBS echoes: pass/fail with notes.
+- Perceived rebuild churn during repeated volume echoes: pass/fail with notes.
+
+Skipped cases:
+
+- List each skipped case and the exact prerequisite or safety reason.
+
+Non-claims:
+
+- State every behavior that was not exercised. For blocked runs, explicitly say
+  no pass/fail behavior is claimed for unexecuted ComboRow changes, Retry,
+  mute echoes, volume echoes, stale cards, or rebuild churn.
+
 ## 2026-06-21 - Focused Mixer Refresh Contract (iteration 10)
 
 Status: Blocked.
@@ -60,6 +118,14 @@ Observations:
 - Stale Mixer cards after OBS echoes: blocked, not executed.
 - Visible rebuild churn under repeated volume echoes: blocked, not executed.
 
+Non-claims:
+
+- This run does not claim pass/fail behavior for ComboRow mode changes,
+  ComboRow scene changes, Retry after failed selected/pinned refresh, OBS mute
+  echoes, OBS volume echoes, stale visible cards, or perceived rebuild churn.
+- The reachable WebSocket/version/inventory checks only describe environment
+  readiness; they are not evidence that the Mixer UI interactions passed.
+
 Optimization gate:
 
 - No Mixer input-event optimization was applied from this run. The required
@@ -86,6 +152,8 @@ Environment:
 - OBS process: `pgrep -a obs` reported process `396269 obs`.
 - OBS version: not recorded; `obs --version` produced no output in this
   session.
+- obs-websocket version: not recorded because WebSocket access was not
+  verified in this run.
 
 Blocking prerequisite:
 
@@ -110,3 +178,20 @@ Observations:
   executed.
 - Volume echo frequency does or does not create noticeable full-page rebuild
   churn: blocked, not executed.
+
+Skipped cases:
+
+- ComboRow mode changes and scene changes: skipped because GTK interaction was
+  unavailable in the non-interactive session.
+- Retry after failed selected/pinned refresh: skipped because a verified
+  WebSocket session and non-destructive failure setup were unavailable.
+- OBS mute echoes, OBS volume echoes, stale visible card checks, and rebuild
+  churn observation: skipped because OBS scene/audio prerequisites were not
+  verified and the Mixer UI could not be inspected.
+
+Non-claims:
+
+- This run does not claim pass/fail behavior for ComboRow mode changes,
+  ComboRow scene changes, Selected or Pinned fallback behavior, Retry after
+  selected/pinned refresh failure, OBS mute echoes, OBS volume echoes, stale
+  visible cards, or perceived rebuild churn.

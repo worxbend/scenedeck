@@ -45,12 +45,13 @@ reducer-owned mixer input mirror containment, selected/pinned and Active-mode
 Mixer input-event reconciliation, Mixer render-source reconciliation, legacy
 Mixer mirror state removal, hidden snapshot invariant restoration, shared
 Mixer scene-specific target resolution, refresh-target naming cleanup,
-fallback-aware Mixer summary copy, and output confirmation dialog appearance
-metadata. Focused manual Mixer interaction evidence is still blocked: OBS
-WebSocket was reachable and version/inventory data was recorded, but the OBS
-scene setup lacked verified differing scene-specific audio inputs and the
-non-interactive environment could not safely drive GTK ComboRows or inspect the
-Mixer UI.
+fallback-aware Mixer summary copy, direct Mixer summary copy tests, output
+confirmation dialog appearance metadata, and tightened focused Mixer manual
+evidence instructions. Focused manual Mixer interaction evidence is still
+blocked: OBS WebSocket was reachable and version/inventory data was recorded,
+but the OBS scene setup lacked verified differing scene-specific audio inputs
+and the non-interactive environment could not safely drive GTK ComboRows or
+inspect the Mixer UI.
 
 ## Completed Phases
 
@@ -506,6 +507,42 @@ Review verdict:
 - The conditional optimization task was correctly skipped because the manual
   evidence gate did not show runtime cost.
 
+### Mixer Summary Copy Tests And Manual Evidence Instructions
+
+Working tree, reviewed 2026-06-21:
+
+- Added focused helper-level tests in `src/ui/pages/mixer.rs` for the final
+  `source_summary` strings:
+  - Active mode follows the active OBS scene.
+  - Direct Selected and direct Pinned scenes use direct labels.
+  - Selected current-scene fallback, Pinned selected-scene fallback, and Pinned
+    current-scene fallback all use explicit fallback wording.
+  - Scene-specific modes with no target report `No scene selected`.
+- Tightened `docs/manual-test-plan.md` for the focused Mixer refresh contract:
+  prerequisites now require reachable WebSocket details, global audio inputs,
+  differing scene-specific audio inputs, inspectable GTK ComboRows/cards, and
+  explicit recording of skipped cases.
+- Added a reusable focused Mixer run template to `docs/manual-test-runs.md` and
+  expanded blocked-run entries with skipped cases and non-claims.
+
+Review verdict:
+
+- Scoped validation passed: `git diff --check` and
+  `cargo test --workspace --all-features summary -- --nocapture` ran
+  successfully; the summary filter executed seven Mixer summary tests.
+- The previously identified final-copy coverage gap is closed at the helper
+  level. The tests exercise the same `AppState::mixer_scene_refresh_target_details`
+  path used by the UI before calling `source_summary`.
+- No production behavior changed in this iteration.
+- Manual evidence remains blocked. The improved checklist/template reduces the
+  chance of overstated runtime claims, but it still does not prove ComboRow
+  timing, Retry behavior, OBS mute/volume echoes, stale-card behavior, or
+  rebuild churn.
+- Remaining code-quality gap: the summary helper is still private to the Mixer
+  page and tested through an internal module, which is fine for now, but any
+  future reuse should extract a small copy/label helper rather than duplicating
+  these strings in GTK code.
+
 ## Groomed Next Steps
 
 ### P1: Complete Focused Mixer Contract Manual Run
@@ -536,6 +573,38 @@ Plan:
   `docs/manual-test-runs.md`.
 - Keep blocked entries explicit if any prerequisite remains unavailable; do not
   convert pure-test confidence into manual pass claims.
+- Use the new focused Mixer run template in `docs/manual-test-runs.md` so each
+  case has a pass/fail/blocked result and skipped cases list the exact
+  prerequisite or safety reason.
+
+Files:
+
+- `docs/manual-test-plan.md`
+- `docs/manual-test-runs.md`
+
+### P1: Make Focused Mixer Manual Run Reproducible
+
+Problem:
+
+- The last two focused Mixer runs were blocked partly by environment setup:
+  missing differing scene-specific audio inputs and no safe way to drive or
+  inspect GTK controls from the non-interactive session.
+- The current manual checklist is clearer, but it still depends on a human or
+  ad hoc environment preparation.
+
+Plan:
+
+- Document a small, non-destructive OBS fixture setup for the focused Mixer run:
+  two temporary scenes, at least one global input, and one scene-specific input
+  present in only one test scene.
+- Decide whether this belongs as a short section in
+  `docs/manual-test-plan.md` or a separate helper note referenced from the
+  focused run.
+- If a reliable UI automation path exists in the target desktop session,
+  document the exact tool and limitations for selecting ComboRows, clicking
+  Retry, and capturing visible Mixer card state.
+- Keep destructive OBS mutations out of the default run; use temporary scenes
+  or a known throwaway OBS profile for failure/retry testing.
 
 Files:
 
@@ -572,30 +641,6 @@ Tests:
 - Existing pure predicate coverage remains.
 - Add GTK-level or widget-level coverage only if a test harness can inspect card
   updates without excessive brittleness.
-
-### P1: Add Direct Mixer Summary Copy Tests
-
-Problem:
-
-- Fallback-aware Mixer summary copy is implemented and backed by
-  `MixerSceneRefreshTargetReason`.
-- The reducer tests prove target reasons, but the final user-facing strings in
-  `source_summary` and `scene_target_summary` are not directly tested.
-- A future copy edit could accidentally flatten fallback wording back into
-  direct `Selected scene` / `Pinned scene` labels without breaking the state
-  tests.
-
-Plan:
-
-- Add focused pure tests in `src/ui/pages/mixer.rs` for Active summary,
-  direct Selected, direct Pinned, Selected current-scene fallback, Pinned
-  selected-scene fallback, Pinned current-scene fallback, and no-target copy.
-- Keep the tests at helper level; avoid GTK widget tests unless the summary
-  moves into a reusable widget.
-
-Files:
-
-- `src/ui/pages/mixer.rs`
 
 ### P1: Surface Output Command Errors In Output UI
 

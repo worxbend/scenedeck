@@ -654,11 +654,39 @@ fn write_mixer_selection(selection: MixerSelection) -> Result<(), std::io::Error
 #[cfg(test)]
 mod tests {
     use super::{
-        prepare_mixer_scene_audio_request, should_request_mixer_scene_audio,
+        prepare_mixer_scene_audio_request, should_request_mixer_scene_audio, source_summary,
         MixerRefreshRequestIntent,
     };
     use crate::controller::command::AppCommand;
-    use crate::controller::state::{MixerAudioError, MixerVisibleAudioStatus};
+    use crate::controller::state::{
+        AppState, MixerAudioError, MixerSceneRefreshTargetReason, MixerVisibleAudioStatus,
+    };
+    use crate::domain::appearance::ThemeMode;
+    use crate::domain::mixer::{MixerMode, MixerSelection};
+    use crate::storage::config::OutputConfig;
+
+    fn app_state() -> AppState {
+        AppState::new(
+            ThemeMode::default(),
+            MixerSelection::default(),
+            OutputConfig::default(),
+            None,
+        )
+    }
+
+    fn summary_target_details(state: &AppState) -> Option<(String, MixerSceneRefreshTargetReason)> {
+        state
+            .mixer_scene_refresh_target_details()
+            .map(|target| (target.scene.to_string(), target.reason))
+    }
+
+    fn mixer_summary(state: &AppState) -> String {
+        source_summary(
+            state.mixer.mode,
+            state.scene_inventory.current_id.as_deref(),
+            summary_target_details(state),
+        )
+    }
 
     fn mixer_error() -> MixerAudioError {
         MixerAudioError {
@@ -676,6 +704,83 @@ mod tests {
             Some(AppCommand::RefreshMixerSceneAudio(scene)) => Some(scene),
             _ => None,
         }
+    }
+
+    #[test]
+    fn active_mode_summary_follows_active_obs_scene() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::ActiveScene;
+        state.scene_inventory.current_id = Some("Program".to_string());
+        state.mixer.selected_scene = Some("Selected".to_string());
+        state.mixer.pinned_scene = Some("Pinned".to_string());
+
+        assert_eq!(mixer_summary(&state), "Following active OBS scene: Program");
+    }
+
+    #[test]
+    fn selected_mode_summary_names_explicit_selected_scene() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::SelectedScene;
+        state.scene_inventory.current_id = Some("Program".to_string());
+        state.mixer.selected_scene = Some("Selected".to_string());
+
+        assert_eq!(mixer_summary(&state), "Selected scene: Selected");
+    }
+
+    #[test]
+    fn pinned_mode_summary_names_explicit_pinned_scene() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::PinnedScene;
+        state.scene_inventory.current_id = Some("Program".to_string());
+        state.mixer.selected_scene = Some("Selected".to_string());
+        state.mixer.pinned_scene = Some("Pinned".to_string());
+
+        assert_eq!(mixer_summary(&state), "Pinned scene: Pinned");
+    }
+
+    #[test]
+    fn selected_mode_summary_describes_current_scene_fallback() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::SelectedScene;
+        state.scene_inventory.current_id = Some("Program".to_string());
+
+        assert_eq!(
+            mixer_summary(&state),
+            "Selected scene not set; using active OBS scene: Program"
+        );
+    }
+
+    #[test]
+    fn pinned_mode_summary_describes_selected_scene_fallback() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::PinnedScene;
+        state.scene_inventory.current_id = Some("Program".to_string());
+        state.mixer.selected_scene = Some("Selected".to_string());
+
+        assert_eq!(
+            mixer_summary(&state),
+            "Pinned scene not set; using selected scene: Selected"
+        );
+    }
+
+    #[test]
+    fn pinned_mode_summary_describes_current_scene_fallback() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::PinnedScene;
+        state.scene_inventory.current_id = Some("Program".to_string());
+
+        assert_eq!(
+            mixer_summary(&state),
+            "Pinned and selected scenes not set; using active OBS scene: Program"
+        );
+    }
+
+    #[test]
+    fn scene_specific_mode_summary_reports_no_scene_without_target_or_fallback() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::SelectedScene;
+
+        assert_eq!(mixer_summary(&state), "No scene selected");
     }
 
     #[test]
