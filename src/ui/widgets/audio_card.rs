@@ -1,11 +1,14 @@
 //! Audio input card for the Live page mixer.
 
+use std::{cell::RefCell, rc::Rc};
+
 use adw::prelude::*;
+use glib::{source::SourceId, timeout_add_local_once};
 use gtk4::{Align, Box as GtkBox, Button, Label, Orientation, Scale, ToggleButton};
 
 use crate::controller::command::AppCommand;
 use crate::domain::audio::AudioInput;
-use crate::services::audio_service::AudioService;
+use crate::services::audio_service::{AudioService, VolumeChangeDebouncer, VOLUME_SLIDER_DEBOUNCE};
 use crate::ui::navigation::NavigationContext;
 
 // ── Public handle ─────────────────────────────────────────────────────────────
@@ -16,6 +19,8 @@ pub(crate) struct AudioCardHandle {
     mute_btn: ToggleButton,
     vol_scale: Scale,
     db_label: Label,
+    volume_debouncer: Rc<RefCell<VolumeChangeDebouncer>>,
+    volume_debounce_source: Rc<RefCell<Option<SourceId>>>,
     mute_signal_id: glib::SignalHandlerId,
     vol_signal_id: glib::SignalHandlerId,
 }
@@ -31,6 +36,10 @@ impl AudioCardHandle {
 
     /// Update volume from an OBS event without triggering the dispatch signal.
     pub(crate) fn update_volume(&self, mul: f64, db: f64) {
+        if let Some(source_id) = self.volume_debounce_source.borrow_mut().take() {
+            source_id.remove();
+        }
+        self.volume_debouncer.borrow_mut().reset_to_observed(mul);
         self.vol_scale.block_signal(&self.vol_signal_id);
         self.vol_scale.set_value(mul);
         self.vol_scale.unblock_signal(&self.vol_signal_id);
@@ -95,14 +104,31 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
     vol_scale.add_mark(1.0, gtk4::PositionType::Right, None);
     vol_scale.set_tooltip_text(Some("Volume fader"));
 
+    // ── dB label ──────────────────────────────────────────────────────────────
+    let db_label = Label::builder()
+        .label(AudioService::format_db(input.volume_db))
+        .width_chars(8)
+        .xalign(0.5)
+        .halign(Align::Center)
+        .build();
+    db_label.add_css_class("numeric");
+    db_label.add_css_class("dim-label");
+
+    let volume_debouncer = Rc::new(RefCell::new(VolumeChangeDebouncer::new(input.volume_mul)));
+    let volume_debounce_source = Rc::new(RefCell::new(None));
+
     let vol_signal_id = {
         let nav = nav.clone();
         let input_id = input_id.clone();
+        let db_label = db_label.clone();
+        let debouncer = volume_debouncer.clone();
+        let debounce_source = volume_debounce_source.clone();
         vol_scale.connect_value_changed(move |scale| {
-            nav.dispatch(AppCommand::SetInputVolume {
-                input: input_id.clone(),
-                volume_mul: scale.value(),
-            });
+            let volume_mul = scale.value();
+            db_label.set_text(&AudioService::format_db(AudioService::volume_mul_to_db(
+                volume_mul,
+            )));
+            queue_slider_volume(&nav, &input_id, volume_mul, &debouncer, &debounce_source);
         })
     };
 
@@ -134,16 +160,6 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
     controls.append(&mute_btn);
     controls.append(&lock_btn);
 
-    // ── dB label ──────────────────────────────────────────────────────────────
-    let db_label = Label::builder()
-        .label(AudioService::format_db(input.volume_db))
-        .width_chars(8)
-        .xalign(0.5)
-        .halign(Align::Center)
-        .build();
-    db_label.add_css_class("numeric");
-    db_label.add_css_class("dim-label");
-
     let slider_col = GtkBox::builder()
         .orientation(Orientation::Vertical)
         .spacing(2)
@@ -154,7 +170,13 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
     slider_col.append(&vol_scale);
     slider_col.append(&db_label);
 
-    let fine_controls = build_fine_controls(input, &vol_scale, nav.clone());
+    let fine_controls = build_fine_controls(
+        input,
+        &vol_scale,
+        nav.clone(),
+        volume_debouncer.clone(),
+        volume_debounce_source.clone(),
+    );
 
     let body = GtkBox::builder()
         .orientation(Orientation::Horizontal)
@@ -187,6 +209,8 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         mute_btn,
         vol_scale,
         db_label,
+        volume_debouncer,
+        volume_debounce_source,
         mute_signal_id,
         vol_signal_id,
     }
@@ -217,7 +241,13 @@ fn apply_lock_style(btn: &ToggleButton, locked: bool) {
     }
 }
 
-fn build_fine_controls(input: &AudioInput, vol_scale: &Scale, nav: NavigationContext) -> GtkBox {
+fn build_fine_controls(
+    input: &AudioInput,
+    vol_scale: &Scale,
+    nav: NavigationContext,
+    volume_debouncer: Rc<RefCell<VolumeChangeDebouncer>>,
+    volume_debounce_source: Rc<RefCell<Option<SourceId>>>,
+) -> GtkBox {
     let controls = GtkBox::builder()
         .orientation(Orientation::Vertical)
         .spacing(4)
@@ -242,17 +272,27 @@ fn build_fine_controls(input: &AudioInput, vol_scale: &Scale, nav: NavigationCon
         let nav = nav.clone();
         let input_id = input.id.clone();
         let vol_scale = vol_scale.clone();
-        move |_| dispatch_db_adjust(&nav, &input_id, vol_scale.value(), 1.0)
+        let debouncer = volume_debouncer.clone();
+        let debounce_source = volume_debounce_source.clone();
+        move |_| {
+            dispatch_db_adjust(
+                &nav,
+                &input_id,
+                vol_scale.value(),
+                1.0,
+                &debouncer,
+                &debounce_source,
+            )
+        }
     });
 
     reset.connect_clicked({
         let nav = nav.clone();
         let input_id = input.id.clone();
+        let debouncer = volume_debouncer.clone();
+        let debounce_source = volume_debounce_source.clone();
         move |_| {
-            nav.dispatch(AppCommand::SetInputVolume {
-                input: input_id.clone(),
-                volume_mul: 1.0,
-            });
+            dispatch_volume_now(&nav, &input_id, 1.0, &debouncer, &debounce_source);
         }
     });
 
@@ -260,7 +300,18 @@ fn build_fine_controls(input: &AudioInput, vol_scale: &Scale, nav: NavigationCon
         let nav = nav.clone();
         let input_id = input.id.clone();
         let vol_scale = vol_scale.clone();
-        move |_| dispatch_db_adjust(&nav, &input_id, vol_scale.value(), -1.0)
+        let debouncer = volume_debouncer.clone();
+        let debounce_source = volume_debounce_source.clone();
+        move |_| {
+            dispatch_db_adjust(
+                &nav,
+                &input_id,
+                vol_scale.value(),
+                -1.0,
+                &debouncer,
+                &debounce_source,
+            )
+        }
     });
 
     controls.append(&plus);
@@ -269,11 +320,67 @@ fn build_fine_controls(input: &AudioInput, vol_scale: &Scale, nav: NavigationCon
     controls
 }
 
-fn dispatch_db_adjust(nav: &NavigationContext, input_id: &str, current_mul: f64, delta_db: f64) {
+fn dispatch_db_adjust(
+    nav: &NavigationContext,
+    input_id: &str,
+    current_mul: f64,
+    delta_db: f64,
+    debouncer: &Rc<RefCell<VolumeChangeDebouncer>>,
+    debounce_source: &Rc<RefCell<Option<SourceId>>>,
+) {
     let current_db = AudioService::volume_mul_to_db(current_mul);
     let next_db = AudioService::adjust_volume_db(current_db, delta_db);
+    dispatch_volume_now(
+        nav,
+        input_id,
+        AudioService::volume_db_to_mul(next_db),
+        debouncer,
+        debounce_source,
+    );
+}
+
+fn queue_slider_volume(
+    nav: &NavigationContext,
+    input_id: &str,
+    volume_mul: f64,
+    debouncer: &Rc<RefCell<VolumeChangeDebouncer>>,
+    debounce_source: &Rc<RefCell<Option<SourceId>>>,
+) {
+    debouncer.borrow_mut().queue(volume_mul);
+    if let Some(source_id) = debounce_source.borrow_mut().take() {
+        source_id.remove();
+    }
+
+    let nav = nav.clone();
+    let input_id = input_id.to_string();
+    let debouncer = debouncer.clone();
+    let debounce_source = debounce_source.clone();
+    let debounce_source_for_timeout = debounce_source.clone();
+    let source_id = timeout_add_local_once(VOLUME_SLIDER_DEBOUNCE, move || {
+        debounce_source_for_timeout.borrow_mut().take();
+        if let Some(volume_mul) = debouncer.borrow_mut().take_due() {
+            nav.dispatch(AppCommand::SetInputVolume {
+                input: input_id,
+                volume_mul,
+            });
+        }
+    });
+    *debounce_source.borrow_mut() = Some(source_id);
+}
+
+fn dispatch_volume_now(
+    nav: &NavigationContext,
+    input_id: &str,
+    volume_mul: f64,
+    debouncer: &Rc<RefCell<VolumeChangeDebouncer>>,
+    debounce_source: &Rc<RefCell<Option<SourceId>>>,
+) {
+    if let Some(source_id) = debounce_source.borrow_mut().take() {
+        source_id.remove();
+    }
+    debouncer.borrow_mut().mark_sent(volume_mul);
     nav.dispatch(AppCommand::SetInputVolume {
         input: input_id.to_string(),
-        volume_mul: AudioService::volume_db_to_mul(next_db),
+        volume_mul,
     });
 }

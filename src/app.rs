@@ -68,9 +68,15 @@ fn build_ui(
     let loaded = read_config();
     let theme_mode = loaded.config.appearance.mode;
     let mixer = loaded.config.mixer;
+    let output_confirmations = loaded.config.outputs;
     let notice = loaded.startup_notice.map(|n| n.user_message());
 
-    let state = Rc::new(RefCell::new(AppState::new(theme_mode, mixer, notice)));
+    let state = Rc::new(RefCell::new(AppState::new(
+        theme_mode,
+        mixer,
+        output_confirmations,
+        notice,
+    )));
 
     let _window = ui::build_main_window(app, state, controller, event_rx);
 }

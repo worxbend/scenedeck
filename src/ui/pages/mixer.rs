@@ -107,15 +107,72 @@ fn populate(root: &GtkBox, nav: &NavigationContext) {
 
     root.append(&page);
 
-    let source_inputs = if mixer.mode == MixerMode::ActiveScene {
-        state.audio_inputs
-    } else if state.mixer_audio_scene.as_deref() == target_scene.as_deref() {
-        state.mixer_audio_inputs
-    } else {
-        Vec::new()
+    let source_inputs = match mixer.mode {
+        MixerMode::ActiveScene => Some(state.audio_inputs),
+        MixerMode::SelectedScene | MixerMode::PinnedScene => {
+            let Some(scene) = target_scene.as_deref() else {
+                append_mixer_status(
+                    root,
+                    "audio-volume-muted-symbolic",
+                    "No Scene Selected",
+                    "Choose a scene to load its mixer audio.",
+                );
+                return;
+            };
+
+            if state.mixer_audio_loading_scene.as_deref() == Some(scene) {
+                append_mixer_status(
+                    root,
+                    "view-refresh-symbolic",
+                    "Loading Mixer Audio",
+                    &format!("Loading audio sources for {scene}."),
+                );
+                return;
+            }
+
+            if let Some(error) = state
+                .mixer_audio_error
+                .as_ref()
+                .filter(|error| error.scene == scene)
+            {
+                append_mixer_status(
+                    root,
+                    "dialog-warning-symbolic",
+                    "Mixer Audio Unavailable",
+                    &format!(
+                        "Could not load audio sources for {scene}: {}",
+                        error.message
+                    ),
+                );
+                return;
+            }
+
+            if state.mixer_audio_scene.as_deref() == Some(scene) {
+                Some(state.mixer_audio_inputs)
+            } else {
+                mark_mixer_scene_loading(nav, scene);
+                nav.dispatch(AppCommand::RefreshMixerSceneAudio(scene.to_string()));
+                append_mixer_status(
+                    root,
+                    "view-refresh-symbolic",
+                    "Loading Mixer Audio",
+                    &format!("Loading audio sources for {scene}."),
+                );
+                return;
+            }
+        }
     };
+    let source_inputs = source_inputs.unwrap_or_default();
     let inputs = filter_inputs(&source_inputs, &mixer.search);
-    append_mixer_inputs(root, nav, &inputs, mixer.grouping);
+    append_mixer_inputs(
+        root,
+        nav,
+        &inputs,
+        source_inputs.len(),
+        mixer.grouping,
+        &mixer.search,
+        target_scene.as_deref(),
+    );
 }
 
 fn build_mode_row(nav: &NavigationContext, selected: MixerMode) -> ComboRow {
@@ -248,17 +305,30 @@ fn append_mixer_inputs(
     root: &GtkBox,
     nav: &NavigationContext,
     inputs: &[AudioInput],
+    source_count: usize,
     grouping: MixerGrouping,
+    search: &str,
+    target_scene: Option<&str>,
 ) {
     if inputs.is_empty() {
-        let empty = StatusPage::builder()
-            .icon_name("audio-volume-muted-symbolic")
-            .title("No Matching Audio Sources")
-            .description(
-                "Adjust the search filter, choose a scene, or refresh after connecting to OBS.",
-            )
-            .build();
-        root.append(&empty);
+        if source_count == 0 && search.trim().is_empty() {
+            append_mixer_status(
+                root,
+                "audio-volume-muted-symbolic",
+                "No Audio Sources",
+                &format!(
+                    "{} has no matching configured OBS audio sources.",
+                    target_scene.unwrap_or("The current scene")
+                ),
+            );
+        } else {
+            append_mixer_status(
+                root,
+                "edit-find-symbolic",
+                "No Matching Audio Sources",
+                "Adjust the search filter to show available audio sources.",
+            );
+        }
         return;
     }
 
@@ -293,6 +363,15 @@ fn append_mixer_inputs(
             }
         }
     }
+}
+
+fn append_mixer_status(root: &GtkBox, icon_name: &str, title: &str, description: &str) {
+    let status = StatusPage::builder()
+        .icon_name(icon_name)
+        .title(title)
+        .description(description)
+        .build();
+    root.append(&status);
 }
 
 fn append_group(root: &GtkBox, nav: &NavigationContext, title: &str, inputs: &[AudioInput]) {
@@ -393,6 +472,19 @@ fn mixer_target_scene(
         MixerMode::PinnedScene => pinned_scene.or(selected_scene).or(active_scene),
     }
     .map(str::to_string)
+}
+
+fn mark_mixer_scene_loading(nav: &NavigationContext, scene: &str) {
+    let mut state = nav.state.borrow_mut();
+    state.mixer_audio_loading_scene = Some(scene.to_string());
+    if state
+        .mixer_audio_error
+        .as_ref()
+        .map(|error| error.scene.as_str())
+        == Some(scene)
+    {
+        state.mixer_audio_error = None;
+    }
 }
 
 fn mode_to_index(mode: MixerMode) -> u32 {

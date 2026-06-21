@@ -78,13 +78,45 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
     stream_btn.set_tooltip_text(Some("Start or stop streaming"));
     stream_btn.connect_clicked({
         let nav = nav.clone();
-        move |_| {
+        move |button| {
             let active = nav.state.borrow().stream_status.active;
-            nav.dispatch(if active {
+            let command = if active {
                 AppCommand::StopStreaming
             } else {
                 AppCommand::StartStreaming
-            });
+            };
+            let should_confirm = {
+                let state = nav.state.borrow();
+                if active {
+                    state.output_confirmations.confirm_stop_stream
+                } else {
+                    state.output_confirmations.confirm_start_stream
+                }
+            };
+            if should_confirm {
+                confirm_output_action(
+                    button,
+                    if active {
+                        "Stop Stream?"
+                    } else {
+                        "Start Stream?"
+                    },
+                    if active {
+                        "OBS will stop sending the live stream."
+                    } else {
+                        "OBS will start sending the live stream."
+                    },
+                    if active {
+                        "Stop Stream"
+                    } else {
+                        "Start Stream"
+                    },
+                    command,
+                    nav.clone(),
+                );
+            } else {
+                nav.dispatch(command);
+            }
         }
     });
 
@@ -103,13 +135,45 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
     record_btn.set_tooltip_text(Some("Start or stop recording"));
     record_btn.connect_clicked({
         let nav = nav.clone();
-        move |_| {
+        move |button| {
             let active = nav.state.borrow().record_status.active;
-            nav.dispatch(if active {
+            let command = if active {
                 AppCommand::StopRecording
             } else {
                 AppCommand::StartRecording
-            });
+            };
+            let should_confirm = {
+                let state = nav.state.borrow();
+                if active {
+                    state.output_confirmations.confirm_stop_recording
+                } else {
+                    state.output_confirmations.confirm_start_recording
+                }
+            };
+            if should_confirm {
+                confirm_output_action(
+                    button,
+                    if active {
+                        "Stop Recording?"
+                    } else {
+                        "Start Recording?"
+                    },
+                    if active {
+                        "OBS will stop the current recording."
+                    } else {
+                        "OBS will start a new recording."
+                    },
+                    if active {
+                        "Stop Recording"
+                    } else {
+                        "Start Recording"
+                    },
+                    command,
+                    nav.clone(),
+                );
+            } else {
+                nav.dispatch(command);
+            }
         }
     });
 
@@ -394,6 +458,32 @@ fn output_label(kind: &str, status: &OutputStatus, elapsed: Option<&str>) -> Str
         Some(elapsed) if status.active => format!("{kind}: {} · {elapsed}", status.state.label()),
         _ => format!("{kind}: {}", status.state.label()),
     }
+}
+
+fn confirm_output_action(
+    parent: &impl IsA<gtk4::Widget>,
+    heading: &str,
+    body: &str,
+    confirm_label: &str,
+    command: AppCommand,
+    nav: NavigationContext,
+) {
+    let parent_window = parent
+        .root()
+        .and_then(|root| root.downcast::<gtk4::Window>().ok());
+    let dialog = adw::MessageDialog::new(parent_window.as_ref(), Some(heading), Some(body));
+    dialog.add_response("cancel", "Cancel");
+    dialog.add_response("confirm", confirm_label);
+    dialog.set_default_response(Some("cancel"));
+    dialog.set_close_response("cancel");
+    dialog.set_response_appearance("confirm", adw::ResponseAppearance::Destructive);
+    dialog.connect_response(None, move |dialog, response| {
+        if response == "confirm" {
+            nav.dispatch(command.clone());
+        }
+        dialog.close();
+    });
+    dialog.present();
 }
 
 fn insert_scene_placeholder(scenes_box: &FlowBox, message: &str) {

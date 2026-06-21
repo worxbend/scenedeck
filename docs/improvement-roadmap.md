@@ -74,12 +74,18 @@ Current improvements:
   active.
 - The last OBS recording path is retained in UI state and can be copied from
   the Live page.
+- Output confirmation preferences are implemented and exposed in Settings:
+  start stream and start recording confirmations default off, while stop stream
+  and stop recording confirmations default on.
 
 Known gaps:
 
-- There are no confirmation preferences for critical start/stop actions.
 - Last error is surfaced through generic app errors/toasts rather than an output
   control card state.
+
+Output confirmation phase status: completed in the working tree. Full
+validation should pass before committing as
+`feat: add output confirmation preferences`.
 
 Primary files for stream/record improvements:
 

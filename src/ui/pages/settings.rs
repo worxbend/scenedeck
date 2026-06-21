@@ -11,7 +11,7 @@ use gtk4::StringList;
 
 use crate::controller::state::ObsStatus;
 use crate::domain::appearance::{ThemeId, ThemeMode};
-use crate::storage::config::write_config;
+use crate::storage::config::{write_config, OutputConfig};
 use crate::storage::secret;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::theme::ThemeManager;
@@ -269,11 +269,57 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     obs_group.add(&port_row);
     obs_group.add(&password_row);
 
+    // ── Output safety ────────────────────────────────────────────────────────
+    let output_group = PreferencesGroup::builder()
+        .title("Output Safety")
+        .description("Optional confirmations for critical stream and recording actions.")
+        .build();
+
+    let confirm_start_stream = output_switch_row(
+        "Confirm Start Stream",
+        "Ask before starting the live stream.",
+        cfg.outputs.confirm_start_stream,
+    );
+    let confirm_stop_stream = output_switch_row(
+        "Confirm Stop Stream",
+        "Ask before stopping the live stream.",
+        cfg.outputs.confirm_stop_stream,
+    );
+    let confirm_start_recording = output_switch_row(
+        "Confirm Start Recording",
+        "Ask before starting a recording.",
+        cfg.outputs.confirm_start_recording,
+    );
+    let confirm_stop_recording = output_switch_row(
+        "Confirm Stop Recording",
+        "Ask before stopping a recording.",
+        cfg.outputs.confirm_stop_recording,
+    );
+
+    connect_output_switch(&confirm_start_stream, &nav, |outputs, active| {
+        outputs.confirm_start_stream = active;
+    });
+    connect_output_switch(&confirm_stop_stream, &nav, |outputs, active| {
+        outputs.confirm_stop_stream = active;
+    });
+    connect_output_switch(&confirm_start_recording, &nav, |outputs, active| {
+        outputs.confirm_start_recording = active;
+    });
+    connect_output_switch(&confirm_stop_recording, &nav, |outputs, active| {
+        outputs.confirm_stop_recording = active;
+    });
+
+    output_group.add(&confirm_start_stream);
+    output_group.add(&confirm_stop_stream);
+    output_group.add(&confirm_start_recording);
+    output_group.add(&confirm_stop_recording);
+
     let status_group = PreferencesGroup::new();
     status_group.add(&status_row);
 
     page.add(&appearance_group);
     page.add(&obs_group);
+    page.add(&output_group);
     page.add(&status_group);
 
     // Closure that refreshes the status row when navigating back to this page
@@ -306,6 +352,31 @@ fn persist_config(nav: &NavigationContext) -> Result<(), std::io::Error> {
     let mut cfg = crate::storage::config::read_config().config;
     cfg.appearance.mode = model.theme_mode;
     write_config(&cfg)
+}
+
+fn output_switch_row(title: &str, subtitle: &str, active: bool) -> SwitchRow {
+    SwitchRow::builder()
+        .title(title)
+        .subtitle(subtitle)
+        .active(active)
+        .build()
+}
+
+fn connect_output_switch<F>(row: &SwitchRow, nav: &NavigationContext, update: F)
+where
+    F: Fn(&mut OutputConfig, bool) + 'static,
+{
+    row.connect_active_notify({
+        let nav = nav.clone();
+        move |row| {
+            let mut cfg = crate::storage::config::read_config().config;
+            update(&mut cfg.outputs, row.is_active());
+            nav.state.borrow_mut().output_confirmations = cfg.outputs.clone();
+            if let Err(err) = write_config(&cfg) {
+                tracing::warn!(%err, "failed to save output confirmation preference");
+            }
+        }
+    });
 }
 
 fn theme_subtitle(theme: crate::ui::theme::BuiltInTheme) -> String {

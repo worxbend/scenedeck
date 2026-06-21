@@ -25,6 +25,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub live: LiveConfig,
     #[serde(default)]
+    pub outputs: OutputConfig,
+    #[serde(default)]
     pub appearance: ThemePreference,
     #[serde(default)]
     pub mixer: MixerSelection,
@@ -38,6 +40,7 @@ impl Default for AppConfig {
             version: default_version(),
             obs: ObsConfig::default(),
             live: LiveConfig::default(),
+            outputs: OutputConfig::default(),
             appearance: ThemePreference::default(),
             mixer: MixerSelection::default(),
             legacy_theme_mode: None,
@@ -58,6 +61,29 @@ impl Default for ObsConfig {
         Self {
             host: default_obs_host(),
             port: default_obs_port(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutputConfig {
+    #[serde(default)]
+    pub confirm_start_stream: bool,
+    #[serde(default = "default_confirm_stop_stream")]
+    pub confirm_stop_stream: bool,
+    #[serde(default)]
+    pub confirm_start_recording: bool,
+    #[serde(default = "default_confirm_stop_recording")]
+    pub confirm_stop_recording: bool,
+}
+
+impl Default for OutputConfig {
+    fn default() -> Self {
+        Self {
+            confirm_start_stream: false,
+            confirm_stop_stream: true,
+            confirm_start_recording: false,
+            confirm_stop_recording: true,
         }
     }
 }
@@ -94,6 +120,12 @@ fn default_show_roles() -> Vec<String> {
 }
 fn default_allow_switching() -> Vec<String> {
     vec!["primary".to_string()]
+}
+fn default_confirm_stop_stream() -> bool {
+    true
+}
+fn default_confirm_stop_recording() -> bool {
+    true
 }
 
 // ── Load / save ───────────────────────────────────────────────────────────────
@@ -209,6 +241,10 @@ mod tests {
         assert_eq!(c.version, CURRENT_VERSION);
         assert_eq!(c.obs.host, "127.0.0.1");
         assert_eq!(c.obs.port, 4455);
+        assert!(!c.outputs.confirm_start_stream);
+        assert!(c.outputs.confirm_stop_stream);
+        assert!(!c.outputs.confirm_start_recording);
+        assert!(c.outputs.confirm_stop_recording);
         assert_eq!(c.appearance.mode, ThemeMode::System);
         assert_eq!(c.appearance.selected_theme_id(), "adwaita-default");
         assert_eq!(c.mixer, MixerSelection::default());

@@ -408,8 +408,51 @@ fn apply_event(
         AppEvent::MixerAudioInputsUpdated { scene, inputs } => {
             {
                 let mut state = nav.state.borrow_mut();
+                if state.mixer_audio_loading_scene.as_deref() == Some(scene.as_str()) {
+                    state.mixer_audio_loading_scene = None;
+                }
+                if state
+                    .mixer_audio_error
+                    .as_ref()
+                    .map(|err| err.scene.as_str())
+                    == Some(scene.as_str())
+                {
+                    state.mixer_audio_error = None;
+                }
                 state.mixer_audio_scene = Some(scene);
                 state.mixer_audio_inputs = inputs;
+            }
+            if nav.state.borrow().current_page == Page::Mixer {
+                refreshers.call(Page::Mixer);
+            }
+        }
+
+        AppEvent::MixerAudioInputsLoading { scene } => {
+            {
+                let mut state = nav.state.borrow_mut();
+                state.mixer_audio_loading_scene = Some(scene.clone());
+                if state
+                    .mixer_audio_error
+                    .as_ref()
+                    .map(|err| err.scene.as_str())
+                    == Some(scene.as_str())
+                {
+                    state.mixer_audio_error = None;
+                }
+            }
+            if nav.state.borrow().current_page == Page::Mixer {
+                refreshers.call(Page::Mixer);
+            }
+        }
+
+        AppEvent::MixerAudioInputsFailed { scene, message } => {
+            {
+                let mut state = nav.state.borrow_mut();
+                if state.mixer_audio_loading_scene.as_deref() == Some(scene.as_str()) {
+                    state.mixer_audio_loading_scene = None;
+                }
+                state.mixer_audio_error =
+                    Some(crate::controller::state::MixerAudioError { scene, message });
             }
             if nav.state.borrow().current_page == Page::Mixer {
                 refreshers.call(Page::Mixer);

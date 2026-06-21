@@ -287,20 +287,35 @@ impl AppController {
 
     fn refresh_mixer_scene_audio(&self, scene: String) {
         let config = self.dependencies.load_config();
-        self.with_client(|c, tx, rt| {
-            rt.spawn(async move {
-                match c
-                    .get_scene_audio_inputs(&scene, &config.live.audio_inputs)
-                    .await
-                {
-                    Ok(inputs) => {
-                        let _ = tx.send(AppEvent::MixerAudioInputsUpdated { scene, inputs });
-                    }
-                    Err(e) => {
-                        let _ = tx.send(AppEvent::Error(e));
-                    }
-                }
+        let tx = self.event_tx.clone();
+        let Some(client) = self.client_slot.lock().ok().and_then(|s| s.clone()) else {
+            tracing::warn!("mixer scene audio refresh ignored — not connected to OBS");
+            let _ = tx.send(AppEvent::MixerAudioInputsFailed {
+                scene,
+                message: "Not connected to OBS".to_string(),
             });
+            return;
+        };
+
+        let _ = tx.send(AppEvent::MixerAudioInputsLoading {
+            scene: scene.clone(),
+        });
+
+        self.runtime.spawn(async move {
+            match client
+                .get_scene_audio_inputs(&scene, &config.live.audio_inputs)
+                .await
+            {
+                Ok(inputs) => {
+                    let _ = tx.send(AppEvent::MixerAudioInputsUpdated { scene, inputs });
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::MixerAudioInputsFailed {
+                        scene,
+                        message: e.to_string(),
+                    });
+                }
+            }
         });
     }
 

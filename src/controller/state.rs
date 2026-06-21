@@ -8,7 +8,8 @@ use crate::domain::graph::SceneGraph;
 use crate::domain::mixer::MixerSelection;
 use crate::domain::obs::ObsNamedList;
 use crate::domain::output::OutputStatus;
-use crate::domain::scene::SceneInventory;
+use crate::domain::scene::{SceneId, SceneInventory};
+use crate::storage::config::OutputConfig;
 use std::time::Instant;
 
 // ── Navigation ────────────────────────────────────────────────────────────────
@@ -90,6 +91,14 @@ impl ObsStatus {
     }
 }
 
+// ── Mixer audio ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MixerAudioError {
+    pub scene: SceneId,
+    pub message: String,
+}
+
 // ── App state ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -106,9 +115,12 @@ pub struct AppState {
     pub stream_active_since: Option<Instant>,
     pub record_active_since: Option<Instant>,
     pub last_recording_path: Option<String>,
+    pub output_confirmations: OutputConfig,
     pub audio_inputs: Vec<AudioInput>,
     pub mixer_audio_scene: Option<String>,
     pub mixer_audio_inputs: Vec<AudioInput>,
+    pub mixer_audio_loading_scene: Option<SceneId>,
+    pub mixer_audio_error: Option<MixerAudioError>,
     pub mixer: MixerSelection,
     pub diagnostics: Vec<Diagnostic>,
     /// Human-readable config-load notice shown once on the Settings page.
@@ -119,6 +131,7 @@ impl AppState {
     pub fn new(
         theme_mode: ThemeMode,
         mixer: MixerSelection,
+        output_confirmations: OutputConfig,
         startup_notice: Option<String>,
     ) -> Self {
         Self {
@@ -134,9 +147,12 @@ impl AppState {
             stream_active_since: None,
             record_active_since: None,
             last_recording_path: None,
+            output_confirmations,
             audio_inputs: Vec::new(),
             mixer_audio_scene: None,
             mixer_audio_inputs: Vec::new(),
+            mixer_audio_loading_scene: None,
+            mixer_audio_error: None,
             mixer,
             diagnostics: Vec::new(),
             startup_notice,

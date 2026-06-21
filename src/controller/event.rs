@@ -27,9 +27,16 @@ pub enum AppEvent {
 
     // Audio
     AudioInputsUpdated(Vec<AudioInput>),
+    MixerAudioInputsLoading {
+        scene: SceneId,
+    },
     MixerAudioInputsUpdated {
         scene: SceneId,
         inputs: Vec<AudioInput>,
+    },
+    MixerAudioInputsFailed {
+        scene: SceneId,
+        message: String,
     },
     InputMuteChanged {
         input: InputId,

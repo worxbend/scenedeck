@@ -32,6 +32,12 @@ Example:
     "audio_inputs": [],
     "allow_switching_only": ["primary"]
   },
+  "outputs": {
+    "confirm_start_stream": false,
+    "confirm_stop_stream": true,
+    "confirm_start_recording": false,
+    "confirm_stop_recording": true
+  },
   "appearance": {
     "mode": "system",
     "theme": "adwaita-default",
@@ -61,6 +67,14 @@ Fields:
   Empty means discover all active scene audio inputs.
 - `live.allow_switching_only`: roles intended for scene switching. Current Live
   switching uses scenes whose role is `Primary`.
+- `outputs.confirm_start_stream`: whether the Live page asks before starting
+  the stream. Defaults to `false`.
+- `outputs.confirm_stop_stream`: whether the Live page asks before stopping the
+  stream. Defaults to `true`.
+- `outputs.confirm_start_recording`: whether the Live page asks before starting
+  a recording. Defaults to `false`.
+- `outputs.confirm_stop_recording`: whether the Live page asks before stopping a
+  recording. Defaults to `true`.
 - `appearance.mode`: `system`, `light`, or `dark`.
 - `appearance.theme`: selected built-in theme id. `adwaita-default` is the
   fallback. Theme selection UI and built-in theme files are planned for the

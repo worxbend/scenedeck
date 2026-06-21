@@ -95,6 +95,11 @@ The top Live controls display streaming and recording state. Use Start Stream,
 Stop Stream, Start Record, and Stop Record to control OBS outputs. When OBS
 reports output state changes directly, SceneDeck updates the labels.
 
+The Live page asks for confirmation before stream or recording actions whose
+Output Safety toggles are enabled in Settings. By default, SceneDeck confirms
+Stop Stream and Stop Recording, while Start Stream and Start Recording run
+immediately.
+
 When streaming or recording is active, SceneDeck shows a local elapsed timer in
 the output label. If recording stops and OBS returns a file path, the record
 status tooltip shows that path and the copy button copies it to the clipboard.
@@ -177,6 +182,11 @@ $HOME/.config/scenedeck/config.json
 ```
 
 The OBS password is stored separately in the system Secret Service keyring.
+
+Output Safety controls whether SceneDeck asks before starting or stopping OBS
+streaming and recording. The four toggles are Confirm Start Stream, Confirm Stop
+Stream, Confirm Start Recording, and Confirm Stop Recording. Changes apply to
+Live page output buttons immediately and are stored in the local config file.
 
 ## Keyboard Shortcuts
 

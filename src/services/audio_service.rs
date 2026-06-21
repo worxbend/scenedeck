@@ -1,6 +1,11 @@
 //! Audio input queries and mutations.  Phase 1: stubs.
 
+use std::time::Duration;
+
 use crate::domain::audio::AudioInput;
+
+pub const VOLUME_SLIDER_DEBOUNCE: Duration = Duration::from_millis(120);
+const VOLUME_MEANINGFUL_DELTA: f64 = 0.005;
 
 pub struct AudioService;
 
@@ -52,6 +57,61 @@ impl AudioService {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct VolumeChangeDebouncer {
+    last_sent: Option<f64>,
+    pending: Option<f64>,
+    meaningful_delta: f64,
+}
+
+impl VolumeChangeDebouncer {
+    pub fn new(initial_volume: f64) -> Self {
+        Self {
+            last_sent: Some(initial_volume),
+            pending: None,
+            meaningful_delta: VOLUME_MEANINGFUL_DELTA,
+        }
+    }
+
+    pub fn queue(&mut self, volume_mul: f64) {
+        self.pending = Some(sanitize_volume_mul(volume_mul));
+    }
+
+    pub fn take_due(&mut self) -> Option<f64> {
+        let pending = self.pending.take()?;
+        if self.should_send(pending) {
+            self.last_sent = Some(pending);
+            Some(pending)
+        } else {
+            None
+        }
+    }
+
+    pub fn mark_sent(&mut self, volume_mul: f64) {
+        self.last_sent = Some(sanitize_volume_mul(volume_mul));
+        self.pending = None;
+    }
+
+    pub fn reset_to_observed(&mut self, volume_mul: f64) {
+        self.last_sent = Some(sanitize_volume_mul(volume_mul));
+        self.pending = None;
+    }
+
+    fn should_send(&self, volume_mul: f64) -> bool {
+        self.last_sent
+            .map(|last| (volume_mul - last).abs() >= self.meaningful_delta)
+            .unwrap_or(true)
+    }
+}
+
+fn sanitize_volume_mul(volume_mul: f64) -> f64 {
+    if volume_mul.is_finite() {
+        volume_mul.max(0.0)
+    } else {
+        0.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,5 +134,36 @@ mod tests {
     fn clamps_fine_adjustment_range() {
         assert_eq!(AudioService::adjust_volume_db(25.8, 1.0), 26.0);
         assert_eq!(AudioService::adjust_volume_db(-99.8, -1.0), -100.0);
+    }
+
+    #[test]
+    fn debouncer_coalesces_pending_slider_values() {
+        let mut debouncer = VolumeChangeDebouncer::new(0.5);
+
+        debouncer.queue(0.54);
+        debouncer.queue(0.61);
+
+        assert_eq!(debouncer.take_due(), Some(0.61));
+        assert_eq!(debouncer.take_due(), None);
+    }
+
+    #[test]
+    fn debouncer_ignores_tiny_changes_after_debounce() {
+        let mut debouncer = VolumeChangeDebouncer::new(0.5);
+
+        debouncer.queue(0.503);
+
+        assert_eq!(debouncer.take_due(), None);
+    }
+
+    #[test]
+    fn debouncer_resets_to_observed_obs_volume() {
+        let mut debouncer = VolumeChangeDebouncer::new(0.5);
+
+        debouncer.queue(0.8);
+        debouncer.reset_to_observed(0.8);
+        debouncer.queue(0.802);
+
+        assert_eq!(debouncer.take_due(), None);
     }
 }
