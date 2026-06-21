@@ -29,6 +29,8 @@
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
 
+#[cfg(test)]
+use futures_util::future::BoxFuture;
 use futures_util::StreamExt;
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
@@ -49,6 +51,8 @@ pub struct AppController {
     /// Shared slot written by the session task once connected, read by
     /// per-command tasks.  `None` while disconnected.
     client_slot: Arc<Mutex<Option<ObsClient>>>,
+    #[cfg(test)]
+    output_client_override: Arc<Mutex<Option<OutputCommandClient>>>,
     output_pending: Arc<Mutex<OutputPending>>,
 }
 
@@ -74,6 +78,8 @@ impl AppController {
             dependencies,
             session: None,
             client_slot: Arc::new(Mutex::new(None)),
+            #[cfg(test)]
+            output_client_override: Arc::new(Mutex::new(None)),
             output_pending: Arc::new(Mutex::new(OutputPending::default())),
         }
     }
@@ -328,7 +334,7 @@ impl AppController {
             return;
         }
 
-        let Some(client) = self.client_slot.lock().ok().and_then(|s| s.clone()) else {
+        let Some(client) = self.output_command_client() else {
             clear_stream_pending(&self.output_pending);
             tracing::warn!("stream command ignored — not connected to OBS");
             let _ = self.event_tx.send(AppEvent::StreamCommandFailed(
@@ -354,13 +360,13 @@ impl AppController {
             match client.set_streaming(active).await {
                 Ok(()) => {
                     let _ = tx.send(AppEvent::StreamCommandSucceeded);
-                    refresh_output_statuses(&client, &tx).await;
+                    refresh_output_statuses_for_output_client(&client, &tx).await;
                 }
                 Err(e) => {
                     let message = e.to_string();
-                    let _ = tx.send(AppEvent::Error(e));
+                    tracing::warn!(%e, active, "stream command failed");
                     let _ = tx.send(AppEvent::StreamCommandFailed(message));
-                    refresh_output_statuses(&client, &tx).await;
+                    refresh_output_statuses_for_output_client(&client, &tx).await;
                 }
             }
             clear_stream_pending(&pending);
@@ -376,7 +382,7 @@ impl AppController {
             return;
         }
 
-        let Some(client) = self.client_slot.lock().ok().and_then(|s| s.clone()) else {
+        let Some(client) = self.output_command_client() else {
             clear_record_pending(&self.output_pending);
             tracing::warn!("record command ignored — not connected to OBS");
             let _ = self.event_tx.send(AppEvent::RecordCommandFailed(
@@ -402,7 +408,7 @@ impl AppController {
             match client.set_recording(active).await {
                 Ok(path) => {
                     let _ = tx.send(AppEvent::RecordCommandSucceeded);
-                    refresh_output_statuses(&client, &tx).await;
+                    refresh_output_statuses_for_output_client(&client, &tx).await;
                     if let Some(path) = path {
                         let _ = tx.send(AppEvent::RecordStatusUpdated(OutputStatus {
                             active: false,
@@ -413,9 +419,9 @@ impl AppController {
                 }
                 Err(e) => {
                     let message = e.to_string();
-                    let _ = tx.send(AppEvent::Error(e));
+                    tracing::warn!(%e, active, "record command failed");
                     let _ = tx.send(AppEvent::RecordCommandFailed(message));
-                    refresh_output_statuses(&client, &tx).await;
+                    refresh_output_statuses_for_output_client(&client, &tx).await;
                 }
             }
             clear_record_pending(&pending);
@@ -446,6 +452,80 @@ impl AppController {
             None => tracing::warn!("command ignored — not connected to OBS"),
         }
     }
+
+    fn output_command_client(&self) -> Option<OutputCommandClient> {
+        #[cfg(test)]
+        if let Some(client) = self
+            .output_client_override
+            .lock()
+            .ok()
+            .and_then(|s| s.clone())
+        {
+            return Some(client);
+        }
+
+        self.client_slot
+            .lock()
+            .ok()
+            .and_then(|s| s.clone())
+            .map(OutputCommandClient::Obs)
+    }
+
+    #[cfg(test)]
+    fn set_output_client_override(&self, client: OutputCommandClient) {
+        if let Ok(mut slot) = self.output_client_override.lock() {
+            *slot = Some(client);
+        }
+    }
+}
+
+#[derive(Clone)]
+enum OutputCommandClient {
+    Obs(ObsClient),
+    #[cfg(test)]
+    Fake(Arc<dyn FakeOutputCommandClient>),
+}
+
+impl OutputCommandClient {
+    async fn set_streaming(&self, active: bool) -> Result<(), AppError> {
+        match self {
+            Self::Obs(client) => client.set_streaming(active).await,
+            #[cfg(test)]
+            Self::Fake(client) => client.set_streaming(active).await,
+        }
+    }
+
+    async fn set_recording(&self, active: bool) -> Result<Option<String>, AppError> {
+        match self {
+            Self::Obs(client) => client.set_recording(active).await,
+            #[cfg(test)]
+            Self::Fake(client) => client.set_recording(active).await,
+        }
+    }
+
+    async fn get_stream_status(&self) -> Result<OutputStatus, AppError> {
+        match self {
+            Self::Obs(client) => client.get_stream_status().await,
+            #[cfg(test)]
+            Self::Fake(client) => client.get_stream_status().await,
+        }
+    }
+
+    async fn get_record_status(&self) -> Result<OutputStatus, AppError> {
+        match self {
+            Self::Obs(client) => client.get_record_status().await,
+            #[cfg(test)]
+            Self::Fake(client) => client.get_record_status().await,
+        }
+    }
+}
+
+#[cfg(test)]
+trait FakeOutputCommandClient: Send + Sync {
+    fn set_streaming(&self, active: bool) -> BoxFuture<'_, Result<(), AppError>>;
+    fn set_recording(&self, active: bool) -> BoxFuture<'_, Result<Option<String>, AppError>>;
+    fn get_stream_status(&self) -> BoxFuture<'_, Result<OutputStatus, AppError>>;
+    fn get_record_status(&self) -> BoxFuture<'_, Result<OutputStatus, AppError>>;
 }
 
 fn mark_stream_pending(pending: &Arc<Mutex<OutputPending>>) -> bool {
@@ -538,6 +618,25 @@ async fn refresh_profile_and_collection_lists(client: &ObsClient, tx: &SyncSende
 }
 
 async fn refresh_output_statuses(client: &ObsClient, tx: &SyncSender<AppEvent>) {
+    match client.get_stream_status().await {
+        Ok(status) => {
+            let _ = tx.send(AppEvent::StreamStatusUpdated(status));
+        }
+        Err(e) => tracing::warn!(%e, "stream status refresh failed"),
+    }
+
+    match client.get_record_status().await {
+        Ok(status) => {
+            let _ = tx.send(AppEvent::RecordStatusUpdated(status));
+        }
+        Err(e) => tracing::warn!(%e, "record status refresh failed"),
+    }
+}
+
+async fn refresh_output_statuses_for_output_client(
+    client: &OutputCommandClient,
+    tx: &SyncSender<AppEvent>,
+) {
     match client.get_stream_status().await {
         Ok(status) => {
             let _ = tx.send(AppEvent::StreamStatusUpdated(status));
@@ -758,13 +857,98 @@ fn output_status_from_event(
 mod tests {
     use super::*;
     use std::sync::mpsc;
+    use std::time::Duration;
     use tokio::runtime::Runtime;
 
     fn controller_with_receiver() -> (Runtime, AppController, mpsc::Receiver<AppEvent>) {
         let runtime = Runtime::new().expect("test runtime");
         let handle = runtime.handle().clone();
-        let (tx, rx) = mpsc::sync_channel(8);
+        let (tx, rx) = mpsc::sync_channel(16);
         (runtime, AppController::new(handle, tx), rx)
+    }
+
+    #[derive(Debug)]
+    struct FakeOutputClient {
+        stream_result: Result<(), AppError>,
+        record_result: Result<Option<String>, AppError>,
+        stream_status: OutputStatus,
+        record_status: OutputStatus,
+        stream_status_calls: Arc<Mutex<usize>>,
+        record_status_calls: Arc<Mutex<usize>>,
+    }
+
+    impl FakeOutputClient {
+        fn with_failures() -> Arc<Self> {
+            Arc::new(Self {
+                stream_result: Err(AppError::Request("stream backend refused".to_string())),
+                record_result: Err(AppError::Request("record backend refused".to_string())),
+                stream_status: OutputStatus {
+                    active: false,
+                    state: OutputRunState::Inactive,
+                    detail: None,
+                },
+                record_status: OutputStatus {
+                    active: true,
+                    state: OutputRunState::Active,
+                    detail: Some("/tmp/current-recording.mkv".to_string()),
+                },
+                stream_status_calls: Arc::new(Mutex::new(0)),
+                record_status_calls: Arc::new(Mutex::new(0)),
+            })
+        }
+
+        fn stream_status_call_count(&self) -> usize {
+            *self
+                .stream_status_calls
+                .lock()
+                .expect("stream status calls")
+        }
+
+        fn record_status_call_count(&self) -> usize {
+            *self
+                .record_status_calls
+                .lock()
+                .expect("record status calls")
+        }
+    }
+
+    impl FakeOutputCommandClient for FakeOutputClient {
+        fn set_streaming(&self, _active: bool) -> BoxFuture<'_, Result<(), AppError>> {
+            let result = self.stream_result.clone();
+            Box::pin(async move { result })
+        }
+
+        fn set_recording(&self, _active: bool) -> BoxFuture<'_, Result<Option<String>, AppError>> {
+            let result = self.record_result.clone();
+            Box::pin(async move { result })
+        }
+
+        fn get_stream_status(&self) -> BoxFuture<'_, Result<OutputStatus, AppError>> {
+            let status = self.stream_status.clone();
+            let calls = Arc::clone(&self.stream_status_calls);
+            Box::pin(async move {
+                *calls.lock().expect("stream status calls") += 1;
+                Ok(status)
+            })
+        }
+
+        fn get_record_status(&self) -> BoxFuture<'_, Result<OutputStatus, AppError>> {
+            let status = self.record_status.clone();
+            let calls = Arc::clone(&self.record_status_calls);
+            Box::pin(async move {
+                *calls.lock().expect("record status calls") += 1;
+                Ok(status)
+            })
+        }
+    }
+
+    fn receive_events(rx: &mpsc::Receiver<AppEvent>, count: usize, context: &str) -> Vec<AppEvent> {
+        (0..count)
+            .map(|_| {
+                rx.recv_timeout(Duration::from_secs(2))
+                    .unwrap_or_else(|_| panic!("timed out waiting for {context} event"))
+            })
+            .collect()
     }
 
     #[test]
@@ -792,6 +976,106 @@ mod tests {
             panic!("expected record command failure event");
         };
         assert_eq!(message, "Not connected to OBS");
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn async_stream_command_failure_emits_only_stream_failure_and_refreshes_status() {
+        let (_runtime, mut controller, rx) = controller_with_receiver();
+        let fake = FakeOutputClient::with_failures();
+        controller.set_output_client_override(OutputCommandClient::Fake(fake.clone()));
+
+        controller.handle(AppCommand::StartStreaming);
+
+        let events = receive_events(&rx, 4, "stream failure");
+        assert!(matches!(
+            events[0],
+            AppEvent::StreamCommandPending(OutputStatus {
+                active: false,
+                state: OutputRunState::Starting,
+                detail: None
+            })
+        ));
+
+        let AppEvent::StreamCommandFailed(message) = &events[1] else {
+            panic!("expected stream command failure after pending event");
+        };
+        assert!(message.contains("stream backend refused"));
+
+        assert!(matches!(
+            events[2],
+            AppEvent::StreamStatusUpdated(OutputStatus {
+                active: false,
+                state: OutputRunState::Inactive,
+                detail: None
+            })
+        ));
+        assert!(matches!(
+            events[3],
+            AppEvent::RecordStatusUpdated(OutputStatus {
+                active: true,
+                state: OutputRunState::Active,
+                detail: Some(_)
+            })
+        ));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AppEvent::Error(_))),
+            "output command failure should not emit generic AppEvent::Error"
+        );
+        assert_eq!(fake.stream_status_call_count(), 1);
+        assert_eq!(fake.record_status_call_count(), 1);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn async_record_command_failure_emits_only_record_failure_and_refreshes_status() {
+        let (_runtime, mut controller, rx) = controller_with_receiver();
+        let fake = FakeOutputClient::with_failures();
+        controller.set_output_client_override(OutputCommandClient::Fake(fake.clone()));
+
+        controller.handle(AppCommand::StartRecording);
+
+        let events = receive_events(&rx, 4, "record failure");
+        assert!(matches!(
+            events[0],
+            AppEvent::RecordCommandPending(OutputStatus {
+                active: false,
+                state: OutputRunState::Starting,
+                detail: None
+            })
+        ));
+
+        let AppEvent::RecordCommandFailed(message) = &events[1] else {
+            panic!("expected record command failure after pending event");
+        };
+        assert!(message.contains("record backend refused"));
+
+        assert!(matches!(
+            events[2],
+            AppEvent::StreamStatusUpdated(OutputStatus {
+                active: false,
+                state: OutputRunState::Inactive,
+                detail: None
+            })
+        ));
+        assert!(matches!(
+            events[3],
+            AppEvent::RecordStatusUpdated(OutputStatus {
+                active: true,
+                state: OutputRunState::Active,
+                detail: Some(_)
+            })
+        ));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AppEvent::Error(_))),
+            "output command failure should not emit generic AppEvent::Error"
+        );
+        assert_eq!(fake.stream_status_call_count(), 1);
+        assert_eq!(fake.record_status_call_count(), 1);
         assert!(rx.try_recv().is_err());
     }
 }

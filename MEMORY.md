@@ -17,3 +17,4 @@
 [pattern] Keep debug inspection DTOs raw where possible and derive display labels at the UI/serialization boundary with the same helpers used by rendered widgets.
 [learning] Repeating blocked runtime evidence runs without first restoring OBS prerequisites and a UI control path only adds log volume; convert the blocker into an executable-environment task.
 [anti-pattern] Command-scoped failures should not reuse connection-level error events; generic session error handlers can reset UI state and make localized operation failures look like disconnections.
+[learning] Localized async command failures still need an explicit non-transitioning recovery state when follow-up status refresh fails; otherwise pending UI can remain disabled without a connection error.

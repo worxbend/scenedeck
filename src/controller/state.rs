@@ -329,6 +329,14 @@ impl AppState {
         self.mixer_audio_refresh.clear_pending();
     }
 
+    pub fn set_stream_status(&mut self, status: OutputStatus) {
+        self.stream_status = status;
+    }
+
+    pub fn set_record_status(&mut self, status: OutputStatus) {
+        self.record_status = status;
+    }
+
     pub fn set_stream_command_pending(&mut self, status: OutputStatus) {
         self.last_stream_command_error = None;
         self.stream_status = status;
@@ -723,6 +731,122 @@ mod tests {
         state.clear_output_command_errors();
 
         assert_eq!(state.last_stream_command_error, None);
+        assert_eq!(state.last_record_command_error, None);
+    }
+
+    #[test]
+    fn stream_command_failure_sequence_keeps_obs_connected_and_record_error() {
+        let mut state = app_state();
+        state.current_page = Page::Live;
+        state.set_obs_status(ObsStatus::Connected {
+            obs_version: "32.1.2".to_string(),
+        });
+        state.set_record_command_failure("existing record failure".to_string());
+
+        state.set_stream_command_pending(output_status(false, OutputRunState::Starting));
+        assert_eq!(state.stream_status.state, OutputRunState::Starting);
+        assert_eq!(state.last_stream_command_error, None);
+
+        state.set_stream_command_failure("stream command failed".to_string());
+        state.set_stream_status(output_status(false, OutputRunState::Inactive));
+
+        assert_eq!(
+            state.obs_status,
+            ObsStatus::Connected {
+                obs_version: "32.1.2".to_string()
+            }
+        );
+        assert_eq!(state.current_page, Page::Live);
+        assert!(!state.stream_status.state.is_transitioning());
+        assert_eq!(
+            state.last_stream_command_error.as_deref(),
+            Some("stream command failed")
+        );
+        assert_eq!(
+            state.last_record_command_error.as_deref(),
+            Some("existing record failure")
+        );
+
+        state.set_stream_command_pending(output_status(false, OutputRunState::Starting));
+        assert_eq!(state.last_stream_command_error, None);
+        assert_eq!(
+            state.last_record_command_error.as_deref(),
+            Some("existing record failure")
+        );
+
+        state.set_stream_status(output_status(true, OutputRunState::Active));
+        state.set_stream_command_success();
+
+        assert_eq!(
+            state.obs_status,
+            ObsStatus::Connected {
+                obs_version: "32.1.2".to_string()
+            }
+        );
+        assert_eq!(state.current_page, Page::Live);
+        assert!(!state.stream_status.state.is_transitioning());
+        assert_eq!(state.last_stream_command_error, None);
+        assert_eq!(
+            state.last_record_command_error.as_deref(),
+            Some("existing record failure")
+        );
+    }
+
+    #[test]
+    fn record_command_failure_sequence_keeps_obs_connected_and_stream_error() {
+        let mut state = app_state();
+        state.current_page = Page::Live;
+        state.set_obs_status(ObsStatus::Connected {
+            obs_version: "32.1.2".to_string(),
+        });
+        state.set_stream_command_failure("existing stream failure".to_string());
+
+        state.set_record_command_pending(output_status(true, OutputRunState::Stopping));
+        assert_eq!(state.record_status.state, OutputRunState::Stopping);
+        assert_eq!(state.last_record_command_error, None);
+
+        state.set_record_command_failure("record command failed".to_string());
+        state.set_record_status(output_status(true, OutputRunState::Active));
+
+        assert_eq!(
+            state.obs_status,
+            ObsStatus::Connected {
+                obs_version: "32.1.2".to_string()
+            }
+        );
+        assert_eq!(state.current_page, Page::Live);
+        assert!(!state.record_status.state.is_transitioning());
+        assert_eq!(
+            state.last_stream_command_error.as_deref(),
+            Some("existing stream failure")
+        );
+        assert_eq!(
+            state.last_record_command_error.as_deref(),
+            Some("record command failed")
+        );
+
+        state.set_record_command_pending(output_status(true, OutputRunState::Stopping));
+        assert_eq!(
+            state.last_stream_command_error.as_deref(),
+            Some("existing stream failure")
+        );
+        assert_eq!(state.last_record_command_error, None);
+
+        state.set_record_status(output_status(false, OutputRunState::Inactive));
+        state.set_record_command_success();
+
+        assert_eq!(
+            state.obs_status,
+            ObsStatus::Connected {
+                obs_version: "32.1.2".to_string()
+            }
+        );
+        assert_eq!(state.current_page, Page::Live);
+        assert!(!state.record_status.state.is_transitioning());
+        assert_eq!(
+            state.last_stream_command_error.as_deref(),
+            Some("existing stream failure")
+        );
         assert_eq!(state.last_record_command_error, None);
     }
 

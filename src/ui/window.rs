@@ -505,7 +505,7 @@ fn apply_event(
             let (elapsed, error) = {
                 let mut state = nav.state.borrow_mut();
                 update_active_since(status.active, &mut state.stream_active_since);
-                state.stream_status = status.clone();
+                state.set_stream_status(status.clone());
                 (
                     state.stream_active_since.map(format_elapsed),
                     state.last_stream_command_error.clone(),
@@ -521,7 +521,7 @@ fn apply_event(
                 if let Some(path) = status.detail.as_ref().filter(|path| !path.is_empty()) {
                     state.last_recording_path = Some(path.clone());
                 }
-                state.record_status = status.clone();
+                state.set_record_status(status.clone());
                 (
                     state.record_active_since.map(format_elapsed),
                     state.last_recording_path.clone(),

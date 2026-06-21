@@ -1605,3 +1605,101 @@ M  src/controller/event.rs
 M  src/controller/state.rs
 M  src/ui/pages/live.rs
 M  src/ui/window.rs
+2026-06-21T14:09:41Z iteration 18 started remaining=9630s
+2026-06-21T14:09:41Z iteration 18 preplanner effective budgets untracked_scan_max_bytes=536870912 untracked_scan_max_count=10000 snapshot_copy_max_bytes=536870912 snapshot_copy_max_count=10000 snapshot_copy_max_file_bytes=134217728
+2026-06-21T14:09:41Z iteration 18 disposable preplanner repo created path=/tmp/agent-loop-preplanner-repo-_n6ptl9e/repo copied_entries=115
+2026-06-21T14:09:41Z iteration 18 ideator phase started count=3
+2026-06-21T14:09:41Z iteration 18 ideator phase concurrency workers=3
+2026-06-21T14:09:41Z iteration 18 ideator 1 role="the pragmatist" started
+2026-06-21T14:09:41Z iteration 18 ideator 2 role="the architect" started
+2026-06-21T14:09:41Z iteration 18 ideator 3 role="the contrarian" started
+2026-06-21T14:09:48Z iteration 18 ideator 1 role="the pragmatist" completed status=0
+2026-06-21T14:09:50Z iteration 18 ideator 2 role="the architect" completed status=0
+2026-06-21T14:09:52Z iteration 18 ideator 3 role="the contrarian" completed status=0
+2026-06-21T14:09:52Z iteration 18 ideator phase completed approaches=3
+2026-06-21T14:09:52Z iteration 18 selector started approaches=3
+2026-06-21T14:10:05Z iteration 18 selector completed status=0
+2026-06-21T14:10:05Z iteration 18 disposable preplanner repo cleanup path=/tmp/agent-loop-preplanner-repo-_n6ptl9e/repo
+2026-06-21T14:10:05Z iteration 18 selector rejected alternative role="the pragmatist" approach="Protect the Connection Boundary First: prioritize separating command-scoped output failures from session-level OBS failures before pursuing more UI polish or blocked runtime evi..." reason="Strong direction, but selected as part of a hybrid because it frames the priority well while needing the architect/contrarian emphasis on event taxonomy and avoiding broad fake-client overengineering."
+2026-06-21T14:10:05Z iteration 18 selector rejected alternative role="the architect" approach="Error-Boundary First: stabilize output command failure semantics before expanding UI or runtime evidence work, treating stream/record failures as localized operational state rat..." reason="Strong direction, but selected as part of a hybrid because it correctly emphasizes localized operational state while benefiting from the contrarian's explicit boundary-audit framing."
+2026-06-21T14:10:05Z iteration 18 selector rejected alternative role="the contrarian" approach="Contract Firewall First: treat output command errors as an event-boundary design problem before touching presentation or Mixer evidence. The next planner should first reassert t..." reason="Strong direction, but selected as part of a hybrid because its contract-firewall framing is useful strategically, while the final guidance should stay more pragmatic about preserving genuine connection/session failures."
+2026-06-21T14:10:05Z iteration 18 selector alternatives persisted count=3
+2026-06-21T14:10:05Z iteration 18 selector structured alternatives persisted count=3
+2026-06-21T14:10:05Z iteration 18 planner started
+2026-06-21T14:10:23Z iteration 18 plan: 4 task(s) in 4 phase(s). This iteration focuses on the highest-confidence P1 defect: stream/record command failures must be localized output errors, not connection-level OBS errors. The work is sequential because controller event semantics must be corrected before meaningful controller and UI-state tests can assert the final behavior.
+2026-06-21T14:10:23Z iteration 18 phase 1 started parallel=False tasks=1
+2026-06-21T14:11:33Z iteration 18 task t1 ('Separate output command failures from generic OBS errors') status=0
+2026-06-21T14:11:33Z iteration 18 phase 2 started parallel=False tasks=1
+2026-06-21T14:14:36Z iteration 18 task t2 ('Add async output command failure coverage') status=0
+2026-06-21T14:14:36Z iteration 18 phase 3 started parallel=False tasks=1
+2026-06-21T14:16:28Z iteration 18 task t3 ('Protect UI state from command-scoped failures') status=0
+2026-06-21T14:16:28Z iteration 18 phase 4 started parallel=False tasks=1
+2026-06-21T14:16:51Z iteration 18 task t4 ('Run full validation') status=0
+2026-06-21T14:16:51Z iteration 18 reviewer started
+
+## Review Summary - Iteration 18 - 2026-06-21
+
+### What Was Done
+
+- Removed generic connection-level `AppEvent::Error` emission from async
+  stream/record command failures.
+- Added a narrow `OutputCommandClient` wrapper with a `#[cfg(test)]` fake path
+  so command failures can be tested without a live OBS client.
+- Kept production output commands backed by `ObsClient` while allowing tests to
+  fail `set_streaming` / `set_recording` and still return output statuses.
+- Added controller coverage for async stream and record command failures,
+  proving only output-specific failure events are emitted and status refreshes
+  follow.
+- Added state-level event-sequence coverage proving localized failures preserve
+  `ObsStatus::Connected`, the Live page, and the other output's last error.
+- Routed normal stream/record status updates through `AppState` setters instead
+  of direct UI-layer field writes.
+
+### What Was Found
+
+- Focused validation passed in review:
+  `cargo test --workspace --all-features command_failure -- --nocapture`,
+  `cargo test --workspace --all-features stream_command -- --nocapture`, and
+  `cargo test --workspace --all-features record_command -- --nocapture`.
+- The original high-priority defect is fixed: real async stream/record command
+  failures no longer run through the generic OBS error handler, so they should
+  not force disconnected/error Live UI or erase output-specific command errors.
+- The fake output client seam is appropriately narrow and test-only; it avoids
+  a broad controller dependency refactor.
+- New high-priority gap: if a command fails and the follow-up output status
+  refresh also fails, the UI can remain in the synthetic `Starting`/`Stopping`
+  status because the failure event records only the error text. Since Live
+  buttons disable on transitioning states, the affected output control can stay
+  disabled until another status event arrives.
+- Minor design debt: output status refresh logic is duplicated between the
+  direct `ObsClient` helper and the new wrapper helper. This is acceptable now
+  but should be unified if the output-client abstraction grows.
+
+### Top Improvement Proposals
+
+1. Define and implement recovery for command failure plus status-refresh
+   failure so output controls always leave synthetic pending state or escalate
+   through an explicit session failure.
+2. Extend fake-client tests to cover failed status refreshes after failed
+   `set_streaming` / `set_recording`.
+3. Add state/event-sequence tests proving failed commands cannot leave
+   `Starting`, `Stopping`, or `Reconnecting` as the final visible output state
+   unless an explicit connection/session event follows.
+4. Keep generic `AppEvent::Error` reserved for connection/session failures; do
+   not reintroduce it as an output-command recovery shortcut.
+5. Improve output error presentation with concise banner text plus full error
+   details in a tooltip/details affordance after the recovery contract is
+   hardened.
+2026-06-21T14:20:15Z iteration 18 reviewer completed status=0
+2026-06-21T14:20:15Z iteration 18 memory updated
+2026-06-21T14:20:15Z iteration 18 completed validation_status=0
+2026-06-21T14:20:15Z iteration 18 checkpoint started
+2026-06-21T14:20:15Z iteration 18 checkpoint status before commit:
+M  AGENT_LOG.md
+M  ALTERNATIVES.jsonl
+M  MEMORY.md
+M  PLAN.md
+M  SCORES.jsonl
+M  src/controller/app_controller.rs
+M  src/controller/state.rs
+M  src/ui/window.rs
