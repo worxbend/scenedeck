@@ -76,6 +76,23 @@ Status: Passed, Failed, Blocked, or Mixed.
 Scope: focused Mixer render-state inspection using the debug inspection path,
 optionally paired with interactive OBS and GTK observations.
 
+Inspection contract:
+
+- `SCENEDECK_MIXER_INSPECT=1` lines describe the rendered Mixer branch that
+  appended placeholders or visible cards, not merely the raw pre-render reducer
+  state.
+- When a scene-specific missing state dispatches an automatic refresh and the
+  page shows the loading/requested placeholder, record the inspection status as
+  loading/requested. Do not treat that branch as a passing `missing` result.
+- Loaded scenes with no audio sources and loaded scenes with audio sources
+  hidden by search are separate rendered states. Record `No Audio Sources` and
+  `No Matching Audio Sources` evidence separately when those cases are
+  exercised.
+- Structured inspection can support rendered state and card-data claims. It
+  still does not prove pointer interaction success, visual layout quality, or
+  perceived rebuild churn without an interactive observation or equivalent
+  instrumentation.
+
 Environment:
 
 - SceneDeck commit: `TODO`.
@@ -109,7 +126,10 @@ Per-case results:
 | Selected fallback | TODO: pass/fail/blocked/skipped | TODO: cite fallback reason, effective refresh target, render source/status, and visible card input names. |
 | Pinned direct | TODO: pass/fail/blocked/skipped | TODO: cite pinned scene, refresh target/reason, render source/status, and visible card input names. |
 | Pinned fallback | TODO: pass/fail/blocked/skipped | TODO: cite fallback reason, effective refresh target, render source/status, and visible card input names. |
+| Missing to automatic loading/requested placeholder | TODO: pass/fail/blocked/skipped | TODO: cite the inspection line from the rendered branch showing loading/requested placeholder state after automatic refresh dispatch, or explain why unavailable. |
 | Retry after failure | TODO: pass/fail/blocked/skipped | TODO: cite error/loading/Retry visible and enabled state before and after retry, or explain why failure setup was unavailable. |
+| Loaded with no audio sources | TODO: pass/fail/blocked/skipped | TODO: cite the rendered status for `No Audio Sources` and the empty visible card list, or explain why no empty fixture scene was available. |
+| Loaded with no matching audio sources | TODO: pass/fail/blocked/skipped | TODO: cite the rendered filtered-empty status for `No Matching Audio Sources`, the search query/filter used, and the empty visible card list. |
 | OBS mute echo | TODO: pass/fail/blocked/skipped | TODO: cite before/after inspection lines showing the visible card mute state changed for the expected input. |
 | OBS volume echo | TODO: pass/fail/blocked/skipped | TODO: cite before/after inspection lines showing the visible card volume value/label changed for the expected input. |
 | Stale visible cards | TODO: pass/fail/blocked/skipped | TODO: cite inspection lines proving cards matched the current render source after scene or OBS input changes, or describe the stale mismatch. |
@@ -119,7 +139,9 @@ Inspection evidence captured:
 
 - Mode, selected scene, and pinned scene: `TODO`.
 - Scene-specific refresh target and fallback reason: `TODO`.
-- Render source kind and loading/error/missing status: `TODO`.
+- Render source kind and rendered status: loading/requested placeholder, error
+  placeholder, missing/no target, loaded cards, loaded with no audio sources,
+  or loaded with no matching audio sources after filtering: `TODO`.
 - Visible card input names: `TODO`.
 - Mute states: `TODO`.
 - Volume values and labels: `TODO`.

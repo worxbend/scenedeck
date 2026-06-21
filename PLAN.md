@@ -47,15 +47,17 @@ Mixer mirror state removal, hidden snapshot invariant restoration, shared
 Mixer scene-specific target resolution, refresh-target naming cleanup,
 fallback-aware Mixer summary copy, direct Mixer summary copy tests, output
 confirmation dialog appearance metadata, tightened focused Mixer manual
-evidence instructions, reproducible focused Mixer fixture documentation, and
-the opt-in Mixer debug inspection path. Focused manual Mixer interaction
-evidence is still not complete: the debug path now exposes structured Mixer
-render state, visible cards, mute/volume labels, and Retry/error state, but the
-review found one evidence-quality issue before it should be trusted for a run:
-the automatic Missing -> Loading branch can emit a `missing` inspection snapshot
-while the visible page has already chosen a loading placeholder. No pass/fail
-behavior is claimed yet for ComboRow timing, Retry activation, OBS mute/volume
-echoes, stale visible cards, or runtime rebuild churn.
+evidence instructions, reproducible focused Mixer fixture documentation, the
+opt-in Mixer debug inspection path, and rendered-branch inspection status
+alignment. Focused manual Mixer interaction evidence is still not complete. The
+debug path now distinguishes loading placeholders, error placeholders, missing
+no-target state, loaded visible cards, loaded empty audio, and filtered-empty
+audio, but the latest review found a remaining evidence-fidelity bug: controller
+inspection labels use a local dB formatter that does not match
+`AudioService::format_db`, so structured `volume_label` values can disagree
+with rendered audio-card labels at very low or near-zero dB values. No
+pass/fail behavior is claimed yet for ComboRow timing, Retry activation, OBS
+mute/volume echoes, stale visible cards, or runtime rebuild churn.
 
 ## Completed Phases
 
@@ -637,32 +639,76 @@ Review verdict:
   layout quality, or perceived rebuild churn; the docs correctly preserve those
   limits.
 
+### Mixer Rendered Inspection Status Alignment
+
+Working tree, reviewed 2026-06-21:
+
+- Expanded `MixerInspectionStatus` to model rendered UI branches:
+  loading placeholder, error placeholder, missing/no-target, loaded visible
+  cards, loaded with no audio sources, and loaded with no matching audio sources
+  after filtering.
+- Changed Mixer inspection emission so `src/ui/pages/mixer.rs` passes the
+  branch-specific rendered status into `format_mixer_inspection_line` instead
+  of always serializing the pre-render reducer snapshot status.
+- Fixed the specific Missing -> automatic refresh mismatch: that branch now
+  emits `loading_placeholder_shown` while rendering the "Loading Mixer Audio"
+  status page.
+- Made `append_mixer_inputs` return the rendered loaded status so inspection
+  output can distinguish visible cards, no audio sources, and filtered-empty
+  status pages.
+- Removed the direct `AudioService` import from `src/controller/state.rs` and
+  replaced it with local debug dB formatting in the inspection snapshot.
+- Updated the focused manual test plan and run template to record
+  loading/requested, loaded-empty, and filtered-empty inspection evidence.
+
+Review verdict:
+
+- Scoped validation passed in review: `git diff --check` and
+  `cargo test --workspace --all-features mixer_inspection -- --nocapture`.
+- The original high-priority Missing -> Loading inspection mismatch is fixed:
+  inspection output is now emitted from the same UI branch that appends the
+  visible placeholder or cards.
+- Empty loaded states are now represented clearly enough for future manual
+  evidence to distinguish "loaded but no sources" from "loaded but search
+  filtered all sources."
+- New high-priority evidence bug: `src/controller/state.rs` now formats
+  inspection snapshot dB labels with `format_mixer_inspection_db`, which only
+  maps non-finite values to `-inf dB`. The rendered audio card uses
+  `AudioService::format_db`, which also maps values `<= -100.0` to `-inf dB`
+  and normalizes near-zero values to `0.0 dB`. For example, an input at
+  `-120.0 dB` can be inspected as `-120.0 dB` while the visible card reads
+  `-inf dB`, and `0.01 dB` can inspect as `0.0 dB` only by rounding rather than
+  by the shared display rule. The debug path should not be treated as
+  authoritative card-label evidence until this is fixed and covered by tests.
+- Design concern remains: inspection status is partly controller-derived and
+  partly UI-rendered. That split is acceptable for an opt-in evidence path, but
+  display formatting must be shared or injected from the UI layer to avoid a
+  second presentation model.
+
 ## Groomed Next Steps
 
-### P1: Align Mixer Inspection Output With Rendered UI
+### P1: Align Mixer Inspection Volume Labels With Rendered Audio Cards
 
 Problem:
 
-- `SCENEDECK_MIXER_INSPECT=1` now emits structured Mixer state, but the
-  automatic scene-specific Missing branch requests a refresh and renders a
-  loading placeholder while emitting a pre-request `missing` snapshot.
-- That mismatch can make the focused inspection run ambiguous exactly when it
-  is trying to replace brittle visual card inspection.
-- The current formatter also lacks an explicit UI/status-page state for loaded
-  snapshots that render "No Audio Sources" or "No Matching Audio Sources".
+- `SCENEDECK_MIXER_INSPECT=1` now emits branch-aligned status, but visible card
+  `volume_label` values can still diverge from the actual Mixer card labels.
+- `src/controller/state.rs::format_mixer_inspection_db` is a local presentation
+  formatter that does not preserve `AudioService::format_db` semantics for
+  `<= -100.0 dB` and near-zero values.
+- This undermines the debug path's main purpose: using structured lines as
+  trustworthy evidence for visible Mixer card data.
 
 Plan:
 
-- Emit inspection from the same branch-specific view decision that appends the
-  visible status or cards. For Missing -> automatic request, either emit a
-  status that explicitly means "refresh requested/loading placeholder shown" or
-  defer emission until the controller loading event rebuilds the page.
-- Add formatter tests for Missing -> requested/loading placeholder behavior and
-  for filtered-empty/no-audio status pages, so inspection evidence can
-  distinguish "loaded with no visible cards" from "still loading/missing".
-- Consider moving dB label formatting out of `AppState` and into the debug
-  serialization layer if the inspection snapshot is meant to remain a
-  controller-level state contract rather than a UI DTO.
+- Reuse the same dB display formatter as audio cards, or move `volume_label`
+  derivation fully into the UI/debug serialization layer where `AudioService`
+  is already used.
+- Add tests proving inspection labels match rendered card labels for
+  `f64::NEG_INFINITY`, `-120.0`, near-zero positive/negative values, and a
+  normal value such as `-6.24`.
+- Prefer one shared formatting helper over duplicating the thresholds in
+  controller state.
 - Keep the debug path opt-in through `SCENEDECK_MIXER_INSPECT=1`; do not add a
   visible production control for this evidence-only surface.
 
@@ -670,8 +716,12 @@ Files:
 
 - `src/controller/state.rs`
 - `src/ui/pages/mixer.rs`
-- `docs/manual-test-plan.md`
-- `docs/manual-test-runs.md`
+
+Tests:
+
+- `cargo test --workspace --all-features mixer_inspection -- --nocapture`
+- Add or extend focused tests that compare inspection `volume_label` output to
+  `AudioService::format_db`.
 
 ### P1: Run Focused Mixer Inspection Evidence
 
@@ -679,8 +729,9 @@ Problem:
 
 - The focused Mixer interaction contract still has no passing or failing
   runtime evidence.
-- The debug inspection path now exists but should not be used as authoritative
-  evidence until the rendered-state mismatch above is resolved.
+- The debug inspection path now exists and its rendered-status vocabulary is
+  aligned with the UI branches, but it should not be used as authoritative
+  visible-card label evidence until the dB label mismatch above is resolved.
 - The OBS fixture still needs a scene-specific input present in only one test
   scene before Selected/Pinned scene-specific behavior can be proven.
 - Pointer interaction, layout quality, and perceived rebuild churn still

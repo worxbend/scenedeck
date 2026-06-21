@@ -189,7 +189,10 @@ checklist.
   cases below. This path can prove rendered Mixer state, visible input names,
   mute state, volume labels, loading/error state, and Retry visible/enabled
   state. It can also show selected and pinned target/fallback state when the
-  application renders those modes.
+  application renders those modes. Inspection lines are emitted from the same
+  rendered UI branch that appends Mixer placeholders or visible cards, so the
+  status must describe what the page showed rather than only the pre-render
+  reducer state.
 
 Debug inspection limits:
 
@@ -204,6 +207,13 @@ Debug inspection limits:
 - For any automated or alternate control path, record the exact tool or method
   in `docs/manual-test-runs.md`. Cases outside that method's control and
   inspection limits remain blocked, not passed.
+- Scene-specific missing snapshots can trigger an automatic refresh during
+  rendering. When that branch shows the loading/requested placeholder, the
+  inspection line must be recorded as loading/requested, not as a stale
+  `missing` result.
+- Loaded empty states are distinct. A loaded scene with no audio sources should
+  be recorded separately from a loaded scene whose audio sources were filtered
+  out by search as `No Matching Audio Sources`.
 
 1. Open Mixer and select Active mode with the mode ComboRow.
 2. Change the current OBS program scene from OBS and from SceneDeck Live.
@@ -236,19 +246,24 @@ Debug inspection limits:
     loading, and visible-card states recover or remain failed. With debug
     inspection, capture loading/error/missing status and whether Retry is
     visible/enabled before and after Retry is activated.
-14. In OBS Audio Mixer, toggle mute for a visible Mixer source in Active,
+14. For loaded fixture scenes, exercise both empty-state branches when
+    available: a scene with no audio sources, and a scene with audio sources
+    hidden by the Mixer search filter. With debug inspection, capture the
+    distinct rendered statuses for `No Audio Sources` and
+    `No Matching Audio Sources`.
+15. In OBS Audio Mixer, toggle mute for a visible Mixer source in Active,
     Selected, and Pinned modes where the source is present.
-15. Record whether each OBS mute echo updates the visible Mixer card without a
+16. Record whether each OBS mute echo updates the visible Mixer card without a
     manual page change. With debug inspection, capture the matching input name
     and mute state before and after the OBS echo.
-16. In OBS Audio Mixer, move volume for a visible Mixer source repeatedly in
+17. In OBS Audio Mixer, move volume for a visible Mixer source repeatedly in
     Active, Selected, and Pinned modes where the source is present.
-17. Record whether each OBS volume echo updates the visible Mixer card without a
+18. Record whether each OBS volume echo updates the visible Mixer card without a
     manual page change. With debug inspection, capture the matching input name,
     volume value, and volume label before and after the OBS echo.
-18. After mute and volume echoes, check for stale visible cards by comparing the
+19. After mute and volume echoes, check for stale visible cards by comparing the
     SceneDeck mute state and dB readout with OBS.
-19. During repeated volume echoes, record perceived rebuild churn: visible
+20. During repeated volume echoes, record perceived rebuild churn: visible
     flicker, scroll position jumps, focus loss, control resets, or no noticeable
     churn.
 
@@ -260,9 +275,11 @@ Mixer cards, no stale visible cards after echoes, acceptable visual layout, and
 no noticeable rebuild churn under repeated volume echoes. A complete pass
 through the debug inspection path shows structured lines matching the rendered
 Mixer state, visible input names, mute states, volume values and labels,
-loading/error/missing state, and Retry visible/enabled state for the exercised
-cases. If any prerequisite or interaction path is unavailable, record the case
-as blocked or skipped and make no pass/fail claim for that behavior.
+loading/requested, error, missing/no-target, loaded-card, loaded-empty, and
+filtered-empty state, and Retry visible/enabled state for the exercised cases.
+Structured inspection can support rendered state and card-data claims only. If
+any prerequisite or interaction path is unavailable, record the case as blocked
+or skipped and make no pass/fail claim for that behavior.
 
 ### Volume and Mute Sync: SceneDeck to OBS
 

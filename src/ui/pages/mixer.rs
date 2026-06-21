@@ -152,7 +152,12 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
     let source_inputs = match state.visible_mixer_render_source() {
         MixerVisibleRenderSource::ActiveScene(inputs) => inputs.to_vec(),
         MixerVisibleRenderSource::MissingScene => {
-            emit_mixer_inspection(&inspection_snapshot, &[], MixerRetryInspection::HIDDEN);
+            emit_mixer_inspection(
+                &inspection_snapshot,
+                MixerInspectionStatus::MissingNoTarget,
+                &[],
+                MixerRetryInspection::HIDDEN,
+            );
             append_mixer_status(
                 root,
                 "audio-volume-muted-symbolic",
@@ -164,7 +169,12 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
         MixerVisibleRenderSource::Scene { scene, status } => match status {
             MixerVisibleAudioStatus::Loading => {
                 clear_tracked_request(refresh_tracker, scene);
-                emit_mixer_inspection(&inspection_snapshot, &[], MixerRetryInspection::HIDDEN);
+                emit_mixer_inspection(
+                    &inspection_snapshot,
+                    MixerInspectionStatus::LoadingPlaceholderShown,
+                    &[],
+                    MixerRetryInspection::HIDDEN,
+                );
                 append_mixer_status(
                     root,
                     "view-refresh-symbolic",
@@ -177,6 +187,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
                 clear_tracked_request(refresh_tracker, scene);
                 emit_mixer_inspection(
                     &inspection_snapshot,
+                    MixerInspectionStatus::ErrorPlaceholderShown(error.message.as_str()),
                     &[],
                     MixerRetryInspection::VISIBLE_ENABLED,
                 );
@@ -193,7 +204,12 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
                     refresh_tracker,
                     MixerRefreshRequestIntent::Automatic,
                 );
-                emit_mixer_inspection(&inspection_snapshot, &[], MixerRetryInspection::HIDDEN);
+                emit_mixer_inspection(
+                    &inspection_snapshot,
+                    MixerInspectionStatus::LoadingPlaceholderShown,
+                    &[],
+                    MixerRetryInspection::HIDDEN,
+                );
                 append_mixer_status(
                     root,
                     "view-refresh-symbolic",
@@ -205,8 +221,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
         },
     };
     let inputs = filter_inputs(&source_inputs, &mixer.search);
-    emit_mixer_inspection(&inspection_snapshot, &inputs, MixerRetryInspection::HIDDEN);
-    append_mixer_inputs(
+    let inspection_status = append_mixer_inputs(
         root,
         nav,
         &inputs,
@@ -214,6 +229,12 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
         mixer.grouping,
         &mixer.search,
         target_scene.as_deref(),
+    );
+    emit_mixer_inspection(
+        &inspection_snapshot,
+        inspection_status,
+        &inputs,
+        MixerRetryInspection::HIDDEN,
     );
 }
 
@@ -343,7 +364,7 @@ fn append_mixer_inputs(
     grouping: MixerGrouping,
     search: &str,
     target_scene: Option<&str>,
-) {
+) -> MixerInspectionStatus<'static> {
     if inputs.is_empty() {
         if source_count == 0 && search.trim().is_empty() {
             append_mixer_status(
@@ -355,6 +376,7 @@ fn append_mixer_inputs(
                     target_scene.unwrap_or("The current scene")
                 ),
             );
+            MixerInspectionStatus::LoadedNoAudioSources
         } else {
             append_mixer_status(
                 root,
@@ -362,40 +384,42 @@ fn append_mixer_inputs(
                 "No Matching Audio Sources",
                 "Adjust the search filter to show available audio sources.",
             );
+            MixerInspectionStatus::LoadedNoMatchingAudioSourcesAfterFiltering
         }
-        return;
-    }
+    } else {
+        match grouping {
+            MixerGrouping::None => append_group(root, nav, "All Sources", inputs),
+            MixerGrouping::Scope => {
+                let mut groups: BTreeMap<String, Vec<AudioInput>> = BTreeMap::new();
+                for input in inputs {
+                    groups
+                        .entry(input.source_scope.label().to_string())
+                        .or_default()
+                        .push(input.clone());
+                }
+                for (title, inputs) in groups {
+                    append_group(root, nav, &title, &inputs);
+                }
+            }
+            MixerGrouping::ScenePath => {
+                let mut groups: BTreeMap<String, Vec<AudioInput>> = BTreeMap::new();
+                for input in inputs {
+                    groups
+                        .entry(
+                            input
+                                .source_path_label()
+                                .unwrap_or_else(|| "Global".to_string()),
+                        )
+                        .or_default()
+                        .push(input.clone());
+                }
+                for (title, inputs) in groups {
+                    append_group(root, nav, &title, &inputs);
+                }
+            }
+        }
 
-    match grouping {
-        MixerGrouping::None => append_group(root, nav, "All Sources", inputs),
-        MixerGrouping::Scope => {
-            let mut groups: BTreeMap<String, Vec<AudioInput>> = BTreeMap::new();
-            for input in inputs {
-                groups
-                    .entry(input.source_scope.label().to_string())
-                    .or_default()
-                    .push(input.clone());
-            }
-            for (title, inputs) in groups {
-                append_group(root, nav, &title, &inputs);
-            }
-        }
-        MixerGrouping::ScenePath => {
-            let mut groups: BTreeMap<String, Vec<AudioInput>> = BTreeMap::new();
-            for input in inputs {
-                groups
-                    .entry(
-                        input
-                            .source_path_label()
-                            .unwrap_or_else(|| "Global".to_string()),
-                    )
-                    .or_default()
-                    .push(input.clone());
-            }
-            for (title, inputs) in groups {
-                append_group(root, nav, &title, &inputs);
-            }
-        }
+        MixerInspectionStatus::LoadedWithVisibleInputCards
     }
 }
 
@@ -506,19 +530,21 @@ fn filter_inputs(inputs: &[AudioInput], search: &str) -> Vec<AudioInput> {
 
 fn emit_mixer_inspection(
     snapshot: &MixerInspectionSnapshot<'_>,
+    status: MixerInspectionStatus<'_>,
     visible_cards: &[AudioInput],
     retry: MixerRetryInspection,
 ) {
     if std::env::var(MIXER_INSPECT_ENV).ok().as_deref() == Some("1") {
         eprintln!(
             "{}",
-            format_mixer_inspection_line(snapshot, visible_cards, retry)
+            format_mixer_inspection_line(snapshot, status, visible_cards, retry)
         );
     }
 }
 
 fn format_mixer_inspection_line(
     snapshot: &MixerInspectionSnapshot<'_>,
+    status: MixerInspectionStatus<'_>,
     visible_cards: &[AudioInput],
     retry: MixerRetryInspection,
 ) -> String {
@@ -554,7 +580,7 @@ fn format_mixer_inspection_line(
             .map(|target| mixer_refresh_reason_inspection_label(target.reason)),
         "render_source": mixer_render_source_inspection_label(snapshot.render_source_kind),
         "render_scene": snapshot.scene,
-        "status": mixer_status_inspection_value(snapshot.status),
+        "status": mixer_status_inspection_value(status),
         "visible_cards": cards,
         "retry": {
             "visible": retry.visible,
@@ -566,12 +592,24 @@ fn format_mixer_inspection_line(
 
 fn mixer_status_inspection_value(status: MixerInspectionStatus<'_>) -> serde_json::Value {
     match status {
-        MixerInspectionStatus::Loaded => serde_json::json!({ "kind": "loaded" }),
-        MixerInspectionStatus::Loading => serde_json::json!({ "kind": "loading" }),
-        MixerInspectionStatus::Error(message) => {
+        MixerInspectionStatus::LoadedWithVisibleInputCards => {
+            serde_json::json!({ "kind": "loaded_with_visible_input_cards" })
+        }
+        MixerInspectionStatus::LoadedNoAudioSources => {
+            serde_json::json!({ "kind": "loaded_no_audio_sources" })
+        }
+        MixerInspectionStatus::LoadedNoMatchingAudioSourcesAfterFiltering => {
+            serde_json::json!({ "kind": "loaded_no_matching_audio_sources_after_filtering" })
+        }
+        MixerInspectionStatus::LoadingPlaceholderShown => {
+            serde_json::json!({ "kind": "loading_placeholder_shown" })
+        }
+        MixerInspectionStatus::ErrorPlaceholderShown(message) => {
             serde_json::json!({ "kind": "error", "message": message })
         }
-        MixerInspectionStatus::Missing => serde_json::json!({ "kind": "missing" }),
+        MixerInspectionStatus::MissingNoTarget => {
+            serde_json::json!({ "kind": "missing_no_target" })
+        }
     }
 }
 
@@ -793,7 +831,8 @@ mod tests {
     };
     use crate::controller::command::AppCommand;
     use crate::controller::state::{
-        AppState, MixerAudioError, MixerSceneRefreshTargetReason, MixerVisibleAudioStatus,
+        AppState, MixerAudioError, MixerInspectionStatus, MixerSceneRefreshTargetReason,
+        MixerVisibleAudioStatus,
     };
     use crate::domain::appearance::ThemeMode;
     use crate::domain::audio::AudioInput;
@@ -845,6 +884,12 @@ mod tests {
             .strip_prefix("scenedeck_mixer_inspect ")
             .expect("inspection line prefix");
         serde_json::from_str(payload).expect("valid inspection json")
+    }
+
+    fn inspection_status_kind(json: &serde_json::Value) -> &str {
+        json["status"]["kind"]
+            .as_str()
+            .expect("inspection status kind")
     }
 
     fn command_scene(command: Option<AppCommand>) -> Option<String> {
@@ -945,6 +990,7 @@ mod tests {
 
         let json = inspection_json(&format_mixer_inspection_line(
             &snapshot,
+            MixerInspectionStatus::LoadedWithVisibleInputCards,
             &visible_cards,
             MixerRetryInspection::HIDDEN,
         ));
@@ -953,7 +999,7 @@ mod tests {
         assert_eq!(json["mode"], "active");
         assert_eq!(json["render_source"], "active_scene");
         assert_eq!(json["render_scene"], "Program");
-        assert_eq!(json["status"]["kind"], "loaded");
+        assert_eq!(json["status"]["kind"], "loaded_with_visible_input_cards");
         assert_eq!(json["retry"]["visible"], false);
         let cards = json["visible_cards"].as_array().unwrap();
         assert_eq!(cards.len(), 1);
@@ -976,6 +1022,7 @@ mod tests {
 
         let json = inspection_json(&format_mixer_inspection_line(
             &snapshot,
+            MixerInspectionStatus::ErrorPlaceholderShown("OBS failed"),
             &[],
             MixerRetryInspection::VISIBLE_ENABLED,
         ));
@@ -990,6 +1037,110 @@ mod tests {
         assert_eq!(json["visible_cards"].as_array().unwrap().len(), 0);
         assert_eq!(json["retry"]["visible"], true);
         assert_eq!(json["retry"]["enabled"], true);
+    }
+
+    #[test]
+    fn mixer_inspection_line_reports_loading_placeholder_after_missing_automatic_request() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::SelectedScene;
+        state.mixer.selected_scene = Some("Scene A".to_string());
+        let snapshot = state.mixer_inspection_snapshot();
+        assert_eq!(snapshot.status, MixerInspectionStatus::MissingNoTarget);
+
+        let mut tracked_scene = None;
+        let command = prepare_mixer_scene_audio_request(
+            MixerRefreshRequestIntent::Automatic,
+            "Scene A",
+            MixerVisibleAudioStatus::Missing,
+            &mut tracked_scene,
+        );
+        assert_eq!(command_scene(command).as_deref(), Some("Scene A"));
+        assert_eq!(tracked_scene.as_deref(), Some("Scene A"));
+
+        let json = inspection_json(&format_mixer_inspection_line(
+            &snapshot,
+            MixerInspectionStatus::LoadingPlaceholderShown,
+            &[],
+            MixerRetryInspection::HIDDEN,
+        ));
+
+        assert_eq!(json["mode"], "selected");
+        assert_eq!(json["refresh_target"], "Scene A");
+        assert_eq!(json["refresh_reason"], "direct_selected_scene");
+        assert_eq!(json["render_source"], "scene");
+        assert_eq!(json["render_scene"], "Scene A");
+        assert_eq!(inspection_status_kind(&json), "loading_placeholder_shown");
+        assert_ne!(inspection_status_kind(&json), "missing_no_target");
+        assert_eq!(json["visible_cards"].as_array().unwrap().len(), 0);
+        assert_eq!(json["retry"]["visible"], false);
+    }
+
+    #[test]
+    fn mixer_inspection_line_reports_loaded_empty_audio_sources() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::SelectedScene;
+        state.mixer.selected_scene = Some("Scene A".to_string());
+        state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_success("Scene A".to_string(), Vec::new());
+        let snapshot = state.mixer_inspection_snapshot();
+        assert_eq!(snapshot.status, MixerInspectionStatus::LoadedNoAudioSources);
+
+        let json = inspection_json(&format_mixer_inspection_line(
+            &snapshot,
+            MixerInspectionStatus::LoadedNoAudioSources,
+            &[],
+            MixerRetryInspection::HIDDEN,
+        ));
+
+        assert_eq!(json["mode"], "selected");
+        assert_eq!(json["render_source"], "scene");
+        assert_eq!(json["render_scene"], "Scene A");
+        assert_eq!(inspection_status_kind(&json), "loaded_no_audio_sources");
+        assert_ne!(inspection_status_kind(&json), "loading_placeholder_shown");
+        assert_ne!(inspection_status_kind(&json), "missing_no_target");
+        assert_ne!(inspection_status_kind(&json), "error");
+        assert_ne!(
+            inspection_status_kind(&json),
+            "loaded_no_matching_audio_sources_after_filtering"
+        );
+        assert_eq!(json["visible_cards"].as_array().unwrap().len(), 0);
+        assert_eq!(json["retry"]["visible"], false);
+    }
+
+    #[test]
+    fn mixer_inspection_line_reports_loaded_filtered_empty_audio_sources() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::SelectedScene;
+        state.mixer.selected_scene = Some("Scene A".to_string());
+        state.mixer.search = "does-not-match".to_string();
+        state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_success("Scene A".to_string(), vec![input("Mic", false, 1.0, 0.0)]);
+        let snapshot = state.mixer_inspection_snapshot();
+        assert_eq!(
+            snapshot.status,
+            MixerInspectionStatus::LoadedWithVisibleInputCards
+        );
+
+        let json = inspection_json(&format_mixer_inspection_line(
+            &snapshot,
+            MixerInspectionStatus::LoadedNoMatchingAudioSourcesAfterFiltering,
+            &[],
+            MixerRetryInspection::HIDDEN,
+        ));
+
+        assert_eq!(json["mode"], "selected");
+        assert_eq!(json["render_source"], "scene");
+        assert_eq!(json["render_scene"], "Scene A");
+        assert_eq!(
+            inspection_status_kind(&json),
+            "loaded_no_matching_audio_sources_after_filtering"
+        );
+        assert_ne!(inspection_status_kind(&json), "loaded_no_audio_sources");
+        assert_ne!(inspection_status_kind(&json), "loading_placeholder_shown");
+        assert_ne!(inspection_status_kind(&json), "missing_no_target");
+        assert_ne!(inspection_status_kind(&json), "error");
+        assert_eq!(json["visible_cards"].as_array().unwrap().len(), 0);
+        assert_eq!(json["retry"]["visible"], false);
     }
 
     #[test]

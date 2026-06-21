@@ -13,3 +13,4 @@
 [learning] State-level reason metadata tests do not protect final user-facing copy; helper-level string tests are needed when wording carries behavioral meaning.
 [pattern] Manual runtime plans should include non-destructive fixture setup and interaction/inspection prerequisites; otherwise repeated runs can document the same blocker without increasing confidence.
 [learning] Debug inspection output is only useful evidence when it is emitted from the same rendered branch as the UI; pre-dispatch snapshots can contradict loading placeholders.
+[anti-pattern] Duplicating presentation formatters in debug inspection creates false evidence; structured labels must share the same display formatter as rendered widgets.

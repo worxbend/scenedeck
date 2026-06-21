@@ -9,7 +9,6 @@ use crate::domain::mixer::{MixerMode, MixerSelection};
 use crate::domain::obs::ObsNamedList;
 use crate::domain::output::OutputStatus;
 use crate::domain::scene::{SceneId, SceneInventory};
-use crate::services::audio_service::AudioService;
 use crate::storage::config::OutputConfig;
 use std::time::Instant;
 
@@ -157,10 +156,12 @@ pub enum MixerInspectionRenderSourceKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MixerInspectionStatus<'a> {
-    Loaded,
-    Loading,
-    Error(&'a str),
-    Missing,
+    LoadingPlaceholderShown,
+    ErrorPlaceholderShown(&'a str),
+    MissingNoTarget,
+    LoadedWithVisibleInputCards,
+    LoadedNoAudioSources,
+    LoadedNoMatchingAudioSourcesAfterFiltering,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -367,7 +368,7 @@ impl AppState {
             MixerVisibleRenderSource::ActiveScene(inputs) => (
                 MixerInspectionRenderSourceKind::ActiveScene,
                 self.scene_inventory.current_id.as_deref(),
-                MixerInspectionStatus::Loaded,
+                mixer_inspection_loaded_status(inputs),
                 mixer_inspection_inputs(inputs),
             ),
             MixerVisibleRenderSource::Scene { scene, status } => {
@@ -382,7 +383,7 @@ impl AppState {
             MixerVisibleRenderSource::MissingScene => (
                 MixerInspectionRenderSourceKind::MissingScene,
                 None,
-                MixerInspectionStatus::Missing,
+                MixerInspectionStatus::MissingNoTarget,
                 Vec::new(),
             ),
         };
@@ -500,16 +501,26 @@ fn mixer_inspection_scene_status(
     status: MixerVisibleAudioStatus<'_>,
 ) -> (MixerInspectionStatus<'_>, Vec<MixerInspectionInput<'_>>) {
     match status {
-        MixerVisibleAudioStatus::Loading => (MixerInspectionStatus::Loading, Vec::new()),
+        MixerVisibleAudioStatus::Loading => {
+            (MixerInspectionStatus::LoadingPlaceholderShown, Vec::new())
+        }
         MixerVisibleAudioStatus::Error(error) => (
-            MixerInspectionStatus::Error(error.message.as_str()),
+            MixerInspectionStatus::ErrorPlaceholderShown(error.message.as_str()),
             Vec::new(),
         ),
         MixerVisibleAudioStatus::Loaded(inputs) => (
-            MixerInspectionStatus::Loaded,
+            mixer_inspection_loaded_status(inputs),
             mixer_inspection_inputs(inputs),
         ),
-        MixerVisibleAudioStatus::Missing => (MixerInspectionStatus::Missing, Vec::new()),
+        MixerVisibleAudioStatus::Missing => (MixerInspectionStatus::MissingNoTarget, Vec::new()),
+    }
+}
+
+fn mixer_inspection_loaded_status(inputs: &[AudioInput]) -> MixerInspectionStatus<'static> {
+    if inputs.is_empty() {
+        MixerInspectionStatus::LoadedNoAudioSources
+    } else {
+        MixerInspectionStatus::LoadedWithVisibleInputCards
     }
 }
 
@@ -522,9 +533,17 @@ fn mixer_inspection_inputs(inputs: &[AudioInput]) -> Vec<MixerInspectionInput<'_
             muted: input.muted,
             volume_mul: input.volume_mul,
             volume_db: input.volume_db,
-            volume_label: AudioService::format_db(input.volume_db),
+            volume_label: format_mixer_inspection_db(input.volume_db),
         })
         .collect()
+}
+
+fn format_mixer_inspection_db(db: f64) -> String {
+    if !db.is_finite() {
+        return "-inf dB".to_string();
+    }
+
+    format!("{db:.1} dB")
 }
 
 #[cfg(test)]
@@ -1057,7 +1076,10 @@ mod tests {
             MixerInspectionRenderSourceKind::ActiveScene
         );
         assert_eq!(snapshot.scene, Some("Active"));
-        assert_eq!(snapshot.status, MixerInspectionStatus::Loaded);
+        assert_eq!(
+            snapshot.status,
+            MixerInspectionStatus::LoadedWithVisibleInputCards
+        );
         assert_eq!(snapshot.inputs.len(), 1);
         assert_snapshot_input(&snapshot.inputs[0], "Live Mic", true);
     }
@@ -1086,7 +1108,10 @@ mod tests {
             MixerInspectionRenderSourceKind::Scene
         );
         assert_eq!(snapshot.scene, Some("Selected"));
-        assert_eq!(snapshot.status, MixerInspectionStatus::Loaded);
+        assert_eq!(
+            snapshot.status,
+            MixerInspectionStatus::LoadedWithVisibleInputCards
+        );
         assert_eq!(snapshot.inputs.len(), 1);
         assert_snapshot_input(&snapshot.inputs[0], "Scene Mic", true);
     }
@@ -1110,7 +1135,10 @@ mod tests {
             })
         );
         assert_eq!(snapshot.scene, Some("Active"));
-        assert_eq!(snapshot.status, MixerInspectionStatus::Loaded);
+        assert_eq!(
+            snapshot.status,
+            MixerInspectionStatus::LoadedWithVisibleInputCards
+        );
         assert_eq!(snapshot.inputs.len(), 1);
         assert_snapshot_input(&snapshot.inputs[0], "Active Mic", true);
     }
@@ -1138,7 +1166,10 @@ mod tests {
             })
         );
         assert_eq!(snapshot.scene, Some("Pinned"));
-        assert_eq!(snapshot.status, MixerInspectionStatus::Loaded);
+        assert_eq!(
+            snapshot.status,
+            MixerInspectionStatus::LoadedWithVisibleInputCards
+        );
         assert_eq!(snapshot.inputs.len(), 1);
         assert_snapshot_input(&snapshot.inputs[0], "Pinned Mic", true);
     }
@@ -1166,7 +1197,10 @@ mod tests {
             })
         );
         assert_eq!(snapshot.scene, Some("Selected"));
-        assert_eq!(snapshot.status, MixerInspectionStatus::Loaded);
+        assert_eq!(
+            snapshot.status,
+            MixerInspectionStatus::LoadedWithVisibleInputCards
+        );
         assert_eq!(snapshot.inputs.len(), 1);
         assert_snapshot_input(&snapshot.inputs[0], "Selected Mic", true);
     }
@@ -1181,7 +1215,10 @@ mod tests {
         let snapshot = state.mixer_inspection_snapshot();
 
         assert_eq!(snapshot.scene, Some("Selected"));
-        assert_eq!(snapshot.status, MixerInspectionStatus::Loading);
+        assert_eq!(
+            snapshot.status,
+            MixerInspectionStatus::LoadingPlaceholderShown
+        );
         assert!(snapshot.inputs.is_empty());
     }
 
@@ -1196,7 +1233,10 @@ mod tests {
         let snapshot = state.mixer_inspection_snapshot();
 
         assert_eq!(snapshot.scene, Some("Pinned"));
-        assert_eq!(snapshot.status, MixerInspectionStatus::Error("OBS failed"));
+        assert_eq!(
+            snapshot.status,
+            MixerInspectionStatus::ErrorPlaceholderShown("OBS failed")
+        );
         assert!(snapshot.inputs.is_empty());
     }
 
@@ -1215,8 +1255,52 @@ mod tests {
             MixerInspectionRenderSourceKind::Scene
         );
         assert_eq!(snapshot.scene, Some("Selected"));
-        assert_eq!(snapshot.status, MixerInspectionStatus::Missing);
+        assert_eq!(snapshot.status, MixerInspectionStatus::MissingNoTarget);
         assert!(snapshot.inputs.is_empty());
+    }
+
+    #[test]
+    fn mixer_inspection_snapshot_reports_active_loaded_empty_status() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::ActiveScene;
+        state.scene_inventory.current_id = Some("Active".to_string());
+
+        let snapshot = state.mixer_inspection_snapshot();
+
+        assert_eq!(
+            snapshot.render_source_kind,
+            MixerInspectionRenderSourceKind::ActiveScene
+        );
+        assert_eq!(snapshot.scene, Some("Active"));
+        assert_eq!(snapshot.status, MixerInspectionStatus::LoadedNoAudioSources);
+        assert!(snapshot.inputs.is_empty());
+    }
+
+    #[test]
+    fn mixer_inspection_snapshot_reports_scene_loaded_empty_status() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::SelectedScene;
+        state.mixer.selected_scene = Some("Selected".to_string());
+        state.set_mixer_audio_loading("Selected".to_string());
+        state.set_mixer_audio_success("Selected".to_string(), Vec::new());
+
+        let snapshot = state.mixer_inspection_snapshot();
+
+        assert_eq!(
+            snapshot.render_source_kind,
+            MixerInspectionRenderSourceKind::Scene
+        );
+        assert_eq!(snapshot.scene, Some("Selected"));
+        assert_eq!(snapshot.status, MixerInspectionStatus::LoadedNoAudioSources);
+        assert!(snapshot.inputs.is_empty());
+    }
+
+    #[test]
+    fn mixer_inspection_status_can_represent_filtered_loaded_empty_status() {
+        assert_ne!(
+            MixerInspectionStatus::LoadedNoAudioSources,
+            MixerInspectionStatus::LoadedNoMatchingAudioSourcesAfterFiltering
+        );
     }
 
     #[test]
