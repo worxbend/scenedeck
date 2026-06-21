@@ -1326,3 +1326,97 @@ M  docs/manual-test-plan.md
 M  docs/manual-test-runs.md
 M  src/controller/state.rs
 M  src/ui/pages/mixer.rs
+2026-06-21T13:46:22Z iteration 15 started remaining=11028s
+2026-06-21T13:46:22Z iteration 15 preplanner effective budgets untracked_scan_max_bytes=536870912 untracked_scan_max_count=10000 snapshot_copy_max_bytes=536870912 snapshot_copy_max_count=10000 snapshot_copy_max_file_bytes=134217728
+2026-06-21T13:46:22Z iteration 15 disposable preplanner repo created path=/tmp/agent-loop-preplanner-repo-bj74jiz0/repo copied_entries=115
+2026-06-21T13:46:22Z iteration 15 ideator phase started count=3
+2026-06-21T13:46:22Z iteration 15 ideator phase concurrency workers=3
+2026-06-21T13:46:22Z iteration 15 ideator 1 role="the pragmatist" started
+2026-06-21T13:46:22Z iteration 15 ideator 2 role="the architect" started
+2026-06-21T13:46:22Z iteration 15 ideator 3 role="the contrarian" started
+2026-06-21T13:46:30Z iteration 15 ideator 3 role="the contrarian" completed status=0
+2026-06-21T13:46:31Z iteration 15 ideator 2 role="the architect" completed status=0
+2026-06-21T13:46:32Z iteration 15 ideator 1 role="the pragmatist" completed status=0
+2026-06-21T13:46:32Z iteration 15 ideator phase completed approaches=3
+2026-06-21T13:46:32Z iteration 15 selector started approaches=3
+2026-06-21T13:46:42Z iteration 15 selector completed status=0
+2026-06-21T13:46:42Z iteration 15 disposable preplanner repo cleanup path=/tmp/agent-loop-preplanner-repo-bj74jiz0/repo
+2026-06-21T13:46:42Z iteration 15 selector rejected alternative role="the contrarian" approach="Evidence Contract First: treat the Mixer inspection path as a test oracle before pursuing UX or performance work" reason="Strong strategic framing, but selected only after narrowing it: the Planner should not expand the debug path into a general oracle, only repair the known trust gap and keep its evidence limits explicit."
+2026-06-21T13:46:42Z iteration 15 selector rejected alternative role="the architect" approach="Evidence-First Formatter Unification: treat the Mixer inspection path as an evidence contract before expanding runtime claims, by first eliminating presentation drift and only t..." reason="Very close to the selected direction, but it leans more toward formatter unification as an architectural goal. The guiding priority should be evidence trust and decision quality, with formatter sharing as the means."
+2026-06-21T13:46:42Z iteration 15 selector rejected alternative role="the pragmatist" approach="Evidence-First Trust Repair: treat the Mixer inspection dB mismatch as a blocker for credible runtime evidence, then use the repaired inspection path to decide whether any UI op..." reason="Also close to selected, but the final strategy makes the sequencing sharper: repair inspection fidelity first, then use that evidence to decide whether manual validation or rebuild optimization is warranted."
+2026-06-21T13:46:42Z iteration 15 selector alternatives persisted count=3
+2026-06-21T13:46:42Z iteration 15 selector structured alternatives persisted count=3
+2026-06-21T13:46:42Z iteration 15 planner started
+2026-06-21T13:47:07Z iteration 15 plan: 4 task(s) in 3 phase(s). This slice follows the Evidence-First Trust Repair constraint: first make the Mixer inspection channel trustworthy by sharing rendered dB formatting, then update the evidence instructions. Runtime Mixer evidence and any rebuild optimization should remain deferred until the inspection output can be trusted.
+2026-06-21T13:47:07Z iteration 15 phase 1 started parallel=False tasks=2
+2026-06-21T13:48:36Z iteration 15 task t1 ('Align Mixer inspection volume labels') status=0
+2026-06-21T13:49:29Z iteration 15 task t2 ('Cover inspection label parity') status=0
+2026-06-21T13:49:29Z iteration 15 phase 2 started parallel=False tasks=1
+2026-06-21T13:50:15Z iteration 15 task t3 ('Update focused Mixer evidence docs') status=0
+2026-06-21T13:50:15Z iteration 15 phase 3 started parallel=False tasks=1
+2026-06-21T13:50:23Z iteration 15 task t4 ('Run focused inspection validation') status=0
+2026-06-21T13:50:23Z iteration 15 reviewer started
+
+## Review Summary - Iteration 15 - 2026-06-21
+
+### What Was Done
+
+- Removed the duplicated inspection-only dB label from
+  `MixerInspectionInput`.
+- Moved Mixer inspection `volume_label` derivation into the UI/debug
+  serialization path and used `AudioService::format_db`, matching rendered
+  audio cards.
+- Added focused inspection coverage for `f64::NEG_INFINITY`, `-120.0`,
+  near-zero positive and negative values, zero, and `-6.24`.
+- Updated focused Mixer manual evidence docs and run templates to require the
+  shared rendered audio-card dB formatter before using structured
+  `volume_label` lines as visible-card evidence.
+
+### What Was Found
+
+- Scoped validation passed:
+  `cargo test --workspace --all-features mixer_inspection -- --nocapture`.
+- The previous high-priority evidence bug is fixed. Structured
+  `volume_label` output now follows the same floor and near-zero rules as the
+  rendered Mixer card labels.
+- No production UI surface was added; the inspection path remains opt-in with
+  `SCENEDECK_MIXER_INSPECT=1`.
+- No functional regression was found in the changed code paths.
+- Minor design issue: `format_mixer_inspection_line` emits `volume_db` from the
+  visible card but derives `volume_label` by looking up the matching snapshot
+  input by name and falling back to the visible card value. Normal rendering
+  currently passes cloned values from the same source, but direct visible-card
+  formatting would make the evidence contract simpler and harder to misuse.
+- Runtime Mixer evidence remains incomplete. There are still no pass/fail
+  claims for ComboRow timing, Retry activation, OBS mute/volume echoes, stale
+  visible cards, visual layout quality, or rebuild churn.
+
+### Top Improvement Proposals
+
+1. Run the focused Mixer inspection evidence pass against a temporary OBS
+   fixture with a scene-specific input present in only one fixture scene.
+2. Use `SCENEDECK_MIXER_INSPECT=1` plus an interactive or documented control
+   path to record Active, Selected, Pinned, Retry, mute echo, volume echo,
+   loaded-empty, and filtered-empty cases without overstating inspection
+   limits.
+3. Simplify `format_mixer_inspection_line` so `volume_label` is formatted
+   directly from each visible card's `volume_db`, and add a regression test for
+   label/value consistency.
+4. Keep full-page Mixer rebuilds until a completed focused run shows visible
+   churn from high-frequency volume echoes.
+5. Move to non-Mixer P1 work, especially output command errors in the Live UI,
+   if the OBS fixture or interaction path remains unavailable.
+2026-06-21T13:53:08Z iteration 15 reviewer completed status=0
+2026-06-21T13:53:08Z iteration 15 memory updated
+2026-06-21T13:53:08Z iteration 15 completed validation_status=0
+2026-06-21T13:53:08Z iteration 15 checkpoint started
+2026-06-21T13:53:08Z iteration 15 checkpoint status before commit:
+M  AGENT_LOG.md
+M  ALTERNATIVES.jsonl
+M  MEMORY.md
+M  PLAN.md
+M  SCORES.jsonl
+M  docs/manual-test-plan.md
+M  docs/manual-test-runs.md
+M  src/controller/state.rs
+M  src/ui/pages/mixer.rs

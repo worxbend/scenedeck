@@ -88,6 +88,10 @@ Inspection contract:
   hidden by search are separate rendered states. Record `No Audio Sources` and
   `No Matching Audio Sources` evidence separately when those cases are
   exercised.
+- Structured `volume_label` evidence is valid visible-card evidence only
+  because inspection output shares the same dB formatter used by rendered Mixer
+  audio cards. Do not accept labels produced by a duplicated inspection-only
+  formatter as proof of the visible card label.
 - Structured inspection can support rendered state and card-data claims. It
   still does not prove pointer interaction success, visual layout quality, or
   perceived rebuild churn without an interactive observation or equivalent
@@ -144,7 +148,8 @@ Inspection evidence captured:
   or loaded with no matching audio sources after filtering: `TODO`.
 - Visible card input names: `TODO`.
 - Mute states: `TODO`.
-- Volume values and labels: `TODO`.
+- Volume values and labels: `TODO`; for labels, note that the build shares the
+  rendered audio-card dB formatter.
 - Retry visible/enabled state: `TODO`.
 
 Non-claims:

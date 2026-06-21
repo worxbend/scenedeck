@@ -171,7 +171,6 @@ pub struct MixerInspectionInput<'a> {
     pub muted: bool,
     pub volume_mul: f64,
     pub volume_db: f64,
-    pub volume_label: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -533,17 +532,8 @@ fn mixer_inspection_inputs(inputs: &[AudioInput]) -> Vec<MixerInspectionInput<'_
             muted: input.muted,
             volume_mul: input.volume_mul,
             volume_db: input.volume_db,
-            volume_label: format_mixer_inspection_db(input.volume_db),
         })
         .collect()
-}
-
-fn format_mixer_inspection_db(db: f64) -> String {
-    if !db.is_finite() {
-        return "-inf dB".to_string();
-    }
-
-    format!("{db:.1} dB")
 }
 
 #[cfg(test)]
@@ -602,7 +592,6 @@ mod tests {
         assert_eq!(input.muted, muted);
         assert_eq!(input.volume_mul, 0.5);
         assert_eq!(input.volume_db, -6.24);
-        assert_eq!(input.volume_label, "-6.2 dB");
     }
 
     #[test]

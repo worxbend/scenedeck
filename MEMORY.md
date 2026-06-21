@@ -14,3 +14,4 @@
 [pattern] Manual runtime plans should include non-destructive fixture setup and interaction/inspection prerequisites; otherwise repeated runs can document the same blocker without increasing confidence.
 [learning] Debug inspection output is only useful evidence when it is emitted from the same rendered branch as the UI; pre-dispatch snapshots can contradict loading placeholders.
 [anti-pattern] Duplicating presentation formatters in debug inspection creates false evidence; structured labels must share the same display formatter as rendered widgets.
+[pattern] Keep debug inspection DTOs raw where possible and derive display labels at the UI/serialization boundary with the same helpers used by rendered widgets.

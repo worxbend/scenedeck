@@ -49,15 +49,13 @@ fallback-aware Mixer summary copy, direct Mixer summary copy tests, output
 confirmation dialog appearance metadata, tightened focused Mixer manual
 evidence instructions, reproducible focused Mixer fixture documentation, the
 opt-in Mixer debug inspection path, and rendered-branch inspection status
-alignment. Focused manual Mixer interaction evidence is still not complete. The
-debug path now distinguishes loading placeholders, error placeholders, missing
-no-target state, loaded visible cards, loaded empty audio, and filtered-empty
-audio, but the latest review found a remaining evidence-fidelity bug: controller
-inspection labels use a local dB formatter that does not match
-`AudioService::format_db`, so structured `volume_label` values can disagree
-with rendered audio-card labels at very low or near-zero dB values. No
-pass/fail behavior is claimed yet for ComboRow timing, Retry activation, OBS
-mute/volume echoes, stale visible cards, or runtime rebuild churn.
+alignment. The debug path now distinguishes loading placeholders, error
+placeholders, missing no-target state, loaded visible cards, loaded empty audio,
+and filtered-empty audio, and structured `volume_label` values are derived with
+the same `AudioService::format_db` helper used by rendered audio cards. Focused
+manual Mixer interaction evidence is still not complete. No pass/fail behavior
+is claimed yet for ComboRow timing, Retry activation, OBS mute/volume echoes,
+stale visible cards, or runtime rebuild churn.
 
 ## Completed Phases
 
@@ -685,43 +683,40 @@ Review verdict:
   display formatting must be shared or injected from the UI layer to avoid a
   second presentation model.
 
+### Mixer Inspection Volume Label Alignment
+
+Working tree, reviewed 2026-06-21:
+
+- Removed `volume_label` from `MixerInspectionInput` so controller state no
+  longer owns a duplicated presentation formatter.
+- Changed Mixer inspection JSON serialization in `src/ui/pages/mixer.rs` to
+  derive `volume_label` with `AudioService::format_db`, the same helper used by
+  rendered audio cards.
+- Added focused inspection coverage for `f64::NEG_INFINITY`, `-120.0`,
+  near-zero positive and negative values, zero, and a normal value such as
+  `-6.24`.
+- Updated focused Mixer evidence instructions and run templates to require the
+  shared rendered audio-card dB formatter before treating structured
+  `volume_label` values as visible-card evidence.
+
+Review verdict:
+
+- Scoped validation passed in review:
+  `cargo test --workspace --all-features mixer_inspection -- --nocapture`.
+- The high-priority evidence-fidelity bug from the previous review is fixed:
+  inspection labels now follow `AudioService::format_db`, including the
+  `<= -100.0 dB` floor and near-zero normalization used by audio cards.
+- The implementation correctly keeps the debug path opt-in and avoids adding a
+  visible production control.
+- No functional regression was found in the changed paths.
+- Minor cleanup opportunity: `format_mixer_inspection_line` formats the label
+  by looking up a matching snapshot input by name and falling back to the
+  visible card value. In normal rendering those values come from the same
+  cloned inputs, but serializing directly from the visible card would make the
+  label/value relationship simpler and avoid a future mismatch if inspection
+  callers ever pass a filtered or transformed visible-card list.
+
 ## Groomed Next Steps
-
-### P1: Align Mixer Inspection Volume Labels With Rendered Audio Cards
-
-Problem:
-
-- `SCENEDECK_MIXER_INSPECT=1` now emits branch-aligned status, but visible card
-  `volume_label` values can still diverge from the actual Mixer card labels.
-- `src/controller/state.rs::format_mixer_inspection_db` is a local presentation
-  formatter that does not preserve `AudioService::format_db` semantics for
-  `<= -100.0 dB` and near-zero values.
-- This undermines the debug path's main purpose: using structured lines as
-  trustworthy evidence for visible Mixer card data.
-
-Plan:
-
-- Reuse the same dB display formatter as audio cards, or move `volume_label`
-  derivation fully into the UI/debug serialization layer where `AudioService`
-  is already used.
-- Add tests proving inspection labels match rendered card labels for
-  `f64::NEG_INFINITY`, `-120.0`, near-zero positive/negative values, and a
-  normal value such as `-6.24`.
-- Prefer one shared formatting helper over duplicating the thresholds in
-  controller state.
-- Keep the debug path opt-in through `SCENEDECK_MIXER_INSPECT=1`; do not add a
-  visible production control for this evidence-only surface.
-
-Files:
-
-- `src/controller/state.rs`
-- `src/ui/pages/mixer.rs`
-
-Tests:
-
-- `cargo test --workspace --all-features mixer_inspection -- --nocapture`
-- Add or extend focused tests that compare inspection `volume_label` output to
-  `AudioService::format_db`.
 
 ### P1: Run Focused Mixer Inspection Evidence
 
@@ -729,9 +724,9 @@ Problem:
 
 - The focused Mixer interaction contract still has no passing or failing
   runtime evidence.
-- The debug inspection path now exists and its rendered-status vocabulary is
-  aligned with the UI branches, but it should not be used as authoritative
-  visible-card label evidence until the dB label mismatch above is resolved.
+- The debug inspection path is now branch-aligned and uses the rendered
+  audio-card dB formatter, so it is ready to support rendered-state and
+  card-data evidence.
 - The OBS fixture still needs a scene-specific input present in only one test
   scene before Selected/Pinned scene-specific behavior can be proven.
 - Pointer interaction, layout quality, and perceived rebuild churn still
@@ -740,28 +735,55 @@ Problem:
 
 Plan:
 
-- Run SceneDeck against a verified OBS WebSocket setup with at least two scenes,
-  global audio inputs, and at least one scene-specific audio input that differs
-  between scenes.
-- Use an interactive desktop session or an available UI automation path that
-  can select ComboRows, click Retry, and inspect visible Mixer cards.
-- Execute `Focused Mixer Refresh Contract` from
-  `docs/manual-test-plan.md`.
-- Capture `SCENEDECK_MIXER_INSPECT=1` output and use the focused inspection run
-  template in `docs/manual-test-runs.md`.
-- Record OBS version, SceneDeck build/commit, pass/fail results, skipped cases,
-  relevant structured lines, and any stale-card, retry, or rebuild-churn
-  observations.
+- Prepare or verify a temporary OBS fixture with at least two scenes, global
+  audio inputs, and one scene-specific audio input present in only one fixture
+  scene.
+- Run SceneDeck with `SCENEDECK_MIXER_INSPECT=1` against the verified OBS
+  WebSocket setup.
+- Use an interactive desktop session or a documented automation/control path
+  to exercise Active, Selected, Pinned, Retry, mute echo, volume echo, empty,
+  and filtered-empty cases from `docs/manual-test-plan.md`.
+- Record OBS version, SceneDeck build/commit, pass/fail/blocked results,
+  skipped cases, relevant structured lines, and any stale-card, retry, or
+  rebuild-churn observations in `docs/manual-test-runs.md`.
 - Keep blocked entries explicit if any prerequisite remains unavailable; do not
-  convert pure-test confidence into manual pass claims.
-- Keep the inspection path's limits explicit: it can prove rendered state and
-  card data, but not pointer interaction success, visual layout quality, or
-  perceived churn unless those were also observed interactively.
+  convert pure-test confidence or structured inspection outside its limits into
+  manual pass claims.
 
 Files:
 
 - `docs/manual-test-plan.md`
 - `docs/manual-test-runs.md`
+
+Tests:
+
+- Manual evidence run, with `SCENEDECK_MIXER_INSPECT=1` output attached or
+  pasted for the exercised cases.
+
+### P1: Simplify Mixer Inspection Card Serialization
+
+Problem:
+
+- `format_mixer_inspection_line` currently emits `volume_db` from the visible
+  card but derives `volume_label` by first looking up the matching snapshot
+  input by name.
+- Normal Mixer rendering passes visible cards cloned from the same snapshot, so
+  behavior is currently correct, but the extra lookup makes the evidence path
+  harder to reason about and could create mismatched `volume_db`/`volume_label`
+  pairs if a future caller passes transformed visible-card data.
+
+Plan:
+
+- Format `volume_label` directly from `input.volume_db`, the same value emitted
+  as the visible card's `volume_db`.
+- Keep any reducer snapshot fields for render-source/status evidence only, not
+  for per-card presentation values already available from visible cards.
+- Add a focused test that would fail if `volume_db` and `volume_label` are
+  sourced from different card values.
+
+Files:
+
+- `src/ui/pages/mixer.rs`
 
 ### P1: Reduce Mixer Page Rebuild Cost For High-Frequency Input Events
 

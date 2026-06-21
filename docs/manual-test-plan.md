@@ -192,7 +192,9 @@ checklist.
   application renders those modes. Inspection lines are emitted from the same
   rendered UI branch that appends Mixer placeholders or visible cards, so the
   status must describe what the page showed rather than only the pre-render
-  reducer state.
+  reducer state. Structured `volume_label` evidence is valid card-data
+  evidence only because it is derived with the same rendered audio-card dB
+  formatter used by the Mixer UI.
 
 Debug inspection limits:
 
@@ -214,6 +216,10 @@ Debug inspection limits:
 - Loaded empty states are distinct. A loaded scene with no audio sources should
   be recorded separately from a loaded scene whose audio sources were filtered
   out by search as `No Matching Audio Sources`.
+- Treat structured volume labels as visible-card evidence only for builds where
+  inspection output shares the rendered Mixer audio-card dB formatter. A local
+  or duplicated inspection formatter is not acceptable evidence for visible dB
+  labels.
 
 1. Open Mixer and select Active mode with the mode ComboRow.
 2. Change the current OBS program scene from OBS and from SceneDeck Live.
@@ -274,12 +280,15 @@ failed selected or pinned refresh, OBS mute and volume echoes updating visible
 Mixer cards, no stale visible cards after echoes, acceptable visual layout, and
 no noticeable rebuild churn under repeated volume echoes. A complete pass
 through the debug inspection path shows structured lines matching the rendered
-Mixer state, visible input names, mute states, volume values and labels,
+Mixer state, visible input names, mute states, volume values and labels that
+share the rendered audio-card dB formatter,
 loading/requested, error, missing/no-target, loaded-card, loaded-empty, and
 filtered-empty state, and Retry visible/enabled state for the exercised cases.
-Structured inspection can support rendered state and card-data claims only. If
-any prerequisite or interaction path is unavailable, record the case as blocked
-or skipped and make no pass/fail claim for that behavior.
+Structured inspection can support rendered state and card-data claims only; it
+still cannot prove pointer interaction success, visual layout quality, or
+perceived rebuild churn without interactive observation. If any prerequisite or
+interaction path is unavailable, record the case as blocked or skipped and make
+no pass/fail claim for that behavior.
 
 ### Volume and Mute Sync: SceneDeck to OBS
 

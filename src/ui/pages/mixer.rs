@@ -551,20 +551,19 @@ fn format_mixer_inspection_line(
     let cards: Vec<_> = visible_cards
         .iter()
         .map(|input| {
-            let snapshot_input = snapshot
+            let volume_db = snapshot
                 .inputs
                 .iter()
-                .find(|snapshot_input| snapshot_input.name == input.name.as_str());
+                .find(|snapshot_input| snapshot_input.name == input.name.as_str())
+                .map(|snapshot_input| snapshot_input.volume_db)
+                .unwrap_or(input.volume_db);
             serde_json::json!({
                 "name": input.name,
                 "display_name": input.display_name,
                 "muted": input.muted,
                 "volume_mul": input.volume_mul,
                 "volume_db": input.volume_db,
-                "volume_label": snapshot_input
-                    .map(|input| input.volume_label.as_str())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| AudioService::format_db(input.volume_db)),
+                "volume_label": AudioService::format_db(volume_db),
             })
         })
         .collect();
@@ -837,6 +836,7 @@ mod tests {
     use crate::domain::appearance::ThemeMode;
     use crate::domain::audio::AudioInput;
     use crate::domain::mixer::{MixerMode, MixerSelection};
+    use crate::services::audio_service::AudioService;
     use crate::storage::config::OutputConfig;
 
     fn app_state() -> AppState {
@@ -1009,6 +1009,45 @@ mod tests {
         assert_eq!(cards[0]["volume_mul"], 0.5);
         assert_eq!(cards[0]["volume_db"], -6.24);
         assert_eq!(cards[0]["volume_label"], "-6.2 dB");
+    }
+
+    #[test]
+    fn mixer_inspection_line_volume_labels_match_audio_card_formatter() {
+        let mut state = app_state();
+        state.mixer.mode = MixerMode::ActiveScene;
+        state.scene_inventory.current_id = Some("Program".to_string());
+        let volume_cases = [
+            ("NegInf", f64::NEG_INFINITY),
+            ("BelowFloor", -120.0),
+            ("NearZeroPositive", 0.01),
+            ("NearZeroNegative", -0.01),
+            ("Zero", 0.0),
+            ("Normal", -6.24),
+        ];
+        state.audio_inputs = volume_cases
+            .iter()
+            .map(|(name, volume_db)| input(name, false, 1.0, *volume_db))
+            .collect();
+        let visible_cards = state.audio_inputs.clone();
+        let snapshot = state.mixer_inspection_snapshot();
+
+        let json = inspection_json(&format_mixer_inspection_line(
+            &snapshot,
+            MixerInspectionStatus::LoadedWithVisibleInputCards,
+            &visible_cards,
+            MixerRetryInspection::HIDDEN,
+        ));
+
+        let cards = json["visible_cards"].as_array().unwrap();
+        assert_eq!(cards.len(), volume_cases.len());
+        for ((name, volume_db), card) in volume_cases.iter().zip(cards) {
+            assert_eq!(card["name"], *name);
+            assert_eq!(
+                card["volume_label"],
+                AudioService::format_db(*volume_db),
+                "inspection label should match rendered audio-card formatter for {name}"
+            );
+        }
     }
 
     #[test]
