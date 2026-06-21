@@ -40,9 +40,9 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
 Status: all passed on 2026-06-21 after the mixer refresh contract, optimistic
-audio update, output confirmation decision-helper work, and mixer retry-intent
-fix. The current review also reran the focused `mixer_refresh` and `request_`
-test filters.
+audio update, output confirmation decision-helper work, mixer retry-intent fix,
+and reducer-owned mixer input mirror containment. The current review reran the
+full validation rule plus the focused `mixer_input` test filter.
 
 ## Completed Phases
 
@@ -213,43 +213,40 @@ Review verdict:
 - Legacy mixer mirror fields remain public because GTK pages read them
   directly; comments help, but do not mechanically prevent future bypasses.
 
+### Mixer Reducer-Owned Input Mirrors
+
+Working tree, reviewed 2026-06-21:
+
+- Added `AppState::update_mixer_input_mute` and
+  `AppState::update_mixer_input_volume` so OBS input events update
+  `MixerAudioRefreshState::loaded.inputs` and then resync the legacy mirror
+  fields from the reducer-owned snapshot.
+- Routed `InputMuteChanged` and `InputVolumeChanged` in `src/ui/window.rs`
+  through those APIs while preserving active-scene `audio_inputs` updates.
+- Made the legacy mixer mirror fields private to `src/controller/state.rs` and
+  added read-only accessors for Mixer page rendering.
+- Updated `src/ui/pages/mixer.rs` to use the accessors.
+- Added reducer tests proving mute and volume updates keep mirrors and loaded
+  snapshots synchronized and survive same-scene loading/failure transitions
+  without restoring stale values.
+
+Review verdict:
+
+- Static validation passed: `cargo fmt --all -- --check`,
+  `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- The planned P0 mirror drift fix is complete for known OBS input event paths.
+- The private fields are a meaningful mechanical fence; `rg` shows no direct
+  mirror reads or writes outside `src/controller/state.rs`.
+- Remaining gap: visible Mixer page cards are not directly reconciled on
+  `InputMuteChanged` / `InputVolumeChanged`; state is correct, but a selected
+  or pinned Mixer card can stay visually stale until the page rebuilds.
+- The legacy mirror fields still exist for UI rendering compatibility. Longer
+  term, the Mixer page should read a single derived snapshot/accessor instead
+  of coordinating four mirror accessors itself.
+
 ## Groomed Next Steps
-
-### P0: Make Mixer Audio Mirrors Mechanically Safe
-
-Problem:
-
-- `mixer_audio_scene`, `mixer_audio_inputs`, `mixer_audio_loading_scene`, and
-  `mixer_audio_error` are documented as mirrors of `MixerAudioRefreshState`,
-  but they are still public and can be directly mutated.
-- `InputMuteChanged` and `InputVolumeChanged` currently mutate
-  `mixer_audio_inputs` in `src/ui/window.rs` without updating
-  `mixer_audio_refresh.loaded.inputs`.
-- A later reducer sync can clone the stale loaded snapshot back into the legacy
-  fields and lose the latest mute/volume event.
-
-Plan:
-
-- Add `AppState` methods for mixer input mute and volume updates that update
-  both the active mirror and `mixer_audio_refresh.loaded.inputs`.
-- Route `InputMuteChanged` and `InputVolumeChanged` through those methods.
-- Add `AppState` tests that prove mixer loaded snapshots and mirrors remain in
-  sync after input mute/volume events.
-- Consider making the legacy mixer fields `pub(crate)` or replacing UI reads
-  with accessor methods so direct writes become harder.
-
-Files:
-
-- `src/controller/state.rs`
-- `src/ui/window.rs`
-- `src/ui/pages/mixer.rs`
-
-Tests:
-
-- Updating a mixer input mute state updates both mirror and reducer snapshot.
-- Updating a mixer input volume updates both mirror and reducer snapshot.
-- A subsequent mixer loading/failure transition does not restore stale input
-  values from `mixer_audio_refresh.loaded`.
 
 ### P0: Add Mixer Retry Interaction Coverage
 
@@ -281,6 +278,71 @@ Tests:
 - Explicit retry dispatches exactly once from a matching failed state.
 - Automatic rebuild after failure does not dispatch.
 - Explicit retry during loading/tracked state does not duplicate requests.
+
+### P1: Keep Visible Mixer Cards Synced With OBS Input Events
+
+Problem:
+
+- `InputMuteChanged` and `InputVolumeChanged` now keep `AppState` mixer
+  snapshots correct, but `src/ui/window.rs` only updates `live.audio_cards`.
+- Mixer page cards are rebuilt from state, so they eventually become correct,
+  but visible selected/pinned Mixer controls can display stale mute/volume
+  values until a page refresh occurs.
+
+Plan:
+
+- Decide whether Mixer cards should be tracked like Live cards or whether input
+  events should refresh the Mixer page when it is visible.
+- Prefer a small, testable page-refresh condition first: when the current page
+  is Mixer and the changed input exists in the visible mixer snapshot, refresh
+  only the Mixer page.
+- Avoid dispatching OBS refreshes from this path; it is a local UI/state
+  reconciliation for an already received OBS event.
+- Add focused coverage for the predicate that decides whether a Mixer rebuild
+  is needed after an input event.
+
+Files:
+
+- `src/ui/window.rs`
+- `src/ui/pages/mixer.rs`
+- possible `src/controller/state.rs` helper for snapshot membership
+
+Tests:
+
+- An input event for a visible selected/pinned mixer snapshot triggers a Mixer
+  rebuild/update.
+- An unrelated input event does not rebuild Mixer.
+- Active-scene Live audio updates continue to update existing Live cards.
+
+### P1: Collapse Mixer Mirror Read Model
+
+Problem:
+
+- The legacy mixer mirror fields are now private, but the Mixer page still has
+  to combine `mixer_audio_scene()`, `mixer_audio_inputs()`,
+  `mixer_audio_loading_scene()`, and `mixer_audio_error()` manually.
+- That preserves some of the old split-state shape in read code even though
+  writes are now reducer-owned.
+
+Plan:
+
+- Add a small `AppState` read helper that returns the visible mixer refresh
+  status for a target scene: loading, error, loaded inputs, or missing.
+- Refactor `src/ui/pages/mixer.rs` to branch on that helper rather than on four
+  separate accessors.
+- Keep the legacy mirror fields only as compatibility state while the page
+  still needs cloned `AudioInput` values for card construction.
+
+Files:
+
+- `src/controller/state.rs`
+- `src/ui/pages/mixer.rs`
+
+Tests:
+
+- Target-scene helper reports loading, error, loaded, and missing states.
+- Stale loaded/error data for another scene is not reported as visible for the
+  requested target.
 
 ### P1: Surface Output Command Errors In Output UI
 

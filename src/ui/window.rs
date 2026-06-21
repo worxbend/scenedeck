@@ -447,24 +447,14 @@ fn apply_event(
         }
 
         AppEvent::InputMuteChanged { input, muted } => {
-            if let Some(a) = nav
-                .state
-                .borrow_mut()
-                .audio_inputs
-                .iter_mut()
-                .find(|a| a.id == input)
             {
-                a.muted = muted;
+                let mut state = nav.state.borrow_mut();
+                if let Some(a) = state.audio_inputs.iter_mut().find(|a| a.id == input) {
+                    a.muted = muted;
+                }
+                state.update_mixer_input_mute(&input, muted);
             }
-            if let Some(a) = nav
-                .state
-                .borrow_mut()
-                .mixer_audio_inputs
-                .iter_mut()
-                .find(|a| a.id == input)
-            {
-                a.muted = muted;
-            }
+
             for card in live.audio_cards.borrow().iter() {
                 if card.input_id == input {
                     card.update_mute(muted);
@@ -478,26 +468,15 @@ fn apply_event(
             volume_mul,
             volume_db,
         } => {
-            if let Some(a) = nav
-                .state
-                .borrow_mut()
-                .audio_inputs
-                .iter_mut()
-                .find(|a| a.id == input)
             {
-                a.volume_mul = volume_mul;
-                a.volume_db = volume_db;
+                let mut state = nav.state.borrow_mut();
+                if let Some(a) = state.audio_inputs.iter_mut().find(|a| a.id == input) {
+                    a.volume_mul = volume_mul;
+                    a.volume_db = volume_db;
+                }
+                state.update_mixer_input_volume(&input, volume_mul, volume_db);
             }
-            if let Some(a) = nav
-                .state
-                .borrow_mut()
-                .mixer_audio_inputs
-                .iter_mut()
-                .find(|a| a.id == input)
-            {
-                a.volume_mul = volume_mul;
-                a.volume_db = volume_db;
-            }
+
             for card in live.audio_cards.borrow().iter() {
                 if card.input_id == input {
                     card.update_volume(volume_mul, volume_db);

@@ -190,16 +190,16 @@ pub struct AppState {
     /// Event handlers must update these legacy fields only through
     /// `set_mixer_audio_loading`, `set_mixer_audio_success`,
     /// `set_mixer_audio_failure`, or `clear_pending_mixer_audio_refresh`.
-    pub mixer_audio_scene: Option<String>,
+    mixer_audio_scene: Option<String>,
     /// Legacy mirror of `mixer_audio_refresh.loaded.inputs`; see
     /// `mixer_audio_scene` for the reducer contract.
-    pub mixer_audio_inputs: Vec<AudioInput>,
+    mixer_audio_inputs: Vec<AudioInput>,
     /// Legacy mirror of `mixer_audio_refresh.requested_scene`; see
     /// `mixer_audio_scene` for the reducer contract.
-    pub mixer_audio_loading_scene: Option<SceneId>,
+    mixer_audio_loading_scene: Option<SceneId>,
     /// Legacy mirror of `mixer_audio_refresh.error`; see `mixer_audio_scene`
     /// for the reducer contract.
-    pub mixer_audio_error: Option<MixerAudioError>,
+    mixer_audio_error: Option<MixerAudioError>,
     pub mixer_audio_refresh: MixerAudioRefreshState,
     pub mixer: MixerSelection,
     pub diagnostics: Vec<Diagnostic>,
@@ -281,6 +281,74 @@ impl AppState {
         self.sync_mixer_audio_fields();
     }
 
+    pub fn mixer_audio_scene(&self) -> Option<&str> {
+        self.mixer_audio_scene.as_deref()
+    }
+
+    pub fn mixer_audio_inputs(&self) -> &[AudioInput] {
+        &self.mixer_audio_inputs
+    }
+
+    pub fn mixer_audio_loading_scene(&self) -> Option<&str> {
+        self.mixer_audio_loading_scene.as_deref()
+    }
+
+    pub fn mixer_audio_error(&self) -> Option<&MixerAudioError> {
+        self.mixer_audio_error.as_ref()
+    }
+
+    pub fn update_mixer_input_mute(&mut self, input_id: &str, muted: bool) -> bool {
+        let updated = self
+            .mixer_audio_refresh
+            .loaded
+            .as_mut()
+            .and_then(|snapshot| {
+                snapshot
+                    .inputs
+                    .iter_mut()
+                    .find(|input| input.id == input_id)
+            })
+            .map(|input| {
+                input.muted = muted;
+            })
+            .is_some();
+
+        if updated {
+            self.sync_mixer_audio_fields();
+        }
+
+        updated
+    }
+
+    pub fn update_mixer_input_volume(
+        &mut self,
+        input_id: &str,
+        volume_mul: f64,
+        volume_db: f64,
+    ) -> bool {
+        let updated = self
+            .mixer_audio_refresh
+            .loaded
+            .as_mut()
+            .and_then(|snapshot| {
+                snapshot
+                    .inputs
+                    .iter_mut()
+                    .find(|input| input.id == input_id)
+            })
+            .map(|input| {
+                input.volume_mul = volume_mul;
+                input.volume_db = volume_db;
+            })
+            .is_some();
+
+        if updated {
+            self.sync_mixer_audio_fields();
+        }
+
+        updated
+    }
+
     fn sync_mixer_audio_fields(&mut self) {
         self.mixer_audio_loading_scene = self.mixer_audio_refresh.requested_scene.clone();
         self.mixer_audio_error = self.mixer_audio_refresh.error.clone();
@@ -300,6 +368,35 @@ mod tests {
 
     fn input(id: &str) -> AudioInput {
         AudioInput::new(id.to_string(), false, 1.0, 0.0)
+    }
+
+    fn app_state() -> AppState {
+        AppState::new(
+            ThemeMode::default(),
+            MixerSelection::default(),
+            OutputConfig::default(),
+            None,
+        )
+    }
+
+    fn mirror_input<'a>(state: &'a AppState, id: &str) -> &'a AudioInput {
+        state
+            .mixer_audio_inputs
+            .iter()
+            .find(|input| input.id == id)
+            .expect("mixer mirror input")
+    }
+
+    fn loaded_input<'a>(state: &'a AppState, id: &str) -> &'a AudioInput {
+        state
+            .mixer_audio_refresh
+            .loaded
+            .as_ref()
+            .expect("loaded mixer snapshot")
+            .inputs
+            .iter()
+            .find(|input| input.id == id)
+            .expect("loaded mixer input")
     }
 
     #[test]
@@ -447,5 +544,89 @@ mod tests {
                 message: "current failure".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn mixer_input_mute_update_keeps_mirror_and_loaded_snapshot_in_sync() {
+        let mut state = app_state();
+        state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_success("Scene A".to_string(), vec![input("Mic"), input("Music")]);
+
+        assert!(state.update_mixer_input_mute("Mic", true));
+
+        assert_eq!(state.mixer_audio_scene.as_deref(), Some("Scene A"));
+        assert!(mirror_input(&state, "Mic").muted);
+        assert!(loaded_input(&state, "Mic").muted);
+        assert!(!mirror_input(&state, "Music").muted);
+        assert!(!loaded_input(&state, "Music").muted);
+    }
+
+    #[test]
+    fn mixer_input_volume_update_keeps_mirror_and_loaded_snapshot_in_sync() {
+        let mut state = app_state();
+        state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_success("Scene A".to_string(), vec![input("Mic"), input("Music")]);
+
+        assert!(state.update_mixer_input_volume("Music", 0.42, -7.5));
+
+        assert_eq!(state.mixer_audio_scene.as_deref(), Some("Scene A"));
+        assert_eq!(mirror_input(&state, "Music").volume_mul, 0.42);
+        assert_eq!(mirror_input(&state, "Music").volume_db, -7.5);
+        assert_eq!(loaded_input(&state, "Music").volume_mul, 0.42);
+        assert_eq!(loaded_input(&state, "Music").volume_db, -7.5);
+        assert_eq!(mirror_input(&state, "Mic").volume_mul, 1.0);
+        assert_eq!(loaded_input(&state, "Mic").volume_mul, 1.0);
+    }
+
+    #[test]
+    fn mixer_input_mute_update_survives_same_scene_loading_and_failure() {
+        let mut state = app_state();
+        state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_success("Scene A".to_string(), vec![input("Mic"), input("Music")]);
+
+        assert!(state.update_mixer_input_mute("Mic", true));
+
+        let transition = state.set_mixer_audio_loading("Scene A".to_string());
+        assert_eq!(transition, MixerAudioRefreshTransition::Loading);
+        assert!(mirror_input(&state, "Mic").muted);
+        assert!(loaded_input(&state, "Mic").muted);
+        assert!(!mirror_input(&state, "Music").muted);
+        assert!(!loaded_input(&state, "Music").muted);
+
+        let transition =
+            state.set_mixer_audio_failure("Scene A".to_string(), "OBS failed".to_string());
+        assert_eq!(transition, MixerAudioRefreshTransition::Failure);
+        assert!(mirror_input(&state, "Mic").muted);
+        assert!(loaded_input(&state, "Mic").muted);
+        assert!(!mirror_input(&state, "Music").muted);
+        assert!(!loaded_input(&state, "Music").muted);
+    }
+
+    #[test]
+    fn mixer_input_volume_update_survives_same_scene_loading_and_failure() {
+        let mut state = app_state();
+        state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_success("Scene A".to_string(), vec![input("Mic"), input("Music")]);
+
+        assert!(state.update_mixer_input_volume("Music", 0.42, -7.5));
+
+        let transition = state.set_mixer_audio_loading("Scene A".to_string());
+        assert_eq!(transition, MixerAudioRefreshTransition::Loading);
+        assert_eq!(mirror_input(&state, "Music").volume_mul, 0.42);
+        assert_eq!(mirror_input(&state, "Music").volume_db, -7.5);
+        assert_eq!(loaded_input(&state, "Music").volume_mul, 0.42);
+        assert_eq!(loaded_input(&state, "Music").volume_db, -7.5);
+        assert_eq!(mirror_input(&state, "Mic").volume_mul, 1.0);
+        assert_eq!(loaded_input(&state, "Mic").volume_mul, 1.0);
+
+        let transition =
+            state.set_mixer_audio_failure("Scene A".to_string(), "OBS failed".to_string());
+        assert_eq!(transition, MixerAudioRefreshTransition::Failure);
+        assert_eq!(mirror_input(&state, "Music").volume_mul, 0.42);
+        assert_eq!(mirror_input(&state, "Music").volume_db, -7.5);
+        assert_eq!(loaded_input(&state, "Music").volume_mul, 0.42);
+        assert_eq!(loaded_input(&state, "Music").volume_db, -7.5);
+        assert_eq!(mirror_input(&state, "Mic").volume_mul, 1.0);
+        assert_eq!(loaded_input(&state, "Mic").volume_mul, 1.0);
     }
 }

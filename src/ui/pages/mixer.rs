@@ -65,8 +65,8 @@ fn rebuild(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefres
 
 fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefreshTracker) {
     let state = nav.state.borrow().clone();
-    let inventory = state.scene_inventory;
-    let mixer = state.mixer;
+    let inventory = state.scene_inventory.clone();
+    let mixer = state.mixer.clone();
     let active_scene = inventory.current_id.clone();
     let target_scene = mixer_target_scene(
         mixer.mode,
@@ -127,7 +127,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
     root.append(&page);
 
     let source_inputs = match mixer.mode {
-        MixerMode::ActiveScene => Some(state.audio_inputs),
+        MixerMode::ActiveScene => Some(state.audio_inputs.clone()),
         MixerMode::SelectedScene | MixerMode::PinnedScene => {
             let Some(scene) = target_scene.as_deref() else {
                 append_mixer_status(
@@ -139,7 +139,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
                 return;
             };
 
-            if state.mixer_audio_loading_scene.as_deref() == Some(scene) {
+            if state.mixer_audio_loading_scene() == Some(scene) {
                 clear_tracked_request(refresh_tracker, scene);
                 append_mixer_status(
                     root,
@@ -151,8 +151,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
             }
 
             if let Some(error) = state
-                .mixer_audio_error
-                .as_ref()
+                .mixer_audio_error()
                 .filter(|error| error.scene == scene)
             {
                 clear_tracked_request(refresh_tracker, scene);
@@ -160,9 +159,9 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
                 return;
             }
 
-            if state.mixer_audio_scene.as_deref() == Some(scene) {
+            if state.mixer_audio_scene() == Some(scene) {
                 clear_tracked_request(refresh_tracker, scene);
-                Some(state.mixer_audio_inputs)
+                Some(state.mixer_audio_inputs().to_vec())
             } else {
                 request_mixer_scene_audio(
                     nav,
@@ -556,12 +555,9 @@ fn request_mixer_scene_audio(
         if !should_request_mixer_scene_audio(
             intent,
             scene,
-            state.mixer_audio_scene.as_deref(),
-            state.mixer_audio_loading_scene.as_deref(),
-            state
-                .mixer_audio_error
-                .as_ref()
-                .map(|error| error.scene.as_str()),
+            state.mixer_audio_scene(),
+            state.mixer_audio_loading_scene(),
+            state.mixer_audio_error().map(|error| error.scene.as_str()),
             refresh_tracker.borrow().as_deref(),
         ) {
             return;

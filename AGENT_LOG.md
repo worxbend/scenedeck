@@ -297,3 +297,100 @@ M  PLAN.md
 M  SCORES.jsonl
 M  src/controller/state.rs
 M  src/ui/pages/mixer.rs
+2026-06-21T12:22:01Z iteration 4 started remaining=16089s
+2026-06-21T12:22:01Z iteration 4 preplanner effective budgets untracked_scan_max_bytes=536870912 untracked_scan_max_count=10000 snapshot_copy_max_bytes=536870912 snapshot_copy_max_count=10000 snapshot_copy_max_file_bytes=134217728
+2026-06-21T12:22:01Z iteration 4 disposable preplanner repo created path=/tmp/agent-loop-preplanner-repo-a_ss4i0o/repo copied_entries=114
+2026-06-21T12:22:01Z iteration 4 ideator phase started count=3
+2026-06-21T12:22:01Z iteration 4 ideator phase concurrency workers=3
+2026-06-21T12:22:01Z iteration 4 ideator 1 role="the pragmatist" started
+2026-06-21T12:22:01Z iteration 4 ideator 2 role="the architect" started
+2026-06-21T12:22:01Z iteration 4 ideator 3 role="the contrarian" started
+2026-06-21T12:22:10Z iteration 4 ideator 2 role="the architect" completed status=0
+2026-06-21T12:22:13Z iteration 4 ideator 3 role="the contrarian" completed status=0
+2026-06-21T12:22:18Z iteration 4 ideator 1 role="the pragmatist" completed status=0
+2026-06-21T12:22:18Z iteration 4 ideator phase completed approaches=3
+2026-06-21T12:22:18Z iteration 4 selector started approaches=3
+2026-06-21T12:22:28Z iteration 4 selector completed status=0
+2026-06-21T12:22:28Z iteration 4 disposable preplanner repo cleanup path=/tmp/agent-loop-preplanner-repo-a_ss4i0o/repo
+2026-06-21T12:22:28Z iteration 4 selector rejected alternative role="the architect" approach="Reducer-First Encapsulation: treat the mixer refresh reducer as the only source of truth, then progressively narrow every legacy mirror interaction behind AppState APIs before a..." reason="Strong framing around reducer ownership, but as-is it risks expanding into progressive accessor churn beyond what the next Planner needs to solve the immediate P0 safely."
+2026-06-21T12:22:28Z iteration 4 selector rejected alternative role="the contrarian" approach="Reducer-First Containment: treat the mixer mirror bug as a state-ownership failure, not a one-off event bug, and make the next change prove that all mixer audio mutations pass t..." reason="Correctly identifies the bug as a state-ownership failure and emphasizes stale-response tests, but its stronger language around proving all mixer audio mutations pass through the reducer could push the Planner toward an oversized refactor."
+2026-06-21T12:22:28Z iteration 4 selector rejected alternative role="the pragmatist" approach="Reducer-First Containment: treat the mixer refresh reducer as the single source of truth and make all legacy mirror access subordinate to it before taking on broader UI behavior." reason="Closest to the desired scope discipline, but it underplays the importance of explicitly testing the later loading/failure transition that can resurrect stale loaded snapshot data."
+2026-06-21T12:22:28Z iteration 4 selector alternatives persisted count=3
+2026-06-21T12:22:28Z iteration 4 selector structured alternatives persisted count=3
+2026-06-21T12:22:28Z iteration 4 planner started
+2026-06-21T12:22:46Z iteration 4 plan: 4 task(s) in 4 phase(s). This iteration focuses on the P0 correctness issue: mixer reducer state and legacy mirror fields can drift. The tasks are sequential because the event routing and regression tests depend on the new AppState mutation APIs, and optional visibility tightening should happen only after the safe mutation path exists.
+2026-06-21T12:22:46Z iteration 4 phase 1 started parallel=False tasks=1
+2026-06-21T12:24:19Z iteration 4 task t1 ('Add reducer-owned mixer input update APIs') status=0
+2026-06-21T12:24:19Z iteration 4 phase 2 started parallel=False tasks=1
+2026-06-21T12:25:27Z iteration 4 task t2 ('Route OBS input change events through AppState APIs') status=0
+2026-06-21T12:25:27Z iteration 4 phase 3 started parallel=False tasks=1
+2026-06-21T12:26:06Z iteration 4 task t3 ('Prove stale mixer transitions cannot restore old input values') status=0
+2026-06-21T12:26:06Z iteration 4 phase 4 started parallel=False tasks=1
+2026-06-21T12:27:30Z iteration 4 task t4 ('Tighten mixer mirror write access where low-risk') status=0
+2026-06-21T12:27:30Z iteration 4 reviewer started
+
+## Review Summary - Iteration 4 - 2026-06-21
+
+### What Was Done
+
+- Added `AppState::update_mixer_input_mute` and
+  `AppState::update_mixer_input_volume` to update the reducer-owned mixer
+  loaded snapshot and resync the legacy mirror fields from that snapshot.
+- Routed `InputMuteChanged` and `InputVolumeChanged` through those AppState
+  APIs while preserving active-scene `audio_inputs` updates.
+- Made `mixer_audio_scene`, `mixer_audio_inputs`,
+  `mixer_audio_loading_scene`, and `mixer_audio_error` private inside
+  `AppState`.
+- Added read-only AppState accessors and updated the Mixer page to use them.
+- Added reducer tests proving mute and volume updates keep the mirror and
+  loaded snapshot synchronized and are not reverted by same-scene loading or
+  failure transitions.
+
+### What Was Found
+
+- Static validation passed: `cargo fmt --all -- --check`,
+  `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- The planned P0 mirror drift fix is implemented correctly for the known OBS
+  input event paths. A later reducer sync no longer restores stale mute or
+  volume values after those events.
+- The legacy mirror fields are now mechanically fenced against direct access
+  outside `src/controller/state.rs`; `rg` found no remaining external direct
+  reads or writes.
+- The visible Mixer page still does not directly update card widgets after
+  `InputMuteChanged` or `InputVolumeChanged`. State is correct, but selected
+  or pinned Mixer cards can remain visually stale until the page rebuilds.
+- The read model is improved but still split across several accessors. A
+  target-scene refresh-status helper would simplify Mixer page branching and
+  further reduce accidental misuse.
+- There is still no interaction-level test for the Retry button/tracker flow;
+  current coverage remains reducer and pure decision-helper focused.
+
+### Top Improvement Proposals
+
+1. Add focused retry interaction coverage around failure -> Retry -> loading,
+   automatic failure dedupe, and explicit dedupe while a request is loading or
+   tracked.
+2. Keep visible Mixer cards synchronized with OBS input events, either by
+   refreshing the Mixer page when a visible mixer snapshot input changes or by
+   tracking Mixer cards like Live cards.
+3. Add a target-scene mixer refresh status helper so UI read code consumes one
+   coherent state view instead of coordinating four mirror accessors.
+4. Refine output confirmation dialog metadata so start actions are not styled
+   as destructive.
+5. Surface stream/record command failures in the Live output UI separately
+   from OBS connection errors.
+2026-06-21T12:29:37Z iteration 4 reviewer completed status=0
+2026-06-21T12:29:37Z iteration 4 memory updated
+2026-06-21T12:29:37Z iteration 4 completed validation_status=0
+2026-06-21T12:29:37Z iteration 4 checkpoint started
+2026-06-21T12:29:37Z iteration 4 checkpoint status before commit:
+M  AGENT_LOG.md
+M  ALTERNATIVES.jsonl
+M  MEMORY.md
+M  PLAN.md
+M  SCORES.jsonl
+M  src/controller/state.rs
+M  src/ui/pages/mixer.rs
+M  src/ui/window.rs
