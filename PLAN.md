@@ -41,9 +41,9 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 Status: all passed on 2026-06-21 after the mixer refresh contract, optimistic
 audio update, output confirmation decision-helper work, mixer retry-intent fix,
-reducer-owned mixer input mirror containment, selected/pinned Mixer input event
-reconciliation, and Active-mode Mixer render-source reconciliation. The current
-review reran the full validation rule.
+reducer-owned mixer input mirror containment, selected/pinned and Active-mode
+Mixer input-event reconciliation, Mixer render-source reconciliation, and legacy
+Mixer mirror state removal. The current review reran the full validation rule.
 
 ## Completed Phases
 
@@ -325,25 +325,66 @@ Review verdict:
   simple and correct, but high-frequency OBS echo events could make this more
   expensive than direct visible-card updates.
 
+### Mixer Contract Consolidation Cleanup
+
+Working tree, reviewed 2026-06-21:
+
+- Removed the private legacy Mixer mirror fields:
+  `mixer_audio_scene`, `mixer_audio_inputs`, `mixer_audio_loading_scene`, and
+  `mixer_audio_error`.
+- Removed `sync_mixer_audio_fields`; Mixer reducer mutation methods now operate
+  only on `MixerAudioRefreshState`.
+- Rewrote mirror-focused reducer tests to assert through
+  `visible_mixer_audio_status`.
+- Refactored `should_rebuild_visible_mixer_for_input_event` to match on
+  `state.visible_mixer_render_source()` instead of duplicating selected/pinned
+  target-scene fallback logic.
+- Added selected and pinned fallback regression coverage proving the rebuild
+  predicate follows the render-source contract.
+
+Review verdict:
+
+- Static validation passed: `cargo fmt --all -- --check`,
+  `cargo check --workspace --all-features`,
+  `cargo test --workspace --all-features`, and
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- The planned contract cleanup is complete: `rg` shows no remaining production
+  mirror fields or `sync_mixer_audio_fields`, and the event predicate now shares
+  the same render-source helper as Mixer rendering.
+- No functional regression was found in the changed source paths.
+- Test coverage regressed slightly in precision: the old same-scene
+  loading/failure tests proved input-event mutations survived in the hidden
+  loaded snapshot, while the rewritten tests mainly prove visible loading/error
+  precedence and fresh success replacement.
+- Remaining design gap: `src/ui/pages/mixer.rs` still has its own
+  `mixer_target_scene` fallback helper for controls, summary text, and refresh
+  dispatch, while `AppState::visible_mixer_target_scene` carries the render
+  contract internally.
+- Rebuilding the whole Mixer page on every relevant OBS input event remains
+  correct but may be too expensive for high-frequency OBS volume echo events.
+
 ## Groomed Next Steps
 
-### P1: Remove Dead Legacy Mixer Mirror Fields
+### P1: Restore Mixer Hidden Snapshot Invariant Coverage
 
 Problem:
 
-- `mixer_audio_scene`, `mixer_audio_inputs`, `mixer_audio_loading_scene`, and
-  `mixer_audio_error` are private and no production code reads them anymore.
-- `sync_mixer_audio_fields` now maintains compatibility mirrors that only
-  tests inspect, which adds churn and preserves a stale state model after the
-  reducer-derived render contract replaced it.
+- Iteration 7 correctly removed the legacy mirror fields, but the replacement
+  tests weakened one invariant.
+- Same-scene loading and failure intentionally hide a loaded snapshot behind
+  loading/error status without mutating that snapshot.
+- The current tests prove the visible status behavior, but they no longer
+  directly prove that `update_mixer_input_mute` and
+  `update_mixer_input_volume` changes remain stored in
+  `mixer_audio_refresh.loaded` across same-scene loading/failure transitions.
 
 Plan:
 
-- Delete the private legacy mirror fields and `sync_mixer_audio_fields`.
-- Have reducer mutation methods operate only on `MixerAudioRefreshState`.
-- Rewrite tests that currently inspect mirror fields to assert through
-  `visible_mixer_audio_status` or `visible_mixer_render_source`.
-- Confirm no UI or controller code still depends on mirror compatibility.
+- Add small reducer tests or local helper assertions that inspect the loaded
+  snapshot directly after same-scene loading and failure.
+- Keep visible-status tests as-is so loading/error precedence stays covered.
+- Name the tests around the intended hidden-snapshot invariant rather than the
+  removed mirror behavior.
 
 Files:
 
@@ -351,38 +392,39 @@ Files:
 
 Tests:
 
-- Existing reducer tests continue to cover mute/volume snapshot mutation and
-  same-scene loading/failure transitions through the reducer-derived status.
+- Add focused tests for mute and volume updates surviving hidden loaded snapshot
+  preservation across same-scene loading/failure.
 
-### P1: Drive Mixer Event Rebuild Predicate From Render Source
+### P1: Consolidate Mixer Target-Scene Fallback Logic
 
 Problem:
 
-- `should_rebuild_visible_mixer_for_input_event` still re-implements the
-  Selected/Pinned target-scene fallback chain instead of asking
-  `visible_mixer_render_source` what is visible.
-- The duplicated logic is correct today, but this is exactly the class of drift
-  that caused Active-mode reconciliation to be missed.
+- `should_rebuild_visible_mixer_for_input_event` now consumes
+  `visible_mixer_render_source`, but `src/ui/pages/mixer.rs` still has a local
+  `mixer_target_scene` helper that duplicates the Selected/Pinned fallback
+  chain for summary text, scene-refresh dispatch, and empty-state labels.
+- The behavior is currently correct, but duplicated target resolution is the
+  same drift class that previously caused Mixer reconciliation gaps.
 
 Plan:
 
-- Refactor the predicate to match on `state.visible_mixer_render_source()`.
-- Return true for Active inputs from `MixerVisibleRenderSource::ActiveScene`.
-- Return true for scene-specific loaded inputs from
-  `MixerVisibleRenderSource::Scene { status: Loaded(..), .. }`.
-- Keep loading/error/missing states as no-rebuild cases.
+- Expose an AppState-level target-scene helper or extend
+  `MixerVisibleRenderSource` with enough metadata for Mixer page controls to
+  derive summary and request targets without duplicating fallback order.
+- Refactor Mixer mode/scene callbacks and summary text to use that shared
+  contract.
+- Keep Active mode from dispatching scene-specific mixer refreshes.
 
 Files:
 
-- `src/ui/window.rs`
-- `src/controller/state.rs` only if the render-source enum needs a small
-  ergonomic addition.
+- `src/controller/state.rs`
+- `src/ui/pages/mixer.rs`
 
 Tests:
 
-- Existing Active/Selected/Pinned predicate tests continue to pass.
-- Add a regression test proving target-scene fallback behavior follows
-  `visible_mixer_render_source` for selected and pinned modes.
+- Add pure tests for selected-scene fallback to current scene and pinned-scene
+  fallback to selected/current scene through the shared helper.
+- Preserve existing retry/request-dedupe tests.
 
 ### P1: Reduce Mixer Page Rebuild Cost For High-Frequency Input Events
 
