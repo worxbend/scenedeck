@@ -9,6 +9,7 @@ use crate::domain::mixer::MixerSelection;
 use crate::domain::obs::ObsNamedList;
 use crate::domain::output::OutputStatus;
 use crate::domain::scene::SceneInventory;
+use std::time::Instant;
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 
@@ -102,6 +103,9 @@ pub struct AppState {
     pub scene_collections: ObsNamedList,
     pub stream_status: OutputStatus,
     pub record_status: OutputStatus,
+    pub stream_active_since: Option<Instant>,
+    pub record_active_since: Option<Instant>,
+    pub last_recording_path: Option<String>,
     pub audio_inputs: Vec<AudioInput>,
     pub mixer_audio_scene: Option<String>,
     pub mixer_audio_inputs: Vec<AudioInput>,
@@ -127,6 +131,9 @@ impl AppState {
             scene_collections: ObsNamedList::default(),
             stream_status: OutputStatus::default(),
             record_status: OutputStatus::default(),
+            stream_active_since: None,
+            record_active_since: None,
+            last_recording_path: None,
             audio_inputs: Vec::new(),
             mixer_audio_scene: None,
             mixer_audio_inputs: Vec::new(),

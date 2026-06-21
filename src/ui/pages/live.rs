@@ -23,6 +23,7 @@ pub(crate) struct LivePageHandle {
     pub(crate) stream_btn: Button,
     pub(crate) record_label: Label,
     pub(crate) record_btn: Button,
+    pub(crate) record_path_btn: Button,
     pub(crate) current_scene_label: Label,
     pub(crate) scenes_box: FlowBox,
     pub(crate) audio_box: FlowBox,
@@ -119,8 +120,29 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
     record_label.add_css_class("caption");
     record_label.add_css_class("dim-label");
 
-    let stream_control = build_output_control(&stream_btn, &stream_label);
-    let record_control = build_output_control(&record_btn, &record_label);
+    let record_path_btn = Button::builder()
+        .icon_name("edit-copy-symbolic")
+        .tooltip_text("Copy last recording path")
+        .valign(Align::Center)
+        .sensitive(false)
+        .build();
+    record_path_btn.add_css_class("flat");
+    record_path_btn.add_css_class("circular");
+    record_path_btn.connect_clicked({
+        let nav = nav.clone();
+        move |button| {
+            let Some(path) = nav.state.borrow().last_recording_path.clone() else {
+                return;
+            };
+            if let Some(display) = gtk4::gdk::Display::default() {
+                display.clipboard().set_text(&path);
+                button.set_tooltip_text(Some("Copied last recording path"));
+            }
+        }
+    });
+
+    let stream_control = build_output_control(&stream_btn, &stream_label, None);
+    let record_control = build_output_control(&record_btn, &record_label, Some(&record_path_btn));
 
     banner_inner.append(&stream_control);
     banner_inner.append(&record_control);
@@ -223,6 +245,7 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
         stream_btn,
         record_label,
         record_btn,
+        record_path_btn,
         current_scene_label: current_label,
         scenes_box,
         audio_box,
@@ -246,20 +269,37 @@ pub(crate) fn show_live_view(handle: &LivePageHandle) {
     handle.root.set_visible_child_name("live");
 }
 
-pub(crate) fn update_stream_status(handle: &LivePageHandle, status: &OutputStatus) {
+pub(crate) fn update_stream_status(
+    handle: &LivePageHandle,
+    status: &OutputStatus,
+    elapsed: Option<String>,
+) {
     handle
         .stream_label
-        .set_text(&format!("Stream: {}", status.state.label()));
+        .set_text(&output_label("Stream", status, elapsed.as_deref()));
     set_output_button(&handle.stream_btn, status, "Start Stream", "Stop Stream");
 }
 
-pub(crate) fn update_record_status(handle: &LivePageHandle, status: &OutputStatus) {
+pub(crate) fn update_record_status(
+    handle: &LivePageHandle,
+    status: &OutputStatus,
+    elapsed: Option<String>,
+    last_path: Option<&str>,
+) {
     handle
         .record_label
-        .set_text(&format!("Record: {}", status.state.label()));
-    handle
-        .record_label
-        .set_tooltip_text(status.detail.as_deref().filter(|path| !path.is_empty()));
+        .set_text(&output_label("Record", status, elapsed.as_deref()));
+    handle.record_label.set_tooltip_text(last_path);
+    handle.record_path_btn.set_sensitive(last_path.is_some());
+    if let Some(path) = last_path {
+        handle
+            .record_path_btn
+            .set_tooltip_text(Some(&format!("Copy recording path: {path}")));
+    } else {
+        handle
+            .record_path_btn
+            .set_tooltip_text(Some("Copy last recording path"));
+    }
     set_output_button(&handle.record_btn, status, "Start Record", "Stop Record");
 }
 
@@ -267,6 +307,10 @@ pub(crate) fn reset_output_controls(handle: &LivePageHandle) {
     handle.stream_label.set_text("Stream: Inactive");
     handle.record_label.set_text("Record: Inactive");
     handle.record_label.set_tooltip_text(None);
+    handle.record_path_btn.set_sensitive(false);
+    handle
+        .record_path_btn
+        .set_tooltip_text(Some("Copy last recording path"));
     handle.stream_btn.set_label("Start Stream");
     handle.record_btn.set_label("Start Record");
     handle.stream_btn.set_sensitive(false);
@@ -275,7 +319,7 @@ pub(crate) fn reset_output_controls(handle: &LivePageHandle) {
     handle.record_btn.remove_css_class("destructive-action");
 }
 
-fn build_output_control(button: &Button, label: &Label) -> GtkBox {
+fn build_output_control(button: &Button, label: &Label, suffix: Option<&Button>) -> GtkBox {
     let control = GtkBox::builder()
         .orientation(Orientation::Horizontal)
         .spacing(6)
@@ -284,6 +328,9 @@ fn build_output_control(button: &Button, label: &Label) -> GtkBox {
     control.add_css_class("output-control");
     control.append(button);
     control.append(label);
+    if let Some(suffix) = suffix {
+        control.append(suffix);
+    }
     control
 }
 
@@ -339,6 +386,13 @@ fn set_output_button(button: &Button, status: &OutputStatus, start_label: &str, 
         button.set_label(start_label);
         button.set_sensitive(true);
         button.remove_css_class("destructive-action");
+    }
+}
+
+fn output_label(kind: &str, status: &OutputStatus, elapsed: Option<&str>) -> String {
+    match elapsed {
+        Some(elapsed) if status.active => format!("{kind}: {} · {elapsed}", status.state.label()),
+        _ => format!("{kind}: {}", status.state.label()),
     }
 }
 

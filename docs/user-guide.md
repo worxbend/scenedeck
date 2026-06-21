@@ -95,8 +95,9 @@ The top Live controls display streaming and recording state. Use Start Stream,
 Stop Stream, Start Record, and Stop Record to control OBS outputs. When OBS
 reports output state changes directly, SceneDeck updates the labels.
 
-If recording stops and OBS returns a file path, the record status tooltip shows
-that path.
+When streaming or recording is active, SceneDeck shows a local elapsed timer in
+the output label. If recording stops and OBS returns a file path, the record
+status tooltip shows that path and the copy button copies it to the clipboard.
 
 ## Header Selectors
 

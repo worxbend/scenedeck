@@ -7,7 +7,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 type RefreshFn = Rc<dyn Fn()>;
 
@@ -130,6 +130,8 @@ pub fn build_main_window(
 
     // ── Toast overlay (created early so the event poller can reference it) ────
     let toast_overlay = adw::ToastOverlay::new();
+    let elapsed_stream_label = live_handle.stream_label.clone();
+    let elapsed_record_label = live_handle.record_label.clone();
 
     // ── Event polling ─────────────────────────────────────────────────────────
     // 50 ms gives responsive-enough UI updates without burning CPU.
@@ -157,6 +159,26 @@ pub fn build_main_window(
                     }
                 }
             }
+            glib::ControlFlow::Continue
+        }
+    });
+
+    glib::timeout_add_local(Duration::from_secs(1), {
+        let state = state.clone();
+        let stream_label = elapsed_stream_label;
+        let record_label = elapsed_record_label;
+        move || {
+            let state = state.borrow();
+            stream_label.set_text(&format!(
+                "Stream: {}{}",
+                state.stream_status.state.label(),
+                elapsed_suffix(state.stream_active_since)
+            ));
+            record_label.set_text(&format!(
+                "Record: {}{}",
+                state.record_status.state.label(),
+                elapsed_suffix(state.record_active_since)
+            ));
             glib::ControlFlow::Continue
         }
     });
@@ -235,7 +257,12 @@ fn apply_event(
 
     match event {
         AppEvent::Connecting => {
-            nav.state.borrow_mut().set_obs_status(ObsStatus::Connecting);
+            {
+                let mut state = nav.state.borrow_mut();
+                state.set_obs_status(ObsStatus::Connecting);
+                state.stream_active_since = None;
+                state.record_active_since = None;
+            }
             sidebar_controls.status_label.set_text("Connecting to OBS…");
             set_status_class(&sidebar_controls.status_label, "obs-connecting");
             sidebar_controls.connect_btn.set_label("Connecting…");
@@ -271,9 +298,12 @@ fn apply_event(
         }
 
         AppEvent::Disconnected => {
-            nav.state
-                .borrow_mut()
-                .set_obs_status(ObsStatus::Disconnected);
+            {
+                let mut state = nav.state.borrow_mut();
+                state.set_obs_status(ObsStatus::Disconnected);
+                state.stream_active_since = None;
+                state.record_active_since = None;
+            }
             sidebar_controls.status_label.set_text("Disconnected");
             set_status_class(&sidebar_controls.status_label, "obs-disconnected");
             sidebar_controls.connect_btn.set_label("Connect to OBS");
@@ -335,9 +365,12 @@ fn apply_event(
         }
 
         AppEvent::Error(err) => {
-            nav.state
-                .borrow_mut()
-                .set_obs_status(ObsStatus::Error(err.to_string()));
+            {
+                let mut state = nav.state.borrow_mut();
+                state.set_obs_status(ObsStatus::Error(err.to_string()));
+                state.stream_active_since = None;
+                state.record_active_since = None;
+            }
             sidebar_controls
                 .status_label
                 .set_text(&format!("Error: {err}"));
@@ -444,13 +477,29 @@ fn apply_event(
         }
 
         AppEvent::StreamStatusUpdated(status) => {
-            nav.state.borrow_mut().stream_status = status.clone();
-            update_stream_status(live, &status);
+            let elapsed = {
+                let mut state = nav.state.borrow_mut();
+                update_active_since(status.active, &mut state.stream_active_since);
+                state.stream_status = status.clone();
+                state.stream_active_since.map(format_elapsed)
+            };
+            update_stream_status(live, &status, elapsed);
         }
 
         AppEvent::RecordStatusUpdated(status) => {
-            nav.state.borrow_mut().record_status = status.clone();
-            update_record_status(live, &status);
+            let (elapsed, last_path) = {
+                let mut state = nav.state.borrow_mut();
+                update_active_since(status.active, &mut state.record_active_since);
+                if let Some(path) = status.detail.as_ref().filter(|path| !path.is_empty()) {
+                    state.last_recording_path = Some(path.clone());
+                }
+                state.record_status = status.clone();
+                (
+                    state.record_active_since.map(format_elapsed),
+                    state.last_recording_path.clone(),
+                )
+            };
+            update_record_status(live, &status, elapsed, last_path.as_deref());
         }
 
         AppEvent::GraphUpdated(graph) => {
@@ -480,6 +529,32 @@ fn set_status_class(label: &gtk4::Label, new_class: &str) {
         label.remove_css_class(class);
     }
     label.add_css_class(new_class);
+}
+
+fn update_active_since(active: bool, active_since: &mut Option<Instant>) {
+    match (active, active_since.is_some()) {
+        (true, false) => *active_since = Some(Instant::now()),
+        (false, true) => *active_since = None,
+        _ => {}
+    }
+}
+
+fn elapsed_suffix(active_since: Option<Instant>) -> String {
+    active_since
+        .map(|since| format!(" · {}", format_elapsed(since)))
+        .unwrap_or_default()
+}
+
+fn format_elapsed(since: Instant) -> String {
+    let elapsed = since.elapsed().as_secs();
+    let hours = elapsed / 3600;
+    let minutes = (elapsed % 3600) / 60;
+    let seconds = elapsed % 60;
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes}:{seconds:02}")
+    }
 }
 
 fn build_header_selectors(nav: &NavigationContext) -> HeaderSelectors {

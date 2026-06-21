@@ -50,10 +50,10 @@ sidebar metadata, page construction, and refresh behavior.
 
 ## Current Stream and Record Behavior
 
-The Live page has a simple horizontal output banner with two buttons:
+The Live page has a horizontal output banner with stream and record controls:
 
-- Stream button dispatches `AppCommand::SetStreaming(!active)`.
-- Record button dispatches `AppCommand::SetRecording(!active)`.
+- Stream button dispatches explicit start/stop commands.
+- Record button dispatches explicit start/stop commands.
 
 `src/controller/app_controller.rs` routes these commands to:
 
@@ -63,17 +63,23 @@ The Live page has a simple horizontal output banner with two buttons:
 
 OBS stream/record events update `OutputStatus` through `AppEvent` values. The
 recording stop path can preserve the returned recording path in
-`OutputStatus.detail`, and the Live page exposes that path as a tooltip.
+`OutputStatus.detail`, and the Live page exposes that path as a tooltip and copy
+button.
+
+Current improvements:
+
+- Pending output operations are guarded in the controller to avoid duplicate
+  start/stop requests.
+- Elapsed time is tracked locally and displayed while stream/record outputs are
+  active.
+- The last OBS recording path is retained in UI state and can be copied from
+  the Live page.
 
 Known gaps:
 
-- The UI does not model pending duplicate-prevention for start/stop operations.
 - There are no confirmation preferences for critical start/stop actions.
-- Elapsed time is not tracked or displayed.
 - Last error is surfaced through generic app errors/toasts rather than an output
   control card state.
-- Commands are toggle-shaped rather than explicit `Start*`, `Stop*`, and
-  `RefreshOutputStatus` operations.
 
 Primary files for stream/record improvements:
 
