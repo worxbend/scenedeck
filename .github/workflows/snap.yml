@@ -53,6 +53,7 @@ jobs:
         id: build
         uses: snapcore/action-build@v1
         with:
+          snapcraft-channel: 8.x/stable
           snapcraft-args: pack --build-for=${{ matrix.snap_arch }}
 
       - name: Print Snapcraft logs
