@@ -51,7 +51,10 @@
     color: @window_fg_color;
 }
 
-.scenedeck-combo-row popover,
+.scenedeck-combo-row popover {
+    background-color: transparent;
+}
+
 .scenedeck-combo-row popover contents,
 .scenedeck-combo-row popover scrolledwindow,
 .scenedeck-combo-row popover list,
@@ -182,12 +185,21 @@
     background-color: alpha(@scenedeck_accent, 0.10);
 }
 
-.scenedeck-dropdown popover,
+.scenedeck-dropdown popover {
+    background-color: transparent;
+}
+
 .scenedeck-dropdown popover contents,
 .scenedeck-dropdown listview,
 .scenedeck-dropdown listview row {
     background-color: @scenedeck_card;
     color: @window_fg_color;
+}
+
+.scenedeck-dropdown popover contents {
+    border: 1px solid alpha(@scenedeck_accent, 0.35);
+    border-radius: 12px;
+    padding: 6px;
 }
 
 .scenedeck-dropdown listview row:hover {
