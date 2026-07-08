@@ -51,9 +51,16 @@ apps:
       - network
 
 parts:
+  rust-deps:
+    plugin: nil
+    build-snaps:
+      - rustup/latest/stable
+
   scenedeck:
     plugin: rust
     source: .
+    after:
+      - rust-deps
     build-packages:
       - libadwaita-1-dev
       - libdbus-1-dev

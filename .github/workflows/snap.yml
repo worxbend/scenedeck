@@ -53,7 +53,7 @@ jobs:
         id: build
         uses: snapcore/action-build@v1
         with:
-          snapcraft-args: --build-for=${{ matrix.snap_arch }}
+          snapcraft-args: pack --build-for=${{ matrix.snap_arch }}
 
       - name: Upload snap artifact
         uses: actions/upload-artifact@v4
