@@ -67,9 +67,6 @@ parts:
     build-packages:
       - build-essential
       - curl
-      - cargo
-      - rustc
-      - rustup
       - libadwaita-1-dev
       - libdbus-1-dev
       - libglib2.0-bin
