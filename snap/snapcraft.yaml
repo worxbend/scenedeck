@@ -51,22 +51,21 @@ apps:
       - network
 
 parts:
-  rust-deps:
-    plugin: nil
-    build-packages:
-      - curl
-    override-pull: |
-      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-      echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+  # rust-deps:
+  #   plugin: nil
+  #   build-packages:
+  #     - curl
+  #   override-pull: |
+  #     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  #     echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
   scenedeck:
     plugin: rust
     source: .
-    rust-channel: stable
-    after: [rust-deps]
+    rust-channel: none
+    # after: [rust-deps]
     build-snaps: [rustup]
     build-packages:
-      - rustup
       - libadwaita-1-dev
       - libdbus-1-dev
       - libglib2.0-bin
