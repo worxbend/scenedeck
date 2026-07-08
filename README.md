@@ -2,6 +2,8 @@
 
 ![SceneDeck logo](docs/scenedeck-logo.svg)
 
+[![Get it from the Snap Store](https://snapcraft.io/en/dark/install.svg)](https://snapcraft.io/scenedeck)
+
 SceneDeck is a Linux desktop controller for OBS Studio. It is built with Rust,
 GTK4, libadwaita, Tokio, and the OBS WebSocket protocol.
 
