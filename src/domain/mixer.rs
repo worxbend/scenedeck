@@ -2,6 +2,7 @@ use crate::domain::scene::SceneId;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub enum MixerMode {
     #[default]
     ActiveScene,
