@@ -2,9 +2,22 @@ name: scenedeck
 title: SceneDeck
 summary: Role-aware OBS scene and audio controller
 description: |
-  SceneDeck is a native Linux controller for structured OBS Studio setups.
-  It provides a role-aware surface for live scene switching, scene dependency
-  inspection, OBS output control, and an integrated audio mixer.
+  SceneDeck is a native Linux controller for OBS Studio, built for streamers
+  who run OBS on one machine while working, coding, presenting, or gaming on
+  another. Instead of jumping back to the streaming computer just to change a
+  scene, start recording, or adjust audio, SceneDeck gives you a clean remote
+  control surface for your OBS setup.
+
+  It also helps when your OBS scene list has grown beyond a few simple scenes.
+  Many real setups include utility scenes, camera-only scenes, overlays,
+  source wrappers, and other secondary scenes that are useful inside primary
+  scenes but should not be clicked live by accident. SceneDeck lets you mark
+  scenes by role, then keeps the Live view focused on the primary scenes you
+  actually want to switch between.
+
+  Use SceneDeck to switch live scenes, control stream and recording outputs,
+  inspect scene dependencies, and manage an integrated audio mixer without
+  breaking focus from your main workstation.
 
 base: core24
 adopt-info: scenedeck
