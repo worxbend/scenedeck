@@ -54,19 +54,25 @@ parts:
   rust-deps:
     plugin: nil
     build-snaps: [rustup]
+    build-packages:
+      - curl
+    override-pull: |
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile default --default-toolchain stable
+      . "$HOME/.cargo/env"
+      ln -sf "$HOME/.cargo/bin/cargo" /usr/local/bin/cargo
+      ln -sf "$HOME/.cargo/bin/rustc" /usr/local/bin/rustc
+      ln -sf "$HOME/.cargo/bin/rustup" /usr/local/bin/rustup
     override-build: |
       rustup default stable
-      craftctl default
 
   scenedeck:
     plugin: rust
     source: .
     rust-channel: none
-    after: [rust-deps]
-    build-snaps: [rustup]
+    after:
+      - rust-deps
     build-packages:
       - build-essential
-      - curl
       - libadwaita-1-dev
       - libdbus-1-dev
       - libglib2.0-bin
