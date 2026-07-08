@@ -55,6 +55,42 @@ jobs:
         with:
           snapcraft-args: pack --build-for=${{ matrix.snap_arch }}
 
+      - name: Print Snapcraft logs
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          log_dir="${HOME}/.local/state/snapcraft/log"
+          if [[ ! -d "${log_dir}" ]]; then
+            echo "Snapcraft log directory not found: ${log_dir}"
+            exit 0
+          fi
+
+          found=false
+          for log in "${log_dir}"/*.log; do
+            if [[ ! -f "${log}" ]]; then
+              continue
+            fi
+
+            found=true
+            echo "::group::$(basename "${log}")"
+            sed -n '1,400p' "${log}"
+            echo "::endgroup::"
+          done
+
+          if [[ "${found}" == "false" ]]; then
+            echo "No Snapcraft log files found in ${log_dir}"
+          fi
+
+      - name: Upload Snapcraft logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapcraft-logs-${{ matrix.artifact_arch }}
+          path: ~/.local/state/snapcraft/log/*.log
+          if-no-files-found: ignore
+
       - name: Upload snap artifact
         uses: actions/upload-artifact@v4
         with:
