@@ -51,25 +51,25 @@ apps:
       - network
 
 parts:
-  # rust-deps:
-  #   plugin: nil
-  #   build-packages:
-  #     - curl
-  #   override-pull: |
-  #     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-  #     echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+  rust-deps:
+    plugin: nil
+    build-snaps: [rustup]
+    override-build: |
+      rustup default stable
+      craftctl default
 
   scenedeck:
     plugin: rust
     source: .
     rust-channel: none
-    # after: [rust-deps]
+    after: [rust-deps]
     build-snaps: [rustup]
     build-packages:
       - build-essential
       - curl
       - cargo
       - rustc
+      - rustup
       - libadwaita-1-dev
       - libdbus-1-dev
       - libglib2.0-bin
@@ -79,6 +79,7 @@ parts:
     stage-packages:
       - libdbus-1-3
     override-pull: |
+      rustup default stable
       craftctl default
       version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
       if [ -z "${version}" ]; then
