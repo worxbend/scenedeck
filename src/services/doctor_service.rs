@@ -5,14 +5,17 @@
 //! sorted most-severe first.
 
 use crate::domain::diagnostic::{Diagnostic, DiagnosticSeverity};
-use crate::domain::graph::SceneGraph;
+use crate::domain::graph::{EdgeStatus, SceneGraph};
 use crate::domain::registry::SceneRegistrySnapshot;
 use crate::domain::role::SceneRole;
 use crate::domain::scene::SceneInventory;
+use crate::services::graph_service::classify_edge;
 
+/// Runs scene architecture diagnostics over domain state.
 pub struct DoctorService;
 
 impl DoctorService {
+    /// Return diagnostics sorted most-severe first.
     pub fn run(
         inventory: &SceneInventory,
         registry: &SceneRegistrySnapshot,
@@ -101,7 +104,9 @@ impl DoctorService {
             let parent_role = Self::role_of(registry, parent);
             for child in children {
                 let child_role = Self::role_of(registry, child);
-                if let Some(diag) = edge_diagnostic(parent, parent_role, child, child_role) {
+                let status = classify_edge(parent_role, child_role, registry.graph_policy());
+                let diagnostic = edge_diagnostic(parent, parent_role, child, child_role, status);
+                if let Some(diag) = diagnostic {
                     diags.push(diag);
                 }
             }
@@ -142,31 +147,42 @@ fn edge_diagnostic(
     parent_role: Option<SceneRole>,
     child: &str,
     child_role: Option<SceneRole>,
+    status: EdgeStatus,
 ) -> Option<Diagnostic> {
     let (pr, cr) = (parent_role?, child_role?);
 
     let (severity, message, suggestion) = match (pr, cr) {
-        (SceneRole::Primary, SceneRole::Debug) => (
+        _ if status == EdgeStatus::Ok => return None,
+        (SceneRole::Primary, SceneRole::Debug) if status == EdgeStatus::Forbidden => (
             DiagnosticSeverity::Error,
             "Primary scene depends on a Debug scene.",
             "Remove the Debug scene from the live path before going live.",
         ),
-        (SceneRole::Primary, SceneRole::Raw) => (
+        (SceneRole::Primary, SceneRole::Raw) if status == EdgeStatus::Warning => (
             DiagnosticSeverity::Warning,
             "Primary scene directly wraps a Raw source.",
             "Wrap the Raw source in a Module scene for reuse and clarity.",
         ),
-        (SceneRole::Module, SceneRole::Primary) => (
+        (SceneRole::Module, SceneRole::Primary) if status == EdgeStatus::Forbidden => (
             DiagnosticSeverity::Error,
             "Module depends on a Primary scene, inverting the hierarchy.",
             "Modules should be building blocks, not consumers of Primary scenes.",
         ),
-        (SceneRole::Raw, _) => (
+        (SceneRole::Raw, _) if status == EdgeStatus::Forbidden => (
             DiagnosticSeverity::Error,
             "Raw scene nests another scene.",
             "Raw scenes should be leaf source wrappers with no nested scenes.",
         ),
-        _ => return None,
+        _ if status == EdgeStatus::Forbidden => (
+            DiagnosticSeverity::Error,
+            "Scene dependency is forbidden by the graph policy.",
+            "Adjust the nested scene relationship or update the registry graph rules.",
+        ),
+        _ => (
+            DiagnosticSeverity::Warning,
+            "Scene dependency is outside the configured graph policy.",
+            "Adjust the nested scene relationship or update the registry graph rules.",
+        ),
     };
 
     Some(Diagnostic {
@@ -189,7 +205,6 @@ mod tests {
         Scene {
             id: id.to_string(),
             name: id.to_string(),
-            role: None,
         }
     }
 
@@ -227,6 +242,40 @@ mod tests {
         let diags = DoctorService::run(&inventory, &registry, &graph);
         assert!(diags.iter().any(|d| d.severity == DiagnosticSeverity::Error
             && d.message.contains("inverting the hierarchy")));
+    }
+
+    #[test]
+    fn flags_primary_depending_on_raw_from_shared_policy() {
+        let inventory = SceneInventory {
+            scenes: vec![scene("Main"), scene("Camera")],
+            current_id: None,
+        };
+        let registry = registry([("Main", SceneRole::Primary), ("Camera", SceneRole::Raw)]);
+
+        let mut graph = SceneGraph::default();
+        graph.edges.insert("Main".into(), vec!["Camera".into()]);
+
+        let diags = DoctorService::run(&inventory, &registry, &graph);
+        assert!(diags
+            .iter()
+            .any(|d| d.severity == DiagnosticSeverity::Warning
+                && d.message.contains("directly wraps a Raw source")));
+    }
+
+    #[test]
+    fn flags_raw_scene_with_nested_child_from_shared_policy() {
+        let inventory = SceneInventory {
+            scenes: vec![scene("Camera"), scene("Overlay")],
+            current_id: None,
+        };
+        let registry = registry([("Camera", SceneRole::Raw), ("Overlay", SceneRole::Module)]);
+
+        let mut graph = SceneGraph::default();
+        graph.edges.insert("Camera".into(), vec!["Overlay".into()]);
+
+        let diags = DoctorService::run(&inventory, &registry, &graph);
+        assert!(diags.iter().any(|d| d.severity == DiagnosticSeverity::Error
+            && d.message.contains("Raw scene nests another scene")));
     }
 
     #[test]

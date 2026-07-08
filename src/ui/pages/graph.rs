@@ -12,11 +12,12 @@ use std::rc::Rc;
 use adw::{prelude::*, StatusPage};
 use gtk4::cairo::{Context, FontSlant, FontWeight};
 use gtk4::{
-    Align, Box as GtkBox, Button, DrawingArea, GestureDrag, Label, Orientation, PolicyType,
+    Align, Box as GtkBox, Button, DrawingArea, GestureDrag, Image, Label, Orientation, PolicyType,
     ScrolledWindow,
 };
 
 use crate::domain::graph::{EdgeStatus, SceneGraph};
+use crate::domain::registry::SceneRegistrySnapshot;
 use crate::domain::role::SceneRole;
 use crate::domain::scene::SceneInventory;
 use crate::services::graph_service::classify_edge;
@@ -45,12 +46,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     let refresh_fn: Rc<dyn Fn()> = Rc::new({
         let nav = nav.clone();
         let container = container.clone();
-        move || {
-            while let Some(child) = container.first_child() {
-                container.remove(&child);
-            }
-            populate(&container, &nav);
-        }
+        move || rebuild(&container, &nav)
     });
 
     container.connect_map({
@@ -59,6 +55,13 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     });
 
     (container.upcast(), refresh_fn)
+}
+
+fn rebuild(container: &GtkBox, nav: &NavigationContext) {
+    while let Some(child) = container.first_child() {
+        container.remove(&child);
+    }
+    populate(container, nav);
 }
 
 fn populate(container: &GtkBox, nav: &NavigationContext) {
@@ -80,7 +83,10 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
         return;
     }
 
-    let model = Rc::new(RefCell::new(GraphModel::build(&graph, &inventory)));
+    let registry = read_registry().snapshot();
+    let model = GraphModel::build(&graph, &inventory, &registry);
+    let edge_summary = model.edge_summary;
+    let model = Rc::new(RefCell::new(model));
 
     let page = GtkBox::builder()
         .orientation(Orientation::Vertical)
@@ -107,6 +113,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
         .build();
     title.add_css_class("heading");
     header.append(&title);
+    header.append(&build_edge_summary(edge_summary));
 
     let reset_btn = Button::builder()
         .icon_name("view-refresh-symbolic")
@@ -136,8 +143,9 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
         let canvas = canvas.clone();
         let graph = graph.clone();
         let inventory = inventory.clone();
+        let registry = registry.clone();
         move |_| {
-            let updated = GraphModel::build(&graph, &inventory);
+            let updated = GraphModel::build(&graph, &inventory, &registry);
             canvas.set_content_width(updated.content_width as i32);
             canvas.set_content_height(updated.content_height as i32);
             model.replace(updated);
@@ -211,16 +219,17 @@ fn install_drag_controller(canvas: &DrawingArea, model: &Rc<RefCell<GraphModel>>
 struct GraphModel {
     nodes: Vec<GraphNode>,
     edges: Vec<GraphEdge>,
+    edge_summary: EdgeSummary,
     content_width: f64,
     content_height: f64,
 }
 
 impl GraphModel {
-    fn build(graph: &SceneGraph, inventory: &SceneInventory) -> Self {
-        let registry = read_registry();
-        let role_of =
-            |scene_id: &str| -> Option<SceneRole> { registry.scenes.get(scene_id).map(|e| e.role) };
-
+    fn build(
+        graph: &SceneGraph,
+        inventory: &SceneInventory,
+        registry: &SceneRegistrySnapshot,
+    ) -> Self {
         let mut node_ids = BTreeSet::new();
         for (parent, children) in &graph.edges {
             node_ids.insert(parent.clone());
@@ -266,7 +275,7 @@ impl GraphModel {
             let row = layer_rows.entry(layer).or_insert(0);
             max_layer = max_layer.max(layer);
             max_row = max_row.max(*row);
-            let role = role_of(&id);
+            let role = registry.scene_role(&id);
 
             nodes.push(GraphNode {
                 label: id,
@@ -278,19 +287,21 @@ impl GraphModel {
             *row += 1;
         }
 
-        let graph_policy = registry.rules.policy();
+        let mut edge_summary = EdgeSummary::default();
         let edges = edge_pairs
             .into_iter()
-            .map(|(from, to)| GraphEdge {
-                from,
-                to,
-                status: classify_edge(nodes[from].role, nodes[to].role, &graph_policy),
+            .map(|(from, to)| {
+                let status =
+                    classify_edge(nodes[from].role, nodes[to].role, registry.graph_policy());
+                edge_summary.record(status);
+                GraphEdge { from, to, status }
             })
             .collect();
 
         Self {
             nodes,
             edges,
+            edge_summary,
             content_width: CANVAS_PADDING * 2.0 + NODE_WIDTH + max_layer as f64 * LAYER_GAP,
             content_height: CANVAS_PADDING * 2.0 + NODE_HEIGHT + max_row as f64 * ROW_GAP,
         }
@@ -329,6 +340,69 @@ struct GraphEdge {
     from: usize,
     to: usize,
     status: EdgeStatus,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct EdgeSummary {
+    ok: usize,
+    warning: usize,
+    forbidden: usize,
+}
+
+impl EdgeSummary {
+    fn record(&mut self, status: EdgeStatus) {
+        match status {
+            EdgeStatus::Ok => self.ok += 1,
+            EdgeStatus::Warning => self.warning += 1,
+            EdgeStatus::Forbidden => self.forbidden += 1,
+        }
+    }
+
+    fn count(self, status: EdgeStatus) -> usize {
+        match status {
+            EdgeStatus::Ok => self.ok,
+            EdgeStatus::Warning => self.warning,
+            EdgeStatus::Forbidden => self.forbidden,
+        }
+    }
+}
+
+fn build_edge_summary(summary: EdgeSummary) -> GtkBox {
+    let root = GtkBox::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(10)
+        .valign(Align::Center)
+        .build();
+    root.add_css_class("graph-status-summary");
+
+    for status in EdgeStatus::SUMMARY_ORDER {
+        root.append(&build_edge_summary_label(status, summary.count(status)));
+    }
+
+    root
+}
+
+fn build_edge_summary_label(status: EdgeStatus, count: usize) -> GtkBox {
+    let root = GtkBox::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(4)
+        .valign(Align::Center)
+        .build();
+    root.set_tooltip_text(Some(status.summary_tooltip()));
+
+    let icon = Image::from_icon_name(status.icon_name());
+    icon.add_css_class(status.css_class());
+    root.append(&icon);
+
+    let summary = Label::builder()
+        .label(format!("{} {count}", status.summary_label()))
+        .valign(Align::Center)
+        .build();
+    summary.add_css_class("caption");
+    summary.add_css_class(status.css_class());
+    root.append(&summary);
+
+    root
 }
 
 fn scene_order(inventory: &SceneInventory) -> HashMap<String, usize> {
@@ -523,7 +597,7 @@ fn draw_node(ctx: &Context, node: &GraphNode, palette: &Palette) {
     ctx.select_font_face("Sans", FontSlant::Normal, FontWeight::Normal);
     ctx.set_font_size(12.0);
     set_rgb(ctx, palette.muted_text);
-    let role = node.role.map(SceneRole::label).unwrap_or("Unassigned");
+    let role = SceneRole::label_or_unassigned(node.role);
     ctx.move_to(node.x + 20.0, node.y + 52.0);
     let _ = ctx.show_text(role);
 }
@@ -612,5 +686,74 @@ impl Palette {
                 muted_text: Color(0.42, 0.46, 0.52),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::registry::SceneMetadata;
+    use crate::domain::scene::Scene;
+
+    #[test]
+    fn graph_model_counts_edge_statuses_from_registry_policy() {
+        let graph = SceneGraph {
+            edges: HashMap::from([(
+                "Main".to_string(),
+                vec!["Module".to_string(), "Raw".to_string()],
+            )]),
+        };
+        let inventory = inventory(["Main", "Module", "Raw"]);
+        let registry = registry([
+            ("Main", SceneRole::Primary),
+            ("Module", SceneRole::Module),
+            ("Raw", SceneRole::Raw),
+        ]);
+
+        let model = GraphModel::build(&graph, &inventory, &registry);
+
+        assert_eq!(model.edge_summary.count(EdgeStatus::Ok), 1);
+        assert_eq!(model.edge_summary.count(EdgeStatus::Warning), 1);
+        assert_eq!(model.edge_summary.count(EdgeStatus::Forbidden), 0);
+    }
+
+    #[test]
+    fn compute_layers_handles_cycles_with_finite_depths() {
+        let layers = compute_layers(2, &BTreeSet::from([(0, 1), (1, 0)]));
+
+        assert_eq!(layers.len(), 2);
+        assert!(layers.into_iter().all(|layer| layer <= 2));
+    }
+
+    fn inventory<const N: usize>(ids: [&str; N]) -> SceneInventory {
+        SceneInventory {
+            scenes: ids
+                .into_iter()
+                .map(|id| Scene {
+                    id: id.to_string(),
+                    name: id.to_string(),
+                })
+                .collect(),
+            current_id: None,
+        }
+    }
+
+    fn registry<const N: usize>(roles: [(&str, SceneRole); N]) -> SceneRegistrySnapshot {
+        SceneRegistrySnapshot::new(
+            roles
+                .into_iter()
+                .map(|(scene_id, role)| {
+                    (
+                        scene_id.to_string(),
+                        SceneMetadata {
+                            role,
+                            tags: Vec::new(),
+                            protected: false,
+                        },
+                    )
+                })
+                .collect(),
+            Default::default(),
+        )
     }
 }

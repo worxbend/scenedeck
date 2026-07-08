@@ -257,7 +257,9 @@ fn handle_scene_role_change(row: &ComboRow, scene_id: &str) {
     if let Err(e) = write_registry(&reg) {
         tracing::warn!(%e, scene = scene_id, "failed to write registry");
     }
-    let subtitle = new_role.map(SceneRole::description).unwrap_or("No role assigned");
+    let subtitle = new_role
+        .map(SceneRole::description)
+        .unwrap_or("No role assigned");
     row.set_subtitle(subtitle);
 }
 
@@ -272,7 +274,12 @@ fn handle_export_click(button: &Button, status_row: &ActionRow) {
     show_export_dialog(button, status_row);
 }
 
-fn handle_import_click(button: &Button, status_row: &ActionRow, container: &GtkBox, nav: &NavigationContext) {
+fn handle_import_click(
+    button: &Button,
+    status_row: &ActionRow,
+    container: &GtkBox,
+    nav: &NavigationContext,
+) {
     show_import_dialog(button, status_row, container, nav);
 }
 

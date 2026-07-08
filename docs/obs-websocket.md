@@ -48,8 +48,8 @@ SceneDeck currently writes:
 - Start or stop streaming.
 - Start or stop recording.
 
-`AppCommand::SetSceneRole` is intentionally local metadata and does not write to
-OBS. Inventory currently writes the local registry directly.
+Scene roles are local metadata and do not write to OBS. Inventory writes the
+local registry directly.
 
 ## Events
 

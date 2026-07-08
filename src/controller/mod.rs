@@ -1,10 +1,10 @@
-pub mod app_controller;
-pub mod command;
-pub mod dependencies;
-pub mod event;
-pub mod state;
+//! Application controller boundary.
+//!
+//! Commands flow from GTK widgets into `AppController`; events flow back to the
+//! GTK main thread where `ui::window` applies them to state and widgets.
 
-pub use app_controller::AppController;
-pub use command::AppCommand;
-pub use event::AppEvent;
-pub use state::AppState;
+pub(crate) mod app_controller;
+pub(crate) mod command;
+pub(crate) mod dependencies;
+pub(crate) mod event;
+pub(crate) mod state;

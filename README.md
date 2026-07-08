@@ -14,7 +14,7 @@ keep local metadata about how scenes are used.
 - Connect to OBS Studio through the built-in OBS WebSocket server.
 - Switch OBS profiles and scene collections from the header once connected.
 - Display the active OBS program scene.
-- Show live-switchable scene cards for scenes marked as `Primary`.
+- Show live-switchable scene cards for configured roles, `Primary` by default.
 - Switch program scenes from the Live page.
 - Display global audio sources first, then audio-capable inputs from the active
   scene, including nested scenes and groups.

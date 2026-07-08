@@ -1,3 +1,4 @@
-pub mod channel;
-pub mod error;
-pub mod logging;
+//! Cross-cutting infrastructure helpers.
+
+pub(crate) mod error;
+pub(crate) mod logging;

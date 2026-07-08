@@ -1,18 +1,40 @@
+//! Scene role classification used by Live, Inventory, Graph, and Doctor.
+
 use serde::{Deserialize, Serialize};
 
+/// Local classification assigned to an OBS scene.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SceneRole {
+    /// Live-switchable program scene.
     Primary,
+    /// Valid scene hidden from Live by default.
     Secondary,
+    /// Reusable nested scene intended as a building block.
     Module,
+    /// Source-wrapper scene that should remain a leaf in the graph.
     #[default]
     Raw,
+    /// Temporary test scene that should not be on a live path.
     Debug,
+    /// Preserved scene excluded from active workflows.
     Archive,
 }
 
 impl SceneRole {
+    /// User-facing label for a scene with no assigned role.
+    pub const UNASSIGNED_LABEL: &'static str = "Unassigned";
+
+    /// Stable display order used by role selectors and summaries.
+    pub const ALL: [Self; 6] = [
+        Self::Primary,
+        Self::Secondary,
+        Self::Module,
+        Self::Raw,
+        Self::Debug,
+        Self::Archive,
+    ];
+
     /// Parse the lowercase policy key used by config and registry files.
     pub const fn from_rule_key(key: &str) -> Option<Self> {
         match key.as_bytes() {
@@ -26,6 +48,7 @@ impl SceneRole {
         }
     }
 
+    /// User-facing role name.
     pub const fn label(self) -> &'static str {
         match self {
             Self::Primary => "Primary",
@@ -37,6 +60,15 @@ impl SceneRole {
         }
     }
 
+    /// User-facing role name, falling back to `Unassigned`.
+    pub const fn label_or_unassigned(role: Option<Self>) -> &'static str {
+        match role {
+            Some(role) => role.label(),
+            None => Self::UNASSIGNED_LABEL,
+        }
+    }
+
+    /// Short user-facing explanation for Inventory role selectors.
     pub const fn description(self) -> &'static str {
         match self {
             Self::Primary => "Live-switchable scene",
@@ -75,5 +107,19 @@ impl SceneRole {
     /// Whether this role is directly switchable from the Live page.
     pub const fn is_live_switchable(self) -> bool {
         matches!(self, Self::Primary)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn optional_role_label_uses_unassigned_fallback() {
+        assert_eq!(SceneRole::label_or_unassigned(None), "Unassigned");
+        assert_eq!(
+            SceneRole::label_or_unassigned(Some(SceneRole::Primary)),
+            "Primary"
+        );
     }
 }

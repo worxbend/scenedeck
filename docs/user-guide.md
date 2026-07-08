@@ -118,11 +118,13 @@ OBS lists yet.
 
 Inventory lists OBS scenes and lets you assign local roles. Roles are stored in
 SceneDeck's local registry and do not rename or modify scenes in OBS.
+If the registry file cannot be loaded, Inventory shows a warning row and falls
+back to unassigned roles until the file is fixed and the page is refreshed.
 
 Roles:
 
-- Primary: live-switchable scene shown on the Live page.
-- Secondary: valid scene hidden from Live by default.
+- Primary: live-switchable scene shown on the Live page by default.
+- Secondary: valid scene hidden from Live by default unless Live config includes it.
 - Module: reusable nested scene, not directly switchable.
 - Raw: hardware or source wrapper scene.
 - Debug: temporary test scene.
@@ -135,6 +137,8 @@ The Scene Registry YAML row exports or imports the local registry as a YAML
 file. This includes scene roles, tags, protection flags, and graph rule fields.
 Use export to back up a scene setup or move it to another machine; use import to
 replace the local registry from a YAML file.
+If the local registry file is invalid, export reports the parse error instead
+of producing a default registry backup.
 
 ## Graph Page
 

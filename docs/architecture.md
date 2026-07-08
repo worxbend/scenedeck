@@ -34,9 +34,11 @@ source of truth for:
 - OBS profiles and scene collections.
 - Stream and record status.
 - Active audio inputs.
-- Diagnostics.
+- One-shot startup notice text.
 
-GTK widgets are updated from events in `src/ui/window.rs`.
+GTK widgets are updated from events in `src/ui/window.rs`. Doctor diagnostics
+are derived from the current inventory, registry snapshot, and graph whenever
+the Doctor page is rebuilt.
 
 ## Command Flow
 

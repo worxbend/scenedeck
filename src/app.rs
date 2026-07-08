@@ -17,6 +17,7 @@ use crate::controller::state::AppState;
 use crate::storage::config::read_config;
 use crate::ui;
 
+/// Initialize runtime state and run the GTK application.
 pub fn run() {
     // The Runtime must be created before the GTK application so that any task
     // it spawns can access a live executor during the GTK main loop.

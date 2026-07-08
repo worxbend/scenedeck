@@ -107,7 +107,7 @@
 
 /* ── Live output controls ──────────────────────────────────────────────────── */
 .output-control button {
-    min-width: 108px;
+    min-width: 132px;
 }
 
 .output-card {
@@ -330,3 +330,8 @@ window.scenedeck-about-window preferencesgroup row {
 .diag-warning { color: @warning_color; }
 .diag-info    { color: @accent_color; }
 .diag-ok      { color: @success_color; }
+
+/* ── Graph page ─────────────────────────────────────────────────────────────── */
+.graph-status-summary label {
+    font-weight: 700;
+}

@@ -779,7 +779,18 @@ pub(crate) fn rebuild_scene_cards(
 
     for scene in primary_scenes {
         let is_active = inventory.current_id.as_deref() == Some(&scene.id);
-        let card = scene_card::build(&scene.name, scene.id.clone(), is_active, nav.clone());
+        let scene_role = registry
+            .scenes
+            .get(&scene.id)
+            .map(|entry| entry.role)
+            .unwrap_or_default();
+        let card = scene_card::build(
+            &scene.name,
+            scene.id.clone(),
+            scene_role,
+            is_active,
+            nav.clone(),
+        );
         handle.scenes_box.insert(&card, -1);
     }
 }

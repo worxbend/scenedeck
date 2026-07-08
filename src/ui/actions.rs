@@ -15,40 +15,29 @@ pub(super) fn install(
     window: &adw::ApplicationWindow,
     nav: NavigationContext,
 ) {
-    // Quit — Ctrl+Q
-    let quit = gio::SimpleAction::new("quit", None);
-    quit.connect_activate({
+    let app = app.clone();
+    let window = window.clone();
+    let nav = nav.clone();
+
+    register_simple_action(&app, "quit", Some("<Primary>q"), {
         let app = app.clone();
-        move |_, _| app.quit()
+        move || app.quit()
     });
-    app.add_action(&quit);
-    app.set_accels_for_action("app.quit", &["<Primary>q"]);
 
-    // About dialog
-    let about = gio::SimpleAction::new("about", None);
-    about.connect_activate({
+    register_simple_action(&app, "about", None, {
         let window = window.clone();
-        move |_, _| show_about(&window)
+        move || show_about(&window)
     });
-    app.add_action(&about);
 
-    // Reconnect to OBS — Ctrl+R
-    let reconnect = gio::SimpleAction::new("reconnect", None);
-    reconnect.connect_activate({
+    register_simple_action(&app, "reconnect", Some("<Primary>r"), {
         let nav = nav.clone();
-        move |_, _| nav.dispatch(AppCommand::Connect)
+        move || nav.dispatch(AppCommand::Connect)
     });
-    app.add_action(&reconnect);
-    app.set_accels_for_action("app.reconnect", &["<Primary>r"]);
 
-    // Jump to Settings — Ctrl+comma (the GNOME convention)
-    let settings = gio::SimpleAction::new("settings", None);
-    settings.connect_activate({
+    register_simple_action(&app, "settings", Some("<Primary>comma"), {
         let nav = nav.clone();
-        move |_, _| nav.switch_to_page(Page::Settings)
+        move || nav.switch_to_page(Page::Settings)
     });
-    app.add_action(&settings);
-    app.set_accels_for_action("app.settings", &["<Primary>comma"]);
 }
 
 fn show_about(parent: &adw::ApplicationWindow) {
@@ -62,4 +51,20 @@ fn show_about(parent: &adw::ApplicationWindow) {
         .build();
     about.add_css_class("scenedeck-about-window");
     about.present();
+}
+
+fn register_simple_action(
+    app: &adw::Application,
+    action_name: &'static str,
+    accelerator: Option<&'static str>,
+    handler: impl Fn() + 'static,
+) {
+    let action = gio::SimpleAction::new(action_name, None);
+    action.connect_activate(move |_, _| handler());
+    app.add_action(&action);
+
+    if let Some(accel) = accelerator {
+        let action_name = format!("app.{action_name}");
+        app.set_accels_for_action(&action_name, &[accel]);
+    }
 }

@@ -14,6 +14,9 @@ use crate::services::doctor_service::DoctorService;
 use crate::storage::registry::read_registry;
 use crate::ui::navigation::NavigationContext;
 
+const NO_DIAGNOSTICS_SUMMARY: &str = "No problems found";
+const NO_DIAGNOSTICS_DETAIL: &str = "The scene architecture satisfies all checks.";
+
 pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     let container = GtkBox::builder()
         .orientation(Orientation::Vertical)
@@ -72,20 +75,15 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
     page.add_css_class("app-preferences-page");
 
     // ── Summary / re-run ──────────────────────────────────────────────────────
-    let errors = count(&diagnostics, DiagnosticSeverity::Error);
-    let warnings = count(&diagnostics, DiagnosticSeverity::Warning);
-    let infos = count(&diagnostics, DiagnosticSeverity::Info);
-
     let summary_group = PreferencesGroup::new();
     let summary_row = ActionRow::builder()
         .title("Diagnostics")
-        .subtitle(format!(
-            "{errors} error(s), {warnings} warning(s), {infos} info"
-        ))
+        .subtitle(diagnostic_summary(&diagnostics))
         .build();
 
     let rerun_btn = gtk4::Button::builder()
-        .label("Re-run")
+        .icon_name("view-refresh-symbolic")
+        .tooltip_text("Run diagnostics again")
         .valign(gtk4::Align::Center)
         .build();
     rerun_btn.add_css_class("flat");
@@ -102,8 +100,8 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
     if diagnostics.is_empty() {
         let ok_group = PreferencesGroup::new();
         let ok_row = ActionRow::builder()
-            .title("No problems found")
-            .subtitle("The scene architecture satisfies all checks.")
+            .title(NO_DIAGNOSTICS_SUMMARY)
+            .subtitle(NO_DIAGNOSTICS_DETAIL)
             .build();
         let icon = Image::from_icon_name("object-select-symbolic");
         icon.add_css_class("diag-ok");
@@ -115,11 +113,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
     }
 
     // ── One group per severity (Errors first) ─────────────────────────────────
-    for severity in [
-        DiagnosticSeverity::Error,
-        DiagnosticSeverity::Warning,
-        DiagnosticSeverity::Info,
-    ] {
+    for severity in DiagnosticSeverity::DISPLAY_ORDER {
         let group_diags: Vec<&Diagnostic> = diagnostics
             .iter()
             .filter(|d| d.severity == severity)
@@ -130,12 +124,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
 
         let group = PreferencesGroup::builder().title(severity.label()).build();
         for diag in group_diags {
-            let title = diag
-                .scene
-                .as_deref()
-                .map(|s| format!("{s}: {}", diag.message))
-                .unwrap_or_else(|| diag.message.clone());
-
+            let title = diag.title();
             let row = ActionRow::builder().title(&title).build();
             if let Some(suggestion) = &diag.suggestion {
                 row.set_subtitle(suggestion);
@@ -151,6 +140,48 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
     container.append(&page);
 }
 
-fn count(diags: &[Diagnostic], severity: DiagnosticSeverity) -> usize {
-    diags.iter().filter(|d| d.severity == severity).count()
+fn diagnostic_summary(diagnostics: &[Diagnostic]) -> String {
+    if diagnostics.is_empty() {
+        return NO_DIAGNOSTICS_SUMMARY.to_string();
+    }
+
+    DiagnosticSeverity::DISPLAY_ORDER
+        .iter()
+        .map(|severity| severity.format_count(severity.count_in(diagnostics)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_summary_uses_all_clear_text_when_empty() {
+        assert_eq!(diagnostic_summary(&[]), NO_DIAGNOSTICS_SUMMARY);
+    }
+
+    #[test]
+    fn diagnostic_summary_counts_findings_by_display_order() {
+        let diagnostics = vec![
+            diagnostic(DiagnosticSeverity::Warning),
+            diagnostic(DiagnosticSeverity::Error),
+            diagnostic(DiagnosticSeverity::Info),
+            diagnostic(DiagnosticSeverity::Warning),
+        ];
+
+        assert_eq!(
+            diagnostic_summary(&diagnostics),
+            "1 error, 2 warnings, 1 info item"
+        );
+    }
+
+    fn diagnostic(severity: DiagnosticSeverity) -> Diagnostic {
+        Diagnostic {
+            severity,
+            scene: None,
+            message: String::new(),
+            suggestion: None,
+        }
+    }
 }

@@ -1,31 +1,28 @@
-use crate::domain::role::SceneRole;
+//! Scene inventory state normalized from OBS.
 
 /// Stable identifier for an OBS scene.  Matches `sceneName`.
 pub type SceneId = String;
 
+/// OBS scene identity and user-visible name.
 #[derive(Debug, Clone)]
 pub struct Scene {
+    /// Stable OBS scene identifier.
     pub id: SceneId,
+    /// User-visible scene name.  Currently the same value as `id`.
     pub name: String,
-    /// Role assigned by the local registry; `None` if unclassified.
-    pub role: Option<SceneRole>,
 }
 
 /// Full scene list plus the currently active scene.
 #[derive(Debug, Default, Clone)]
 pub struct SceneInventory {
+    /// OBS scenes in switcher order.
     pub scenes: Vec<Scene>,
+    /// Currently active program scene id, if OBS has reported one.
     pub current_id: Option<SceneId>,
 }
 
 impl SceneInventory {
-    /// Scenes that may be switched from the Live page.
-    pub fn live_scenes(&self) -> impl Iterator<Item = &Scene> {
-        self.scenes
-            .iter()
-            .filter(|s| s.role.map(SceneRole::is_live_switchable).unwrap_or(false))
-    }
-
+    /// Scene matching `current_id`, if it is present in the inventory.
     pub fn current_scene(&self) -> Option<&Scene> {
         self.current_id
             .as_deref()

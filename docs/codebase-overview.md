@@ -54,7 +54,6 @@ Infrastructure helpers.
 
 - `error.rs`: application error type.
 - `logging.rs`: tracing subscriber setup.
-- `channel.rs`: channel-related infrastructure.
 
 `src/obs/`
 
@@ -72,7 +71,6 @@ Higher-level logic over domain types.
 - `doctor_service.rs`: architecture diagnostics.
 - `graph_service.rs`: graph edge classification.
 - `scene_service.rs`: scene-related service functions.
-- `audio_service.rs`: audio-related service functions.
 
 `src/storage/`
 
@@ -81,7 +79,7 @@ Persistence and local machine integration.
 - `config.rs`: JSON config load, save, defaults, and migrations.
 - `registry.rs`: local scene role registry.
 - `secret.rs`: OBS password storage through Secret Service.
-- `xdg.rs`: XDG config and data path resolution.
+- `xdg.rs`: XDG config path resolution.
 
 `src/ui/`
 

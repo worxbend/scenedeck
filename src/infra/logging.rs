@@ -1,5 +1,8 @@
+//! Tracing subscriber setup.
+
 use tracing_subscriber::EnvFilter;
 
+/// Initialize tracing from `RUST_LOG`, with a SceneDeck-focused default.
 pub fn init() {
     tracing_subscriber::fmt()
         .with_env_filter(
