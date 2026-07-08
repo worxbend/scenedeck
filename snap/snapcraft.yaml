@@ -63,6 +63,8 @@ parts:
     source: .
     after:
       - rust-deps
+    build-snaps:
+      - rustup/latest/stable
     build-packages:
       - libadwaita-1-dev
       - libdbus-1-dev
