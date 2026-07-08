@@ -51,18 +51,9 @@ apps:
       - network
 
 parts:
-  rust-deps:
-    plugin: nil
-    stage-snaps:
-      - rustup/latest/stable
-    prime:
-      - -*
-
   scenedeck:
-    plugin: rust
+    plugin: nil
     source: .
-    after:
-      - rust-deps
     build-snaps:
       - rustup/latest/stable
     build-packages:
@@ -83,7 +74,11 @@ parts:
       fi
       craftctl set version="${version}"
     override-build: |
-      craftctl default
+      rustup update stable
+      rustup default stable
+      cargo build --release --locked
+      install -Dm755 target/release/scenedeck \
+        "${CRAFT_PART_INSTALL}/bin/scenedeck"
       install -Dm644 data/io.scenedeck.app.desktop \
         "${CRAFT_PART_INSTALL}/usr/share/applications/io.scenedeck.app.desktop"
       install -Dm644 data/io.scenedeck.app.metainfo.xml \
