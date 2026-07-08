@@ -54,7 +54,6 @@ parts:
   scenedeck:
     plugin: rust
     source: .
-    build-snaps: [rustup]
     rust-channel: stable
     build-snaps: [rustup]
     build-packages:
