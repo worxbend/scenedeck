@@ -51,10 +51,18 @@ apps:
       - network
 
 parts:
+  rust-deps:
+    plugin: nil
+    build-packages:
+      - curl
+    override-pull: |
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
   scenedeck:
     plugin: rust
     source: .
     rust-channel: stable
+    after: [rust-deps]
     build-snaps: [rustup]
     build-packages:
       - rustup
