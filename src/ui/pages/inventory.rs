@@ -139,31 +139,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
         combo_row.connect_selected_notify({
             let scene_id = scene.id.clone();
             move |row| {
-                let new_role = index_to_role(row.selected());
-                let mut reg = read_registry();
-                match new_role {
-                    Some(role) => {
-                        reg.scenes
-                            .entry(scene_id.clone())
-                            .and_modify(|e| e.role = role)
-                            .or_insert_with(|| SceneEntry {
-                                role,
-                                tags: Vec::new(),
-                                protected: false,
-                            });
-                    }
-                    None => {
-                        reg.scenes.remove(&scene_id);
-                    }
-                }
-                if let Err(e) = write_registry(&reg) {
-                    tracing::warn!(%e, "failed to write registry");
-                }
-                // Update subtitle to reflect the new role description.
-                let subtitle = new_role
-                    .map(SceneRole::description)
-                    .unwrap_or("No role assigned");
-                row.set_subtitle(subtitle);
+                handle_scene_role_change(row, &scene_id);
             }
         });
 
@@ -207,12 +183,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
             remove_btn.connect_clicked({
                 let entry_name = entry_name.clone();
                 let stale_row = stale_row.clone();
-                move |_| {
-                    let mut reg = read_registry();
-                    reg.scenes.remove(&entry_name);
-                    let _ = write_registry(&reg);
-                    stale_row.set_visible(false);
-                }
+                move |_| handle_stale_entry_remove(entry_name.as_str(), &stale_row)
             });
 
             stale_row.add_suffix(&remove_btn);
@@ -249,19 +220,60 @@ fn build_yaml_actions_row(container: &GtkBox, nav: &NavigationContext) -> Action
 
     export_btn.connect_clicked({
         let row = row.clone();
-        move |button| show_export_dialog(button, &row)
+        move |button| handle_export_click(button, &row)
     });
 
     import_btn.connect_clicked({
         let row = row.clone();
         let container = container.clone();
         let nav = nav.clone();
-        move |button| show_import_dialog(button, &row, &container, &nav)
+        move |button| handle_import_click(button, &row, &container, &nav)
     });
 
     row.add_suffix(&export_btn);
     row.add_suffix(&import_btn);
     row
+}
+
+fn handle_scene_role_change(row: &ComboRow, scene_id: &str) {
+    let new_role = index_to_role(row.selected());
+    let mut reg = read_registry();
+    match new_role {
+        Some(role) => {
+            reg.scenes
+                .entry(scene_id.to_string())
+                .and_modify(|e| e.role = role)
+                .or_insert_with(|| SceneEntry {
+                    role,
+                    tags: Vec::new(),
+                    protected: false,
+                });
+        }
+        None => {
+            reg.scenes.remove(scene_id);
+        }
+    }
+
+    if let Err(e) = write_registry(&reg) {
+        tracing::warn!(%e, scene = scene_id, "failed to write registry");
+    }
+    let subtitle = new_role.map(SceneRole::description).unwrap_or("No role assigned");
+    row.set_subtitle(subtitle);
+}
+
+fn handle_stale_entry_remove(entry_name: &str, stale_row: &ActionRow) {
+    let mut reg = read_registry();
+    reg.scenes.remove(entry_name);
+    let _ = write_registry(&reg);
+    stale_row.set_visible(false);
+}
+
+fn handle_export_click(button: &Button, status_row: &ActionRow) {
+    show_export_dialog(button, status_row);
+}
+
+fn handle_import_click(button: &Button, status_row: &ActionRow, container: &GtkBox, nav: &NavigationContext) {
+    show_import_dialog(button, status_row, container, nav);
 }
 
 fn show_export_dialog(button: &Button, status_row: &ActionRow) {

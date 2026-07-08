@@ -126,26 +126,7 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
     stream_btn.set_tooltip_text(Some("Start or stop streaming"));
     stream_btn.connect_clicked({
         let nav = nav.clone();
-        move |button| {
-            let active = nav.state.borrow().stream_status.active;
-            let command = if active {
-                AppCommand::StopStreaming
-            } else {
-                AppCommand::StartStreaming
-            };
-            let should_confirm = requires_output_confirmation(
-                OutputKind::Stream,
-                active,
-                &nav.state.borrow().output_confirmations,
-            );
-            if should_confirm {
-                let action = output_action_for_active_state(active);
-                let dialog = output_confirmation_dialog(OutputKind::Stream, action);
-                confirm_output_action(button, dialog, command, nav.clone());
-            } else {
-                nav.dispatch(command);
-            }
-        }
+        move |button| handle_stream_output_toggle(button, &nav)
     });
 
     let stream_label = Label::builder()
@@ -166,26 +147,7 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
     record_btn.set_tooltip_text(Some("Start or stop recording"));
     record_btn.connect_clicked({
         let nav = nav.clone();
-        move |button| {
-            let active = nav.state.borrow().record_status.active;
-            let command = if active {
-                AppCommand::StopRecording
-            } else {
-                AppCommand::StartRecording
-            };
-            let should_confirm = requires_output_confirmation(
-                OutputKind::Recording,
-                active,
-                &nav.state.borrow().output_confirmations,
-            );
-            if should_confirm {
-                let action = output_action_for_active_state(active);
-                let dialog = output_confirmation_dialog(OutputKind::Recording, action);
-                confirm_output_action(button, dialog, command, nav.clone());
-            } else {
-                nav.dispatch(command);
-            }
-        }
+        move |button| handle_record_output_toggle(button, &nav)
     });
 
     let record_label = Label::builder()
@@ -362,6 +324,48 @@ pub(crate) fn show_disconnected_view(handle: &LivePageHandle, message: &str) {
         {
             label.set_text(message);
         }
+    }
+}
+
+fn handle_stream_output_toggle(button: &Button, nav: &NavigationContext) {
+    let active = nav.state.borrow().stream_status.active;
+    let command = if active {
+        AppCommand::StopStreaming
+    } else {
+        AppCommand::StartStreaming
+    };
+    let should_confirm = requires_output_confirmation(
+        OutputKind::Stream,
+        active,
+        &nav.state.borrow().output_confirmations,
+    );
+    if should_confirm {
+        let action = output_action_for_active_state(active);
+        let dialog = output_confirmation_dialog(OutputKind::Stream, action);
+        confirm_output_action(button, dialog, command, nav.clone());
+    } else {
+        nav.dispatch(command);
+    }
+}
+
+fn handle_record_output_toggle(button: &Button, nav: &NavigationContext) {
+    let active = nav.state.borrow().record_status.active;
+    let command = if active {
+        AppCommand::StopRecording
+    } else {
+        AppCommand::StartRecording
+    };
+    let should_confirm = requires_output_confirmation(
+        OutputKind::Recording,
+        active,
+        &nav.state.borrow().output_confirmations,
+    );
+    if should_confirm {
+        let action = output_action_for_active_state(active);
+        let dialog = output_confirmation_dialog(OutputKind::Recording, action);
+        confirm_output_action(button, dialog, command, nav.clone());
+    } else {
+        nav.dispatch(command);
     }
 }
 
