@@ -62,8 +62,6 @@ parts:
       ln -sf "$HOME/.cargo/bin/cargo" /usr/local/bin/cargo
       ln -sf "$HOME/.cargo/bin/rustc" /usr/local/bin/rustc
       ln -sf "$HOME/.cargo/bin/rustup" /usr/local/bin/rustup
-    override-build: |
-      rustup default stable
 
   scenedeck:
     plugin: rust
