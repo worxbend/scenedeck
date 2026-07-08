@@ -52,10 +52,8 @@ apps:
 
 parts:
   scenedeck:
-    plugin: nil
+    plugin: rust
     source: .
-    build-snaps:
-      - rustup/latest/stable
     build-packages:
       - libadwaita-1-dev
       - libdbus-1-dev
@@ -74,11 +72,7 @@ parts:
       fi
       craftctl set version="${version}"
     override-build: |
-      env -u LD_LIBRARY_PATH rustup update stable
-      env -u LD_LIBRARY_PATH rustup default stable
-      env -u LD_LIBRARY_PATH cargo build --release --locked
-      install -Dm755 target/release/scenedeck \
-        "${CRAFT_PART_INSTALL}/bin/scenedeck"
+      craftctl default
       install -Dm644 data/io.scenedeck.app.desktop \
         "${CRAFT_PART_INSTALL}/usr/share/applications/io.scenedeck.app.desktop"
       install -Dm644 data/io.scenedeck.app.metainfo.xml \
