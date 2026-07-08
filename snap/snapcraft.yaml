@@ -74,9 +74,9 @@ parts:
       fi
       craftctl set version="${version}"
     override-build: |
-      rustup update stable
-      rustup default stable
-      cargo build --release --locked
+      env -u LD_LIBRARY_PATH rustup update stable
+      env -u LD_LIBRARY_PATH rustup default stable
+      env -u LD_LIBRARY_PATH cargo build --release --locked
       install -Dm755 target/release/scenedeck \
         "${CRAFT_PART_INSTALL}/bin/scenedeck"
       install -Dm644 data/io.scenedeck.app.desktop \
