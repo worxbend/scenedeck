@@ -265,3 +265,197 @@ const BUILT_IN_THEMES: [BuiltInTheme; 11] = [
         dark_css: include_str!("../../resources/themes/ubuntu-violet-dark.css"),
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::{ThemeManager, ThemeVariant, BASE_CSS};
+
+    const REQUIRED_THEME_COLORS: &[&str] = &[
+        "scenedeck_fg",
+        "scenedeck_muted_fg",
+        "scenedeck_accent_fg",
+        "scenedeck_success",
+        "scenedeck_warning",
+        "scenedeck_error",
+    ];
+
+    const THEME_BACKGROUNDS: &[&str] = &[
+        "scenedeck_window",
+        "scenedeck_sidebar",
+        "scenedeck_header",
+        "scenedeck_surface",
+        "scenedeck_card",
+    ];
+
+    #[test]
+    fn mixer_empty_state_uses_themed_surface() {
+        assert!(BASE_CSS.contains(".app-status-page {\n    background-color: @scenedeck_surface;"));
+        assert!(BASE_CSS.contains(".mixer-page {\n    background-color: @scenedeck_surface;"));
+        assert!(!BASE_CSS.contains(".mixer-page {\n    background-color: @window_bg_color;"));
+    }
+
+    #[test]
+    fn base_css_uses_supported_gtk_properties() {
+        assert!(!BASE_CSS.contains("max-width"));
+        assert!(!BASE_CSS.contains("max-height"));
+    }
+
+    #[test]
+    fn suggested_action_buttons_use_theme_accent_foreground() {
+        assert!(BASE_CSS.contains("@define-color scenedeck_accent_fg @accent_fg_color;"));
+        assert!(BASE_CSS.contains("color: @scenedeck_accent_fg;"));
+
+        let high_contrast = ThemeManager::find_theme("high-contrast");
+        assert!(high_contrast
+            .css_for(ThemeVariant::Dark)
+            .contains("@define-color scenedeck_accent #ffffff;"));
+        assert!(high_contrast
+            .css_for(ThemeVariant::Dark)
+            .contains("@define-color scenedeck_accent_fg #000000;"));
+        assert!(high_contrast
+            .css_for(ThemeVariant::Light)
+            .contains("@define-color scenedeck_accent #000000;"));
+        assert!(high_contrast
+            .css_for(ThemeVariant::Light)
+            .contains("@define-color scenedeck_accent_fg #ffffff;"));
+    }
+
+    #[test]
+    fn audio_cards_use_compact_width() {
+        assert!(BASE_CSS.contains(".audio-card {\n    min-width: 136px;"));
+        assert!(BASE_CSS.contains("    min-height: 218px;"));
+        assert!(BASE_CSS.contains("    padding: 6px;\n    border-radius: 8px;"));
+        assert!(BASE_CSS.contains(".audio-card-controls button {\n    min-width: 18px;"));
+        assert!(BASE_CSS.contains(".audio-fine-controls button {\n    min-width: 18px;"));
+        assert!(BASE_CSS.contains(".audio-meter-bar {"));
+        assert!(BASE_CSS.contains("background-image: linear-gradient(to top, #2fa84f"));
+    }
+
+    #[test]
+    fn scene_cards_and_live_sidebar_icon_use_compact_live_styling() {
+        assert!(BASE_CSS
+            .contains(".scenedeck-sidebar-live-icon-streaming {\n    color: @scenedeck_error;"));
+        assert!(BASE_CSS
+            .contains(".scenedeck-top-streaming-icon-active {\n    color: @scenedeck_error;"));
+        assert!(BASE_CSS.contains(".scenedeck-content-header-streaming {"));
+        assert!(BASE_CSS.contains("border-top: 3px solid alpha(@scenedeck_error, 0.78);"));
+        assert!(BASE_CSS.contains("animation-name: scenedeck-live-breathe;"));
+        assert!(BASE_CSS.contains(".scene-card {\n    min-width: 132px;"));
+        assert!(BASE_CSS.contains("background-image: linear-gradient"));
+        assert!(BASE_CSS.contains(".scene-card-previous {"));
+    }
+
+    #[test]
+    fn built_in_theme_text_colors_contrast_with_app_surfaces() {
+        for theme in ThemeManager::built_in_themes() {
+            for variant in [ThemeVariant::Light, ThemeVariant::Dark] {
+                let css = theme.css_for(variant);
+                let colors = parse_theme_colors(css);
+
+                for color in REQUIRED_THEME_COLORS {
+                    assert!(
+                        colors.iter().any(|(name, _)| name == color),
+                        "{} {:?} should define {color}",
+                        theme.id,
+                        variant
+                    );
+                }
+
+                for foreground in [
+                    "scenedeck_fg",
+                    "scenedeck_muted_fg",
+                    "scenedeck_success",
+                    "scenedeck_warning",
+                    "scenedeck_error",
+                ] {
+                    for background in THEME_BACKGROUNDS {
+                        assert_contrast(
+                            theme.id,
+                            variant,
+                            foreground,
+                            background,
+                            color_value(&colors, foreground),
+                            color_value(&colors, background),
+                        );
+                    }
+                }
+
+                assert_contrast(
+                    theme.id,
+                    variant,
+                    "scenedeck_accent_fg",
+                    "scenedeck_accent",
+                    color_value(&colors, "scenedeck_accent_fg"),
+                    color_value(&colors, "scenedeck_accent"),
+                );
+            }
+        }
+    }
+
+    fn parse_theme_colors(css: &str) -> Vec<(&str, [f64; 3])> {
+        css.lines()
+            .filter_map(|line| {
+                let line = line.trim();
+                let rest = line.strip_prefix("@define-color ")?;
+                let (name, value) = rest.split_once(' ')?;
+                let value = value.strip_suffix(';')?;
+                Some((name, parse_hex_color(value)))
+            })
+            .collect()
+    }
+
+    fn color_value(colors: &[(&str, [f64; 3])], name: &str) -> [f64; 3] {
+        colors
+            .iter()
+            .find_map(|(color_name, value)| (*color_name == name).then_some(*value))
+            .unwrap_or_else(|| panic!("missing theme color {name}"))
+    }
+
+    fn parse_hex_color(value: &str) -> [f64; 3] {
+        let value = value
+            .strip_prefix('#')
+            .unwrap_or_else(|| panic!("expected hex color, got {value}"));
+        assert_eq!(value.len(), 6, "expected six-digit hex color");
+        [
+            u8::from_str_radix(&value[0..2], 16).expect("red channel") as f64 / 255.0,
+            u8::from_str_radix(&value[2..4], 16).expect("green channel") as f64 / 255.0,
+            u8::from_str_radix(&value[4..6], 16).expect("blue channel") as f64 / 255.0,
+        ]
+    }
+
+    fn assert_contrast(
+        theme_id: &str,
+        variant: ThemeVariant,
+        foreground_name: &str,
+        background_name: &str,
+        foreground: [f64; 3],
+        background: [f64; 3],
+    ) {
+        let ratio = contrast_ratio(foreground, background);
+        assert!(
+            ratio >= 4.5,
+            "{theme_id} {variant:?} {foreground_name} on {background_name} contrast {ratio:.2}"
+        );
+    }
+
+    fn contrast_ratio(a: [f64; 3], b: [f64; 3]) -> f64 {
+        let a = relative_luminance(a);
+        let b = relative_luminance(b);
+        let (lighter, darker) = if a >= b { (a, b) } else { (b, a) };
+        (lighter + 0.05) / (darker + 0.05)
+    }
+
+    fn relative_luminance(rgb: [f64; 3]) -> f64 {
+        0.2126 * linear_channel(rgb[0])
+            + 0.7152 * linear_channel(rgb[1])
+            + 0.0722 * linear_channel(rgb[2])
+    }
+
+    fn linear_channel(channel: f64) -> f64 {
+        if channel <= 0.04045 {
+            channel / 12.92
+        } else {
+            ((channel + 0.055) / 1.055).powf(2.4)
+        }
+    }
+}

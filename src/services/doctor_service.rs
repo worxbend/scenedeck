@@ -233,6 +233,7 @@ mod tests {
         let inventory = SceneInventory {
             scenes: vec![scene("Mod"), scene("Main")],
             current_id: None,
+            previous_id: None,
         };
         let registry = registry([("Mod", SceneRole::Module), ("Main", SceneRole::Primary)]);
 
@@ -249,6 +250,7 @@ mod tests {
         let inventory = SceneInventory {
             scenes: vec![scene("Main"), scene("Camera")],
             current_id: None,
+            previous_id: None,
         };
         let registry = registry([("Main", SceneRole::Primary), ("Camera", SceneRole::Raw)]);
 
@@ -267,6 +269,7 @@ mod tests {
         let inventory = SceneInventory {
             scenes: vec![scene("Camera"), scene("Overlay")],
             current_id: None,
+            previous_id: None,
         };
         let registry = registry([("Camera", SceneRole::Raw), ("Overlay", SceneRole::Module)]);
 
@@ -283,6 +286,7 @@ mod tests {
         let inventory = SceneInventory {
             scenes: vec![scene("A"), scene("B")],
             current_id: None,
+            previous_id: None,
         };
         let registry = registry([("A", SceneRole::Module), ("B", SceneRole::Module)]);
 

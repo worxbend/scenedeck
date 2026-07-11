@@ -85,6 +85,7 @@ mod tests {
                 name: scene_id.to_string(),
             }],
             current_id: None,
+            previous_id: None,
         }
     }
 

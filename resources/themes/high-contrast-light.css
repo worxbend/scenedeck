@@ -1,4 +1,10 @@
 @define-color scenedeck_accent #000000;
+@define-color scenedeck_fg #1d1d1f;
+@define-color scenedeck_muted_fg #555a60;
+@define-color scenedeck_accent_fg #ffffff;
+@define-color scenedeck_success #0f6b2f;
+@define-color scenedeck_warning #7a4a00;
+@define-color scenedeck_error #b00020;
 @define-color scenedeck_window #ffffff;
 @define-color scenedeck_sidebar #f0f0f0;
 @define-color scenedeck_header #e0e0e0;
@@ -7,7 +13,7 @@
 
 .scene-card,
 .audio-card {
-  border: 2px solid @window_fg_color;
+  border: 2px solid @scenedeck_fg;
 }
 
 .scene-card-active {
@@ -15,5 +21,5 @@
 }
 
 .audio-card-controls button {
-  border: 1px solid @window_fg_color;
+  border: 1px solid @scenedeck_fg;
 }

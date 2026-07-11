@@ -1,4 +1,10 @@
 @define-color scenedeck_accent #2f6fed;
+@define-color scenedeck_fg #1d1d1f;
+@define-color scenedeck_muted_fg #555a60;
+@define-color scenedeck_accent_fg #000000;
+@define-color scenedeck_success #0f6b2f;
+@define-color scenedeck_warning #7a4a00;
+@define-color scenedeck_error #b00020;
 @define-color scenedeck_window #f5f7fb;
 @define-color scenedeck_sidebar #e9edf5;
 @define-color scenedeck_header #dde4f0;

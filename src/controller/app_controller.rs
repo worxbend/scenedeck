@@ -454,17 +454,29 @@ impl AppController {
     }
 
     fn disconnect(&mut self) {
-        if let Some(h) = self.session.take() {
-            h.abort();
-        }
-        if let Ok(mut slot) = self.client_slot.lock() {
-            *slot = None;
-        }
-        if let Ok(mut pending) = self.output_pending.lock() {
-            pending.stream = false;
-            pending.record = false;
-        }
-        let _ = self.event_tx.send(AppEvent::Disconnected);
+        let session = self.session.take();
+        let client = self.output_command_client();
+        let client_slot = Arc::clone(&self.client_slot);
+        let output_pending = Arc::clone(&self.output_pending);
+        let tx = self.event_tx.clone();
+
+        self.runtime.spawn(async move {
+            if let Some(client) = client {
+                stop_active_outputs_before_disconnect(&client).await;
+            }
+
+            if let Some(session) = session {
+                session.abort();
+            }
+            if let Ok(mut slot) = client_slot.lock() {
+                *slot = None;
+            }
+            if let Ok(mut pending) = output_pending.lock() {
+                pending.stream = false;
+                pending.record = false;
+            }
+            let _ = tx.send(AppEvent::Disconnected);
+        });
     }
 
     /// Clone the current client if connected, then call `f` with it.
@@ -609,6 +621,28 @@ fn mark_record_pending(pending: &Arc<Mutex<OutputPending>>) -> bool {
 fn clear_record_pending(pending: &Arc<Mutex<OutputPending>>) {
     if let Ok(mut pending) = pending.lock() {
         pending.record = false;
+    }
+}
+
+async fn stop_active_outputs_before_disconnect(client: &OutputCommandClient) {
+    match client.get_stream_status().await {
+        Ok(status) if status.active => {
+            if let Err(e) = client.set_streaming(false).await {
+                tracing::warn!(%e, "failed to stop active stream before disconnect");
+            }
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!(%e, "could not read stream status before disconnect"),
+    }
+
+    match client.get_record_status().await {
+        Ok(status) if status.active => {
+            if let Err(e) = client.set_recording(false).await {
+                tracing::warn!(%e, "failed to stop active recording before disconnect");
+            }
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!(%e, "could not read recording status before disconnect"),
     }
 }
 
@@ -904,6 +938,8 @@ mod tests {
         record_result: Result<Option<String>, AppError>,
         stream_status: Result<OutputStatus, AppError>,
         record_status: Result<OutputStatus, AppError>,
+        stream_commands: Arc<Mutex<Vec<bool>>>,
+        record_commands: Arc<Mutex<Vec<bool>>>,
         stream_status_calls: Arc<Mutex<usize>>,
         record_status_calls: Arc<Mutex<usize>>,
     }
@@ -923,6 +959,8 @@ mod tests {
                     state: OutputRunState::Active,
                     detail: Some("/tmp/current-recording.mkv".to_string()),
                 }),
+                stream_commands: Arc::new(Mutex::new(Vec::new())),
+                record_commands: Arc::new(Mutex::new(Vec::new())),
                 stream_status_calls: Arc::new(Mutex::new(0)),
                 record_status_calls: Arc::new(Mutex::new(0)),
             })
@@ -937,6 +975,24 @@ mod tests {
                 record_result: Err(AppError::Request("record backend refused".to_string())),
                 stream_status,
                 record_status,
+                stream_commands: Arc::new(Mutex::new(Vec::new())),
+                record_commands: Arc::new(Mutex::new(Vec::new())),
+                stream_status_calls: Arc::new(Mutex::new(0)),
+                record_status_calls: Arc::new(Mutex::new(0)),
+            })
+        }
+
+        fn with_successful_commands(
+            stream_status: OutputStatus,
+            record_status: OutputStatus,
+        ) -> Arc<Self> {
+            Arc::new(Self {
+                stream_result: Ok(()),
+                record_result: Ok(None),
+                stream_status: Ok(stream_status),
+                record_status: Ok(record_status),
+                stream_commands: Arc::new(Mutex::new(Vec::new())),
+                record_commands: Arc::new(Mutex::new(Vec::new())),
                 stream_status_calls: Arc::new(Mutex::new(0)),
                 record_status_calls: Arc::new(Mutex::new(0)),
             })
@@ -955,17 +1011,39 @@ mod tests {
                 .lock()
                 .expect("record status calls")
         }
+
+        fn stream_commands(&self) -> Vec<bool> {
+            self.stream_commands
+                .lock()
+                .expect("stream commands")
+                .clone()
+        }
+
+        fn record_commands(&self) -> Vec<bool> {
+            self.record_commands
+                .lock()
+                .expect("record commands")
+                .clone()
+        }
     }
 
     impl FakeOutputCommandClient for FakeOutputClient {
-        fn set_streaming(&self, _active: bool) -> BoxFuture<'_, Result<(), AppError>> {
+        fn set_streaming(&self, active: bool) -> BoxFuture<'_, Result<(), AppError>> {
             let result = self.stream_result.clone();
-            Box::pin(async move { result })
+            let commands = Arc::clone(&self.stream_commands);
+            Box::pin(async move {
+                commands.lock().expect("stream commands").push(active);
+                result
+            })
         }
 
-        fn set_recording(&self, _active: bool) -> BoxFuture<'_, Result<Option<String>, AppError>> {
+        fn set_recording(&self, active: bool) -> BoxFuture<'_, Result<Option<String>, AppError>> {
             let result = self.record_result.clone();
-            Box::pin(async move { result })
+            let commands = Arc::clone(&self.record_commands);
+            Box::pin(async move {
+                commands.lock().expect("record commands").push(active);
+                result
+            })
         }
 
         fn get_stream_status(&self) -> BoxFuture<'_, Result<OutputStatus, AppError>> {
@@ -1108,6 +1186,24 @@ mod tests {
         assert_eq!(failure.message(), "Not connected to OBS");
         assert_eq!(failure.fallback_status(), &inactive_status());
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn disconnect_stops_active_outputs_before_disconnected_event() {
+        let (_runtime, mut controller, rx) = controller_with_receiver();
+        let fake = FakeOutputClient::with_successful_commands(active_status(), active_status());
+        controller.set_output_client_override(OutputCommandClient::Fake(fake.clone()));
+
+        controller.handle(AppCommand::Disconnect);
+
+        let event = rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("disconnected event");
+        assert!(matches!(event, AppEvent::Disconnected));
+        assert_eq!(fake.stream_status_call_count(), 1);
+        assert_eq!(fake.record_status_call_count(), 1);
+        assert_eq!(fake.stream_commands(), vec![false]);
+        assert_eq!(fake.record_commands(), vec![false]);
     }
 
     #[test]

@@ -7,7 +7,7 @@ use crate::domain::audio::AudioInput;
 pub const VOLUME_SLIDER_DEBOUNCE: Duration = Duration::from_millis(120);
 const VOLUME_MEANINGFUL_DELTA: f64 = 0.005;
 const MIN_VOLUME_DB: f64 = -100.0;
-const MAX_VOLUME_DB: f64 = 26.0;
+const MAX_VOLUME_DB: f64 = 0.0;
 
 pub struct AudioService;
 
@@ -32,7 +32,8 @@ impl AudioService {
     }
 
     pub fn volume_db_to_mul(db: f64) -> f64 {
-        if !db.is_finite() || db <= MIN_VOLUME_DB {
+        let db = Self::sanitize_volume_db(db);
+        if db <= MIN_VOLUME_DB {
             0.0
         } else {
             10.0_f64.powf(db / 20.0)
@@ -58,8 +59,30 @@ impl AudioService {
         (base + delta_db).clamp(MIN_VOLUME_DB, MAX_VOLUME_DB)
     }
 
+    pub fn min_volume_db() -> f64 {
+        MIN_VOLUME_DB
+    }
+
+    pub fn max_volume_db() -> f64 {
+        MAX_VOLUME_DB
+    }
+
     pub fn max_volume_mul() -> f64 {
         Self::volume_db_to_mul(MAX_VOLUME_DB)
+    }
+
+    pub fn sanitize_volume_db(volume_db: f64) -> f64 {
+        if volume_db.is_finite() {
+            volume_db.clamp(MIN_VOLUME_DB, MAX_VOLUME_DB)
+        } else {
+            MIN_VOLUME_DB
+        }
+    }
+
+    pub fn slider_db_from_mul(volume_mul: f64) -> f64 {
+        Self::sanitize_volume_db(Self::volume_mul_to_db(Self::sanitize_volume_mul(
+            volume_mul,
+        )))
     }
 
     pub fn sanitize_volume_mul(volume_mul: f64) -> f64 {
@@ -134,22 +157,34 @@ mod tests {
     fn converts_db_to_volume_multiplier() {
         assert_eq!(AudioService::volume_db_to_mul(f64::NEG_INFINITY), 0.0);
         assert!((AudioService::volume_db_to_mul(0.0) - 1.0).abs() < 0.0001);
+        assert_eq!(AudioService::volume_db_to_mul(6.0), 1.0);
     }
 
     #[test]
     fn clamps_fine_adjustment_range() {
-        assert_eq!(AudioService::adjust_volume_db(25.8, 1.0), 26.0);
+        assert_eq!(AudioService::adjust_volume_db(-0.2, 1.0), 0.0);
+        assert_eq!(AudioService::adjust_volume_db(6.0, 1.0), 0.0);
         assert_eq!(AudioService::adjust_volume_db(-99.8, -1.0), -100.0);
     }
 
     #[test]
-    fn sanitizes_volume_multiplier_for_obs_range() {
+    fn sanitizes_volume_multiplier_for_obs_mixer_range() {
         assert_eq!(AudioService::sanitize_volume_mul(f64::NAN), 0.0);
         assert_eq!(AudioService::sanitize_volume_mul(-0.5), 0.0);
+        assert_eq!(AudioService::max_volume_mul(), 1.0);
         assert_eq!(
             AudioService::sanitize_volume_mul(AudioService::max_volume_mul() + 1.0),
-            AudioService::max_volume_mul()
+            1.0
         );
+    }
+
+    #[test]
+    fn maps_slider_position_to_obs_decibel_range() {
+        assert_eq!(AudioService::sanitize_volume_db(f64::NAN), -100.0);
+        assert_eq!(AudioService::sanitize_volume_db(6.0), 0.0);
+        assert_eq!(AudioService::sanitize_volume_db(-120.0), -100.0);
+        assert_eq!(AudioService::slider_db_from_mul(2.0), 0.0);
+        assert_eq!(AudioService::slider_db_from_mul(0.0), -100.0);
     }
 
     #[test]

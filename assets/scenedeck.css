@@ -3,13 +3,20 @@
 @define-color scenedeck_header @headerbar_bg_color;
 @define-color scenedeck_surface @view_bg_color;
 @define-color scenedeck_card @card_bg_color;
+@define-color scenedeck_fg @window_fg_color;
+@define-color scenedeck_muted_fg @dim_label_color;
 @define-color scenedeck_accent @accent_bg_color;
+@define-color scenedeck_accent_fg @accent_fg_color;
+@define-color scenedeck_success @success_color;
+@define-color scenedeck_warning @warning_color;
+@define-color scenedeck_error @error_color;
 
 /* ── Application shell ─────────────────────────────────────────────────────── */
 .scenedeck-root,
 .scenedeck-toast-overlay,
 .scenedeck-split {
     background-color: @scenedeck_window;
+    color: @scenedeck_fg;
 }
 
 .scenedeck-content-toolbar,
@@ -21,6 +28,11 @@
 
 .scenedeck-content-header {
     background-color: @scenedeck_header;
+}
+
+.scenedeck-content-header-streaming {
+    border-top: 3px solid alpha(@scenedeck_error, 0.78);
+    background-image: linear-gradient(to bottom, alpha(@scenedeck_error, 0.12), @scenedeck_header 42%);
 }
 
 .scenedeck-sidebar-toolbar,
@@ -37,8 +49,35 @@
     background-color: alpha(@scenedeck_accent, 0.12);
 }
 
+@keyframes scenedeck-live-breathe {
+    0% { opacity: 0.55; }
+    50% { opacity: 1.0; }
+    100% { opacity: 0.55; }
+}
+
+.scenedeck-sidebar-live-icon-streaming {
+    color: @scenedeck_error;
+    animation-name: scenedeck-live-breathe;
+    animation-duration: 1.4s;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+}
+
+.scenedeck-top-streaming-icon-active {
+    color: @scenedeck_error;
+    animation-name: scenedeck-live-breathe;
+    animation-duration: 1.4s;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+}
+
 .live-disconnected-view {
     background-color: @scenedeck_surface;
+}
+
+.app-status-page {
+    background-color: @scenedeck_surface;
+    color: @scenedeck_fg;
 }
 
 .scenedeck-root .card,
@@ -48,7 +87,7 @@
 
 .scenedeck-combo-row {
     background-color: @scenedeck_card;
-    color: @window_fg_color;
+    color: @scenedeck_fg;
 }
 
 .scenedeck-combo-row popover {
@@ -60,7 +99,7 @@
 .scenedeck-combo-row popover list,
 .scenedeck-combo-row popover listview {
     background-color: @scenedeck_card;
-    color: @window_fg_color;
+    color: @scenedeck_fg;
 }
 
 .scenedeck-combo-row popover contents {
@@ -72,7 +111,7 @@
 .scenedeck-combo-row popover list row,
 .scenedeck-combo-row popover listview row {
     background-color: transparent;
-    color: @window_fg_color;
+    color: @scenedeck_fg;
     border-radius: 6px;
     margin: 0;
 }
@@ -95,13 +134,14 @@
 .scenedeck-root .role-debug,
 .scenedeck-root .role-archive {
     background-color: @scenedeck_accent;
+    color: @scenedeck_accent_fg;
 }
 
 /* ── OBS connection status ──────────────────────────────────────────────────── */
-.obs-connected    { color: @success_color; }
-.obs-connecting   { color: @warning_color; }
-.obs-disconnected { color: @dim_label_color; }
-.obs-error        { color: @error_color; }
+.obs-connected    { color: @scenedeck_success; }
+.obs-connecting   { color: @scenedeck_warning; }
+.obs-disconnected { color: @scenedeck_muted_fg; }
+.obs-error        { color: @scenedeck_error; }
 
 /* ── Sidebar OBS connection ────────────────────────────────────────────────── */
 .sidebar-obs-footer button {
@@ -115,19 +155,15 @@
 
 .output-card {
     min-width: 260px;
-    min-height: 132px;
-    padding: 10px 12px;
+    min-height: 0;
+    padding: 6px 10px;
     border-radius: 8px;
-    background-color: alpha(@card_fg_color, 0.04);
+    background-color: alpha(@scenedeck_fg, 0.04);
 }
 
 .output-card-title {
-    color: @dim_label_color;
+    color: @scenedeck_muted_fg;
     font-weight: 700;
-}
-
-.output-card label {
-    max-width: 230px;
 }
 
 .output-card button.circular {
@@ -136,23 +172,16 @@
     padding: 0;
 }
 
-.output-progress,
-.output-detail,
-.output-command-error {
-    min-height: 1.35em;
-    max-width: 230px;
-}
-
 .output-progress {
-    color: @dim_label_color;
+    color: @scenedeck_muted_fg;
 }
 
 .output-detail {
-    color: @dim_label_color;
+    color: @scenedeck_muted_fg;
 }
 
 .output-command-error {
-    color: @error_color;
+    color: @scenedeck_error;
     font-weight: 700;
 }
 
@@ -162,7 +191,7 @@
 }
 
 .header-selector label.caption {
-    color: @dim_label_color;
+    color: @scenedeck_muted_fg;
     font-size: 0.86em;
     font-weight: 700;
 }
@@ -174,7 +203,7 @@
 .scenedeck-dropdown,
 .scenedeck-dropdown button {
     background-color: @scenedeck_card;
-    color: @window_fg_color;
+    color: @scenedeck_fg;
 }
 
 .scenedeck-dropdown button {
@@ -193,7 +222,7 @@
 .scenedeck-dropdown listview,
 .scenedeck-dropdown listview row {
     background-color: @scenedeck_card;
-    color: @window_fg_color;
+    color: @scenedeck_fg;
 }
 
 .scenedeck-dropdown popover contents {
@@ -215,7 +244,7 @@ window.scenedeck-about-window,
 window.scenedeck-about-window viewport,
 window.scenedeck-about-window preferencespage {
     background-color: @scenedeck_surface;
-    color: @window_fg_color;
+    color: @scenedeck_fg;
 }
 
 window.scenedeck-about-window headerbar {
@@ -234,92 +263,109 @@ window.scenedeck-about-window preferencesgroup row {
 .role-raw,
 .role-debug,
 .role-archive {
-    background-color: @accent_bg_color;
-    color: @accent_fg_color;
+    background-color: @scenedeck_accent;
+    color: @scenedeck_accent_fg;
     border-radius: 4px;
     padding: 1px 6px;
 }
 
 /* ── Live page scene cards ──────────────────────────────────────────────────── */
 .scene-card {
-    min-width: 188px;
-    min-height: 118px;
+    min-width: 132px;
+    min-height: 58px;
     padding: 0;
     border-radius: 8px;
 }
 
 .scene-card > box {
-    padding: 14px;
+    padding: 7px 9px;
 }
 
 .scene-card-active {
-    outline: 2px solid @accent_color;
+    background-image: linear-gradient(135deg, alpha(@scenedeck_accent, 0.32), alpha(@scenedeck_accent, 0.08));
+    outline: 2px solid @scenedeck_accent;
+}
+
+.scene-card-previous {
+    background-color: alpha(@scenedeck_accent, 0.08);
+    outline: 1px solid alpha(@scenedeck_accent, 0.45);
 }
 
 .scene-card-status-live,
+.scene-card-status-previous,
 .scene-card-status-ready {
     border-radius: 4px;
-    padding: 2px 7px;
+    padding: 1px 6px;
     font-weight: 700;
+    font-size: 0.78em;
 }
 
 .scene-card-status-live {
-    background-color: @accent_bg_color;
-    color: @accent_fg_color;
+    background-color: @scenedeck_accent;
+    color: @scenedeck_accent_fg;
 }
 
 .scene-card-status-ready {
-    background-color: alpha(@card_fg_color, 0.10);
-    color: @dim_label_color;
+    background-color: alpha(@scenedeck_fg, 0.10);
+    color: @scenedeck_muted_fg;
+}
+
+.scene-card-status-previous {
+    background-color: alpha(@scenedeck_accent, 0.16);
+    color: @scenedeck_accent;
+}
+
+.scene-card-title {
+    font-size: 0.9em;
 }
 
 /* ── Live page audio cards ──────────────────────────────────────────────────── */
 .audio-card {
-    min-width: 100px;
-    min-height: 148px;
-    padding: 8px;
+    min-width: 136px;
+    min-height: 218px;
+    padding: 6px;
     border-radius: 8px;
 }
 
 .audio-card-title {
     font-weight: 700;
-    font-size: 0.86em;
+    font-size: 0.82em;
 }
 
 .audio-source-badge {
     border-radius: 4px;
-    padding: 1px 6px;
-    font-size: 0.78em;
+    padding: 1px 5px;
+    font-size: 0.74em;
     font-weight: 700;
-    background-color: alpha(@card_fg_color, 0.10);
-    color: @dim_label_color;
+    background-color: alpha(@scenedeck_fg, 0.10);
+    color: @scenedeck_muted_fg;
 }
 
 .audio-scope-global {
-    background-color: alpha(@success_color, 0.18);
-    color: @success_color;
+    background-color: alpha(@scenedeck_success, 0.18);
+    color: @scenedeck_success;
 }
 
 .audio-scope-active {
-    background-color: alpha(@accent_color, 0.16);
-    color: @accent_color;
+    background-color: alpha(@scenedeck_accent, 0.16);
+    color: @scenedeck_accent;
 }
 
 .audio-scope-nested,
 .audio-scope-group {
-    background-color: alpha(@warning_color, 0.18);
-    color: @warning_color;
+    background-color: alpha(@scenedeck_warning, 0.18);
+    color: @scenedeck_warning;
 }
 
 .audio-card-controls button {
-    min-width: 24px;
-    min-height: 24px;
+    min-width: 18px;
+    min-height: 18px;
     padding: 0;
 }
 
 .audio-fine-controls button {
-    min-width: 24px;
-    min-height: 24px;
+    min-width: 18px;
+    min-height: 18px;
     padding: 0;
 }
 
@@ -328,9 +374,29 @@ window.scenedeck-about-window preferencesgroup row {
     margin-bottom: 0;
 }
 
+.audio-fader-row {
+    min-height: 128px;
+}
+
+.audio-meter-ruler {
+    min-height: 128px;
+}
+
+.audio-meter-bar {
+    min-width: 10px;
+    min-height: 128px;
+    border-radius: 2px;
+    background-image: linear-gradient(to top, #2fa84f 0%, #2fa84f 68%, #d4b93a 68%, #d4b93a 86%, #d04444 86%, #d04444 100%);
+}
+
+.audio-meter-label {
+    font-size: 0.58em;
+    color: @scenedeck_muted_fg;
+}
+
 /* ── Mixer page ─────────────────────────────────────────────────────────────── */
 .mixer-page {
-    background-color: @window_bg_color;
+    background-color: @scenedeck_surface;
 }
 
 .mixer-section {
@@ -338,10 +404,10 @@ window.scenedeck-about-window preferencesgroup row {
 }
 
 /* ── Doctor diagnostics ─────────────────────────────────────────────────────── */
-.diag-error   { color: @error_color; }
-.diag-warning { color: @warning_color; }
-.diag-info    { color: @accent_color; }
-.diag-ok      { color: @success_color; }
+.diag-error   { color: @scenedeck_error; }
+.diag-warning { color: @scenedeck_warning; }
+.diag-info    { color: @scenedeck_accent; }
+.diag-ok      { color: @scenedeck_success; }
 
 /* ── Graph page ─────────────────────────────────────────────────────────────── */
 .graph-status-summary label {

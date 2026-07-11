@@ -38,7 +38,11 @@ pub(super) fn map_scenes(resp: Scenes) -> SceneInventory {
         })
         .collect();
 
-    SceneInventory { scenes, current_id }
+    SceneInventory {
+        scenes,
+        current_id,
+        previous_id: None,
+    }
 }
 
 /// Convert an OBS output lifecycle state into the app's normalized state.

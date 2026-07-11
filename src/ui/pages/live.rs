@@ -5,8 +5,8 @@
 
 use adw::prelude::*;
 use gtk4::{
-    Align, Box as GtkBox, Button, FlowBox, Label, Orientation, Paned, PolicyType, ScrolledWindow,
-    Stack, StackTransitionType,
+    Align, Box as GtkBox, Button, FlowBox, FlowBoxChild, Label, Orientation, Paned, PolicyType,
+    ScrolledWindow, Stack, StackTransitionType,
 };
 
 use crate::controller::command::AppCommand;
@@ -17,7 +17,7 @@ use crate::storage::registry::read_registry;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::widgets::{audio_card, scene_card};
 
-const EMPTY_OUTPUT_SLOT: &str = " ";
+const EMPTY_OUTPUT_SLOT: &str = "";
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum OutputKind {
@@ -112,8 +112,8 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
         .spacing(12)
         .margin_start(16)
         .margin_end(12)
-        .margin_top(10)
-        .margin_bottom(10)
+        .margin_top(6)
+        .margin_bottom(6)
         .hexpand(true)
         .build();
     banner.append(&banner_inner);
@@ -220,17 +220,17 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
         .hexpand(true)
         .wide_handle(true)
         .build();
-    live_split.set_resize_start_child(true);
+    live_split.set_resize_start_child(false);
     live_split.set_resize_end_child(true);
-    live_split.set_shrink_start_child(false);
+    live_split.set_shrink_start_child(true);
     live_split.set_shrink_end_child(false);
     page.append(&live_split);
 
     // ── Scene cards ───────────────────────────────────────────────────────────
     let scenes_pane = GtkBox::builder()
         .orientation(Orientation::Vertical)
-        .spacing(8)
-        .vexpand(true)
+        .spacing(4)
+        .vexpand(false)
         .hexpand(true)
         .build();
     let scenes_section_label = Label::builder().label("Scenes").xalign(0.0).build();
@@ -239,22 +239,26 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
 
     let scenes_box = FlowBox::builder()
         .selection_mode(gtk4::SelectionMode::None)
-        .column_spacing(12)
-        .row_spacing(12)
+        .column_spacing(6)
+        .row_spacing(6)
         .homogeneous(false)
+        .halign(Align::Start)
+        .valign(Align::Start)
+        .hexpand(false)
+        .vexpand(false)
         .margin_top(3)
-        .margin_bottom(3)
+        .margin_bottom(1)
         .margin_start(3)
         .margin_end(3)
         .min_children_per_line(1)
-        .max_children_per_line(4)
+        .max_children_per_line(6)
         .build();
     insert_scene_placeholder(&scenes_box, "Connect to OBS to load scenes.");
 
     let scenes_scroll = ScrolledWindow::builder()
-        .vexpand(true)
+        .vexpand(false)
         .hexpand(true)
-        .min_content_height(160)
+        .min_content_height(72)
         .hscrollbar_policy(PolicyType::Never)
         .vscrollbar_policy(PolicyType::Automatic)
         .child(&scenes_box)
@@ -277,17 +281,21 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
 
     let audio_box = FlowBox::builder()
         .selection_mode(gtk4::SelectionMode::None)
-        .column_spacing(8)
-        .row_spacing(8)
+        .column_spacing(5)
+        .row_spacing(6)
         .homogeneous(false)
+        .halign(Align::Start)
+        .valign(Align::Start)
+        .hexpand(false)
+        .vexpand(false)
         .min_children_per_line(1)
-        .max_children_per_line(10)
+        .max_children_per_line(12)
         .build();
 
     let audio_scroll = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
-        .min_content_height(160)
+        .min_content_height(232)
         .hscrollbar_policy(PolicyType::Never)
         .vscrollbar_policy(PolicyType::Automatic)
         .child(&audio_box)
@@ -454,7 +462,7 @@ fn build_output_card(
 ) -> GtkBox {
     let card = GtkBox::builder()
         .orientation(Orientation::Vertical)
-        .spacing(8)
+        .spacing(4)
         .valign(Align::Center)
         .hexpand(true)
         .build();
@@ -490,6 +498,7 @@ fn build_output_progress_label() -> Label {
         .label(EMPTY_OUTPUT_SLOT)
         .xalign(0.0)
         .wrap(true)
+        .visible(false)
         .build();
     label.add_css_class("caption");
     label.add_css_class("dim-label");
@@ -502,6 +511,7 @@ fn build_output_detail_label() -> Label {
         .label(EMPTY_OUTPUT_SLOT)
         .xalign(0.0)
         .wrap(true)
+        .visible(false)
         .build();
     label.add_css_class("caption");
     label.add_css_class("dim-label");
@@ -514,6 +524,7 @@ fn build_output_error_label() -> Label {
         .label(EMPTY_OUTPUT_SLOT)
         .xalign(0.0)
         .wrap(true)
+        .visible(false)
         .build();
     label.add_css_class("caption");
     label.add_css_class("output-command-error");
@@ -521,27 +532,32 @@ fn build_output_error_label() -> Label {
 }
 
 fn update_output_progress(label: &Label, kind: OutputKind, status: &OutputStatus) {
-    label.set_text(output_progress_copy(kind, status));
+    set_optional_output_text(label, output_progress_copy(kind, status));
 }
 
 fn update_output_error(label: &Label, kind: OutputKind, error: Option<&str>) {
     if let Some(display) = output_command_error_display(kind, error) {
-        label.set_text(display.label);
+        set_optional_output_text(label, display.label);
         label.set_tooltip_text(Some(display.tooltip));
     } else {
-        label.set_text(EMPTY_OUTPUT_SLOT);
+        set_optional_output_text(label, EMPTY_OUTPUT_SLOT);
         label.set_tooltip_text(None);
     }
 }
 
 fn update_recording_path_detail(label: &Label, last_path: Option<&str>) {
     if let Some(display) = output_recording_path_display(last_path) {
-        label.set_text(&display.label);
+        set_optional_output_text(label, &display.label);
         label.set_tooltip_text(Some(display.tooltip));
     } else {
-        label.set_text(EMPTY_OUTPUT_SLOT);
+        set_optional_output_text(label, EMPTY_OUTPUT_SLOT);
         label.set_tooltip_text(None);
     }
+}
+
+fn set_optional_output_text(label: &Label, text: &str) {
+    label.set_text(text);
+    label.set_visible(!text.is_empty());
 }
 
 fn output_command_error_display(
@@ -735,7 +751,7 @@ fn insert_scene_placeholder(scenes_box: &FlowBox, message: &str) {
         .xalign(0.0)
         .build();
     hint.add_css_class("dim-label");
-    scenes_box.insert(&hint, -1);
+    insert_compact_flow_child(scenes_box, &hint);
 }
 
 /// Rebuild the scene cards from the current inventory.
@@ -773,12 +789,13 @@ pub(crate) fn rebuild_scene_cards(
             .xalign(0.0)
             .build();
         hint.add_css_class("dim-label");
-        handle.scenes_box.insert(&hint, -1);
+        insert_compact_flow_child(&handle.scenes_box, &hint);
         return;
     }
 
     for scene in primary_scenes {
         let is_active = inventory.current_id.as_deref() == Some(&scene.id);
+        let is_previous = inventory.previous_id.as_deref() == Some(&scene.id);
         let scene_role = registry
             .scenes
             .get(&scene.id)
@@ -789,9 +806,10 @@ pub(crate) fn rebuild_scene_cards(
             scene.id.clone(),
             scene_role,
             is_active,
+            is_previous,
             nav.clone(),
         );
-        handle.scenes_box.insert(&card, -1);
+        insert_compact_flow_child(&handle.scenes_box, &card);
     }
 }
 
@@ -816,15 +834,25 @@ pub(crate) fn rebuild_audio_cards(
             .xalign(0.0)
             .build();
         hint.add_css_class("dim-label");
-        handle.audio_box.insert(&hint, -1);
+        insert_compact_flow_child(&handle.audio_box, &hint);
         return;
     }
 
     for input in inputs {
         let card = audio_card::build(input, nav.clone());
-        handle.audio_box.insert(&card.root, -1);
+        insert_compact_flow_child(&handle.audio_box, &card.root);
         cards.push(card);
     }
+}
+
+fn insert_compact_flow_child<W: IsA<gtk4::Widget>>(flow: &FlowBox, widget: &W) {
+    let child = FlowBoxChild::new();
+    child.set_halign(Align::Start);
+    child.set_valign(Align::Start);
+    child.set_hexpand(false);
+    child.set_vexpand(false);
+    child.set_child(Some(widget));
+    flow.insert(&child, -1);
 }
 
 #[cfg(test)]
@@ -1049,7 +1077,7 @@ mod tests {
     }
 
     #[test]
-    fn output_progress_copy_reserves_empty_slot_for_inactive_states() {
+    fn output_progress_copy_is_empty_for_inactive_states() {
         for kind in [OutputKind::Stream, OutputKind::Recording] {
             for state in [
                 OutputRunState::Inactive,

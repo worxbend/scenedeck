@@ -11,7 +11,8 @@ use std::rc::Rc;
 
 use adw::{prelude::*, ComboRow, EntryRow, PreferencesGroup, PreferencesPage, StatusPage};
 use gtk4::{
-    Box as GtkBox, Button, FlowBox, Label, Orientation, PolicyType, ScrolledWindow, StringList,
+    Align, Box as GtkBox, Button, FlowBox, FlowBoxChild, Label, Orientation, PolicyType,
+    ScrolledWindow, StringList,
 };
 
 use crate::controller::command::AppCommand;
@@ -105,6 +106,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
             .title("No Mixer Data")
             .description("Connect to OBS to load scenes and audio sources.")
             .build();
+        empty.add_css_class("app-status-page");
         root.append(&empty);
         return;
     }
@@ -434,6 +436,7 @@ fn append_mixer_status(root: &GtkBox, icon_name: &str, title: &str, description:
         .title(title)
         .description(description)
         .build();
+    status.add_css_class("app-status-page");
     root.append(&status);
 }
 
@@ -451,6 +454,7 @@ fn append_mixer_error_status(
             "Could not load audio sources for {scene}: {message}"
         ))
         .build();
+    status.add_css_class("app-status-page");
     let retry_btn = Button::builder()
         .label("Retry")
         .tooltip_text("Retry loading mixer audio")
@@ -488,21 +492,25 @@ fn append_group(root: &GtkBox, nav: &NavigationContext, title: &str, inputs: &[A
 
     let flow = FlowBox::builder()
         .selection_mode(gtk4::SelectionMode::None)
-        .column_spacing(10)
-        .row_spacing(10)
+        .column_spacing(5)
+        .row_spacing(6)
+        .halign(Align::Start)
+        .valign(Align::Start)
+        .hexpand(false)
+        .vexpand(false)
         .min_children_per_line(1)
-        .max_children_per_line(8)
+        .max_children_per_line(12)
         .build();
 
     for input in inputs {
         let card = audio_card::build(input, nav.clone());
-        flow.insert(&card.root, -1);
+        insert_compact_flow_child(&flow, &card.root);
     }
 
     let scroll = ScrolledWindow::builder()
         .vexpand(false)
         .hexpand(true)
-        .min_content_height(190)
+        .min_content_height(232)
         .hscrollbar_policy(PolicyType::Never)
         .vscrollbar_policy(PolicyType::Automatic)
         .child(&flow)
@@ -510,6 +518,16 @@ fn append_group(root: &GtkBox, nav: &NavigationContext, title: &str, inputs: &[A
     scroll.add_css_class("live-pane-scroll");
     section.append(&scroll);
     root.append(&section);
+}
+
+fn insert_compact_flow_child<W: IsA<gtk4::Widget>>(flow: &FlowBox, widget: &W) {
+    let child = FlowBoxChild::new();
+    child.set_halign(Align::Start);
+    child.set_valign(Align::Start);
+    child.set_hexpand(false);
+    child.set_vexpand(false);
+    child.set_child(Some(widget));
+    flow.insert(&child, -1);
 }
 
 fn filter_inputs(inputs: &[AudioInput], search: &str) -> Vec<AudioInput> {
@@ -562,7 +580,7 @@ fn format_mixer_inspection_line(
                 "muted": input.muted,
                 "volume_mul": input.volume_mul,
                 "volume_db": input.volume_db,
-                "volume_label": AudioService::format_db(input.volume_db),
+                "volume_label": AudioService::format_db(AudioService::sanitize_volume_db(input.volume_db)),
             })
         })
         .collect();
@@ -1021,6 +1039,7 @@ mod tests {
             ("NearZeroPositive", 0.01),
             ("NearZeroNegative", -0.01),
             ("Zero", 0.0),
+            ("AboveObsMax", 6.0),
             ("Normal", -6.24),
         ];
         state.audio_inputs = volume_cases
@@ -1043,7 +1062,7 @@ mod tests {
             assert_eq!(card["name"], *name);
             assert_eq!(
                 card["volume_label"],
-                AudioService::format_db(*volume_db),
+                AudioService::format_db(AudioService::sanitize_volume_db(*volume_db)),
                 "inspection label should match rendered audio-card formatter for {name}"
             );
         }

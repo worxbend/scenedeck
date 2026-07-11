@@ -735,6 +735,7 @@ mod tests {
                 })
                 .collect(),
             current_id: None,
+            previous_id: None,
         }
     }
 

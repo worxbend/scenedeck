@@ -10,10 +10,11 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 type RefreshFn = Rc<dyn Fn()>;
+type StreamingChromeRef = Rc<RefCell<Option<StreamingChrome>>>;
 
 use adw::prelude::*;
 use gtk4::{
-    Box as GtkBox, Button, DropDown, Label, ListBox, Orientation, SelectionMode, Stack,
+    Box as GtkBox, Button, DropDown, Image, Label, ListBox, Orientation, SelectionMode, Stack,
     StackTransitionType, StringList,
 };
 
@@ -27,6 +28,7 @@ use crate::controller::state::{
 };
 use crate::domain::appearance::ThemeMode;
 use crate::domain::obs::ObsNamedList;
+use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::ui::navigation::NavigationContext;
 use crate::ui::pages::live::LivePageHandle;
 use crate::ui::register_resources;
@@ -120,6 +122,7 @@ pub fn build_main_window(
 
     // ── Sidebar ───────────────────────────────────────────────────────────────
     let (sidebar_page, sidebar_list, sidebar_controls) = build_sidebar(&nav);
+    let streaming_chrome: StreamingChromeRef = Rc::new(RefCell::new(None));
 
     sidebar_list.connect_row_selected({
         let nav = nav.clone();
@@ -145,6 +148,7 @@ pub fn build_main_window(
         let refreshers = refreshers.clone();
         let header_selectors = header_selectors.clone();
         let sidebar_controls = sidebar_controls.clone();
+        let streaming_chrome = streaming_chrome.clone();
         move || {
             loop {
                 match event_rx.try_recv() {
@@ -156,6 +160,7 @@ pub fn build_main_window(
                         &refreshers,
                         &header_selectors,
                         &sidebar_controls,
+                        &streaming_chrome,
                     ),
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => {
@@ -192,6 +197,11 @@ pub fn build_main_window(
     content_header.add_css_class("flat");
     content_header.add_css_class("scenedeck-content-header");
 
+    let stream_live_icon = Image::from_icon_name("media-record-symbolic");
+    stream_live_icon.add_css_class("scenedeck-top-streaming-icon");
+    stream_live_icon.set_tooltip_text(Some("Streaming live"));
+    stream_live_icon.set_visible(false);
+
     let about_btn = gtk4::Button::builder()
         .icon_name("help-about-symbolic")
         .tooltip_text("About SceneDeck")
@@ -217,9 +227,14 @@ pub fn build_main_window(
             refreshers.call(page);
         }
     });
+    content_header.pack_start(&stream_live_icon);
     content_header.pack_start(&refresh_btn);
     content_header.pack_start(&header_selectors.scene_collections.root);
     content_header.pack_start(&header_selectors.profiles.root);
+    *streaming_chrome.borrow_mut() = Some(StreamingChrome {
+        header: content_header.clone(),
+        top_icon: stream_live_icon,
+    });
 
     let content_toolbar = adw::ToolbarView::new();
     content_toolbar.add_css_class("scenedeck-content-toolbar");
@@ -257,6 +272,7 @@ fn apply_event(
     refreshers: &PageRefreshers,
     header_selectors: &HeaderSelectors,
     sidebar_controls: &SidebarControls,
+    streaming_chrome: &StreamingChromeRef,
 ) {
     use crate::ui::pages::live::{
         rebuild_audio_cards, rebuild_scene_cards, reset_output_controls, show_disconnected_view,
@@ -268,6 +284,9 @@ fn apply_event(
             {
                 let mut state = nav.state.borrow_mut();
                 state.set_obs_status(ObsStatus::Connecting);
+                state.set_stream_status(OutputStatus::default());
+                state.set_record_status(OutputStatus::default());
+                state.scene_inventory = Default::default();
                 state.stream_active_since = None;
                 state.record_active_since = None;
                 state.clear_pending_mixer_audio_refresh();
@@ -277,6 +296,7 @@ fn apply_event(
             set_status_class(&sidebar_controls.status_label, "obs-connecting");
             sidebar_controls.connect_btn.set_label("Connecting…");
             sidebar_controls.connect_btn.set_sensitive(false);
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
             show_disconnected_view(live, "Connecting to OBS…");
             live.current_scene_label.set_text("Current scene: —");
             rebuild_audio_cards(live, &[], nav);
@@ -304,6 +324,7 @@ fn apply_event(
             sidebar_controls
                 .connect_btn
                 .add_css_class("destructive-action");
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
             show_live_view(live);
         }
 
@@ -311,6 +332,9 @@ fn apply_event(
             {
                 let mut state = nav.state.borrow_mut();
                 state.set_obs_status(ObsStatus::Disconnected);
+                state.set_stream_status(OutputStatus::default());
+                state.set_record_status(OutputStatus::default());
+                state.scene_inventory = Default::default();
                 state.stream_active_since = None;
                 state.record_active_since = None;
                 state.clear_pending_mixer_audio_refresh();
@@ -326,6 +350,7 @@ fn apply_event(
             sidebar_controls
                 .connect_btn
                 .remove_css_class("destructive-action");
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
             show_disconnected_view(live, "Connect to OBS to use Live controls");
             live.current_scene_label.set_text("Current scene: —");
             rebuild_audio_cards(live, &[], nav);
@@ -339,7 +364,17 @@ fn apply_event(
 
         AppEvent::SceneInventoryUpdated(inventory) => {
             show_live_view(live);
-            nav.state.borrow_mut().scene_inventory = inventory.clone();
+            let inventory = {
+                let mut state = nav.state.borrow_mut();
+                let mut inventory = inventory.clone();
+                inventory.previous_id = previous_scene_for_inventory_update(
+                    state.scene_inventory.current_id.as_deref(),
+                    state.scene_inventory.previous_id.as_deref(),
+                    inventory.current_id.as_deref(),
+                );
+                state.scene_inventory = inventory.clone();
+                inventory
+            };
             // Update the current scene label from the inventory's known active scene.
             let scene_text = inventory.current_id.as_deref().unwrap_or("—");
             live.current_scene_label
@@ -367,7 +402,7 @@ fn apply_event(
                 .set_text(&format!("Current scene: {scene_id}"));
             let inventory = {
                 let mut state = nav.state.borrow_mut();
-                state.scene_inventory.current_id = Some(scene_id);
+                state.scene_inventory.set_current_scene(scene_id);
                 state.scene_inventory.clone()
             };
             rebuild_scene_cards(live, &inventory, nav);
@@ -380,6 +415,9 @@ fn apply_event(
             {
                 let mut state = nav.state.borrow_mut();
                 state.set_obs_status(ObsStatus::Error(err.to_string()));
+                state.set_stream_status(OutputStatus::default());
+                state.set_record_status(OutputStatus::default());
+                state.scene_inventory = Default::default();
                 state.stream_active_since = None;
                 state.record_active_since = None;
                 state.clear_pending_mixer_audio_refresh();
@@ -397,6 +435,7 @@ fn apply_event(
             sidebar_controls
                 .connect_btn
                 .remove_css_class("destructive-action");
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
             reset_output_controls(live);
             show_disconnected_view(live, "OBS connection failed");
             live.current_scene_label.set_text("Current scene: —");
@@ -517,6 +556,7 @@ fn apply_event(
                 )
             };
             update_stream_status(live, &status, elapsed, error.as_deref());
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
         }
 
         AppEvent::RecordStatusUpdated(status) => {
@@ -540,6 +580,7 @@ fn apply_event(
                 last_path.as_deref(),
                 error.as_deref(),
             );
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
         }
 
         AppEvent::StreamCommandPending(status) => {
@@ -553,6 +594,7 @@ fn apply_event(
                 )
             };
             update_stream_status(live, &status, elapsed, error.as_deref());
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
         }
 
         AppEvent::RecordCommandPending(status) => {
@@ -573,6 +615,7 @@ fn apply_event(
                 last_path.as_deref(),
                 error.as_deref(),
             );
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
         }
 
         AppEvent::StreamCommandSucceeded => {
@@ -585,6 +628,7 @@ fn apply_event(
                 )
             };
             update_stream_status(live, &status, elapsed, None);
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
         }
 
         AppEvent::RecordCommandSucceeded => {
@@ -598,6 +642,7 @@ fn apply_event(
                 )
             };
             update_record_status(live, &status, elapsed, last_path.as_deref(), None);
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
         }
 
         AppEvent::StreamCommandFailed(failure) => {
@@ -611,6 +656,7 @@ fn apply_event(
                 )
             };
             update_stream_status(live, &status, elapsed, error.as_deref());
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
         }
 
         AppEvent::RecordCommandFailed(failure) => {
@@ -631,6 +677,7 @@ fn apply_event(
                 last_path.as_deref(),
                 error.as_deref(),
             );
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
         }
 
         AppEvent::GraphUpdated(graph) => {
@@ -711,6 +758,144 @@ fn format_elapsed(since: Instant) -> String {
         format!("{hours}:{minutes:02}:{seconds:02}")
     } else {
         format!("{minutes}:{seconds:02}")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SidebarOutputButtonModel {
+    label: &'static str,
+    sensitive: bool,
+    suggested: bool,
+    destructive: bool,
+}
+
+fn sidebar_output_button_model(
+    status: &OutputStatus,
+    connected: bool,
+    start_label: &'static str,
+    stop_label: &'static str,
+) -> SidebarOutputButtonModel {
+    if status.state.is_transitioning() {
+        return SidebarOutputButtonModel {
+            label: match status.state {
+                OutputRunState::Starting => "Starting…",
+                OutputRunState::Stopping => "Stopping…",
+                OutputRunState::Reconnecting => "Reconnecting…",
+                _ => "Working…",
+            },
+            sensitive: false,
+            suggested: false,
+            destructive: status.active,
+        };
+    }
+
+    if status.active {
+        SidebarOutputButtonModel {
+            label: stop_label,
+            sensitive: connected,
+            suggested: false,
+            destructive: connected,
+        }
+    } else {
+        SidebarOutputButtonModel {
+            label: start_label,
+            sensitive: connected,
+            suggested: connected,
+            destructive: false,
+        }
+    }
+}
+
+fn apply_sidebar_output_button(button: &Button, model: SidebarOutputButtonModel) {
+    button.set_label(model.label);
+    button.set_sensitive(model.sensitive);
+    if model.suggested {
+        button.add_css_class("suggested-action");
+    } else {
+        button.remove_css_class("suggested-action");
+    }
+    if model.destructive {
+        button.add_css_class("destructive-action");
+    } else {
+        button.remove_css_class("destructive-action");
+    }
+}
+
+fn sync_output_indicators(
+    sidebar: &SidebarControls,
+    streaming_chrome: &StreamingChromeRef,
+    state: &AppState,
+) {
+    sync_sidebar_output_buttons(sidebar, state);
+    sync_streaming_chrome(streaming_chrome, state.stream_status.active);
+}
+
+fn sync_sidebar_output_buttons(sidebar: &SidebarControls, state: &AppState) {
+    let connected = matches!(state.obs_status, ObsStatus::Connected { .. });
+    apply_sidebar_output_button(
+        &sidebar.stream_btn,
+        sidebar_output_button_model(
+            &state.stream_status,
+            connected,
+            "Start Stream",
+            "Stop Stream",
+        ),
+    );
+    apply_sidebar_output_button(
+        &sidebar.record_btn,
+        sidebar_output_button_model(
+            &state.record_status,
+            connected,
+            "Start Recording",
+            "Stop Recording",
+        ),
+    );
+    sync_live_sidebar_icon(sidebar, state.stream_status.active);
+}
+
+fn sync_streaming_chrome(streaming_chrome: &StreamingChromeRef, streaming: bool) {
+    let Some(chrome) = streaming_chrome.borrow().as_ref().cloned() else {
+        return;
+    };
+
+    chrome.top_icon.set_visible(streaming);
+    if streaming {
+        chrome
+            .header
+            .add_css_class("scenedeck-content-header-streaming");
+        chrome
+            .top_icon
+            .add_css_class("scenedeck-top-streaming-icon-active");
+    } else {
+        chrome
+            .header
+            .remove_css_class("scenedeck-content-header-streaming");
+        chrome
+            .top_icon
+            .remove_css_class("scenedeck-top-streaming-icon-active");
+    }
+}
+
+fn sync_live_sidebar_icon(sidebar: &SidebarControls, streaming: bool) {
+    if streaming {
+        sidebar
+            .live_icon
+            .add_css_class("scenedeck-sidebar-live-icon-streaming");
+    } else {
+        sidebar
+            .live_icon
+            .remove_css_class("scenedeck-sidebar-live-icon-streaming");
+    }
+}
+
+fn previous_scene_for_inventory_update(
+    old_current: Option<&str>,
+    old_previous: Option<&str>,
+    new_current: Option<&str>,
+) -> Option<String> {
+    match (old_current, new_current) {
+        (Some(old), Some(new)) if old != new => Some(old.to_string()),
+        _ => old_previous.map(str::to_string),
     }
 }
 
@@ -822,8 +1007,13 @@ fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, Side
     list.add_css_class("navigation-sidebar");
     list.add_css_class("scenedeck-sidebar-list");
 
+    let mut live_icon = None;
     for page in NAV_PAGES {
-        let icon = gtk4::Image::from_icon_name(page.icon_name());
+        let icon = Image::from_icon_name(page.icon_name());
+        if page == Page::Live {
+            icon.add_css_class("scenedeck-sidebar-live-icon");
+            live_icon = Some(icon.clone());
+        }
         let row = adw::ActionRow::builder()
             .title(page.title())
             .activatable(true)
@@ -864,6 +1054,42 @@ fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, Side
         }
     });
 
+    let stream_btn = Button::builder()
+        .label("Start Stream")
+        .halign(gtk4::Align::Fill)
+        .hexpand(true)
+        .sensitive(false)
+        .build();
+    stream_btn.add_css_class("sidebar-output-button");
+    stream_btn.connect_clicked({
+        let nav = nav.clone();
+        move |_| {
+            if nav.state.borrow().stream_status.active {
+                nav.dispatch(AppCommand::StopStreaming);
+            } else {
+                nav.dispatch(AppCommand::StartStreaming);
+            }
+        }
+    });
+
+    let record_btn = Button::builder()
+        .label("Start Recording")
+        .halign(gtk4::Align::Fill)
+        .hexpand(true)
+        .sensitive(false)
+        .build();
+    record_btn.add_css_class("sidebar-output-button");
+    record_btn.connect_clicked({
+        let nav = nav.clone();
+        move |_| {
+            if nav.state.borrow().record_status.active {
+                nav.dispatch(AppCommand::StopRecording);
+            } else {
+                nav.dispatch(AppCommand::StartRecording);
+            }
+        }
+    });
+
     let footer = GtkBox::builder()
         .orientation(Orientation::Vertical)
         .spacing(8)
@@ -874,6 +1100,8 @@ fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, Side
         .build();
     footer.add_css_class("sidebar-obs-footer");
     footer.append(&status_label);
+    footer.append(&stream_btn);
+    footer.append(&record_btn);
     footer.append(&connect_btn);
 
     let sidebar_content = GtkBox::builder()
@@ -902,6 +1130,9 @@ fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, Side
         list,
         SidebarControls {
             status_label,
+            live_icon: live_icon.expect("Live page icon"),
+            stream_btn,
+            record_btn,
             connect_btn,
         },
     )
@@ -940,7 +1171,16 @@ struct NamedSelector {
 #[derive(Clone)]
 struct SidebarControls {
     status_label: Label,
+    live_icon: Image,
+    stream_btn: Button,
+    record_btn: Button,
     connect_btn: Button,
+}
+
+#[derive(Clone)]
+struct StreamingChrome {
+    header: adw::HeaderBar,
+    top_icon: Image,
 }
 
 #[derive(Clone)]
@@ -1002,6 +1242,90 @@ mod tests {
         state.mixer.mode = MixerMode::SelectedScene;
         state.mixer.selected_scene = Some("Scene A".to_string());
         state
+    }
+
+    fn output_status(active: bool, state: OutputRunState) -> OutputStatus {
+        OutputStatus {
+            active,
+            state,
+            detail: None,
+        }
+    }
+
+    #[test]
+    fn sidebar_output_button_model_reflects_connection_and_output_state() {
+        assert_eq!(
+            sidebar_output_button_model(
+                &output_status(false, OutputRunState::Inactive),
+                false,
+                "Start Stream",
+                "Stop Stream",
+            ),
+            SidebarOutputButtonModel {
+                label: "Start Stream",
+                sensitive: false,
+                suggested: false,
+                destructive: false,
+            }
+        );
+        assert_eq!(
+            sidebar_output_button_model(
+                &output_status(false, OutputRunState::Inactive),
+                true,
+                "Start Stream",
+                "Stop Stream",
+            ),
+            SidebarOutputButtonModel {
+                label: "Start Stream",
+                sensitive: true,
+                suggested: true,
+                destructive: false,
+            }
+        );
+        assert_eq!(
+            sidebar_output_button_model(
+                &output_status(true, OutputRunState::Active),
+                true,
+                "Start Stream",
+                "Stop Stream",
+            ),
+            SidebarOutputButtonModel {
+                label: "Stop Stream",
+                sensitive: true,
+                suggested: false,
+                destructive: true,
+            }
+        );
+        assert_eq!(
+            sidebar_output_button_model(
+                &output_status(false, OutputRunState::Starting),
+                true,
+                "Start Stream",
+                "Stop Stream",
+            ),
+            SidebarOutputButtonModel {
+                label: "Starting…",
+                sensitive: false,
+                suggested: false,
+                destructive: false,
+            }
+        );
+    }
+
+    #[test]
+    fn inventory_refresh_tracks_previous_scene_only_when_current_changes() {
+        assert_eq!(
+            previous_scene_for_inventory_update(Some("A"), None, Some("B")),
+            Some("A".to_string())
+        );
+        assert_eq!(
+            previous_scene_for_inventory_update(Some("A"), Some("Prev"), Some("A")),
+            Some("Prev".to_string())
+        );
+        assert_eq!(
+            previous_scene_for_inventory_update(None, Some("Prev"), Some("A")),
+            Some("Prev".to_string())
+        );
     }
 
     #[test]

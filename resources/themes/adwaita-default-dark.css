@@ -5,6 +5,12 @@
 @define-color scenedeck_surface #242424;
 @define-color scenedeck_card #303030;
 @define-color scenedeck_accent #78aeed;
+@define-color scenedeck_fg #f4f4f4;
+@define-color scenedeck_muted_fg #c7c7c7;
+@define-color scenedeck_accent_fg #000000;
+@define-color scenedeck_success #57e389;
+@define-color scenedeck_warning #f8e45c;
+@define-color scenedeck_error #ff8f8f;
 
 .scenedeck-root {
 }

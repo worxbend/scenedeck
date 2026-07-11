@@ -17,22 +17,27 @@ pub(crate) fn build(
     scene_id: SceneId,
     scene_role: SceneRole,
     is_active: bool,
+    is_previous: bool,
     nav: NavigationContext,
 ) -> Button {
-    let presentation = SceneCardPresentation::for_active(is_active);
+    let presentation = SceneCardPresentation::for_state(is_active, is_previous);
 
     let card = Button::builder()
-        .halign(Align::Fill)
-        .hexpand(true)
-        .width_request(188)
+        .halign(Align::Start)
+        .hexpand(false)
+        .width_request(132)
         .build();
     card.add_css_class("card");
     card.add_css_class("scene-card");
-    card.set_tooltip_text(Some(presentation.tooltip));
+    card.set_tooltip_text(Some(&format!(
+        "{} ({})",
+        presentation.tooltip,
+        scene_role_subtitle(scene_role)
+    )));
 
     let content = GtkBox::builder()
         .orientation(Orientation::Vertical)
-        .spacing(10)
+        .spacing(4)
         .halign(Align::Fill)
         .hexpand(true)
         .build();
@@ -69,21 +74,14 @@ pub(crate) fn build(
         .halign(Align::Fill)
         .hexpand(true)
         .wrap(true)
-        .lines(2)
+        .lines(1)
+        .ellipsize(gtk4::pango::EllipsizeMode::End)
         .build();
     title.add_css_class("heading");
-
-    let subtitle = Label::builder()
-        .label(scene_role_subtitle(scene_role))
-        .xalign(0.0)
-        .halign(Align::Fill)
-        .build();
-    subtitle.add_css_class("caption");
-    subtitle.add_css_class("dim-label");
+    title.add_css_class("scene-card-title");
 
     content.append(&header);
     content.append(&title);
-    content.append(&subtitle);
     card.set_child(Some(&content));
 
     if let Some(class) = presentation.card_css_class {
@@ -111,14 +109,22 @@ struct SceneCardPresentation {
 }
 
 impl SceneCardPresentation {
-    const fn for_active(active: bool) -> Self {
+    const fn for_state(active: bool, previous: bool) -> Self {
         if active {
             Self {
                 tooltip: "Current program scene",
                 status_label: "Live",
                 status_css_class: "scene-card-status-live",
-                marker_label: "On air",
+                marker_label: "On",
                 card_css_class: Some("scene-card-active"),
+            }
+        } else if previous {
+            Self {
+                tooltip: "Previously live scene",
+                status_label: "Prev",
+                status_css_class: "scene-card-status-previous",
+                marker_label: "Last",
+                card_css_class: Some("scene-card-previous"),
             }
         } else {
             Self {
@@ -139,13 +145,27 @@ mod tests {
     #[test]
     fn scene_card_presentation_marks_active_scene_as_live() {
         assert_eq!(
-            SceneCardPresentation::for_active(true),
+            SceneCardPresentation::for_state(true, false),
             SceneCardPresentation {
                 tooltip: "Current program scene",
                 status_label: "Live",
                 status_css_class: "scene-card-status-live",
-                marker_label: "On air",
+                marker_label: "On",
                 card_css_class: Some("scene-card-active")
+            }
+        );
+    }
+
+    #[test]
+    fn scene_card_presentation_marks_previous_scene_as_previous() {
+        assert_eq!(
+            SceneCardPresentation::for_state(false, true),
+            SceneCardPresentation {
+                tooltip: "Previously live scene",
+                status_label: "Prev",
+                status_css_class: "scene-card-status-previous",
+                marker_label: "Last",
+                card_css_class: Some("scene-card-previous")
             }
         );
     }
@@ -153,7 +173,7 @@ mod tests {
     #[test]
     fn scene_card_presentation_marks_inactive_scene_as_ready() {
         assert_eq!(
-            SceneCardPresentation::for_active(false),
+            SceneCardPresentation::for_state(false, false),
             SceneCardPresentation {
                 tooltip: "Switch to this scene",
                 status_label: "Ready",
