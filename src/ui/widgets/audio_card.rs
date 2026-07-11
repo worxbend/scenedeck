@@ -24,6 +24,7 @@ const OBS_FADER_MARKS_DB: &[(f64, &str)] = &[
     (-54.0, "-54"),
     (-60.0, "-60"),
 ];
+const OBS_FADER_INVERTED: bool = true;
 
 // ── Public handle ─────────────────────────────────────────────────────────────
 
@@ -136,7 +137,7 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         0.5,
     );
     vol_scale.set_value(AudioService::slider_db_from_mul(input.volume_mul));
-    vol_scale.set_inverted(false);
+    vol_scale.set_inverted(OBS_FADER_INVERTED);
     vol_scale.set_draw_value(false);
     vol_scale.set_vexpand(false);
     vol_scale.set_height_request(128);
@@ -539,7 +540,7 @@ fn update_visible_volume(
 
 #[cfg(test)]
 mod tests {
-    use super::OBS_FADER_MARKS_DB;
+    use super::{OBS_FADER_INVERTED, OBS_FADER_MARKS_DB};
 
     #[test]
     fn obs_fader_marks_start_at_unity_and_descend() {
@@ -549,5 +550,10 @@ mod tests {
         assert!(OBS_FADER_MARKS_DB
             .windows(2)
             .all(|pair| pair[0].0 > pair[1].0));
+    }
+
+    #[test]
+    fn obs_fader_is_inverted_so_unity_is_at_the_top() {
+        assert!(OBS_FADER_INVERTED);
     }
 }
