@@ -2,22 +2,65 @@ name: scenedeck
 title: SceneDeck
 summary: Role-aware OBS scene and audio controller
 description: |
-  SceneDeck is a native Linux controller for OBS Studio, built for streamers
-  who run OBS on one machine while working, coding, presenting, or gaming on
-  another. Instead of jumping back to the streaming computer just to change a
-  scene, start recording, or adjust audio, SceneDeck gives you a clean remote
-  control surface for your OBS setup.
+  🎬 **Stream from one machine. Control it from another.**
 
-  It also helps when your OBS scene list has grown beyond a few simple scenes.
-  Many real setups include utility scenes, camera-only scenes, overlays,
-  source wrappers, and other secondary scenes that are useful inside primary
-  scenes but should not be clicked live by accident. SceneDeck lets you mark
-  scenes by role, then keeps the Live view focused on the primary scenes you
-  actually want to switch between.
+  You run _OBS Studio_ on your streaming rig, but you actually work, code,
+  present, or game on a different computer. Every scene switch means
+  alt-tabbing back — or getting up and walking over. 😤
 
-  Use SceneDeck to switch live scenes, control stream and recording outputs,
-  inspect scene dependencies, and manage an integrated audio mixer without
-  breaking focus from your main workstation.
+  **SceneDeck fixes that.** It's a fast, native Linux remote for your whole OBS
+  session, so you can switch scenes, roll recordings, and ride your audio
+  without ever breaking focus on your main machine. ✨
+
+  🗂️ **Scene list grown out of control?**
+
+  Real setups fill up with utility scenes, camera-only scenes, overlays, and
+  source wrappers — stuff that belongs _inside_ other scenes but should never
+  be clicked live by accident. One wrong click on stream and... 😬
+
+  SceneDeck lets you tag scenes by **role** and keeps the Live view showing
+  only the primary scenes you actually switch between. No renaming, no
+  restructuring — your OBS setup stays exactly as it is. 👍
+
+  🎚️ **Fighting with audio in the middle of a stream?**
+
+  SceneDeck gives you a proper mixer for your global audio and the inputs of
+  the active scene — even inputs nested inside other scenes and groups. 🔊
+
+  * Mute or unmute any input instantly.
+  * Ride levels with compact vertical sliders.
+  * 🔒 Lock a slider so you never nudge it by accident on air.
+
+  📡 **Flying blind on stream health?**
+
+  A status bar sits at the bottom of every page with the numbers that matter:
+  connection state, stream and record status, FPS, streaming bitrate, OBS CPU
+  usage, and dropped frames — so you spot trouble _before_ your viewers do. 👀
+
+  🧭 **Everything else you'd expect:**
+
+  * ▶️ Switch program scenes from clean, role-aware Live cards.
+  * 🔴 Start and stop streaming and recording with clear feedback.
+  * 🔀 Switch OBS profiles and scene collections right from the header.
+  * 🕸️ Inspect nested scene dependencies in the _Graph_ view.
+  * 🩺 Run _Doctor_ checks over your roles and dependency structure.
+  * 💾 Export and import your local scene registry as YAML.
+
+  🎨 **Made to feel at home on Linux:**
+
+  * Built with Rust, GTK4, and libadwaita for a truly native experience.
+  * Follows your system light/dark theme — or force either mode.
+  * Ships polished built-in themes and can load your own custom CSS.
+  * 🔐 Keeps your OBS password in the system keyring, never in plain text.
+
+  ✅ **What you'll need:**
+
+  * A Linux desktop with GTK4 and libadwaita.
+  * OBS Studio 28+ with the built-in WebSocket server enabled.
+  * SceneDeck connects to `127.0.0.1:4455` right out of the box.
+
+  💜 Free and open source — source, issues, and docs live at
+  https://github.com/worxbend/scenedeck
 
 base: core24
 adopt-info: scenedeck
