@@ -413,3 +413,35 @@ window.scenedeck-about-window preferencesgroup row {
 .graph-status-summary label {
     font-weight: 700;
 }
+
+/* ── Bottom status bar ─────────────────────────────────────────────────────── */
+.scenedeck-status-bar {
+    background-color: @scenedeck_header;
+    border-top: 1px solid alpha(@scenedeck_fg, 0.08);
+    padding: 1px 12px;
+    min-height: 20px;
+}
+
+.scenedeck-status-bar-item {
+    font-size: 0.82em;
+}
+
+.scenedeck-status-bar-output,
+.scenedeck-status-bar-metric {
+    color: @scenedeck_muted_fg;
+}
+
+.scenedeck-status-bar-separator {
+    margin: 3px 0;
+    opacity: 0.5;
+}
+
+.scenedeck-status-bar-live {
+    color: @scenedeck_error;
+    font-weight: 700;
+}
+
+.scenedeck-status-bar-dropped {
+    color: @scenedeck_warning;
+    font-weight: 700;
+}

@@ -6,3 +6,4 @@
 
 pub(crate) mod audio_card;
 pub(crate) mod scene_card;
+pub(crate) mod status_bar;

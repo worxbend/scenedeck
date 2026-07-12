@@ -30,9 +30,10 @@ use crate::domain::appearance::ThemeMode;
 use crate::domain::obs::ObsNamedList;
 use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::ui::navigation::NavigationContext;
-use crate::ui::pages::live::LivePageHandle;
+use crate::ui::pages::live::{output_label, LivePageHandle};
 use crate::ui::register_resources;
 use crate::ui::theme::ThemeManager;
+use crate::ui::widgets::status_bar::{self, StatusBarHandle};
 
 const DEFAULT_WIDTH: i32 = 1100;
 const DEFAULT_HEIGHT: i32 = 740;
@@ -124,6 +125,9 @@ pub fn build_main_window(
     let (sidebar_page, sidebar_list, sidebar_controls) = build_sidebar(&nav);
     let streaming_chrome: StreamingChromeRef = Rc::new(RefCell::new(None));
 
+    // ── Status bar ────────────────────────────────────────────────────────────
+    let status_bar = status_bar::build();
+
     sidebar_list.connect_row_selected({
         let nav = nav.clone();
         move |_, row| {
@@ -149,6 +153,7 @@ pub fn build_main_window(
         let header_selectors = header_selectors.clone();
         let sidebar_controls = sidebar_controls.clone();
         let streaming_chrome = streaming_chrome.clone();
+        let status_bar = status_bar.clone();
         move || {
             loop {
                 match event_rx.try_recv() {
@@ -161,6 +166,7 @@ pub fn build_main_window(
                         &header_selectors,
                         &sidebar_controls,
                         &streaming_chrome,
+                        &status_bar,
                     ),
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => {
@@ -176,6 +182,7 @@ pub fn build_main_window(
         let state = state.clone();
         let stream_label = elapsed_stream_label;
         let record_label = elapsed_record_label;
+        let status_bar = status_bar.clone();
         move || {
             let state = state.borrow();
             stream_label.set_text(&format!(
@@ -188,6 +195,37 @@ pub fn build_main_window(
                 state.record_status.state.label(),
                 elapsed_suffix(state.record_active_since)
             ));
+            status_bar::set_stream(
+                &status_bar,
+                &format!(
+                    "Stream: {}{}",
+                    state.stream_status.state.label(),
+                    elapsed_suffix(state.stream_active_since)
+                ),
+                state.stream_status.active,
+            );
+            status_bar::set_record(
+                &status_bar,
+                &format!(
+                    "Record: {}{}",
+                    state.record_status.state.label(),
+                    elapsed_suffix(state.record_active_since)
+                ),
+                state.record_status.active,
+            );
+            glib::ControlFlow::Continue
+        }
+    });
+
+    // Poll OBS performance stats on a slower cadence than the elapsed-time
+    // tick above — CPU/FPS/bitrate don't need per-second precision, and this
+    // keeps `GetStats` traffic light while OBS is otherwise idle.
+    glib::timeout_add_local(Duration::from_secs(2), {
+        let nav = nav.clone();
+        move || {
+            if matches!(nav.state.borrow().obs_status, ObsStatus::Connected { .. }) {
+                nav.dispatch(AppCommand::RefreshStats);
+            }
             glib::ControlFlow::Continue
         }
     });
@@ -254,7 +292,12 @@ pub fn build_main_window(
 
     toast_overlay.add_css_class("scenedeck-toast-overlay");
     toast_overlay.set_child(Some(&split));
-    window.set_content(Some(&toast_overlay));
+
+    let outer_toolbar = adw::ToolbarView::new();
+    outer_toolbar.add_css_class("scenedeck-outer-toolbar");
+    outer_toolbar.set_content(Some(&toast_overlay));
+    outer_toolbar.add_bottom_bar(&status_bar.root);
+    window.set_content(Some(&outer_toolbar));
 
     super::actions::install(app, &window, nav);
 
@@ -273,6 +316,7 @@ fn apply_event(
     header_selectors: &HeaderSelectors,
     sidebar_controls: &SidebarControls,
     streaming_chrome: &StreamingChromeRef,
+    status_bar: &StatusBarHandle,
 ) {
     use crate::ui::pages::live::{
         rebuild_audio_cards, rebuild_scene_cards, reset_output_controls, show_disconnected_view,
@@ -291,12 +335,15 @@ fn apply_event(
                 state.record_active_since = None;
                 state.clear_pending_mixer_audio_refresh();
                 state.clear_output_command_errors();
+                state.clear_obs_stats();
             }
             sidebar_controls.status_label.set_text("Connecting to OBS…");
             set_status_class(&sidebar_controls.status_label, "obs-connecting");
             sidebar_controls.connect_btn.set_label("Connecting…");
             sidebar_controls.connect_btn.set_sensitive(false);
             sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+            status_bar::set_connection(status_bar, &ObsStatus::Connecting);
+            status_bar::clear_stats(status_bar);
             show_disconnected_view(live, "Connecting to OBS…");
             live.current_scene_label.set_text("Current scene: —");
             rebuild_audio_cards(live, &[], nav);
@@ -309,9 +356,10 @@ fn apply_event(
         }
 
         AppEvent::Connected(info) => {
-            nav.state.borrow_mut().set_obs_status(ObsStatus::Connected {
+            let obs_status = ObsStatus::Connected {
                 obs_version: info.obs_version.clone(),
-            });
+            };
+            nav.state.borrow_mut().set_obs_status(obs_status.clone());
             sidebar_controls
                 .status_label
                 .set_text(&format!("Connected — OBS {}", info.obs_version));
@@ -325,6 +373,7 @@ fn apply_event(
                 .connect_btn
                 .add_css_class("destructive-action");
             sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+            status_bar::set_connection(status_bar, &obs_status);
             show_live_view(live);
         }
 
@@ -339,6 +388,7 @@ fn apply_event(
                 state.record_active_since = None;
                 state.clear_pending_mixer_audio_refresh();
                 state.clear_output_command_errors();
+                state.clear_obs_stats();
             }
             sidebar_controls.status_label.set_text("Disconnected");
             set_status_class(&sidebar_controls.status_label, "obs-disconnected");
@@ -351,6 +401,8 @@ fn apply_event(
                 .connect_btn
                 .remove_css_class("destructive-action");
             sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+            status_bar::set_connection(status_bar, &ObsStatus::Disconnected);
+            status_bar::clear_stats(status_bar);
             show_disconnected_view(live, "Connect to OBS to use Live controls");
             live.current_scene_label.set_text("Current scene: —");
             rebuild_audio_cards(live, &[], nav);
@@ -412,9 +464,10 @@ fn apply_event(
         }
 
         AppEvent::Error(err) => {
+            let obs_status = ObsStatus::Error(err.to_string());
             {
                 let mut state = nav.state.borrow_mut();
-                state.set_obs_status(ObsStatus::Error(err.to_string()));
+                state.set_obs_status(obs_status.clone());
                 state.set_stream_status(OutputStatus::default());
                 state.set_record_status(OutputStatus::default());
                 state.scene_inventory = Default::default();
@@ -422,6 +475,7 @@ fn apply_event(
                 state.record_active_since = None;
                 state.clear_pending_mixer_audio_refresh();
                 state.clear_output_command_errors();
+                state.clear_obs_stats();
             }
             sidebar_controls
                 .status_label
@@ -436,6 +490,8 @@ fn apply_event(
                 .connect_btn
                 .remove_css_class("destructive-action");
             sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+            status_bar::set_connection(status_bar, &obs_status);
+            status_bar::clear_stats(status_bar);
             reset_output_controls(live);
             show_disconnected_view(live, "OBS connection failed");
             live.current_scene_label.set_text("Current scene: —");
@@ -555,6 +611,11 @@ fn apply_event(
                     state.last_stream_command_error.clone(),
                 )
             };
+            status_bar::set_stream(
+                status_bar,
+                &output_label("Stream", &status, elapsed.as_deref()),
+                status.active,
+            );
             update_stream_status(live, &status, elapsed, error.as_deref());
             sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
         }
@@ -573,6 +634,11 @@ fn apply_event(
                     state.last_record_command_error.clone(),
                 )
             };
+            status_bar::set_record(
+                status_bar,
+                &output_label("Record", &status, elapsed.as_deref()),
+                status.active,
+            );
             update_record_status(
                 live,
                 &status,
@@ -593,6 +659,11 @@ fn apply_event(
                     state.last_stream_command_error.clone(),
                 )
             };
+            status_bar::set_stream(
+                status_bar,
+                &output_label("Stream", &status, elapsed.as_deref()),
+                status.active,
+            );
             update_stream_status(live, &status, elapsed, error.as_deref());
             sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
         }
@@ -608,6 +679,11 @@ fn apply_event(
                     state.last_record_command_error.clone(),
                 )
             };
+            status_bar::set_record(
+                status_bar,
+                &output_label("Record", &status, elapsed.as_deref()),
+                status.active,
+            );
             update_record_status(
                 live,
                 &status,
@@ -627,6 +703,11 @@ fn apply_event(
                     state.stream_active_since.map(format_elapsed),
                 )
             };
+            status_bar::set_stream(
+                status_bar,
+                &output_label("Stream", &status, elapsed.as_deref()),
+                status.active,
+            );
             update_stream_status(live, &status, elapsed, None);
             sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
         }
@@ -641,6 +722,11 @@ fn apply_event(
                     state.last_recording_path.clone(),
                 )
             };
+            status_bar::set_record(
+                status_bar,
+                &output_label("Record", &status, elapsed.as_deref()),
+                status.active,
+            );
             update_record_status(live, &status, elapsed, last_path.as_deref(), None);
             sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
         }
@@ -655,6 +741,11 @@ fn apply_event(
                     state.last_stream_command_error.clone(),
                 )
             };
+            status_bar::set_stream(
+                status_bar,
+                &output_label("Stream", &status, elapsed.as_deref()),
+                status.active,
+            );
             update_stream_status(live, &status, elapsed, error.as_deref());
             sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
         }
@@ -670,6 +761,11 @@ fn apply_event(
                     state.last_record_command_error.clone(),
                 )
             };
+            status_bar::set_record(
+                status_bar,
+                &output_label("Record", &status, elapsed.as_deref()),
+                status.active,
+            );
             update_record_status(
                 live,
                 &status,
@@ -691,6 +787,18 @@ fn apply_event(
 
         AppEvent::DiagnosticsUpdated(diagnostics) => {
             nav.state.borrow_mut().diagnostics = diagnostics;
+        }
+
+        AppEvent::StatsUpdated {
+            stats,
+            bitrate_kbps,
+        } => {
+            let streaming = {
+                let mut state = nav.state.borrow_mut();
+                state.set_obs_stats(stats, bitrate_kbps);
+                state.stream_status.active
+            };
+            status_bar::set_stats(status_bar, &stats, bitrate_kbps, streaming);
         }
     }
 }

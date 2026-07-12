@@ -656,7 +656,7 @@ fn set_output_button(button: &Button, status: &OutputStatus, start_label: &str, 
     }
 }
 
-fn output_label(kind: &str, status: &OutputStatus, elapsed: Option<&str>) -> String {
+pub(crate) fn output_label(kind: &str, status: &OutputStatus, elapsed: Option<&str>) -> String {
     match elapsed {
         Some(elapsed) if status.active => format!("{kind}: {} · {elapsed}", status.state.label()),
         _ => format!("{kind}: {}", status.state.label()),

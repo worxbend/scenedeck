@@ -28,6 +28,7 @@
 
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use futures_util::future::BoxFuture;
 use futures_util::StreamExt;
@@ -43,6 +44,10 @@ use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::infra::error::AppError;
 use crate::obs::client::ObsClient;
 
+/// Last (timestamp, cumulative bytes) sample used to derive stream bitrate
+/// between successive `GetStats`/`GetStreamStatus` polls.
+type BitrateSample = Arc<Mutex<Option<(Instant, u64)>>>;
+
 pub struct AppController {
     event_tx: SyncSender<AppEvent>,
     runtime: Handle,
@@ -55,6 +60,7 @@ pub struct AppController {
     #[cfg(test)]
     output_client_override: Arc<Mutex<Option<OutputCommandClient>>>,
     output_pending: Arc<Mutex<OutputPending>>,
+    bitrate_sample: BitrateSample,
 }
 
 #[derive(Debug, Default)]
@@ -82,6 +88,7 @@ impl AppController {
             #[cfg(test)]
             output_client_override: Arc::new(Mutex::new(None)),
             output_pending: Arc::new(Mutex::new(OutputPending::default())),
+            bitrate_sample: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -198,6 +205,7 @@ impl AppController {
             }),
             AppCommand::SetRecording(active) => self.set_recording(active),
             AppCommand::RefreshOutputStatus => self.refresh_output_status(),
+            AppCommand::RefreshStats => self.refresh_stats(),
 
             AppCommand::RefreshData => self.refresh_data(),
 
@@ -216,6 +224,9 @@ impl AppController {
         // Clear any stale client handle from the previous session
         if let Ok(mut slot) = self.client_slot.lock() {
             *slot = None;
+        }
+        if let Ok(mut sample) = self.bitrate_sample.lock() {
+            *sample = None;
         }
 
         let tx = self.event_tx.clone();
@@ -288,6 +299,15 @@ impl AppController {
         self.with_client(|c, tx, rt| {
             rt.spawn(async move {
                 refresh_output_statuses(&c, &tx).await;
+            });
+        });
+    }
+
+    fn refresh_stats(&self) {
+        let bitrate_sample = Arc::clone(&self.bitrate_sample);
+        self.with_client(|c, tx, rt| {
+            rt.spawn(async move {
+                refresh_obs_stats(&c, &tx, &bitrate_sample).await;
             });
         });
     }
@@ -459,6 +479,10 @@ impl AppController {
         let client_slot = Arc::clone(&self.client_slot);
         let output_pending = Arc::clone(&self.output_pending);
         let tx = self.event_tx.clone();
+
+        if let Ok(mut sample) = self.bitrate_sample.lock() {
+            *sample = None;
+        }
 
         self.runtime.spawn(async move {
             if let Some(client) = client {
@@ -715,6 +739,59 @@ async fn refresh_output_statuses(client: &impl OutputStatusReader, tx: &SyncSend
         }
         Err(e) => tracing::warn!(%e, "record status refresh failed"),
     }
+}
+
+/// Poll `GetStats` plus the stream byte counter and publish a combined
+/// `StatsUpdated` event. Bitrate is derived from the delta in stream bytes
+/// against the previous sample, so it is `None` until a second sample lands
+/// and whenever the byte counter resets (e.g. the stream just (re)started).
+async fn refresh_obs_stats(
+    client: &ObsClient,
+    tx: &SyncSender<AppEvent>,
+    bitrate_sample: &BitrateSample,
+) {
+    let stats = match client.get_obs_stats().await {
+        Ok(stats) => stats,
+        Err(e) => {
+            tracing::warn!(%e, "obs stats refresh failed");
+            return;
+        }
+    };
+
+    let bitrate_kbps = match client.get_stream_bytes().await {
+        Ok(bytes) => bitrate_kbps_since_last_sample(bitrate_sample, bytes),
+        Err(e) => {
+            tracing::debug!(%e, "stream byte counter refresh failed");
+            None
+        }
+    };
+
+    let _ = tx.send(AppEvent::StatsUpdated {
+        stats,
+        bitrate_kbps,
+    });
+}
+
+/// Compute kbps from the delta against the last (time, bytes) sample, then
+/// store `bytes` as the new sample. Returns `None` on the first sample or
+/// whenever the counter goes backwards (stream restarted).
+fn bitrate_kbps_since_last_sample(bitrate_sample: &BitrateSample, bytes: u64) -> Option<f64> {
+    let now = Instant::now();
+    let mut sample = bitrate_sample.lock().ok()?;
+    let previous = *sample;
+    *sample = Some((now, bytes));
+
+    let (prev_time, prev_bytes) = previous?;
+    if bytes < prev_bytes {
+        return None;
+    }
+
+    let elapsed_secs = now.duration_since(prev_time).as_secs_f64();
+    if elapsed_secs <= 0.0 {
+        return None;
+    }
+
+    Some((bytes - prev_bytes) as f64 * 8.0 / elapsed_secs / 1000.0)
 }
 
 async fn refresh_live_data(client: &ObsClient, tx: &SyncSender<AppEvent>, audio_filter: &[String]) {
@@ -1063,6 +1140,37 @@ mod tests {
                 status
             })
         }
+    }
+
+    #[test]
+    fn bitrate_sample_is_none_until_a_second_sample_arrives() {
+        let sample: BitrateSample = Arc::new(Mutex::new(None));
+
+        assert_eq!(bitrate_kbps_since_last_sample(&sample, 1_000), None);
+        assert_eq!(sample.lock().unwrap().map(|(_, bytes)| bytes), Some(1_000));
+    }
+
+    #[test]
+    fn bitrate_sample_returns_none_when_byte_counter_goes_backwards() {
+        let sample: BitrateSample = Arc::new(Mutex::new(Some((Instant::now(), 5_000))));
+
+        assert_eq!(bitrate_kbps_since_last_sample(&sample, 1_000), None);
+        assert_eq!(sample.lock().unwrap().map(|(_, bytes)| bytes), Some(1_000));
+    }
+
+    #[test]
+    fn bitrate_sample_computes_kbps_from_byte_delta_over_elapsed_time() {
+        let previous_time = Instant::now() - Duration::from_secs(1);
+        let sample: BitrateSample = Arc::new(Mutex::new(Some((previous_time, 0))));
+
+        // 125_000 bytes/sec == 1_000_000 bits/sec == 1000 kbps.
+        let kbps = bitrate_kbps_since_last_sample(&sample, 125_000)
+            .expect("expected a bitrate sample after a prior reading");
+
+        assert!(
+            (900.0..=1100.0).contains(&kbps),
+            "expected ~1000 kbps, got {kbps}"
+        );
     }
 
     fn receive_events(rx: &mpsc::Receiver<AppEvent>, count: usize, context: &str) -> Vec<AppEvent> {

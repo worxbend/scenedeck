@@ -10,6 +10,7 @@ use crate::domain::mixer::{MixerMode, MixerSelection};
 use crate::domain::obs::ObsNamedList;
 use crate::domain::output::OutputStatus;
 use crate::domain::scene::{SceneId, SceneInventory};
+use crate::domain::stats::ObsStats;
 use crate::storage::config::OutputConfig;
 use std::time::Instant;
 
@@ -263,6 +264,11 @@ pub struct AppState {
     pub diagnostics: Vec<Diagnostic>,
     /// Human-readable config-load notice shown once on the Settings page.
     pub startup_notice: Option<String>,
+    /// Latest OBS `GetStats` snapshot for the status bar. `None` until the
+    /// first poll completes after connecting.
+    pub obs_stats: Option<ObsStats>,
+    /// Rolling stream bitrate derived from consecutive stats polls.
+    pub stream_bitrate_kbps: Option<f64>,
 }
 
 impl AppState {
@@ -293,6 +299,8 @@ impl AppState {
             mixer,
             diagnostics: Vec::new(),
             startup_notice,
+            obs_stats: None,
+            stream_bitrate_kbps: None,
         }
     }
 
@@ -383,6 +391,20 @@ impl AppState {
     pub fn clear_output_command_errors(&mut self) {
         self.last_stream_command_error = None;
         self.last_record_command_error = None;
+    }
+
+    pub fn set_obs_stats(&mut self, stats: ObsStats, bitrate_kbps: Option<f64>) {
+        self.obs_stats = Some(stats);
+        self.stream_bitrate_kbps = if self.stream_status.active {
+            bitrate_kbps
+        } else {
+            None
+        };
+    }
+
+    pub fn clear_obs_stats(&mut self) {
+        self.obs_stats = None;
+        self.stream_bitrate_kbps = None;
     }
 
     pub fn visible_mixer_audio_status(&self, scene: &str) -> MixerVisibleAudioStatus<'_> {

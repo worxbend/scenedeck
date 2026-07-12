@@ -49,6 +49,8 @@ pub enum AppCommand {
     ToggleRecording,
     SetRecording(bool),
     RefreshOutputStatus,
+    /// Poll `GetStats` and stream byte counters for the status bar.
+    RefreshStats,
 
     // Diagnostics
     RunDoctor,

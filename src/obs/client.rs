@@ -14,6 +14,7 @@ use crate::domain::graph::SceneGraph;
 use crate::domain::obs::ObsNamedList;
 use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::domain::scene::SceneInventory;
+use crate::domain::stats::ObsStats;
 use crate::infra::error::AppError;
 use crate::obs::mapper;
 
@@ -182,6 +183,28 @@ impl ObsClient {
                 },
                 detail: None,
             })
+            .map_err(|e| AppError::Request(e.to_string()))
+    }
+
+    /// OBS process performance counters (`GetStats`) — CPU, memory, FPS,
+    /// render/output frame timing. Available regardless of streaming state.
+    pub async fn get_obs_stats(&self) -> Result<ObsStats, AppError> {
+        self.inner
+            .general()
+            .stats()
+            .await
+            .map(mapper::map_stats)
+            .map_err(|e| AppError::Request(e.to_string()))
+    }
+
+    /// Cumulative bytes sent by the stream output, used to derive a rolling
+    /// bitrate. Zero while the stream is inactive.
+    pub async fn get_stream_bytes(&self) -> Result<u64, AppError> {
+        self.inner
+            .streaming()
+            .status()
+            .await
+            .map(|status| status.bytes)
             .map_err(|e| AppError::Request(e.to_string()))
     }
 

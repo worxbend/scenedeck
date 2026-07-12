@@ -3,7 +3,7 @@
 //! All OBS-specific types stop here.  Nothing above this module imports from `obws`.
 
 use obws::events::{Event, OutputState};
-use obws::responses::general::Version;
+use obws::responses::general::{Stats, Version};
 use obws::responses::recording::RecordStatus;
 use obws::responses::scenes::Scenes;
 use obws::responses::streaming::StreamStatus;
@@ -11,6 +11,7 @@ use obws::responses::streaming::StreamStatus;
 use crate::controller::event::ConnectionInfo;
 use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::domain::scene::{Scene, SceneInventory};
+use crate::domain::stats::ObsStats;
 use crate::obs::event::ObsEvent;
 
 /// Convert OBS version metadata into controller connection info.
@@ -78,6 +79,20 @@ pub(super) fn map_stream_status(status: StreamStatus) -> OutputStatus {
             OutputRunState::Inactive
         },
     )
+}
+
+/// Convert `GetStats` into the app's normalized OBS performance snapshot.
+pub(super) fn map_stats(stats: Stats) -> ObsStats {
+    ObsStats {
+        cpu_usage_percent: stats.cpu_usage,
+        memory_usage_mb: stats.memory_usage,
+        active_fps: stats.active_fps,
+        average_frame_render_time_ms: stats.average_frame_render_time,
+        render_skipped_frames: stats.render_skipped_frames,
+        render_total_frames: stats.render_total_frames,
+        output_skipped_frames: stats.output_skipped_frames,
+        output_total_frames: stats.output_total_frames,
+    }
 }
 
 /// Convert `GetRecordStatus` into the app's normalized output status.
