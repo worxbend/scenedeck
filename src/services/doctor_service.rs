@@ -4,11 +4,14 @@
 //! dependency graph.  No OBS or GTK types.  Produces a list of `Diagnostic`s
 //! sorted most-severe first.
 
+use i18n_embed_fl::fl;
+
 use crate::domain::diagnostic::{Diagnostic, DiagnosticSeverity};
 use crate::domain::graph::{EdgeStatus, SceneGraph};
 use crate::domain::registry::SceneRegistrySnapshot;
 use crate::domain::role::SceneRole;
 use crate::domain::scene::SceneInventory;
+use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::graph_service::classify_edge;
 
 /// Runs scene architecture diagnostics over domain state.
@@ -49,8 +52,8 @@ impl DoctorService {
                 diags.push(Diagnostic {
                     severity: DiagnosticSeverity::Warning,
                     scene: Some(scene.id.clone()),
-                    message: "Scene has no role assigned in the local registry.".to_string(),
-                    suggestion: Some("Open Inventory and assign a role.".to_string()),
+                    message: fl!(LANGUAGE_LOADER, "doctor-no-role"),
+                    suggestion: Some(fl!(LANGUAGE_LOADER, "doctor-no-role-suggestion")),
                 });
             }
         }
@@ -67,8 +70,8 @@ impl DoctorService {
                 diags.push(Diagnostic {
                     severity: DiagnosticSeverity::Info,
                     scene: Some(scene_name.clone()),
-                    message: "Registry entry references a scene not found in OBS.".to_string(),
-                    suggestion: Some("Remove the entry from Inventory.".to_string()),
+                    message: fl!(LANGUAGE_LOADER, "doctor-stale-entry"),
+                    suggestion: Some(fl!(LANGUAGE_LOADER, "doctor-stale-entry-suggestion")),
                 });
             }
         }
@@ -81,14 +84,15 @@ impl DoctorService {
                 diags.push(Diagnostic {
                     severity: DiagnosticSeverity::Warning,
                     scene: Some(name.clone()),
-                    message: format!(
-                        "Protected scene is in the switchable '{}' role.",
-                        metadata.role.label()
+                    message: fl!(
+                        LANGUAGE_LOADER,
+                        "doctor-protected-switchable",
+                        role = metadata.role.label()
                     ),
-                    suggestion: Some(
-                        "Protected scenes are usually building blocks; consider Module or Raw."
-                            .to_string(),
-                    ),
+                    suggestion: Some(fl!(
+                        LANGUAGE_LOADER,
+                        "doctor-protected-switchable-suggestion"
+                    )),
                 });
             }
         }
@@ -126,13 +130,13 @@ impl DoctorService {
                         diags.push(Diagnostic {
                             severity: DiagnosticSeverity::Error,
                             scene: Some(parent.clone()),
-                            message: format!(
-                                "Circular scene reference involving '{parent}' and '{child}'."
+                            message: fl!(
+                                LANGUAGE_LOADER,
+                                "doctor-cycle",
+                                parent = parent.as_str(),
+                                child = child.as_str()
                             ),
-                            suggestion: Some(
-                                "Remove the nested-scene loop; OBS cannot render cycles."
-                                    .to_string(),
-                            ),
+                            suggestion: Some(fl!(LANGUAGE_LOADER, "doctor-cycle-suggestion")),
                         });
                     }
                 }
@@ -155,41 +159,41 @@ fn edge_diagnostic(
         _ if status == EdgeStatus::Ok => return None,
         (SceneRole::Primary, SceneRole::Debug) if status == EdgeStatus::Forbidden => (
             DiagnosticSeverity::Error,
-            "Primary scene depends on a Debug scene.",
-            "Remove the Debug scene from the live path before going live.",
+            fl!(LANGUAGE_LOADER, "doctor-edge-primary-debug", child = child),
+            fl!(LANGUAGE_LOADER, "doctor-edge-primary-debug-suggestion"),
         ),
         (SceneRole::Primary, SceneRole::Raw) if status == EdgeStatus::Warning => (
             DiagnosticSeverity::Warning,
-            "Primary scene directly wraps a Raw source.",
-            "Wrap the Raw source in a Module scene for reuse and clarity.",
+            fl!(LANGUAGE_LOADER, "doctor-edge-primary-raw", child = child),
+            fl!(LANGUAGE_LOADER, "doctor-edge-primary-raw-suggestion"),
         ),
         (SceneRole::Module, SceneRole::Primary) if status == EdgeStatus::Forbidden => (
             DiagnosticSeverity::Error,
-            "Module depends on a Primary scene, inverting the hierarchy.",
-            "Modules should be building blocks, not consumers of Primary scenes.",
+            fl!(LANGUAGE_LOADER, "doctor-edge-module-primary", child = child),
+            fl!(LANGUAGE_LOADER, "doctor-edge-module-primary-suggestion"),
         ),
         (SceneRole::Raw, _) if status == EdgeStatus::Forbidden => (
             DiagnosticSeverity::Error,
-            "Raw scene nests another scene.",
-            "Raw scenes should be leaf source wrappers with no nested scenes.",
+            fl!(LANGUAGE_LOADER, "doctor-edge-raw-nests", child = child),
+            fl!(LANGUAGE_LOADER, "doctor-edge-raw-nests-suggestion"),
         ),
         _ if status == EdgeStatus::Forbidden => (
             DiagnosticSeverity::Error,
-            "Scene dependency is forbidden by the graph policy.",
-            "Adjust the nested scene relationship or update the registry graph rules.",
+            fl!(LANGUAGE_LOADER, "doctor-edge-forbidden", child = child),
+            fl!(LANGUAGE_LOADER, "doctor-edge-adjust-suggestion"),
         ),
         _ => (
             DiagnosticSeverity::Warning,
-            "Scene dependency is outside the configured graph policy.",
-            "Adjust the nested scene relationship or update the registry graph rules.",
+            fl!(LANGUAGE_LOADER, "doctor-edge-outside-policy", child = child),
+            fl!(LANGUAGE_LOADER, "doctor-edge-adjust-suggestion"),
         ),
     };
 
     Some(Diagnostic {
         severity,
         scene: Some(parent.to_string()),
-        message: format!("{message} (→ '{child}')"),
-        suggestion: Some(suggestion.to_string()),
+        message,
+        suggestion: Some(suggestion),
     })
 }
 

@@ -56,6 +56,134 @@ impl<'de> Deserialize<'de> for ThemeMode {
     }
 }
 
+/// UI language preference. `System` follows the desktop locale; every other
+/// variant pins the UI to a specific shipped translation regardless of the
+/// desktop locale.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Language {
+    #[default]
+    System,
+    En,
+    EnGb,
+    De,
+    DeCh,
+    Es,
+    It,
+    Pl,
+    PtPt,
+    Uk,
+}
+
+impl Language {
+    /// All selectable languages in the order they should appear in the
+    /// Settings language picker, `System` first.
+    pub const ALL: [Self; 10] = [
+        Self::System,
+        Self::En,
+        Self::EnGb,
+        Self::De,
+        Self::DeCh,
+        Self::Es,
+        Self::It,
+        Self::Pl,
+        Self::PtPt,
+        Self::Uk,
+    ];
+
+    /// Persisted config value.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::En => "en",
+            Self::EnGb => "en-gb",
+            Self::De => "de",
+            Self::DeCh => "de-ch",
+            Self::Es => "es",
+            Self::It => "it",
+            Self::Pl => "pl",
+            Self::PtPt => "pt-pt",
+            Self::Uk => "uk",
+        }
+    }
+
+    /// Fluent/BCP-47 locale tag to request from the loader, or `None` for
+    /// `System`, meaning "use the desktop locale".
+    pub const fn locale_tag(self) -> Option<&'static str> {
+        match self {
+            Self::System => None,
+            Self::En => Some("en"),
+            Self::EnGb => Some("en-GB"),
+            Self::De => Some("de"),
+            Self::DeCh => Some("de-CH"),
+            Self::Es => Some("es"),
+            Self::It => Some("it"),
+            Self::Pl => Some("pl"),
+            Self::PtPt => Some("pt-PT"),
+            Self::Uk => Some("uk"),
+        }
+    }
+
+    /// Name shown in the Settings language picker, in the language's own
+    /// autonym so a user can find their language regardless of the UI's
+    /// current language.
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::System => "System Default",
+            Self::En => "English",
+            Self::EnGb => "English (UK)",
+            Self::De => "Deutsch",
+            Self::DeCh => "Deutsch (Schweiz)",
+            Self::Es => "Español",
+            Self::It => "Italiano",
+            Self::Pl => "Polski",
+            Self::PtPt => "Português (Portugal)",
+            Self::Uk => "Українська",
+        }
+    }
+}
+
+impl std::str::FromStr for Language {
+    /// Parsing never fails: unknown persisted values fall back to `System`.
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "en" => Self::En,
+            "en-gb" => Self::EnGb,
+            "de" => Self::De,
+            "de-ch" => Self::DeCh,
+            "es" => Self::Es,
+            "it" => Self::It,
+            "pl" => Self::Pl,
+            "pt-pt" => Self::PtPt,
+            "uk" => Self::Uk,
+            _ => Self::System,
+        })
+    }
+}
+
+impl Serialize for Language {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for Language {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        match value.parse() {
+            Ok(language) => Ok(language),
+            Err(never) => match never {},
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThemeId(pub String);
 
@@ -232,6 +360,29 @@ mod tests {
     #[test]
     fn unknown_theme_mode_falls_back_to_system() {
         assert_eq!("unexpected".parse::<ThemeMode>(), Ok(ThemeMode::System));
+    }
+
+    #[test]
+    fn unknown_language_falls_back_to_system() {
+        assert_eq!("xx".parse::<Language>(), Ok(Language::System));
+    }
+
+    #[test]
+    fn language_round_trips_through_persisted_string() {
+        for language in Language::ALL {
+            assert_eq!(language.as_str().parse::<Language>(), Ok(language));
+        }
+    }
+
+    #[test]
+    fn language_serializes_as_persisted_string() {
+        assert_eq!(serde_json::to_string(&Language::DeCh).unwrap(), "\"de-ch\"");
+    }
+
+    #[test]
+    fn system_language_has_no_locale_tag() {
+        assert_eq!(Language::System.locale_tag(), None);
+        assert_eq!(Language::PtPt.locale_tag(), Some("pt-PT"));
     }
 
     #[test]

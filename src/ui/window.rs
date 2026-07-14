@@ -17,6 +17,7 @@ use gtk4::{
     Box as GtkBox, Button, DropDown, Image, Label, ListBox, Orientation, SelectionMode, Stack,
     StackTransitionType, StringList,
 };
+use i18n_embed_fl::fl;
 
 use crate::app_info::APP_NAME;
 use crate::controller::app_controller::AppController;
@@ -29,6 +30,7 @@ use crate::controller::state::{
 use crate::domain::appearance::ThemeMode;
 use crate::domain::obs::ObsNamedList;
 use crate::domain::output::{OutputRunState, OutputStatus};
+use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::pages::live::{output_label, LivePageHandle};
 use crate::ui::register_resources;
@@ -89,23 +91,27 @@ pub fn build_main_window(
     let (doctor_widget, doctor_refresh) = crate::ui::pages::doctor::build(nav.clone());
     let (settings_widget, settings_refresh) = crate::ui::pages::settings::build(nav.clone());
 
-    content_stack.add_titled(&live_handle.root, Some(Page::Live.id()), Page::Live.title());
-    content_stack.add_titled(&mixer_widget, Some(Page::Mixer.id()), Page::Mixer.title());
-    content_stack.add_titled(&graph_widget, Some(Page::Graph.id()), Page::Graph.title());
+    content_stack.add_titled(
+        &live_handle.root,
+        Some(Page::Live.id()),
+        &Page::Live.title(),
+    );
+    content_stack.add_titled(&mixer_widget, Some(Page::Mixer.id()), &Page::Mixer.title());
+    content_stack.add_titled(&graph_widget, Some(Page::Graph.id()), &Page::Graph.title());
     content_stack.add_titled(
         &inventory_widget,
         Some(Page::Inventory.id()),
-        Page::Inventory.title(),
+        &Page::Inventory.title(),
     );
     content_stack.add_titled(
         &doctor_widget,
         Some(Page::Doctor.id()),
-        Page::Doctor.title(),
+        &Page::Doctor.title(),
     );
     content_stack.add_titled(
         &settings_widget,
         Some(Page::Settings.id()),
-        Page::Settings.title(),
+        &Page::Settings.title(),
     );
 
     let refreshers = PageRefreshers {
@@ -185,31 +191,35 @@ pub fn build_main_window(
         let status_bar = status_bar.clone();
         move || {
             let state = state.borrow();
-            stream_label.set_text(&format!(
-                "Stream: {}{}",
-                state.stream_status.state.label(),
-                elapsed_suffix(state.stream_active_since)
+            stream_label.set_text(&fl!(
+                LANGUAGE_LOADER,
+                "window-stream-status-line",
+                state = state.stream_status.state.label(),
+                elapsed = elapsed_suffix(state.stream_active_since)
             ));
-            record_label.set_text(&format!(
-                "Record: {}{}",
-                state.record_status.state.label(),
-                elapsed_suffix(state.record_active_since)
+            record_label.set_text(&fl!(
+                LANGUAGE_LOADER,
+                "window-record-status-line",
+                state = state.record_status.state.label(),
+                elapsed = elapsed_suffix(state.record_active_since)
             ));
             status_bar::set_stream(
                 &status_bar,
-                &format!(
-                    "Stream: {}{}",
-                    state.stream_status.state.label(),
-                    elapsed_suffix(state.stream_active_since)
+                &fl!(
+                    LANGUAGE_LOADER,
+                    "window-stream-status-line",
+                    state = state.stream_status.state.label(),
+                    elapsed = elapsed_suffix(state.stream_active_since)
                 ),
                 state.stream_status.active,
             );
             status_bar::set_record(
                 &status_bar,
-                &format!(
-                    "Record: {}{}",
-                    state.record_status.state.label(),
-                    elapsed_suffix(state.record_active_since)
+                &fl!(
+                    LANGUAGE_LOADER,
+                    "window-record-status-line",
+                    state = state.record_status.state.label(),
+                    elapsed = elapsed_suffix(state.record_active_since)
                 ),
                 state.record_status.active,
             );
@@ -237,12 +247,12 @@ pub fn build_main_window(
 
     let stream_live_icon = Image::from_icon_name("media-record-symbolic");
     stream_live_icon.add_css_class("scenedeck-top-streaming-icon");
-    stream_live_icon.set_tooltip_text(Some("Streaming live"));
+    stream_live_icon.set_tooltip_text(Some(&fl!(LANGUAGE_LOADER, "window-stream-live-tooltip")));
     stream_live_icon.set_visible(false);
 
     let about_btn = gtk4::Button::builder()
         .icon_name("help-about-symbolic")
-        .tooltip_text("About SceneDeck")
+        .tooltip_text(fl!(LANGUAGE_LOADER, "window-about-tooltip"))
         .build();
     about_btn.connect_clicked({
         let window = window.clone();
@@ -252,7 +262,7 @@ pub fn build_main_window(
 
     let refresh_btn = gtk4::Button::builder()
         .icon_name("view-refresh-symbolic")
-        .tooltip_text("Refresh current page")
+        .tooltip_text(fl!(LANGUAGE_LOADER, "window-refresh-tooltip"))
         .build();
     refresh_btn.connect_clicked({
         let nav = nav.clone();
@@ -337,15 +347,20 @@ fn apply_event(
                 state.clear_output_command_errors();
                 state.clear_obs_stats();
             }
-            sidebar_controls.status_label.set_text("Connecting to OBS…");
+            sidebar_controls
+                .status_label
+                .set_text(&fl!(LANGUAGE_LOADER, "window-status-connecting"));
             set_status_class(&sidebar_controls.status_label, "obs-connecting");
-            sidebar_controls.connect_btn.set_label("Connecting…");
+            sidebar_controls
+                .connect_btn
+                .set_label(&fl!(LANGUAGE_LOADER, "window-connect-btn-connecting"));
             sidebar_controls.connect_btn.set_sensitive(false);
             sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
             status_bar::set_connection(status_bar, &ObsStatus::Connecting);
             status_bar::clear_stats(status_bar);
-            show_disconnected_view(live, "Connecting to OBS…");
-            live.current_scene_label.set_text("Current scene: —");
+            show_disconnected_view(live, &fl!(LANGUAGE_LOADER, "window-status-connecting"));
+            live.current_scene_label
+                .set_text(&fl!(LANGUAGE_LOADER, "window-current-scene-none"));
             rebuild_audio_cards(live, &[], nav);
             reset_output_controls(live);
             update_named_selector(&header_selectors.profiles, &ObsNamedList::default());
@@ -360,11 +375,15 @@ fn apply_event(
                 obs_version: info.obs_version.clone(),
             };
             nav.state.borrow_mut().set_obs_status(obs_status.clone());
-            sidebar_controls
-                .status_label
-                .set_text(&format!("Connected — OBS {}", info.obs_version));
+            sidebar_controls.status_label.set_text(&fl!(
+                LANGUAGE_LOADER,
+                "window-status-connected",
+                version = info.obs_version.clone()
+            ));
             set_status_class(&sidebar_controls.status_label, "obs-connected");
-            sidebar_controls.connect_btn.set_label("Disconnect");
+            sidebar_controls
+                .connect_btn
+                .set_label(&fl!(LANGUAGE_LOADER, "window-connect-btn-disconnect"));
             sidebar_controls.connect_btn.set_sensitive(true);
             sidebar_controls
                 .connect_btn
@@ -390,9 +409,13 @@ fn apply_event(
                 state.clear_output_command_errors();
                 state.clear_obs_stats();
             }
-            sidebar_controls.status_label.set_text("Disconnected");
+            sidebar_controls
+                .status_label
+                .set_text(&fl!(LANGUAGE_LOADER, "window-status-disconnected"));
             set_status_class(&sidebar_controls.status_label, "obs-disconnected");
-            sidebar_controls.connect_btn.set_label("Connect to OBS");
+            sidebar_controls
+                .connect_btn
+                .set_label(&fl!(LANGUAGE_LOADER, "window-connect-btn-connect"));
             sidebar_controls.connect_btn.set_sensitive(true);
             sidebar_controls
                 .connect_btn
@@ -403,8 +426,9 @@ fn apply_event(
             sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
             status_bar::set_connection(status_bar, &ObsStatus::Disconnected);
             status_bar::clear_stats(status_bar);
-            show_disconnected_view(live, "Connect to OBS to use Live controls");
-            live.current_scene_label.set_text("Current scene: —");
+            show_disconnected_view(live, &fl!(LANGUAGE_LOADER, "window-live-disconnected-hint"));
+            live.current_scene_label
+                .set_text(&fl!(LANGUAGE_LOADER, "window-current-scene-none"));
             rebuild_audio_cards(live, &[], nav);
             reset_output_controls(live);
             update_named_selector(&header_selectors.profiles, &ObsNamedList::default());
@@ -429,8 +453,11 @@ fn apply_event(
             };
             // Update the current scene label from the inventory's known active scene.
             let scene_text = inventory.current_id.as_deref().unwrap_or("—");
-            live.current_scene_label
-                .set_text(&format!("Current scene: {scene_text}"));
+            live.current_scene_label.set_text(&fl!(
+                LANGUAGE_LOADER,
+                "window-current-scene",
+                scene = scene_text
+            ));
             rebuild_scene_cards(live, &inventory, nav);
             // Refresh pages that display inventory data if they're currently visible.
             let page = nav.state.borrow().current_page;
@@ -450,8 +477,11 @@ fn apply_event(
         }
 
         AppEvent::CurrentSceneChanged(scene_id) => {
-            live.current_scene_label
-                .set_text(&format!("Current scene: {scene_id}"));
+            live.current_scene_label.set_text(&fl!(
+                LANGUAGE_LOADER,
+                "window-current-scene",
+                scene = scene_id.clone()
+            ));
             let inventory = {
                 let mut state = nav.state.borrow_mut();
                 state.scene_inventory.set_current_scene(scene_id);
@@ -477,11 +507,15 @@ fn apply_event(
                 state.clear_output_command_errors();
                 state.clear_obs_stats();
             }
-            sidebar_controls
-                .status_label
-                .set_text(&format!("Error: {err}"));
+            sidebar_controls.status_label.set_text(&fl!(
+                LANGUAGE_LOADER,
+                "window-status-error",
+                error = err.to_string()
+            ));
             set_status_class(&sidebar_controls.status_label, "obs-error");
-            sidebar_controls.connect_btn.set_label("Retry");
+            sidebar_controls
+                .connect_btn
+                .set_label(&fl!(LANGUAGE_LOADER, "window-connect-btn-retry"));
             sidebar_controls.connect_btn.set_sensitive(true);
             sidebar_controls
                 .connect_btn
@@ -493,14 +527,19 @@ fn apply_event(
             status_bar::set_connection(status_bar, &obs_status);
             status_bar::clear_stats(status_bar);
             reset_output_controls(live);
-            show_disconnected_view(live, "OBS connection failed");
-            live.current_scene_label.set_text("Current scene: —");
+            show_disconnected_view(live, &fl!(LANGUAGE_LOADER, "window-obs-connection-failed"));
+            live.current_scene_label
+                .set_text(&fl!(LANGUAGE_LOADER, "window-current-scene-none"));
 
             // Surface the error as a dismissable toast so it's visible even
             // when the user is on a different page.
             toast.add_toast(
                 adw::Toast::builder()
-                    .title(format!("OBS error: {err}"))
+                    .title(fl!(
+                        LANGUAGE_LOADER,
+                        "window-toast-obs-error",
+                        error = err.to_string()
+                    ))
                     .timeout(8)
                     .build(),
             );
@@ -613,7 +652,11 @@ fn apply_event(
             };
             status_bar::set_stream(
                 status_bar,
-                &output_label("Stream", &status, elapsed.as_deref()),
+                &output_label(
+                    &fl!(LANGUAGE_LOADER, "window-output-kind-stream"),
+                    &status,
+                    elapsed.as_deref(),
+                ),
                 status.active,
             );
             update_stream_status(live, &status, elapsed, error.as_deref());
@@ -636,7 +679,11 @@ fn apply_event(
             };
             status_bar::set_record(
                 status_bar,
-                &output_label("Record", &status, elapsed.as_deref()),
+                &output_label(
+                    &fl!(LANGUAGE_LOADER, "window-output-kind-record"),
+                    &status,
+                    elapsed.as_deref(),
+                ),
                 status.active,
             );
             update_record_status(
@@ -661,7 +708,11 @@ fn apply_event(
             };
             status_bar::set_stream(
                 status_bar,
-                &output_label("Stream", &status, elapsed.as_deref()),
+                &output_label(
+                    &fl!(LANGUAGE_LOADER, "window-output-kind-stream"),
+                    &status,
+                    elapsed.as_deref(),
+                ),
                 status.active,
             );
             update_stream_status(live, &status, elapsed, error.as_deref());
@@ -681,7 +732,11 @@ fn apply_event(
             };
             status_bar::set_record(
                 status_bar,
-                &output_label("Record", &status, elapsed.as_deref()),
+                &output_label(
+                    &fl!(LANGUAGE_LOADER, "window-output-kind-record"),
+                    &status,
+                    elapsed.as_deref(),
+                ),
                 status.active,
             );
             update_record_status(
@@ -705,7 +760,11 @@ fn apply_event(
             };
             status_bar::set_stream(
                 status_bar,
-                &output_label("Stream", &status, elapsed.as_deref()),
+                &output_label(
+                    &fl!(LANGUAGE_LOADER, "window-output-kind-stream"),
+                    &status,
+                    elapsed.as_deref(),
+                ),
                 status.active,
             );
             update_stream_status(live, &status, elapsed, None);
@@ -724,7 +783,11 @@ fn apply_event(
             };
             status_bar::set_record(
                 status_bar,
-                &output_label("Record", &status, elapsed.as_deref()),
+                &output_label(
+                    &fl!(LANGUAGE_LOADER, "window-output-kind-record"),
+                    &status,
+                    elapsed.as_deref(),
+                ),
                 status.active,
             );
             update_record_status(live, &status, elapsed, last_path.as_deref(), None);
@@ -743,7 +806,11 @@ fn apply_event(
             };
             status_bar::set_stream(
                 status_bar,
-                &output_label("Stream", &status, elapsed.as_deref()),
+                &output_label(
+                    &fl!(LANGUAGE_LOADER, "window-output-kind-stream"),
+                    &status,
+                    elapsed.as_deref(),
+                ),
                 status.active,
             );
             update_stream_status(live, &status, elapsed, error.as_deref());
@@ -763,7 +830,11 @@ fn apply_event(
             };
             status_bar::set_record(
                 status_bar,
-                &output_label("Record", &status, elapsed.as_deref()),
+                &output_label(
+                    &fl!(LANGUAGE_LOADER, "window-output-kind-record"),
+                    &status,
+                    elapsed.as_deref(),
+                ),
                 status.active,
             );
             update_record_status(
@@ -871,7 +942,7 @@ fn format_elapsed(since: Instant) -> String {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SidebarOutputButtonModel {
-    label: &'static str,
+    label: String,
     sensitive: bool,
     suggested: bool,
     destructive: bool,
@@ -880,16 +951,18 @@ struct SidebarOutputButtonModel {
 fn sidebar_output_button_model(
     status: &OutputStatus,
     connected: bool,
-    start_label: &'static str,
-    stop_label: &'static str,
+    start_label: String,
+    stop_label: String,
 ) -> SidebarOutputButtonModel {
     if status.state.is_transitioning() {
         return SidebarOutputButtonModel {
             label: match status.state {
-                OutputRunState::Starting => "Starting…",
-                OutputRunState::Stopping => "Stopping…",
-                OutputRunState::Reconnecting => "Reconnecting…",
-                _ => "Working…",
+                OutputRunState::Starting => fl!(LANGUAGE_LOADER, "window-sidebar-output-starting"),
+                OutputRunState::Stopping => fl!(LANGUAGE_LOADER, "window-sidebar-output-stopping"),
+                OutputRunState::Reconnecting => {
+                    fl!(LANGUAGE_LOADER, "window-sidebar-output-reconnecting")
+                }
+                _ => fl!(LANGUAGE_LOADER, "window-sidebar-output-working"),
             },
             sensitive: false,
             suggested: false,
@@ -915,7 +988,7 @@ fn sidebar_output_button_model(
 }
 
 fn apply_sidebar_output_button(button: &Button, model: SidebarOutputButtonModel) {
-    button.set_label(model.label);
+    button.set_label(&model.label);
     button.set_sensitive(model.sensitive);
     if model.suggested {
         button.add_css_class("suggested-action");
@@ -945,8 +1018,8 @@ fn sync_sidebar_output_buttons(sidebar: &SidebarControls, state: &AppState) {
         sidebar_output_button_model(
             &state.stream_status,
             connected,
-            "Start Stream",
-            "Stop Stream",
+            fl!(LANGUAGE_LOADER, "window-sidebar-start-stream"),
+            fl!(LANGUAGE_LOADER, "window-sidebar-stop-stream"),
         ),
     );
     apply_sidebar_output_button(
@@ -954,8 +1027,8 @@ fn sync_sidebar_output_buttons(sidebar: &SidebarControls, state: &AppState) {
         sidebar_output_button_model(
             &state.record_status,
             connected,
-            "Start Recording",
-            "Stop Recording",
+            fl!(LANGUAGE_LOADER, "window-sidebar-start-recording"),
+            fl!(LANGUAGE_LOADER, "window-sidebar-stop-recording"),
         ),
     );
     sync_live_sidebar_icon(sidebar, state.stream_status.active);
@@ -1008,7 +1081,10 @@ fn previous_scene_for_inventory_update(
 }
 
 fn build_header_selectors(nav: &NavigationContext) -> HeaderSelectors {
-    let profiles = build_named_selector("Profile", "Switch OBS profile");
+    let profiles = build_named_selector(
+        &fl!(LANGUAGE_LOADER, "window-selector-profile-label"),
+        &fl!(LANGUAGE_LOADER, "window-selector-profile-tooltip"),
+    );
     {
         let nav = nav.clone();
         let model = profiles.model.clone();
@@ -1024,7 +1100,10 @@ fn build_header_selectors(nav: &NavigationContext) -> HeaderSelectors {
         });
     }
 
-    let scene_collections = build_named_selector("Collection", "Switch OBS scene collection");
+    let scene_collections = build_named_selector(
+        &fl!(LANGUAGE_LOADER, "window-selector-collection-label"),
+        &fl!(LANGUAGE_LOADER, "window-selector-collection-tooltip"),
+    );
     {
         let nav = nav.clone();
         let model = scene_collections.model.clone();
@@ -1142,7 +1221,7 @@ fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, Side
     status_label.add_css_class("obs-disconnected");
 
     let connect_btn = Button::builder()
-        .label("Connect to OBS")
+        .label(fl!(LANGUAGE_LOADER, "window-connect-btn-connect"))
         .halign(gtk4::Align::Fill)
         .hexpand(true)
         .build();
@@ -1163,7 +1242,7 @@ fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, Side
     });
 
     let stream_btn = Button::builder()
-        .label("Start Stream")
+        .label(fl!(LANGUAGE_LOADER, "window-sidebar-start-stream"))
         .halign(gtk4::Align::Fill)
         .hexpand(true)
         .sensitive(false)
@@ -1181,7 +1260,7 @@ fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, Side
     });
 
     let record_btn = Button::builder()
-        .label("Start Recording")
+        .label(fl!(LANGUAGE_LOADER, "window-sidebar-start-recording"))
         .halign(gtk4::Align::Fill)
         .hexpand(true)
         .sensitive(false)
@@ -1366,11 +1445,11 @@ mod tests {
             sidebar_output_button_model(
                 &output_status(false, OutputRunState::Inactive),
                 false,
-                "Start Stream",
-                "Stop Stream",
+                "Start Stream".to_string(),
+                "Stop Stream".to_string(),
             ),
             SidebarOutputButtonModel {
-                label: "Start Stream",
+                label: "Start Stream".to_string(),
                 sensitive: false,
                 suggested: false,
                 destructive: false,
@@ -1380,11 +1459,11 @@ mod tests {
             sidebar_output_button_model(
                 &output_status(false, OutputRunState::Inactive),
                 true,
-                "Start Stream",
-                "Stop Stream",
+                "Start Stream".to_string(),
+                "Stop Stream".to_string(),
             ),
             SidebarOutputButtonModel {
-                label: "Start Stream",
+                label: "Start Stream".to_string(),
                 sensitive: true,
                 suggested: true,
                 destructive: false,
@@ -1394,11 +1473,11 @@ mod tests {
             sidebar_output_button_model(
                 &output_status(true, OutputRunState::Active),
                 true,
-                "Start Stream",
-                "Stop Stream",
+                "Start Stream".to_string(),
+                "Stop Stream".to_string(),
             ),
             SidebarOutputButtonModel {
-                label: "Stop Stream",
+                label: "Stop Stream".to_string(),
                 sensitive: true,
                 suggested: false,
                 destructive: true,
@@ -1408,11 +1487,11 @@ mod tests {
             sidebar_output_button_model(
                 &output_status(false, OutputRunState::Starting),
                 true,
-                "Start Stream",
-                "Stop Stream",
+                "Start Stream".to_string(),
+                "Stop Stream".to_string(),
             ),
             SidebarOutputButtonModel {
-                label: "Starting…",
+                label: "Starting…".to_string(),
                 sensitive: false,
                 suggested: false,
                 destructive: false,

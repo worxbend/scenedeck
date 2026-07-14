@@ -1,6 +1,9 @@
 //! Error type shared across OBS, storage, and controller boundaries.
 
+use i18n_embed_fl::fl;
 use thiserror::Error;
+
+use crate::infra::i18n::LANGUAGE_LOADER;
 
 /// Application-level error normalized for controller/UI handling.
 #[derive(Debug, Error, Clone)]
@@ -43,9 +46,35 @@ impl AppError {
         Self::Storage(error.to_string())
     }
 
+    /// Localized, user-facing rendering of this error. The embedded detail
+    /// (often raw text from OBS or another upstream library) is not
+    /// translated, only the surrounding message is.
+    pub fn user_message(&self) -> String {
+        match self {
+            Self::Connection(detail) => {
+                fl!(
+                    LANGUAGE_LOADER,
+                    "error-connection",
+                    detail = detail.as_str()
+                )
+            }
+            Self::Request(detail) => {
+                fl!(LANGUAGE_LOADER, "error-request", detail = detail.as_str())
+            }
+            Self::Config(detail) => fl!(LANGUAGE_LOADER, "error-config", detail = detail.as_str()),
+            Self::Storage(detail) => {
+                fl!(LANGUAGE_LOADER, "error-storage", detail = detail.as_str())
+            }
+        }
+    }
+
     /// Build a concise notification title for user-visible error toasts.
     pub fn notification_title(&self) -> String {
-        format!("SceneDeck error: {self}")
+        fl!(
+            LANGUAGE_LOADER,
+            "error-notification-title",
+            message = self.user_message()
+        )
     }
 }
 

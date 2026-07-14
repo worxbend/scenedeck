@@ -11,11 +11,13 @@ use gtk4::{
 };
 
 use crate::domain::role::SceneRole;
+use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::registry::{
     read_registry, read_registry_yaml_from_path, write_registry, write_registry_yaml_to_path,
     SceneEntry,
 };
 use crate::ui::navigation::NavigationContext;
+use i18n_embed_fl::fl;
 
 // ── Role index helpers ────────────────────────────────────────────────────────
 
@@ -85,8 +87,8 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
     if inventory.scenes.is_empty() {
         let empty = StatusPage::builder()
             .icon_name("view-list-symbolic")
-            .title("No Scenes")
-            .description("Connect to OBS to load the scene list.")
+            .title(fl!(LANGUAGE_LOADER, "inventory-empty-state-title"))
+            .description(fl!(LANGUAGE_LOADER, "inventory-empty-state-description"))
             .build();
         container.append(&empty);
         return;
@@ -95,7 +97,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
     let registry = read_registry();
 
     let page = PreferencesPage::builder()
-        .title("Inventory")
+        .title(fl!(LANGUAGE_LOADER, "inventory-page-title"))
         .vexpand(true)
         .build();
     page.add_css_class("app-preferences-page");
@@ -103,8 +105,8 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
     // ── OBS Scenes group ──────────────────────────────────────────────────────
 
     let scenes_group = PreferencesGroup::builder()
-        .title("OBS Scenes")
-        .description("Assign roles to control which scenes appear on the Live page.")
+        .title(fl!(LANGUAGE_LOADER, "inventory-scenes-group-title"))
+        .description(fl!(LANGUAGE_LOADER, "inventory-scenes-group-description"))
         .build();
 
     let yaml_row = build_yaml_actions_row(container, nav);
@@ -116,17 +118,12 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
 
         let subtitle = current_role
             .map(SceneRole::description)
-            .unwrap_or("No role assigned");
+            .unwrap_or_else(|| fl!(LANGUAGE_LOADER, "inventory-no-role-assigned"));
 
-        let role_model = gtk4::StringList::new(&[
-            "Unassigned",
-            "Primary",
-            "Secondary",
-            "Module",
-            "Raw",
-            "Debug",
-            "Archive",
-        ]);
+        let mut role_labels: Vec<String> = vec![SceneRole::unassigned_label()];
+        role_labels.extend(SceneRole::ALL.iter().map(|r| r.label()));
+        let role_label_refs: Vec<&str> = role_labels.iter().map(String::as_str).collect();
+        let role_model = gtk4::StringList::new(&role_label_refs);
 
         let combo_row = ComboRow::builder()
             .title(scene.name.as_str())
@@ -162,8 +159,8 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
 
     if !stale.is_empty() {
         let stale_group = PreferencesGroup::builder()
-            .title("Stale Registry Entries")
-            .description("These scenes are in your local registry but no longer exist in OBS.")
+            .title(fl!(LANGUAGE_LOADER, "inventory-stale-group-title"))
+            .description(fl!(LANGUAGE_LOADER, "inventory-stale-group-description"))
             .build();
 
         for (entry_name, entry) in stale {
@@ -174,7 +171,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
 
             let remove_btn = Button::builder()
                 .icon_name("list-remove-symbolic")
-                .tooltip_text("Remove stale entry")
+                .tooltip_text(fl!(LANGUAGE_LOADER, "inventory-remove-stale-tooltip"))
                 .valign(Align::Center)
                 .build();
             remove_btn.add_css_class("flat");
@@ -198,22 +195,22 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
 
 fn build_yaml_actions_row(container: &GtkBox, nav: &NavigationContext) -> ActionRow {
     let row = ActionRow::builder()
-        .title("Scene Registry YAML")
-        .subtitle("Export or import scene roles, tags, protection flags, and graph rules.")
+        .title(fl!(LANGUAGE_LOADER, "inventory-yaml-row-title"))
+        .subtitle(fl!(LANGUAGE_LOADER, "inventory-yaml-row-subtitle"))
         .build();
 
     let export_btn = Button::builder()
-        .label("Export")
+        .label(fl!(LANGUAGE_LOADER, "inventory-export-button-label"))
         .icon_name("document-save-symbolic")
-        .tooltip_text("Export scene registry to YAML")
+        .tooltip_text(fl!(LANGUAGE_LOADER, "inventory-export-tooltip"))
         .valign(Align::Center)
         .build();
     export_btn.add_css_class("flat");
 
     let import_btn = Button::builder()
-        .label("Import")
+        .label(fl!(LANGUAGE_LOADER, "inventory-import-button-label"))
         .icon_name("document-open-symbolic")
-        .tooltip_text("Import scene registry from YAML")
+        .tooltip_text(fl!(LANGUAGE_LOADER, "inventory-import-tooltip"))
         .valign(Align::Center)
         .build();
     import_btn.add_css_class("flat");
@@ -259,8 +256,8 @@ fn handle_scene_role_change(row: &ComboRow, scene_id: &str) {
     }
     let subtitle = new_role
         .map(SceneRole::description)
-        .unwrap_or("No role assigned");
-    row.set_subtitle(subtitle);
+        .unwrap_or_else(|| fl!(LANGUAGE_LOADER, "inventory-no-role-assigned"));
+    row.set_subtitle(&subtitle);
 }
 
 fn handle_stale_entry_remove(entry_name: &str, stale_row: &ActionRow) {
@@ -285,11 +282,11 @@ fn handle_import_click(
 
 fn show_export_dialog(button: &Button, status_row: &ActionRow) {
     let dialog = FileChooserNative::new(
-        Some("Export Scene Registry"),
+        Some(&fl!(LANGUAGE_LOADER, "inventory-export-dialog-title")),
         parent_window(button).as_ref(),
         FileChooserAction::Save,
-        Some("Export"),
-        Some("Cancel"),
+        Some(&fl!(LANGUAGE_LOADER, "inventory-export-button-label")),
+        Some(&fl!(LANGUAGE_LOADER, "inventory-dialog-cancel-label")),
     );
     dialog.set_modal(true);
     dialog.set_current_name("scenedeck-registry.yaml");
@@ -303,14 +300,19 @@ fn show_export_dialog(button: &Button, status_row: &ActionRow) {
                     let path = ensure_yaml_extension(path);
                     let registry = read_registry();
                     match write_registry_yaml_to_path(&path, &registry) {
-                        Ok(()) => status_row.set_subtitle(&format!(
-                            "Exported scene registry to {}.",
-                            path.display()
+                        Ok(()) => status_row.set_subtitle(&fl!(
+                            LANGUAGE_LOADER,
+                            "inventory-export-success",
+                            path = path.display().to_string()
                         )),
-                        Err(err) => status_row.set_subtitle(&format!("Export failed: {err}")),
+                        Err(err) => status_row.set_subtitle(&fl!(
+                            LANGUAGE_LOADER,
+                            "inventory-export-error",
+                            error = err.to_string()
+                        )),
                     }
                 }
-                None => status_row.set_subtitle("Export failed: no file was selected."),
+                None => status_row.set_subtitle(&fl!(LANGUAGE_LOADER, "inventory-export-no-file")),
             }
         }
         dialog.destroy();
@@ -324,11 +326,11 @@ fn show_import_dialog(
     nav: &NavigationContext,
 ) {
     let dialog = FileChooserNative::new(
-        Some("Import Scene Registry"),
+        Some(&fl!(LANGUAGE_LOADER, "inventory-import-dialog-title")),
         parent_window(button).as_ref(),
         FileChooserAction::Open,
-        Some("Import"),
-        Some("Cancel"),
+        Some(&fl!(LANGUAGE_LOADER, "inventory-import-button-label")),
+        Some(&fl!(LANGUAGE_LOADER, "inventory-dialog-cancel-label")),
     );
     dialog.set_modal(true);
     dialog.set_filter(&yaml_file_filter());
@@ -343,9 +345,13 @@ fn show_import_dialog(
                     .and_then(|registry| write_registry(&registry))
                 {
                     Ok(()) => rebuild(&container, &nav),
-                    Err(err) => status_row.set_subtitle(&format!("Import failed: {err}")),
+                    Err(err) => status_row.set_subtitle(&fl!(
+                        LANGUAGE_LOADER,
+                        "inventory-import-error",
+                        error = err.to_string()
+                    )),
                 },
-                None => status_row.set_subtitle("Import failed: no file was selected."),
+                None => status_row.set_subtitle(&fl!(LANGUAGE_LOADER, "inventory-import-no-file")),
             }
         }
         dialog.destroy();
@@ -354,7 +360,7 @@ fn show_import_dialog(
 
 fn yaml_file_filter() -> FileFilter {
     let filter = FileFilter::new();
-    filter.set_name(Some("YAML files"));
+    filter.set_name(Some(&fl!(LANGUAGE_LOADER, "inventory-yaml-filter-name")));
     filter.add_pattern("*.yaml");
     filter.add_pattern("*.yml");
     filter

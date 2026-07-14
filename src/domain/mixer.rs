@@ -1,4 +1,6 @@
 use crate::domain::scene::SceneId;
+use crate::infra::i18n::LANGUAGE_LOADER;
+use i18n_embed_fl::fl;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -11,19 +13,19 @@ pub enum MixerMode {
 }
 
 impl MixerMode {
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::ActiveScene => "Active",
-            Self::SelectedScene => "Selected",
-            Self::PinnedScene => "Pinned",
+            Self::ActiveScene => fl!(LANGUAGE_LOADER, "mixer-mode-active"),
+            Self::SelectedScene => fl!(LANGUAGE_LOADER, "mixer-mode-selected"),
+            Self::PinnedScene => fl!(LANGUAGE_LOADER, "mixer-mode-pinned"),
         }
     }
 
-    pub const fn description(self) -> &'static str {
+    pub fn description(self) -> String {
         match self {
-            Self::ActiveScene => "Follow the OBS program scene.",
-            Self::SelectedScene => "Inspect the selected scene without following OBS.",
-            Self::PinnedScene => "Keep the selected scene stable while operating.",
+            Self::ActiveScene => fl!(LANGUAGE_LOADER, "mixer-mode-active-desc"),
+            Self::SelectedScene => fl!(LANGUAGE_LOADER, "mixer-mode-selected-desc"),
+            Self::PinnedScene => fl!(LANGUAGE_LOADER, "mixer-mode-pinned-desc"),
         }
     }
 
@@ -79,11 +81,11 @@ pub enum MixerGrouping {
 }
 
 impl MixerGrouping {
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Scope => "Scope",
-            Self::ScenePath => "Scene Path",
-            Self::None => "None",
+            Self::Scope => fl!(LANGUAGE_LOADER, "mixer-grouping-scope"),
+            Self::ScenePath => fl!(LANGUAGE_LOADER, "mixer-grouping-scene-path"),
+            Self::None => fl!(LANGUAGE_LOADER, "mixer-grouping-none"),
         }
     }
 

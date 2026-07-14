@@ -15,11 +15,13 @@ use gtk4::{
     Align, Box as GtkBox, Button, DrawingArea, GestureDrag, Image, Label, Orientation, PolicyType,
     ScrolledWindow,
 };
+use i18n_embed_fl::fl;
 
 use crate::domain::graph::{EdgeStatus, SceneGraph};
 use crate::domain::registry::SceneRegistrySnapshot;
 use crate::domain::role::SceneRole;
 use crate::domain::scene::SceneInventory;
+use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::graph_service::classify_edge;
 use crate::storage::registry::read_registry;
 use crate::ui::navigation::NavigationContext;
@@ -73,11 +75,8 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
     if graph.edges.is_empty() {
         let empty = StatusPage::builder()
             .icon_name("view-grid-symbolic")
-            .title("No Dependencies")
-            .description(
-                "No scenes nest other scenes, or OBS is not connected. \
-                 Connect and add nested scene sources to see the dependency graph.",
-            )
+            .title(fl!(LANGUAGE_LOADER, "graph-empty-title"))
+            .description(fl!(LANGUAGE_LOADER, "graph-empty-description"))
             .build();
         container.append(&empty);
         return;
@@ -106,7 +105,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
         .build();
 
     let title = Label::builder()
-        .label("Scene Dependencies")
+        .label(fl!(LANGUAGE_LOADER, "graph-page-title"))
         .xalign(0.0)
         .hexpand(true)
         .valign(Align::Center)
@@ -117,7 +116,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
 
     let reset_btn = Button::builder()
         .icon_name("view-refresh-symbolic")
-        .tooltip_text("Reset graph layout")
+        .tooltip_text(fl!(LANGUAGE_LOADER, "graph-reset-tooltip"))
         .valign(Align::Center)
         .build();
     header.append(&reset_btn);
@@ -388,14 +387,19 @@ fn build_edge_summary_label(status: EdgeStatus, count: usize) -> GtkBox {
         .spacing(4)
         .valign(Align::Center)
         .build();
-    root.set_tooltip_text(Some(status.summary_tooltip()));
+    root.set_tooltip_text(Some(&status.summary_tooltip()));
 
     let icon = Image::from_icon_name(status.icon_name());
     icon.add_css_class(status.css_class());
     root.append(&icon);
 
     let summary = Label::builder()
-        .label(format!("{} {count}", status.summary_label()))
+        .label(fl!(
+            LANGUAGE_LOADER,
+            "graph-edge-summary-count",
+            label = status.summary_label(),
+            count = count
+        ))
         .valign(Align::Center)
         .build();
     summary.add_css_class("caption");
@@ -599,7 +603,7 @@ fn draw_node(ctx: &Context, node: &GraphNode, palette: &Palette) {
     set_rgb(ctx, palette.muted_text);
     let role = SceneRole::label_or_unassigned(node.role);
     ctx.move_to(node.x + 20.0, node.y + 52.0);
-    let _ = ctx.show_text(role);
+    let _ = ctx.show_text(&role);
 }
 
 fn rounded_rect(ctx: &Context, x: f64, y: f64, width: f64, height: f64, radius: f64) {

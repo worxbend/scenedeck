@@ -1,5 +1,9 @@
 //! Domain diagnostics produced by hardening checks.
 
+use i18n_embed_fl::fl;
+
+use crate::infra::i18n::LANGUAGE_LOADER;
+
 /// Severity used to sort and group diagnostics in the Doctor page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DiagnosticSeverity {
@@ -16,11 +20,11 @@ impl DiagnosticSeverity {
     pub const DISPLAY_ORDER: [Self; 3] = [Self::Error, Self::Warning, Self::Info];
 
     /// User-facing group label.
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Info => "Info",
-            Self::Warning => "Warnings",
-            Self::Error => "Errors",
+            Self::Info => fl!(LANGUAGE_LOADER, "diag-label-info"),
+            Self::Warning => fl!(LANGUAGE_LOADER, "diag-label-warning"),
+            Self::Error => fl!(LANGUAGE_LOADER, "diag-label-error"),
         }
     }
 
@@ -47,29 +51,14 @@ impl DiagnosticSeverity {
         diagnostics.iter().filter(|d| d.severity == self).count()
     }
 
-    /// User-facing count label with correct singular/plural wording.
+    /// User-facing count label with correct plural wording for the active
+    /// locale (Fluent selects the plural category, not just singular/other).
     pub fn format_count(self, count: usize) -> String {
-        let noun = if count == 1 {
-            self.singular_count_label()
-        } else {
-            self.plural_count_label()
-        };
-        format!("{count} {noun}")
-    }
-
-    const fn singular_count_label(self) -> &'static str {
+        let count = count as i64;
         match self {
-            Self::Info => "info item",
-            Self::Warning => "warning",
-            Self::Error => "error",
-        }
-    }
-
-    const fn plural_count_label(self) -> &'static str {
-        match self {
-            Self::Info => "info items",
-            Self::Warning => "warnings",
-            Self::Error => "errors",
+            Self::Info => fl!(LANGUAGE_LOADER, "diag-count-info", count = count),
+            Self::Warning => fl!(LANGUAGE_LOADER, "diag-count-warning", count = count),
+            Self::Error => fl!(LANGUAGE_LOADER, "diag-count-error", count = count),
         }
     }
 }

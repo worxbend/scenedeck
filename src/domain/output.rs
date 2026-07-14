@@ -1,5 +1,9 @@
 //! Streaming and recording output state.
 
+use i18n_embed_fl::fl;
+
+use crate::infra::i18n::LANGUAGE_LOADER;
+
 /// OBS output lifecycle state normalized for UI display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputRunState {
@@ -21,15 +25,15 @@ pub enum OutputRunState {
 
 impl OutputRunState {
     /// User-facing label for compact output status text.
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Inactive => "Inactive",
-            Self::Starting => "Starting",
-            Self::Active => "Active",
-            Self::Stopping => "Stopping",
-            Self::Reconnecting => "Reconnecting",
-            Self::Paused => "Paused",
-            Self::Unknown => "Unknown",
+            Self::Inactive => fl!(LANGUAGE_LOADER, "output-state-inactive"),
+            Self::Starting => fl!(LANGUAGE_LOADER, "output-state-starting"),
+            Self::Active => fl!(LANGUAGE_LOADER, "output-state-active"),
+            Self::Stopping => fl!(LANGUAGE_LOADER, "output-state-stopping"),
+            Self::Reconnecting => fl!(LANGUAGE_LOADER, "output-state-reconnecting"),
+            Self::Paused => fl!(LANGUAGE_LOADER, "output-state-paused"),
+            Self::Unknown => fl!(LANGUAGE_LOADER, "output-state-unknown"),
         }
     }
 
@@ -99,7 +103,12 @@ impl OutputStatus {
 
     /// Compact user-facing label for one output control.
     pub fn summary(&self, output_name: &str) -> String {
-        format!("{output_name}: {}", self.state.label())
+        fl!(
+            LANGUAGE_LOADER,
+            "output-summary",
+            name = output_name,
+            state = self.state.label()
+        )
     }
 
     /// Optional detail suitable for a tooltip.

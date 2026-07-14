@@ -1,3 +1,7 @@
+use i18n_embed_fl::fl;
+
+use crate::infra::i18n::LANGUAGE_LOADER;
+
 /// Stable identifier for an OBS audio input.  Matches `inputName` in the
 /// WebSocket protocol; OBS guarantees uniqueness within a scene collection.
 pub type InputId = String;
@@ -13,12 +17,12 @@ pub enum AudioSourceScope {
 }
 
 impl AudioSourceScope {
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Global => "Global",
-            Self::ActiveScene => "Scene",
-            Self::NestedScene => "Nested",
-            Self::Group => "Group",
+            Self::Global => fl!(LANGUAGE_LOADER, "audio-scope-global"),
+            Self::ActiveScene => fl!(LANGUAGE_LOADER, "audio-scope-active"),
+            Self::NestedScene => fl!(LANGUAGE_LOADER, "audio-scope-nested"),
+            Self::Group => fl!(LANGUAGE_LOADER, "audio-scope-group"),
         }
     }
 

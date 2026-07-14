@@ -8,9 +8,12 @@ use adw::{
     SwitchRow,
 };
 use gtk4::StringList;
+use i18n_embed_fl::fl;
 
 use crate::controller::state::ObsStatus;
-use crate::domain::appearance::{ThemeId, ThemeMode};
+use crate::domain::appearance::{Language, ThemeId, ThemeMode};
+use crate::infra::i18n;
+use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::config::{write_config, OutputConfig};
 use crate::storage::secret;
 use crate::ui::navigation::NavigationContext;
@@ -20,7 +23,7 @@ use super::super::window::apply_color_scheme;
 
 pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     let page = PreferencesPage::builder()
-        .title("Settings")
+        .title(fl!(LANGUAGE_LOADER, "settings-page-title"))
         .icon_name("preferences-system-symbolic")
         .build();
     page.add_css_class("app-page");
@@ -29,21 +32,27 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
 
     // ── Appearance ────────────────────────────────────────────────────────────
     let appearance_group = PreferencesGroup::builder()
-        .title("Appearance")
-        .description("GNOME apps should follow the system style by default.")
+        .title(fl!(LANGUAGE_LOADER, "settings-appearance-title"))
+        .description(fl!(LANGUAGE_LOADER, "settings-appearance-description"))
         .build();
 
     let cfg = crate::storage::config::read_config().config;
 
-    let theme_options = StringList::new(&["System", "Light", "Dark"]);
+    let theme_mode_strings: Vec<String> = vec![
+        fl!(LANGUAGE_LOADER, "settings-theme-mode-system"),
+        fl!(LANGUAGE_LOADER, "settings-theme-mode-light"),
+        fl!(LANGUAGE_LOADER, "settings-theme-mode-dark"),
+    ];
+    let theme_mode_names: Vec<&str> = theme_mode_strings.iter().map(|s| s.as_str()).collect();
+    let theme_options = StringList::new(&theme_mode_names);
     let current_index = match nav.state.borrow().theme_mode {
         ThemeMode::System => 0u32,
         ThemeMode::Light => 1,
         ThemeMode::Dark => 2,
     };
     let theme_row = ComboRow::builder()
-        .title("Color Scheme")
-        .subtitle("Follow the system preference or force light / dark")
+        .title(fl!(LANGUAGE_LOADER, "settings-color-scheme-title"))
+        .subtitle(fl!(LANGUAGE_LOADER, "settings-color-scheme-subtitle"))
         .model(&theme_options)
         .selected(current_index)
         .build();
@@ -73,7 +82,9 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     appearance_group.add(&theme_row);
 
     let themes = ThemeManager::built_in_themes();
-    let theme_names: Vec<&str> = themes.iter().map(|theme| theme.name).collect();
+    let theme_name_strings: Vec<String> =
+        themes.iter().map(|theme| theme.localized_name()).collect();
+    let theme_names: Vec<&str> = theme_name_strings.iter().map(|s| s.as_str()).collect();
     let selected_theme_index = themes
         .iter()
         .position(|theme| theme.id == cfg.appearance.selected_theme_id())
@@ -84,7 +95,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         .copied()
         .unwrap_or(themes[0]);
     let family_row = ComboRow::builder()
-        .title("Theme")
+        .title(fl!(LANGUAGE_LOADER, "settings-theme-title"))
         .subtitle(theme_subtitle(selected_theme))
         .model(&theme_model)
         .selected(selected_theme_index)
@@ -92,8 +103,8 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     family_row.add_css_class("scenedeck-combo-row");
 
     let theme_status_row = ActionRow::builder()
-        .title("Theme Status")
-        .subtitle("Theme loaded.")
+        .title(fl!(LANGUAGE_LOADER, "settings-theme-status-title"))
+        .subtitle(fl!(LANGUAGE_LOADER, "settings-theme-status-initial"))
         .build();
 
     family_row.connect_selected_notify({
@@ -112,7 +123,11 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
                     row.set_subtitle(&theme_subtitle(theme));
                     theme_status_row.set_subtitle(&theme_report_text(&report));
                 }
-                Err(err) => theme_status_row.set_subtitle(&format!("Failed to save: {err}")),
+                Err(err) => theme_status_row.set_subtitle(&fl!(
+                    LANGUAGE_LOADER,
+                    "settings-failed-to-save",
+                    err = err.to_string()
+                )),
             }
         }
     });
@@ -120,19 +135,19 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     appearance_group.add(&family_row);
 
     let custom_css_row = SwitchRow::builder()
-        .title("Custom CSS")
-        .subtitle("Load separate user CSS files for light and dark mode")
+        .title(fl!(LANGUAGE_LOADER, "settings-custom-css-title"))
+        .subtitle(fl!(LANGUAGE_LOADER, "settings-custom-css-subtitle"))
         .active(cfg.appearance.custom_css.enabled)
         .build();
 
     let light_css_row = EntryRow::builder()
-        .title("Custom Light CSS Path")
+        .title(fl!(LANGUAGE_LOADER, "settings-custom-light-css-title"))
         .text(path_text(cfg.appearance.custom_css.light_path.as_ref()))
         .show_apply_button(true)
         .build();
 
     let dark_css_row = EntryRow::builder()
-        .title("Custom Dark CSS Path")
+        .title(fl!(LANGUAGE_LOADER, "settings-custom-dark-css-title"))
         .text(path_text(cfg.appearance.custom_css.dark_path.as_ref()))
         .show_apply_button(true)
         .build();
@@ -147,7 +162,11 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
                     let report = ThemeManager::apply(&cfg.appearance);
                     theme_status_row.set_subtitle(&theme_report_text(&report));
                 }
-                Err(err) => theme_status_row.set_subtitle(&format!("Failed to save: {err}")),
+                Err(err) => theme_status_row.set_subtitle(&fl!(
+                    LANGUAGE_LOADER,
+                    "settings-failed-to-save",
+                    err = err.to_string()
+                )),
             }
         }
     });
@@ -163,11 +182,11 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     });
 
     let reload_css_row = ActionRow::builder()
-        .title("Reload Custom CSS")
-        .subtitle("Reapply the selected theme and the matching light/dark custom CSS file.")
+        .title(fl!(LANGUAGE_LOADER, "settings-reload-css-title"))
+        .subtitle(fl!(LANGUAGE_LOADER, "settings-reload-css-subtitle"))
         .build();
     let reload_btn = gtk4::Button::builder()
-        .label("Reload")
+        .label(fl!(LANGUAGE_LOADER, "settings-reload-button"))
         .valign(gtk4::Align::Center)
         .build();
     reload_btn.add_css_class("flat");
@@ -187,28 +206,83 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     appearance_group.add(&reload_css_row);
     appearance_group.add(&theme_status_row);
 
+    // ── Language ──────────────────────────────────────────────────────────────
+    let language_group = PreferencesGroup::builder()
+        .title(fl!(LANGUAGE_LOADER, "settings-language-title"))
+        .description(fl!(LANGUAGE_LOADER, "settings-language-description"))
+        .build();
+
+    let language_names: Vec<&str> = Language::ALL.iter().map(|l| l.display_name()).collect();
+    let language_model = StringList::new(&language_names);
+    let selected_language_index = Language::ALL
+        .iter()
+        .position(|l| *l == cfg.language)
+        .unwrap_or(0) as u32;
+    let language_row = ComboRow::builder()
+        .title(fl!(LANGUAGE_LOADER, "settings-display-language-title"))
+        .subtitle(fl!(LANGUAGE_LOADER, "settings-display-language-subtitle"))
+        .model(&language_model)
+        .selected(selected_language_index)
+        .build();
+    language_row.add_css_class("scenedeck-combo-row");
+
+    let language_status_row = ActionRow::builder()
+        .title(fl!(LANGUAGE_LOADER, "settings-language-status-title"))
+        .subtitle(fl!(LANGUAGE_LOADER, "settings-language-status-initial"))
+        .build();
+
+    language_row.connect_selected_notify({
+        let language_status_row = language_status_row.clone();
+        move |row| {
+            let selected = row.selected() as usize;
+            let Some(language) = Language::ALL.get(selected).copied() else {
+                return;
+            };
+
+            let mut cfg = crate::storage::config::read_config().config;
+            cfg.language = language;
+            match write_config(&cfg) {
+                Ok(()) => {
+                    i18n::init(language);
+                    language_status_row
+                        .set_subtitle(&fl!(LANGUAGE_LOADER, "settings-language-saved"));
+                }
+                Err(err) => {
+                    language_status_row.set_subtitle(&fl!(
+                        LANGUAGE_LOADER,
+                        "settings-failed-to-save",
+                        err = err.to_string()
+                    ));
+                }
+            }
+        }
+    });
+
+    language_group.add(&language_row);
+    language_group.add(&language_status_row);
+
     // ── OBS Connection ────────────────────────────────────────────────────────
 
     let obs_group = PreferencesGroup::builder()
-        .title("OBS Connection")
-        .description("WebSocket settings for OBS Studio (default port: 4455).")
+        .title(fl!(LANGUAGE_LOADER, "settings-obs-connection-title"))
+        .description(fl!(LANGUAGE_LOADER, "settings-obs-connection-description"))
         .build();
 
     let host_row = EntryRow::builder()
-        .title("Host")
+        .title(fl!(LANGUAGE_LOADER, "settings-host-title"))
         .text(&cfg.obs.host)
         .show_apply_button(true)
         .build();
 
     let port_row = EntryRow::builder()
-        .title("Port")
+        .title(fl!(LANGUAGE_LOADER, "settings-port-title"))
         .text(cfg.obs.port.to_string())
         .show_apply_button(true)
         .build();
 
     // Password is stored in the system keyring, never in config.json.
     let password_row = PasswordEntryRow::builder()
-        .title("Password (optional)")
+        .title(fl!(LANGUAGE_LOADER, "settings-password-title"))
         .show_apply_button(true)
         .build();
     if let Ok(Some(existing)) = secret::get_obs_password() {
@@ -216,7 +290,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     }
 
     let status_row = ActionRow::builder()
-        .title("OBS Status")
+        .title(fl!(LANGUAGE_LOADER, "settings-obs-status-title"))
         .subtitle(obs_status_text(&nav))
         .build();
 
@@ -230,7 +304,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
             let port: u16 = match port_row.text().trim().parse() {
                 Ok(p) => p,
                 Err(_) => {
-                    status_row.set_subtitle("Invalid port number.");
+                    status_row.set_subtitle(&fl!(LANGUAGE_LOADER, "settings-invalid-port"));
                     return;
                 }
             };
@@ -239,8 +313,12 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
             cfg.obs.host = host;
             cfg.obs.port = port;
             match write_config(&cfg) {
-                Ok(()) => status_row.set_subtitle("Settings saved."),
-                Err(err) => status_row.set_subtitle(&format!("Failed to save: {err}")),
+                Ok(()) => status_row.set_subtitle(&fl!(LANGUAGE_LOADER, "settings-saved")),
+                Err(err) => status_row.set_subtitle(&fl!(
+                    LANGUAGE_LOADER,
+                    "settings-failed-to-save",
+                    err = err.to_string()
+                )),
             }
         }
     };
@@ -264,8 +342,12 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
                 secret::set_obs_password(&text)
             };
             match result {
-                Ok(()) => status_row.set_subtitle("Password saved to keyring."),
-                Err(err) => status_row.set_subtitle(&format!("Keyring error: {err}")),
+                Ok(()) => status_row.set_subtitle(&fl!(LANGUAGE_LOADER, "settings-password-saved")),
+                Err(err) => status_row.set_subtitle(&fl!(
+                    LANGUAGE_LOADER,
+                    "settings-keyring-error",
+                    err = err.to_string()
+                )),
             }
         }
     });
@@ -276,28 +358,28 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
 
     // ── Output safety ────────────────────────────────────────────────────────
     let output_group = PreferencesGroup::builder()
-        .title("Output Safety")
-        .description("Optional confirmations for critical stream and recording actions.")
+        .title(fl!(LANGUAGE_LOADER, "settings-output-safety-title"))
+        .description(fl!(LANGUAGE_LOADER, "settings-output-safety-description"))
         .build();
 
     let confirm_start_stream = output_switch_row(
-        "Confirm Start Stream",
-        "Ask before starting the live stream.",
+        &fl!(LANGUAGE_LOADER, "settings-confirm-start-stream-title"),
+        &fl!(LANGUAGE_LOADER, "settings-confirm-start-stream-subtitle"),
         cfg.outputs.confirm_start_stream,
     );
     let confirm_stop_stream = output_switch_row(
-        "Confirm Stop Stream",
-        "Ask before stopping the live stream.",
+        &fl!(LANGUAGE_LOADER, "settings-confirm-stop-stream-title"),
+        &fl!(LANGUAGE_LOADER, "settings-confirm-stop-stream-subtitle"),
         cfg.outputs.confirm_stop_stream,
     );
     let confirm_start_recording = output_switch_row(
-        "Confirm Start Recording",
-        "Ask before starting a recording.",
+        &fl!(LANGUAGE_LOADER, "settings-confirm-start-recording-title"),
+        &fl!(LANGUAGE_LOADER, "settings-confirm-start-recording-subtitle"),
         cfg.outputs.confirm_start_recording,
     );
     let confirm_stop_recording = output_switch_row(
-        "Confirm Stop Recording",
-        "Ask before stopping a recording.",
+        &fl!(LANGUAGE_LOADER, "settings-confirm-stop-recording-title"),
+        &fl!(LANGUAGE_LOADER, "settings-confirm-stop-recording-subtitle"),
         cfg.outputs.confirm_stop_recording,
     );
 
@@ -323,6 +405,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     status_group.add(&status_row);
 
     page.add(&appearance_group);
+    page.add(&language_group);
     page.add(&obs_group);
     page.add(&output_group);
     page.add(&status_group);
@@ -345,10 +428,16 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
 
 fn obs_status_text(nav: &NavigationContext) -> String {
     match nav.state.borrow().obs_status.clone() {
-        ObsStatus::Disconnected => "Not connected to OBS.".to_string(),
-        ObsStatus::Connecting => "Connecting to OBS…".to_string(),
-        ObsStatus::Connected { obs_version } => format!("Connected — OBS {obs_version}"),
-        ObsStatus::Error(e) => format!("Error: {e}"),
+        ObsStatus::Disconnected => fl!(LANGUAGE_LOADER, "settings-obs-not-connected"),
+        ObsStatus::Connecting => fl!(LANGUAGE_LOADER, "settings-obs-connecting"),
+        ObsStatus::Connected { obs_version } => {
+            fl!(
+                LANGUAGE_LOADER,
+                "settings-obs-connected",
+                version = obs_version
+            )
+        }
+        ObsStatus::Error(e) => fl!(LANGUAGE_LOADER, "settings-obs-error", err = e),
     }
 }
 
@@ -385,20 +474,26 @@ where
 }
 
 fn theme_subtitle(theme: crate::ui::theme::BuiltInTheme) -> String {
-    format!(
-        "{} Swatches: {}",
-        theme.description,
-        theme.swatches.join(", ")
+    fl!(
+        LANGUAGE_LOADER,
+        "settings-theme-subtitle",
+        description = theme.localized_description(),
+        swatches = theme.swatches.join(", ")
     )
 }
 
 fn theme_report_text(report: &crate::ui::theme::ThemeApplyReport) -> String {
     if report.is_ok() {
-        format!("Loaded {} ({:?}).", report.theme_id, report.variant)
+        fl!(
+            LANGUAGE_LOADER,
+            "settings-theme-loaded",
+            theme = report.theme_id.as_str(),
+            variant = format!("{:?}", report.variant)
+        )
     } else {
         report
             .user_message()
-            .unwrap_or_else(|| "Theme loaded with warnings.".to_string())
+            .unwrap_or_else(|| fl!(LANGUAGE_LOADER, "settings-theme-loaded-with-warnings"))
     }
 }
 
@@ -427,7 +522,11 @@ fn save_custom_css_path(row: &EntryRow, kind: CssPathKind, status_row: &ActionRo
             let report = ThemeManager::apply(&cfg.appearance);
             status_row.set_subtitle(&theme_report_text(&report));
         }
-        Err(err) => status_row.set_subtitle(&format!("Failed to save: {err}")),
+        Err(err) => status_row.set_subtitle(&fl!(
+            LANGUAGE_LOADER,
+            "settings-failed-to-save",
+            err = err.to_string()
+        )),
     }
 }
 

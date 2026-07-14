@@ -2,7 +2,10 @@
 
 use std::collections::{HashMap, HashSet};
 
+use i18n_embed_fl::fl;
+
 use crate::domain::scene::SceneId;
+use crate::infra::i18n::LANGUAGE_LOADER;
 
 /// Result of validating a single dependency edge against the role rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,20 +23,20 @@ impl EdgeStatus {
     pub const SUMMARY_ORDER: [Self; 3] = [Self::Ok, Self::Warning, Self::Forbidden];
 
     /// Short label used in the graph edge summary.
-    pub const fn summary_label(self) -> &'static str {
+    pub fn summary_label(self) -> String {
         match self {
-            Self::Ok => "OK",
-            Self::Warning => "Warning",
-            Self::Forbidden => "Forbidden",
+            Self::Ok => fl!(LANGUAGE_LOADER, "edge-status-ok-label"),
+            Self::Warning => fl!(LANGUAGE_LOADER, "edge-status-warning-label"),
+            Self::Forbidden => fl!(LANGUAGE_LOADER, "edge-status-forbidden-label"),
         }
     }
 
     /// Tooltip used to explain this edge status in the graph summary.
-    pub const fn summary_tooltip(self) -> &'static str {
+    pub fn summary_tooltip(self) -> String {
         match self {
-            Self::Ok => "Edges that match the graph policy",
-            Self::Warning => "Edges outside an allow-list",
-            Self::Forbidden => "Edges forbidden by graph policy",
+            Self::Ok => fl!(LANGUAGE_LOADER, "edge-status-ok-tooltip"),
+            Self::Warning => fl!(LANGUAGE_LOADER, "edge-status-warning-tooltip"),
+            Self::Forbidden => fl!(LANGUAGE_LOADER, "edge-status-forbidden-tooltip"),
         }
     }
 

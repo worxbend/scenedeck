@@ -23,10 +23,12 @@ use crate::controller::state::{
 };
 use crate::domain::audio::AudioInput;
 use crate::domain::mixer::{MixerGrouping, MixerMode, MixerSelection};
+use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::audio_service::AudioService;
 use crate::storage::config::write_config;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::widgets::audio_card;
+use i18n_embed_fl::fl;
 
 type MixerRefreshTracker = Rc<RefCell<Option<String>>>;
 const MIXER_INSPECT_ENV: &str = "SCENEDECK_MIXER_INSPECT";
@@ -103,8 +105,8 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
     if inventory.scenes.is_empty() {
         let empty = StatusPage::builder()
             .icon_name("audio-volume-high-symbolic")
-            .title("No Mixer Data")
-            .description("Connect to OBS to load scenes and audio sources.")
+            .title(fl!(LANGUAGE_LOADER, "mixer-empty-title"))
+            .description(fl!(LANGUAGE_LOADER, "mixer-empty-description"))
             .build();
         empty.add_css_class("app-status-page");
         root.append(&empty);
@@ -112,14 +114,14 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
     }
 
     let page = PreferencesPage::builder()
-        .title("Mixer")
+        .title(fl!(LANGUAGE_LOADER, "mixer-page-title"))
         .vexpand(true)
         .hexpand(true)
         .build();
     page.add_css_class("app-preferences-page");
 
     let controls = PreferencesGroup::builder()
-        .title("Mixer Controls")
+        .title(fl!(LANGUAGE_LOADER, "mixer-controls-title"))
         .description(mixer.mode.description())
         .build();
 
@@ -141,7 +143,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
 
     let summary_group = PreferencesGroup::new();
     let summary = adw::ActionRow::builder()
-        .title("Current Mixer Source")
+        .title(fl!(LANGUAGE_LOADER, "mixer-summary-title"))
         .subtitle(source_summary(
             mixer.mode,
             active_scene.as_deref(),
@@ -165,8 +167,8 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
             append_mixer_status(
                 root,
                 "audio-volume-muted-symbolic",
-                "No Scene Selected",
-                "Choose a scene to load its mixer audio.",
+                &fl!(LANGUAGE_LOADER, "mixer-no-scene-title"),
+                &fl!(LANGUAGE_LOADER, "mixer-no-scene-description"),
             );
             return;
         }
@@ -182,8 +184,8 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
                 append_mixer_status(
                     root,
                     "view-refresh-symbolic",
-                    "Loading Mixer Audio",
-                    &format!("Loading audio sources for {scene}."),
+                    &fl!(LANGUAGE_LOADER, "mixer-loading-title"),
+                    &fl!(LANGUAGE_LOADER, "mixer-loading-description", scene = scene),
                 );
                 return;
             }
@@ -217,8 +219,8 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
                 append_mixer_status(
                     root,
                     "view-refresh-symbolic",
-                    "Loading Mixer Audio",
-                    &format!("Loading audio sources for {scene}."),
+                    &fl!(LANGUAGE_LOADER, "mixer-loading-title"),
+                    &fl!(LANGUAGE_LOADER, "mixer-loading-description", scene = scene),
                 );
                 return;
             }
@@ -247,10 +249,17 @@ fn build_mode_row(
     selected: MixerMode,
     refresh_tracker: &MixerRefreshTracker,
 ) -> ComboRow {
-    let model = StringList::new(&["Active", "Selected", "Pinned"]);
+    let mode_order = [
+        MixerMode::ActiveScene,
+        MixerMode::SelectedScene,
+        MixerMode::PinnedScene,
+    ];
+    let labels: Vec<String> = mode_order.iter().map(|mode| mode.label()).collect();
+    let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+    let model = StringList::new(&label_refs);
     let row = ComboRow::builder()
-        .title("Mode")
-        .subtitle("Active follows OBS; Selected and Pinned keep the chosen scene stable.")
+        .title(fl!(LANGUAGE_LOADER, "mixer-mode-row-title"))
+        .subtitle(fl!(LANGUAGE_LOADER, "mixer-mode-row-subtitle"))
         .model(&model)
         .selected(mode_to_index(selected))
         .build();
@@ -291,8 +300,8 @@ fn build_scene_row(
         .unwrap_or(0) as u32;
 
     let row = ComboRow::builder()
-        .title("Scene")
-        .subtitle("Used by Selected and Pinned modes.")
+        .title(fl!(LANGUAGE_LOADER, "mixer-scene-row-title"))
+        .subtitle(fl!(LANGUAGE_LOADER, "mixer-scene-row-subtitle"))
         .model(&model)
         .selected(selected)
         .build();
@@ -324,10 +333,20 @@ fn build_scene_row(
 }
 
 fn build_grouping_row(nav: &NavigationContext, selected: MixerGrouping) -> ComboRow {
-    let model = StringList::new(&["Scope", "Scene Path", "None"]);
+    let grouping_order = [
+        MixerGrouping::Scope,
+        MixerGrouping::ScenePath,
+        MixerGrouping::None,
+    ];
+    let labels: Vec<String> = grouping_order
+        .iter()
+        .map(|grouping| grouping.label())
+        .collect();
+    let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+    let model = StringList::new(&label_refs);
     let row = ComboRow::builder()
-        .title("Group By")
-        .subtitle("Controls how audio sources are arranged below.")
+        .title(fl!(LANGUAGE_LOADER, "mixer-grouping-row-title"))
+        .subtitle(fl!(LANGUAGE_LOADER, "mixer-grouping-row-subtitle"))
         .model(&model)
         .selected(grouping_to_index(selected))
         .build();
@@ -347,7 +366,7 @@ fn build_grouping_row(nav: &NavigationContext, selected: MixerGrouping) -> Combo
 
 fn build_search_row(nav: &NavigationContext, search: &str) -> EntryRow {
     let row = EntryRow::builder()
-        .title("Search")
+        .title(fl!(LANGUAGE_LOADER, "mixer-search-row-title"))
         .text(search)
         .show_apply_button(true)
         .build();
@@ -374,13 +393,17 @@ fn append_mixer_inputs(
 ) -> MixerInspectionStatus<'static> {
     if inputs.is_empty() {
         if source_count == 0 && search.trim().is_empty() {
+            let scene_label = target_scene
+                .map(str::to_string)
+                .unwrap_or_else(|| fl!(LANGUAGE_LOADER, "mixer-current-scene-fallback"));
             append_mixer_status(
                 root,
                 "audio-volume-muted-symbolic",
-                "No Audio Sources",
-                &format!(
-                    "{} has no matching configured OBS audio sources.",
-                    target_scene.unwrap_or("The current scene")
+                &fl!(LANGUAGE_LOADER, "mixer-no-audio-sources-title"),
+                &fl!(
+                    LANGUAGE_LOADER,
+                    "mixer-no-audio-sources-description",
+                    scene = scene_label
                 ),
             );
             MixerInspectionStatus::LoadedNoAudioSources
@@ -388,14 +411,19 @@ fn append_mixer_inputs(
             append_mixer_status(
                 root,
                 "edit-find-symbolic",
-                "No Matching Audio Sources",
-                "Adjust the search filter to show available audio sources.",
+                &fl!(LANGUAGE_LOADER, "mixer-no-matching-title"),
+                &fl!(LANGUAGE_LOADER, "mixer-no-matching-description"),
             );
             MixerInspectionStatus::LoadedNoMatchingAudioSourcesAfterFiltering
         }
     } else {
         match grouping {
-            MixerGrouping::None => append_group(root, nav, "All Sources", inputs),
+            MixerGrouping::None => append_group(
+                root,
+                nav,
+                &fl!(LANGUAGE_LOADER, "mixer-group-all-sources"),
+                inputs,
+            ),
             MixerGrouping::Scope => {
                 let mut groups: BTreeMap<String, Vec<AudioInput>> = BTreeMap::new();
                 for input in inputs {
@@ -413,9 +441,9 @@ fn append_mixer_inputs(
                 for input in inputs {
                     groups
                         .entry(
-                            input
-                                .source_path_label()
-                                .unwrap_or_else(|| "Global".to_string()),
+                            input.source_path_label().unwrap_or_else(|| {
+                                fl!(LANGUAGE_LOADER, "mixer-group-global-fallback")
+                            }),
                         )
                         .or_default()
                         .push(input.clone());
@@ -449,15 +477,18 @@ fn append_mixer_error_status(
 ) {
     let status = StatusPage::builder()
         .icon_name("dialog-warning-symbolic")
-        .title("Mixer Audio Unavailable")
-        .description(format!(
-            "Could not load audio sources for {scene}: {message}"
+        .title(fl!(LANGUAGE_LOADER, "mixer-error-title"))
+        .description(fl!(
+            LANGUAGE_LOADER,
+            "mixer-error-description",
+            scene = scene,
+            message = message
         ))
         .build();
     status.add_css_class("app-status-page");
     let retry_btn = Button::builder()
-        .label("Retry")
-        .tooltip_text("Retry loading mixer audio")
+        .label(fl!(LANGUAGE_LOADER, "mixer-retry-button-label"))
+        .tooltip_text(fl!(LANGUAGE_LOADER, "mixer-retry-button-tooltip"))
         .build();
     retry_btn.add_css_class("suggested-action");
     retry_btn.connect_clicked({
@@ -668,9 +699,10 @@ fn source_summary(
 ) -> String {
     match mode {
         MixerMode::ActiveScene => {
-            format!(
-                "Following active OBS scene: {}",
-                active_scene.unwrap_or("-")
+            fl!(
+                LANGUAGE_LOADER,
+                "mixer-summary-following-active",
+                scene = active_scene.unwrap_or("-")
             )
         }
         MixerMode::SelectedScene | MixerMode::PinnedScene => target
@@ -681,34 +713,45 @@ fn source_summary(
                 };
                 scene_target_summary(target)
             })
-            .unwrap_or_else(|| "No scene selected".to_string()),
+            .unwrap_or_else(|| fl!(LANGUAGE_LOADER, "mixer-summary-no-scene-selected")),
     }
 }
 
 fn scene_target_summary(target: MixerSceneRefreshTarget<'_>) -> String {
     match target.reason {
         MixerSceneRefreshTargetReason::DirectSelectedScene => {
-            format!("Selected scene: {}", target.scene)
+            fl!(
+                LANGUAGE_LOADER,
+                "mixer-summary-selected-scene",
+                scene = target.scene
+            )
         }
         MixerSceneRefreshTargetReason::DirectPinnedScene => {
-            format!("Pinned scene: {}", target.scene)
+            fl!(
+                LANGUAGE_LOADER,
+                "mixer-summary-pinned-scene",
+                scene = target.scene
+            )
         }
         MixerSceneRefreshTargetReason::SelectedModeCurrentSceneFallback => {
-            format!(
-                "Selected scene not set; using active OBS scene: {}",
-                target.scene
+            fl!(
+                LANGUAGE_LOADER,
+                "mixer-summary-selected-fallback",
+                scene = target.scene
             )
         }
         MixerSceneRefreshTargetReason::PinnedModeSelectedSceneFallback => {
-            format!(
-                "Pinned scene not set; using selected scene: {}",
-                target.scene
+            fl!(
+                LANGUAGE_LOADER,
+                "mixer-summary-pinned-selected-fallback",
+                scene = target.scene
             )
         }
         MixerSceneRefreshTargetReason::PinnedModeCurrentSceneFallback => {
-            format!(
-                "Pinned and selected scenes not set; using active OBS scene: {}",
-                target.scene
+            fl!(
+                LANGUAGE_LOADER,
+                "mixer-summary-pinned-active-fallback",
+                scene = target.scene
             )
         }
     }

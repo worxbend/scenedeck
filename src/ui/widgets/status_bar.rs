@@ -4,9 +4,11 @@
 
 use adw::prelude::*;
 use gtk4::{Box as GtkBox, Label, Orientation, Separator};
+use i18n_embed_fl::fl;
 
 use crate::controller::state::ObsStatus;
 use crate::domain::stats::ObsStats;
+use crate::infra::i18n::LANGUAGE_LOADER;
 
 const CONNECTION_CSS_CLASSES: &[&str] = &[
     "obs-connected",
@@ -36,24 +38,24 @@ pub(crate) fn build() -> StatusBarHandle {
     root.add_css_class("scenedeck-status-bar");
 
     let connection_label = segment_label("obs-disconnected");
-    connection_label.set_text(ObsStatus::Disconnected.label());
+    connection_label.set_text(&ObsStatus::Disconnected.label());
 
     let stream_label = segment_label("scenedeck-status-bar-output");
-    stream_label.set_text("Stream: Inactive");
+    stream_label.set_text(&fl!(LANGUAGE_LOADER, "status-bar-stream-inactive"));
 
     let record_label = segment_label("scenedeck-status-bar-output");
-    record_label.set_text("Record: Inactive");
+    record_label.set_text(&fl!(LANGUAGE_LOADER, "status-bar-record-inactive"));
 
     let spacer = GtkBox::builder().hexpand(true).build();
 
     let fps_label = segment_label("scenedeck-status-bar-metric");
-    fps_label.set_text("FPS —");
+    fps_label.set_text(&fl!(LANGUAGE_LOADER, "status-bar-fps-placeholder"));
 
     let bitrate_label = segment_label("scenedeck-status-bar-metric");
-    bitrate_label.set_text("Bitrate —");
+    bitrate_label.set_text(&fl!(LANGUAGE_LOADER, "status-bar-bitrate-placeholder"));
 
     let cpu_label = segment_label("scenedeck-status-bar-metric");
-    cpu_label.set_text("CPU —");
+    cpu_label.set_text(&fl!(LANGUAGE_LOADER, "status-bar-cpu-placeholder"));
 
     let dropped_label = segment_label("scenedeck-status-bar-dropped");
     dropped_label.set_visible(false);
@@ -82,7 +84,7 @@ pub(crate) fn build() -> StatusBarHandle {
 
 /// Reflect the current OBS connection lifecycle state.
 pub(crate) fn set_connection(handle: &StatusBarHandle, status: &ObsStatus) {
-    handle.connection_label.set_text(status.label());
+    handle.connection_label.set_text(&status.label());
     for class in CONNECTION_CSS_CLASSES {
         handle.connection_label.remove_css_class(class);
     }
@@ -128,29 +130,47 @@ pub(crate) fn set_stats(
 
 /// Reset performance segments to their placeholder state, e.g. on disconnect.
 pub(crate) fn clear_stats(handle: &StatusBarHandle) {
-    handle.fps_label.set_text("FPS —");
-    handle.cpu_label.set_text("CPU —");
-    handle.bitrate_label.set_text("Bitrate —");
+    handle
+        .fps_label
+        .set_text(&fl!(LANGUAGE_LOADER, "status-bar-fps-placeholder"));
+    handle
+        .cpu_label
+        .set_text(&fl!(LANGUAGE_LOADER, "status-bar-cpu-placeholder"));
+    handle
+        .bitrate_label
+        .set_text(&fl!(LANGUAGE_LOADER, "status-bar-bitrate-placeholder"));
     handle.dropped_label.set_visible(false);
 }
 
 // ── Formatting (pure, unit tested) ────────────────────────────────────────────
 
 fn format_fps(active_fps: f64) -> String {
-    format!("FPS {active_fps:.1}")
+    fl!(
+        LANGUAGE_LOADER,
+        "status-bar-fps",
+        value = format!("{active_fps:.1}")
+    )
 }
 
 fn format_cpu(cpu_usage_percent: f64) -> String {
-    format!("CPU {cpu_usage_percent:.1}%")
+    fl!(
+        LANGUAGE_LOADER,
+        "status-bar-cpu",
+        value = format!("{cpu_usage_percent:.1}")
+    )
 }
 
 fn format_bitrate(bitrate_kbps: Option<f64>, streaming: bool) -> String {
     if !streaming {
-        return "Bitrate —".to_string();
+        return fl!(LANGUAGE_LOADER, "status-bar-bitrate-placeholder");
     }
     match bitrate_kbps {
-        Some(kbps) => format!("Bitrate {kbps:.0} kbps"),
-        None => "Bitrate —".to_string(),
+        Some(kbps) => fl!(
+            LANGUAGE_LOADER,
+            "status-bar-bitrate",
+            value = format!("{kbps:.0}")
+        ),
+        None => fl!(LANGUAGE_LOADER, "status-bar-bitrate-placeholder"),
     }
 }
 
@@ -158,7 +178,11 @@ fn format_dropped(dropped_frames: u32) -> Option<String> {
     if dropped_frames == 0 {
         return None;
     }
-    Some(format!("{dropped_frames} dropped"))
+    Some(fl!(
+        LANGUAGE_LOADER,
+        "status-bar-dropped",
+        count = dropped_frames
+    ))
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

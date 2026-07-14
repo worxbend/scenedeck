@@ -1,6 +1,9 @@
 //! Scene role classification used by Live, Inventory, Graph, and Doctor.
 
+use i18n_embed_fl::fl;
 use serde::{Deserialize, Serialize};
+
+use crate::infra::i18n::LANGUAGE_LOADER;
 
 /// Local classification assigned to an OBS scene.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -23,7 +26,9 @@ pub enum SceneRole {
 
 impl SceneRole {
     /// User-facing label for a scene with no assigned role.
-    pub const UNASSIGNED_LABEL: &'static str = "Unassigned";
+    pub fn unassigned_label() -> String {
+        fl!(LANGUAGE_LOADER, "role-unassigned")
+    }
 
     /// Stable display order used by role selectors and summaries.
     pub const ALL: [Self; 6] = [
@@ -49,34 +54,34 @@ impl SceneRole {
     }
 
     /// User-facing role name.
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Primary => "Primary",
-            Self::Secondary => "Secondary",
-            Self::Module => "Module",
-            Self::Raw => "Raw",
-            Self::Debug => "Debug",
-            Self::Archive => "Archive",
+            Self::Primary => fl!(LANGUAGE_LOADER, "role-primary"),
+            Self::Secondary => fl!(LANGUAGE_LOADER, "role-secondary"),
+            Self::Module => fl!(LANGUAGE_LOADER, "role-module"),
+            Self::Raw => fl!(LANGUAGE_LOADER, "role-raw"),
+            Self::Debug => fl!(LANGUAGE_LOADER, "role-debug"),
+            Self::Archive => fl!(LANGUAGE_LOADER, "role-archive"),
         }
     }
 
     /// User-facing role name, falling back to `Unassigned`.
-    pub const fn label_or_unassigned(role: Option<Self>) -> &'static str {
+    pub fn label_or_unassigned(role: Option<Self>) -> String {
         match role {
             Some(role) => role.label(),
-            None => Self::UNASSIGNED_LABEL,
+            None => Self::unassigned_label(),
         }
     }
 
     /// Short user-facing explanation for Inventory role selectors.
-    pub const fn description(self) -> &'static str {
+    pub fn description(self) -> String {
         match self {
-            Self::Primary => "Live-switchable scene",
-            Self::Secondary => "Valid scene, hidden from Live by default",
-            Self::Module => "Reusable nested scene, not directly switchable",
-            Self::Raw => "Hardware or source wrapper scene",
-            Self::Debug => "Temporary test scene",
-            Self::Archive => "Preserved but excluded from all workflows",
+            Self::Primary => fl!(LANGUAGE_LOADER, "role-primary-desc"),
+            Self::Secondary => fl!(LANGUAGE_LOADER, "role-secondary-desc"),
+            Self::Module => fl!(LANGUAGE_LOADER, "role-module-desc"),
+            Self::Raw => fl!(LANGUAGE_LOADER, "role-raw-desc"),
+            Self::Debug => fl!(LANGUAGE_LOADER, "role-debug-desc"),
+            Self::Archive => fl!(LANGUAGE_LOADER, "role-archive-desc"),
         }
     }
 

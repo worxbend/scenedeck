@@ -8,10 +8,12 @@ use std::fs::{create_dir_all, read_to_string, write};
 use std::io;
 use std::path::Path;
 
+use i18n_embed_fl::fl;
 use serde::{Deserialize, Serialize};
 
-use crate::domain::appearance::{ThemeMode, ThemePreference};
+use crate::domain::appearance::{Language, ThemeMode, ThemePreference};
 use crate::domain::mixer::MixerSelection;
+use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::xdg;
 
 // ── Config structs ────────────────────────────────────────────────────────────
@@ -29,6 +31,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub appearance: ThemePreference,
     #[serde(default)]
+    pub language: Language,
+    #[serde(default)]
     pub mixer: MixerSelection,
     #[serde(default, rename = "theme_mode", skip_serializing)]
     pub(crate) legacy_theme_mode: Option<ThemeMode>,
@@ -42,6 +46,7 @@ impl Default for AppConfig {
             live: LiveConfig::default(),
             outputs: OutputConfig::default(),
             appearance: ThemePreference::default(),
+            language: Language::default(),
             mixer: MixerSelection::default(),
             legacy_theme_mode: None,
         }
@@ -146,9 +151,17 @@ pub enum ConfigStartupNotice {
 impl ConfigStartupNotice {
     pub fn user_message(&self) -> String {
         match self {
-            Self::FirstLaunch => "No saved settings yet. Defaults are loaded.".to_string(),
-            Self::ReadFailed(err) => format!("Settings could not be read: {err}"),
-            Self::ParseFailed(err) => format!("Settings could not be parsed: {err}"),
+            Self::FirstLaunch => fl!(LANGUAGE_LOADER, "config-first-launch"),
+            Self::ReadFailed(err) => {
+                fl!(LANGUAGE_LOADER, "config-read-failed", detail = err.as_str())
+            }
+            Self::ParseFailed(err) => {
+                fl!(
+                    LANGUAGE_LOADER,
+                    "config-parse-failed",
+                    detail = err.as_str()
+                )
+            }
         }
     }
 }

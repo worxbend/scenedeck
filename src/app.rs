@@ -14,6 +14,7 @@ use crate::app_info::APP_ID;
 use crate::controller::app_controller::AppController;
 use crate::controller::event::AppEvent;
 use crate::controller::state::AppState;
+use crate::infra::i18n;
 use crate::storage::config::read_config;
 use crate::ui;
 
@@ -67,6 +68,7 @@ fn build_ui(
     event_rx: mpsc::Receiver<AppEvent>,
 ) {
     let loaded = read_config();
+    i18n::init(loaded.config.language);
     let theme_mode = loaded.config.appearance.mode;
     let mixer = loaded.config.mixer;
     let output_confirmations = loaded.config.outputs;

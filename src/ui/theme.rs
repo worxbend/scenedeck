@@ -6,8 +6,10 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use gtk4::{gdk, CssProvider};
+use i18n_embed_fl::fl;
 
 use crate::domain::appearance::{ThemeMode, ThemePreference};
+use crate::infra::i18n::LANGUAGE_LOADER;
 
 const BASE_CSS: &str = include_str!("../../assets/scenedeck.css");
 
@@ -36,6 +38,42 @@ impl BuiltInTheme {
         match variant {
             ThemeVariant::Light => self.light_css,
             ThemeVariant::Dark => self.dark_css,
+        }
+    }
+
+    /// Localized display name shown in the Settings theme picker.
+    pub(crate) fn localized_name(&self) -> String {
+        match self.id {
+            "adwaita-default" => fl!(LANGUAGE_LOADER, "theme-adwaita-default-name"),
+            "scenedeck-dark" => fl!(LANGUAGE_LOADER, "theme-scenedeck-dark-name"),
+            "scenedeck-light" => fl!(LANGUAGE_LOADER, "theme-scenedeck-light-name"),
+            "obsidian" => fl!(LANGUAGE_LOADER, "theme-obsidian-name"),
+            "nord" => fl!(LANGUAGE_LOADER, "theme-nord-name"),
+            "dracula-inspired" => fl!(LANGUAGE_LOADER, "theme-dracula-inspired-name"),
+            "solarized-dark" => fl!(LANGUAGE_LOADER, "theme-solarized-dark-name"),
+            "high-contrast" => fl!(LANGUAGE_LOADER, "theme-high-contrast-name"),
+            "stream-red" => fl!(LANGUAGE_LOADER, "theme-stream-red-name"),
+            "studio-purple" => fl!(LANGUAGE_LOADER, "theme-studio-purple-name"),
+            "ubuntu-violet" => fl!(LANGUAGE_LOADER, "theme-ubuntu-violet-name"),
+            _ => self.name.to_string(),
+        }
+    }
+
+    /// Localized description shown alongside the theme in the Settings picker.
+    pub(crate) fn localized_description(&self) -> String {
+        match self.id {
+            "adwaita-default" => fl!(LANGUAGE_LOADER, "theme-adwaita-default-desc"),
+            "scenedeck-dark" => fl!(LANGUAGE_LOADER, "theme-scenedeck-dark-desc"),
+            "scenedeck-light" => fl!(LANGUAGE_LOADER, "theme-scenedeck-light-desc"),
+            "obsidian" => fl!(LANGUAGE_LOADER, "theme-obsidian-desc"),
+            "nord" => fl!(LANGUAGE_LOADER, "theme-nord-desc"),
+            "dracula-inspired" => fl!(LANGUAGE_LOADER, "theme-dracula-inspired-desc"),
+            "solarized-dark" => fl!(LANGUAGE_LOADER, "theme-solarized-dark-desc"),
+            "high-contrast" => fl!(LANGUAGE_LOADER, "theme-high-contrast-desc"),
+            "stream-red" => fl!(LANGUAGE_LOADER, "theme-stream-red-desc"),
+            "studio-purple" => fl!(LANGUAGE_LOADER, "theme-studio-purple-desc"),
+            "ubuntu-violet" => fl!(LANGUAGE_LOADER, "theme-ubuntu-violet-desc"),
+            _ => self.description.to_string(),
         }
     }
 }
@@ -97,14 +135,15 @@ impl ThemeManager {
                     Ok(css) => {
                         install_css_provider(&css, &path.display().to_string(), &mut warnings)
                     }
-                    Err(err) => warnings.push(format!(
-                        "Custom CSS could not be read from {}: {err}",
-                        path.display()
+                    Err(err) => warnings.push(fl!(
+                        LANGUAGE_LOADER,
+                        "theme-custom-css-read-failed",
+                        path = path.display().to_string(),
+                        err = err.to_string()
                     )),
                 }
             } else {
-                warnings
-                    .push("Custom CSS is enabled but no matching light/dark file is set.".into());
+                warnings.push(fl!(LANGUAGE_LOADER, "theme-custom-css-no-matching-file"));
             }
         }
 
@@ -146,8 +185,10 @@ fn clear_active_providers() {
 
 fn install_css_provider(css: &str, label: &str, warnings: &mut Vec<String>) {
     let Some(display) = gdk::Display::default() else {
-        warnings.push(format!(
-            "{label} was not loaded because no GTK display is available."
+        warnings.push(fl!(
+            LANGUAGE_LOADER,
+            "theme-css-no-display",
+            label = label.to_string()
         ));
         return;
     };
@@ -158,9 +199,12 @@ fn install_css_provider(css: &str, label: &str, warnings: &mut Vec<String>) {
         let parse_errors = Rc::clone(&parse_errors);
         let label = label.to_string();
         move |_, _, error| {
-            parse_errors
-                .borrow_mut()
-                .push(format!("{label} CSS parse error: {}", error.message()));
+            parse_errors.borrow_mut().push(fl!(
+                LANGUAGE_LOADER,
+                "theme-css-parse-error",
+                label = label.clone(),
+                message = error.message().to_string()
+            ));
         }
     });
 

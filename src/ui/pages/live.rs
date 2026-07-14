@@ -8,10 +8,12 @@ use gtk4::{
     Align, Box as GtkBox, Button, FlowBox, FlowBoxChild, Label, Orientation, Paned, PolicyType,
     ScrolledWindow, Stack, StackTransitionType,
 };
+use i18n_embed_fl::fl;
 
 use crate::controller::command::AppCommand;
 use crate::domain::output::OutputStatus;
 use crate::domain::scene::SceneInventory;
+use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::config::OutputConfig;
 use crate::storage::registry::read_registry;
 use crate::ui::navigation::NavigationContext;
@@ -39,7 +41,7 @@ enum OutputConfirmationAppearance {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct OutputCommandErrorDisplay<'a> {
-    label: &'static str,
+    label: String,
     tooltip: &'a str,
 }
 
@@ -49,11 +51,11 @@ struct OutputRecordingPathDisplay<'a> {
     tooltip: &'a str,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 struct OutputConfirmationDialog {
-    heading: &'static str,
-    body: &'static str,
-    confirm_label: &'static str,
+    heading: String,
+    body: String,
+    confirm_label: String,
     appearance: OutputConfirmationAppearance,
 }
 
@@ -119,18 +121,18 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
     banner.append(&banner_inner);
 
     let stream_btn = Button::builder()
-        .label("Start Stream")
+        .label(fl!(LANGUAGE_LOADER, "live-start-stream-label"))
         .valign(Align::Center)
         .sensitive(false)
         .build();
-    stream_btn.set_tooltip_text(Some("Start or stop streaming"));
+    stream_btn.set_tooltip_text(Some(&fl!(LANGUAGE_LOADER, "live-stream-toggle-tooltip")));
     stream_btn.connect_clicked({
         let nav = nav.clone();
         move |button| handle_stream_output_toggle(button, &nav)
     });
 
     let stream_label = Label::builder()
-        .label("Stream: Inactive")
+        .label(fl!(LANGUAGE_LOADER, "live-stream-inactive-label"))
         .xalign(0.0)
         .build();
     stream_label.add_css_class("caption");
@@ -140,18 +142,18 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
     let stream_error_label = build_output_error_label();
 
     let record_btn = Button::builder()
-        .label("Start Record")
+        .label(fl!(LANGUAGE_LOADER, "live-start-record-label"))
         .valign(Align::Center)
         .sensitive(false)
         .build();
-    record_btn.set_tooltip_text(Some("Start or stop recording"));
+    record_btn.set_tooltip_text(Some(&fl!(LANGUAGE_LOADER, "live-record-toggle-tooltip")));
     record_btn.connect_clicked({
         let nav = nav.clone();
         move |button| handle_record_output_toggle(button, &nav)
     });
 
     let record_label = Label::builder()
-        .label("Record: Inactive")
+        .label(fl!(LANGUAGE_LOADER, "live-record-inactive-label"))
         .xalign(0.0)
         .build();
     record_label.add_css_class("caption");
@@ -163,7 +165,10 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
 
     let record_path_btn = Button::builder()
         .icon_name("edit-copy-symbolic")
-        .tooltip_text("Copy last recording path")
+        .tooltip_text(fl!(
+            LANGUAGE_LOADER,
+            "live-copy-last-recording-path-tooltip"
+        ))
         .valign(Align::Center)
         .sensitive(false)
         .build();
@@ -177,13 +182,16 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
             };
             if let Some(display) = gtk4::gdk::Display::default() {
                 display.clipboard().set_text(&path);
-                button.set_tooltip_text(Some("Copied last recording path"));
+                button.set_tooltip_text(Some(&fl!(
+                    LANGUAGE_LOADER,
+                    "live-copied-recording-path-tooltip"
+                )));
             }
         }
     });
 
     let stream_control = build_output_card(
-        "Stream",
+        &fl!(LANGUAGE_LOADER, "live-stream-card-title"),
         &stream_btn,
         &stream_label,
         &stream_progress_label,
@@ -192,7 +200,7 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
         None,
     );
     let record_control = build_output_card(
-        "Recording",
+        &fl!(LANGUAGE_LOADER, "live-recording-card-title"),
         &record_btn,
         &record_label,
         &record_progress_label,
@@ -207,7 +215,7 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
 
     // ── Program scene label ───────────────────────────────────────────────────
     let current_label = Label::builder()
-        .label("Current scene: —")
+        .label(fl!(LANGUAGE_LOADER, "live-current-scene-placeholder"))
         .xalign(0.0)
         .build();
     current_label.add_css_class("heading");
@@ -233,7 +241,10 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
         .vexpand(false)
         .hexpand(true)
         .build();
-    let scenes_section_label = Label::builder().label("Scenes").xalign(0.0).build();
+    let scenes_section_label = Label::builder()
+        .label(fl!(LANGUAGE_LOADER, "live-scenes-section-label"))
+        .xalign(0.0)
+        .build();
     scenes_section_label.add_css_class("caption-heading");
     scenes_pane.append(&scenes_section_label);
 
@@ -253,7 +264,10 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
         .min_children_per_line(1)
         .max_children_per_line(6)
         .build();
-    insert_scene_placeholder(&scenes_box, "Connect to OBS to load scenes.");
+    insert_scene_placeholder(
+        &scenes_box,
+        &fl!(LANGUAGE_LOADER, "live-scenes-connect-hint"),
+    );
 
     let scenes_scroll = ScrolledWindow::builder()
         .vexpand(false)
@@ -275,7 +289,10 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
         .hexpand(true)
         .build();
 
-    let audio_section_label = Label::builder().label("Audio").xalign(0.0).build();
+    let audio_section_label = Label::builder()
+        .label(fl!(LANGUAGE_LOADER, "live-audio-section-label"))
+        .xalign(0.0)
+        .build();
     audio_section_label.add_css_class("caption-heading");
     audio_pane.append(&audio_section_label);
 
@@ -387,12 +404,19 @@ pub(crate) fn update_stream_status(
     elapsed: Option<String>,
     error: Option<&str>,
 ) {
-    handle
-        .stream_label
-        .set_text(&output_label("Stream", status, elapsed.as_deref()));
+    handle.stream_label.set_text(&output_label(
+        &fl!(LANGUAGE_LOADER, "live-output-kind-stream"),
+        status,
+        elapsed.as_deref(),
+    ));
     update_output_progress(&handle.stream_progress_label, OutputKind::Stream, status);
     update_output_error(&handle.stream_error_label, OutputKind::Stream, error);
-    set_output_button(&handle.stream_btn, status, "Start Stream", "Stop Stream");
+    set_output_button(
+        &handle.stream_btn,
+        status,
+        &fl!(LANGUAGE_LOADER, "live-start-stream-label"),
+        &fl!(LANGUAGE_LOADER, "live-stop-stream-label"),
+    );
 }
 
 pub(crate) fn update_record_status(
@@ -402,29 +426,43 @@ pub(crate) fn update_record_status(
     last_path: Option<&str>,
     error: Option<&str>,
 ) {
-    handle
-        .record_label
-        .set_text(&output_label("Record", status, elapsed.as_deref()));
+    handle.record_label.set_text(&output_label(
+        &fl!(LANGUAGE_LOADER, "live-output-kind-record"),
+        status,
+        elapsed.as_deref(),
+    ));
     update_output_progress(&handle.record_progress_label, OutputKind::Recording, status);
     update_output_error(&handle.record_error_label, OutputKind::Recording, error);
     handle.record_label.set_tooltip_text(last_path);
     update_recording_path_detail(&handle.record_path_label, last_path);
     handle.record_path_btn.set_sensitive(last_path.is_some());
     if let Some(path) = last_path {
-        handle
-            .record_path_btn
-            .set_tooltip_text(Some(&format!("Copy recording path: {path}")));
+        handle.record_path_btn.set_tooltip_text(Some(&fl!(
+            LANGUAGE_LOADER,
+            "live-copy-recording-path-with-value-tooltip",
+            path = path
+        )));
     } else {
-        handle
-            .record_path_btn
-            .set_tooltip_text(Some("Copy last recording path"));
+        handle.record_path_btn.set_tooltip_text(Some(&fl!(
+            LANGUAGE_LOADER,
+            "live-copy-last-recording-path-tooltip"
+        )));
     }
-    set_output_button(&handle.record_btn, status, "Start Record", "Stop Record");
+    set_output_button(
+        &handle.record_btn,
+        status,
+        &fl!(LANGUAGE_LOADER, "live-start-record-label"),
+        &fl!(LANGUAGE_LOADER, "live-stop-record-label"),
+    );
 }
 
 pub(crate) fn reset_output_controls(handle: &LivePageHandle) {
-    handle.stream_label.set_text("Stream: Inactive");
-    handle.record_label.set_text("Record: Inactive");
+    handle
+        .stream_label
+        .set_text(&fl!(LANGUAGE_LOADER, "live-stream-inactive-label"));
+    handle
+        .record_label
+        .set_text(&fl!(LANGUAGE_LOADER, "live-record-inactive-label"));
     update_output_progress(
         &handle.stream_progress_label,
         OutputKind::Stream,
@@ -440,11 +478,16 @@ pub(crate) fn reset_output_controls(handle: &LivePageHandle) {
     handle.record_label.set_tooltip_text(None);
     update_recording_path_detail(&handle.record_path_label, None);
     handle.record_path_btn.set_sensitive(false);
+    handle.record_path_btn.set_tooltip_text(Some(&fl!(
+        LANGUAGE_LOADER,
+        "live-copy-last-recording-path-tooltip"
+    )));
     handle
-        .record_path_btn
-        .set_tooltip_text(Some("Copy last recording path"));
-    handle.stream_btn.set_label("Start Stream");
-    handle.record_btn.set_label("Start Record");
+        .stream_btn
+        .set_label(&fl!(LANGUAGE_LOADER, "live-start-stream-label"));
+    handle
+        .record_btn
+        .set_label(&fl!(LANGUAGE_LOADER, "live-start-record-label"));
     handle.stream_btn.set_sensitive(false);
     handle.record_btn.set_sensitive(false);
     handle.stream_btn.remove_css_class("destructive-action");
@@ -532,12 +575,12 @@ fn build_output_error_label() -> Label {
 }
 
 fn update_output_progress(label: &Label, kind: OutputKind, status: &OutputStatus) {
-    set_optional_output_text(label, output_progress_copy(kind, status));
+    set_optional_output_text(label, &output_progress_copy(kind, status));
 }
 
 fn update_output_error(label: &Label, kind: OutputKind, error: Option<&str>) {
     if let Some(display) = output_command_error_display(kind, error) {
-        set_optional_output_text(label, display.label);
+        set_optional_output_text(label, &display.label);
         label.set_tooltip_text(Some(display.tooltip));
     } else {
         set_optional_output_text(label, EMPTY_OUTPUT_SLOT);
@@ -566,8 +609,8 @@ fn output_command_error_display(
 ) -> Option<OutputCommandErrorDisplay<'_>> {
     let tooltip = error.filter(|error| !error.is_empty())?;
     let label = match kind {
-        OutputKind::Stream => "Stream command failed",
-        OutputKind::Recording => "Recording command failed",
+        OutputKind::Stream => fl!(LANGUAGE_LOADER, "live-stream-command-error-label"),
+        OutputKind::Recording => fl!(LANGUAGE_LOADER, "live-recording-command-error-label"),
     };
 
     Some(OutputCommandErrorDisplay { label, tooltip })
@@ -576,28 +619,36 @@ fn output_command_error_display(
 fn output_recording_path_display(path: Option<&str>) -> Option<OutputRecordingPathDisplay<'_>> {
     let tooltip = path.filter(|path| !path.is_empty())?;
     Some(OutputRecordingPathDisplay {
-        label: format!("Last recording: {tooltip}"),
+        label: fl!(
+            LANGUAGE_LOADER,
+            "live-last-recording-detail",
+            path = tooltip
+        ),
         tooltip,
     })
 }
 
-fn output_progress_copy(kind: OutputKind, status: &OutputStatus) -> &'static str {
+fn output_progress_copy(kind: OutputKind, status: &OutputStatus) -> String {
     match (kind, status.state) {
-        (OutputKind::Stream, crate::domain::output::OutputRunState::Starting) => "Starting stream…",
-        (OutputKind::Stream, crate::domain::output::OutputRunState::Stopping) => "Stopping stream…",
+        (OutputKind::Stream, crate::domain::output::OutputRunState::Starting) => {
+            fl!(LANGUAGE_LOADER, "live-starting-stream")
+        }
+        (OutputKind::Stream, crate::domain::output::OutputRunState::Stopping) => {
+            fl!(LANGUAGE_LOADER, "live-stopping-stream")
+        }
         (OutputKind::Stream, crate::domain::output::OutputRunState::Reconnecting) => {
-            "Reconnecting stream…"
+            fl!(LANGUAGE_LOADER, "live-reconnecting-stream")
         }
         (OutputKind::Recording, crate::domain::output::OutputRunState::Starting) => {
-            "Starting recording…"
+            fl!(LANGUAGE_LOADER, "live-starting-recording")
         }
         (OutputKind::Recording, crate::domain::output::OutputRunState::Stopping) => {
-            "Stopping recording…"
+            fl!(LANGUAGE_LOADER, "live-stopping-recording")
         }
         (OutputKind::Recording, crate::domain::output::OutputRunState::Reconnecting) => {
-            "Reconnecting recording…"
+            fl!(LANGUAGE_LOADER, "live-reconnecting-recording")
         }
-        _ => EMPTY_OUTPUT_SLOT,
+        _ => EMPTY_OUTPUT_SLOT.to_string(),
     }
 }
 
@@ -613,14 +664,14 @@ fn build_disconnected_view() -> GtkBox {
     view.add_css_class("live-disconnected-view");
 
     let title = Label::builder()
-        .label("Connect to OBS to use Live controls")
+        .label(fl!(LANGUAGE_LOADER, "live-disconnected-title"))
         .wrap(true)
         .justify(gtk4::Justification::Center)
         .build();
     title.add_css_class("title-2");
 
     let detail = Label::builder()
-        .label("Use the connection control at the bottom of the sidebar.")
+        .label(fl!(LANGUAGE_LOADER, "live-disconnected-detail"))
         .wrap(true)
         .justify(gtk4::Justification::Center)
         .build();
@@ -633,12 +684,19 @@ fn build_disconnected_view() -> GtkBox {
 
 fn set_output_button(button: &Button, status: &OutputStatus, start_label: &str, stop_label: &str) {
     if status.state.is_transitioning() {
-        button.set_label(match status.state {
-            crate::domain::output::OutputRunState::Starting => "Starting…",
-            crate::domain::output::OutputRunState::Stopping => "Stopping…",
-            crate::domain::output::OutputRunState::Reconnecting => "Reconnecting…",
-            _ => "Working…",
-        });
+        let transition_label = match status.state {
+            crate::domain::output::OutputRunState::Starting => {
+                fl!(LANGUAGE_LOADER, "live-button-starting")
+            }
+            crate::domain::output::OutputRunState::Stopping => {
+                fl!(LANGUAGE_LOADER, "live-button-stopping")
+            }
+            crate::domain::output::OutputRunState::Reconnecting => {
+                fl!(LANGUAGE_LOADER, "live-button-reconnecting")
+            }
+            _ => fl!(LANGUAGE_LOADER, "live-button-working"),
+        };
+        button.set_label(&transition_label);
         button.set_sensitive(false);
         if status.active {
             button.add_css_class("destructive-action");
@@ -658,8 +716,19 @@ fn set_output_button(button: &Button, status: &OutputStatus, start_label: &str, 
 
 pub(crate) fn output_label(kind: &str, status: &OutputStatus, elapsed: Option<&str>) -> String {
     match elapsed {
-        Some(elapsed) if status.active => format!("{kind}: {} · {elapsed}", status.state.label()),
-        _ => format!("{kind}: {}", status.state.label()),
+        Some(elapsed) if status.active => fl!(
+            LANGUAGE_LOADER,
+            "live-output-label-with-elapsed",
+            kind = kind,
+            state = status.state.label(),
+            elapsed = elapsed
+        ),
+        _ => fl!(
+            LANGUAGE_LOADER,
+            "live-output-label",
+            kind = kind,
+            state = status.state.label()
+        ),
     }
 }
 
@@ -683,27 +752,27 @@ fn output_action_for_active_state(active: bool) -> OutputAction {
 fn output_confirmation_dialog(kind: OutputKind, action: OutputAction) -> OutputConfirmationDialog {
     match (kind, action) {
         (OutputKind::Stream, OutputAction::Start) => OutputConfirmationDialog {
-            heading: "Start Stream?",
-            body: "OBS will start sending the live stream.",
-            confirm_label: "Start Stream",
+            heading: fl!(LANGUAGE_LOADER, "live-start-stream-confirm-heading"),
+            body: fl!(LANGUAGE_LOADER, "live-start-stream-confirm-body"),
+            confirm_label: fl!(LANGUAGE_LOADER, "live-start-stream-label"),
             appearance: OutputConfirmationAppearance::Suggested,
         },
         (OutputKind::Stream, OutputAction::Stop) => OutputConfirmationDialog {
-            heading: "Stop Stream?",
-            body: "OBS will stop sending the live stream.",
-            confirm_label: "Stop Stream",
+            heading: fl!(LANGUAGE_LOADER, "live-stop-stream-confirm-heading"),
+            body: fl!(LANGUAGE_LOADER, "live-stop-stream-confirm-body"),
+            confirm_label: fl!(LANGUAGE_LOADER, "live-stop-stream-label"),
             appearance: OutputConfirmationAppearance::Destructive,
         },
         (OutputKind::Recording, OutputAction::Start) => OutputConfirmationDialog {
-            heading: "Start Recording?",
-            body: "OBS will start a new recording.",
-            confirm_label: "Start Recording",
+            heading: fl!(LANGUAGE_LOADER, "live-start-recording-confirm-heading"),
+            body: fl!(LANGUAGE_LOADER, "live-start-recording-confirm-body"),
+            confirm_label: fl!(LANGUAGE_LOADER, "live-start-recording-confirm-label"),
             appearance: OutputConfirmationAppearance::Suggested,
         },
         (OutputKind::Recording, OutputAction::Stop) => OutputConfirmationDialog {
-            heading: "Stop Recording?",
-            body: "OBS will stop the current recording.",
-            confirm_label: "Stop Recording",
+            heading: fl!(LANGUAGE_LOADER, "live-stop-recording-confirm-heading"),
+            body: fl!(LANGUAGE_LOADER, "live-stop-recording-confirm-body"),
+            confirm_label: fl!(LANGUAGE_LOADER, "live-stop-recording-confirm-label"),
             appearance: OutputConfirmationAppearance::Destructive,
         },
     }
@@ -727,11 +796,11 @@ fn confirm_output_action(
         .and_then(|root| root.downcast::<gtk4::Window>().ok());
     let dialog = adw::MessageDialog::new(
         parent_window.as_ref(),
-        Some(metadata.heading),
-        Some(metadata.body),
+        Some(metadata.heading.as_str()),
+        Some(metadata.body.as_str()),
     );
-    dialog.add_response("cancel", "Cancel");
-    dialog.add_response("confirm", metadata.confirm_label);
+    dialog.add_response("cancel", &fl!(LANGUAGE_LOADER, "live-cancel-button-label"));
+    dialog.add_response("confirm", &metadata.confirm_label);
     dialog.set_default_response(Some("cancel"));
     dialog.set_close_response("cancel");
     dialog.set_response_appearance("confirm", to_adw_response_appearance(metadata.appearance));
@@ -784,7 +853,7 @@ pub(crate) fn rebuild_scene_cards(
 
     if primary_scenes.is_empty() {
         let hint = Label::builder()
-            .label("No Primary-role scenes found. Assign roles in Inventory.")
+            .label(fl!(LANGUAGE_LOADER, "live-scenes-no-primary-hint"))
             .wrap(true)
             .xalign(0.0)
             .build();
@@ -830,7 +899,7 @@ pub(crate) fn rebuild_audio_cards(
 
     if inputs.is_empty() {
         let hint = Label::builder()
-            .label("No audio inputs configured.")
+            .label(fl!(LANGUAGE_LOADER, "live-audio-empty-hint"))
             .xalign(0.0)
             .build();
         hint.add_css_class("dim-label");
@@ -939,9 +1008,9 @@ mod tests {
         assert_eq!(
             output_confirmation_dialog(OutputKind::Stream, OutputAction::Start),
             OutputConfirmationDialog {
-                heading: "Start Stream?",
-                body: "OBS will start sending the live stream.",
-                confirm_label: "Start Stream",
+                heading: "Start Stream?".to_string(),
+                body: "OBS will start sending the live stream.".to_string(),
+                confirm_label: "Start Stream".to_string(),
                 appearance: OutputConfirmationAppearance::Suggested,
             }
         );
@@ -952,9 +1021,9 @@ mod tests {
         assert_eq!(
             output_confirmation_dialog(OutputKind::Stream, OutputAction::Stop),
             OutputConfirmationDialog {
-                heading: "Stop Stream?",
-                body: "OBS will stop sending the live stream.",
-                confirm_label: "Stop Stream",
+                heading: "Stop Stream?".to_string(),
+                body: "OBS will stop sending the live stream.".to_string(),
+                confirm_label: "Stop Stream".to_string(),
                 appearance: OutputConfirmationAppearance::Destructive,
             }
         );
@@ -965,9 +1034,9 @@ mod tests {
         assert_eq!(
             output_confirmation_dialog(OutputKind::Recording, OutputAction::Start),
             OutputConfirmationDialog {
-                heading: "Start Recording?",
-                body: "OBS will start a new recording.",
-                confirm_label: "Start Recording",
+                heading: "Start Recording?".to_string(),
+                body: "OBS will start a new recording.".to_string(),
+                confirm_label: "Start Recording".to_string(),
                 appearance: OutputConfirmationAppearance::Suggested,
             }
         );
@@ -978,9 +1047,9 @@ mod tests {
         assert_eq!(
             output_confirmation_dialog(OutputKind::Recording, OutputAction::Stop),
             OutputConfirmationDialog {
-                heading: "Stop Recording?",
-                body: "OBS will stop the current recording.",
-                confirm_label: "Stop Recording",
+                heading: "Stop Recording?".to_string(),
+                body: "OBS will stop the current recording.".to_string(),
+                confirm_label: "Stop Recording".to_string(),
                 appearance: OutputConfirmationAppearance::Destructive,
             }
         );
@@ -997,7 +1066,7 @@ mod tests {
         assert_eq!(
             output_command_error_display(OutputKind::Stream, Some("OBS said no: backend details")),
             Some(OutputCommandErrorDisplay {
-                label: "Stream command failed",
+                label: "Stream command failed".to_string(),
                 tooltip: "OBS said no: backend details",
             })
         );
@@ -1011,7 +1080,7 @@ mod tests {
                 Some("recording output unavailable")
             ),
             Some(OutputCommandErrorDisplay {
-                label: "Recording command failed",
+                label: "Recording command failed".to_string(),
                 tooltip: "recording output unavailable",
             })
         );

@@ -8,14 +8,21 @@ use std::rc::Rc;
 
 use adw::{prelude::*, ActionRow, PreferencesGroup, PreferencesPage, StatusPage};
 use gtk4::{Box as GtkBox, Image, Orientation};
+use i18n_embed_fl::fl;
 
 use crate::domain::diagnostic::{Diagnostic, DiagnosticSeverity};
+use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::doctor_service::DoctorService;
 use crate::storage::registry::read_registry;
 use crate::ui::navigation::NavigationContext;
 
-const NO_DIAGNOSTICS_SUMMARY: &str = "No problems found";
-const NO_DIAGNOSTICS_DETAIL: &str = "The scene architecture satisfies all checks.";
+fn no_diagnostics_summary() -> String {
+    fl!(LANGUAGE_LOADER, "doctor-all-clear-title")
+}
+
+fn no_diagnostics_detail() -> String {
+    fl!(LANGUAGE_LOADER, "doctor-all-clear-detail")
+}
 
 pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     let container = GtkBox::builder()
@@ -57,8 +64,8 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
     if inventory.scenes.is_empty() {
         let empty = StatusPage::builder()
             .icon_name("emblem-default-symbolic")
-            .title("Nothing to Check")
-            .description("Connect to OBS to run architecture diagnostics.")
+            .title(fl!(LANGUAGE_LOADER, "doctor-empty-state-title"))
+            .description(fl!(LANGUAGE_LOADER, "doctor-empty-state-description"))
             .build();
         container.append(&empty);
         return;
@@ -69,7 +76,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
     let diagnostics = DoctorService::run(&inventory, &registry_snapshot, &graph);
 
     let page = PreferencesPage::builder()
-        .title("Doctor")
+        .title(fl!(LANGUAGE_LOADER, "doctor-page-title"))
         .vexpand(true)
         .build();
     page.add_css_class("app-preferences-page");
@@ -77,13 +84,13 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
     // ── Summary / re-run ──────────────────────────────────────────────────────
     let summary_group = PreferencesGroup::new();
     let summary_row = ActionRow::builder()
-        .title("Diagnostics")
+        .title(fl!(LANGUAGE_LOADER, "doctor-summary-row-title"))
         .subtitle(diagnostic_summary(&diagnostics))
         .build();
 
     let rerun_btn = gtk4::Button::builder()
         .icon_name("view-refresh-symbolic")
-        .tooltip_text("Run diagnostics again")
+        .tooltip_text(fl!(LANGUAGE_LOADER, "doctor-rerun-tooltip"))
         .valign(gtk4::Align::Center)
         .build();
     rerun_btn.add_css_class("flat");
@@ -100,8 +107,8 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
     if diagnostics.is_empty() {
         let ok_group = PreferencesGroup::new();
         let ok_row = ActionRow::builder()
-            .title(NO_DIAGNOSTICS_SUMMARY)
-            .subtitle(NO_DIAGNOSTICS_DETAIL)
+            .title(no_diagnostics_summary())
+            .subtitle(no_diagnostics_detail())
             .build();
         let icon = Image::from_icon_name("object-select-symbolic");
         icon.add_css_class("diag-ok");
@@ -142,7 +149,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
 
 fn diagnostic_summary(diagnostics: &[Diagnostic]) -> String {
     if diagnostics.is_empty() {
-        return NO_DIAGNOSTICS_SUMMARY.to_string();
+        return no_diagnostics_summary();
     }
 
     DiagnosticSeverity::DISPLAY_ORDER
@@ -158,7 +165,7 @@ mod tests {
 
     #[test]
     fn diagnostic_summary_uses_all_clear_text_when_empty() {
-        assert_eq!(diagnostic_summary(&[]), NO_DIAGNOSTICS_SUMMARY);
+        assert_eq!(diagnostic_summary(&[]), "No problems found");
     }
 
     #[test]

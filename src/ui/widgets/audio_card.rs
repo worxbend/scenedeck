@@ -5,9 +5,11 @@ use std::{cell::RefCell, rc::Rc};
 use adw::prelude::*;
 use glib::{source::SourceId, timeout_add_local_once};
 use gtk4::{Align, Box as GtkBox, Button, Label, Orientation, Scale, ToggleButton};
+use i18n_embed_fl::fl;
 
 use crate::controller::command::AppCommand;
 use crate::domain::audio::AudioInput;
+use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::audio_service::{AudioService, VolumeChangeDebouncer, VOLUME_SLIDER_DEBOUNCE};
 use crate::ui::navigation::NavigationContext;
 
@@ -91,7 +93,7 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
 
     // ── Mute toggle ───────────────────────────────────────────────────────────
     let mute_btn = ToggleButton::builder().active(input.muted).build();
-    mute_btn.set_tooltip_text(Some("Mute input"));
+    mute_btn.set_tooltip_text(Some(&fl!(LANGUAGE_LOADER, "audio-card-mute-tooltip")));
     apply_mute_style(&mute_btn, input.muted);
 
     let mute_signal_id = {
@@ -117,9 +119,14 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         .build();
     name_label.add_css_class("audio-card-title");
     if let Some(path) = input.source_path_label() {
-        name_label.set_tooltip_text(Some(&format!("{}: {path}", input.source_scope.label())));
+        name_label.set_tooltip_text(Some(&fl!(
+            LANGUAGE_LOADER,
+            "audio-card-source-path-tooltip",
+            scope = input.source_scope.label(),
+            path = path
+        )));
     } else {
-        name_label.set_tooltip_text(Some(input.source_scope.label()));
+        name_label.set_tooltip_text(Some(&input.source_scope.label()));
     }
 
     let scope_badge = Label::builder()
@@ -144,7 +151,7 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
     vol_scale.set_width_request(22);
     vol_scale.add_css_class("audio-volume-fader");
     add_obs_fader_marks(&vol_scale);
-    vol_scale.set_tooltip_text(Some("Volume fader"));
+    vol_scale.set_tooltip_text(Some(&fl!(LANGUAGE_LOADER, "audio-card-fader-tooltip")));
 
     // ── dB label ──────────────────────────────────────────────────────────────
     let db_label = Label::builder()
@@ -192,7 +199,7 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         .icon_name("changes-prevent-symbolic")
         .active(input.locked_locally)
         .build();
-    lock_btn.set_tooltip_text(Some("Lock volume slider"));
+    lock_btn.set_tooltip_text(Some(&fl!(LANGUAGE_LOADER, "audio-card-lock-tooltip")));
     lock_btn.add_css_class("flat");
     lock_btn.add_css_class("circular");
     lock_btn.connect_toggled({
@@ -374,12 +381,18 @@ fn build_fine_controls(
         .build();
     controls.add_css_class("audio-fine-controls");
 
-    let plus = Button::builder().label("+").tooltip_text("+1 dB").build();
+    let plus = Button::builder()
+        .label("+")
+        .tooltip_text(fl!(LANGUAGE_LOADER, "audio-card-fine-plus-tooltip"))
+        .build();
     let reset = Button::builder()
         .icon_name("edit-undo-symbolic")
-        .tooltip_text("Reset to 0.0 dB")
+        .tooltip_text(fl!(LANGUAGE_LOADER, "audio-card-fine-reset-tooltip"))
         .build();
-    let minus = Button::builder().label("-").tooltip_text("-1 dB").build();
+    let minus = Button::builder()
+        .label("-")
+        .tooltip_text(fl!(LANGUAGE_LOADER, "audio-card-fine-minus-tooltip"))
+        .build();
 
     for button in [&plus, &reset, &minus] {
         button.add_css_class("flat");

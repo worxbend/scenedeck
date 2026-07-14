@@ -2,10 +2,12 @@
 
 use gtk4::prelude::*;
 use gtk4::{Align, Box as GtkBox, Button, Label, Orientation};
+use i18n_embed_fl::fl;
 
 use crate::controller::command::AppCommand;
 use crate::domain::role::SceneRole;
 use crate::domain::scene::SceneId;
+use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::ui::navigation::NavigationContext;
 
 /// Build a scene-switch card.
@@ -29,10 +31,11 @@ pub(crate) fn build(
         .build();
     card.add_css_class("card");
     card.add_css_class("scene-card");
-    card.set_tooltip_text(Some(&format!(
-        "{} ({})",
-        presentation.tooltip,
-        scene_role_subtitle(scene_role)
+    card.set_tooltip_text(Some(&fl!(
+        LANGUAGE_LOADER,
+        "scene-card-tooltip",
+        status = presentation.tooltip,
+        role = scene_role_subtitle(scene_role)
     )));
 
     let content = GtkBox::builder()
@@ -96,7 +99,11 @@ pub(crate) fn build(
 }
 
 fn scene_role_subtitle(role: SceneRole) -> String {
-    format!("{} scene", role.label())
+    fl!(
+        LANGUAGE_LOADER,
+        "scene-card-role-suffix",
+        role = role.label()
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

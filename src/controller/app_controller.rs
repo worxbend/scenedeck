@@ -32,6 +32,7 @@ use std::time::Instant;
 
 use futures_util::future::BoxFuture;
 use futures_util::StreamExt;
+use i18n_embed_fl::fl;
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 
@@ -42,6 +43,7 @@ use crate::controller::event::{
 };
 use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::infra::error::AppError;
+use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::obs::client::ObsClient;
 
 /// Last (timestamp, cumulative bytes) sample used to derive stream bitrate
@@ -323,7 +325,7 @@ impl AppController {
             tracing::warn!("mixer scene audio refresh ignored — not connected to OBS");
             let _ = tx.send(AppEvent::MixerAudioInputsFailed {
                 scene,
-                message: "Not connected to OBS".to_string(),
+                message: fl!(LANGUAGE_LOADER, "controller-not-connected"),
             });
             return;
         };
@@ -359,7 +361,7 @@ impl AppController {
             clear_stream_pending(&self.output_pending);
             tracing::warn!("stream command ignored — not connected to OBS");
             let failure = OutputCommandFailureRecovery::with_failed_command_fallback_status(
-                "Not connected to OBS".to_string(),
+                fl!(LANGUAGE_LOADER, "controller-not-connected"),
                 OutputStatus {
                     active: false,
                     state: OutputRunState::Inactive,
@@ -419,7 +421,7 @@ impl AppController {
             clear_record_pending(&self.output_pending);
             tracing::warn!("record command ignored — not connected to OBS");
             let failure = OutputCommandFailureRecovery::with_failed_command_fallback_status(
-                "Not connected to OBS".to_string(),
+                fl!(LANGUAGE_LOADER, "controller-not-connected"),
                 OutputStatus {
                     active: false,
                     state: OutputRunState::Inactive,

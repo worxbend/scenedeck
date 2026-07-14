@@ -11,7 +11,9 @@ use crate::domain::obs::ObsNamedList;
 use crate::domain::output::OutputStatus;
 use crate::domain::scene::{SceneId, SceneInventory};
 use crate::domain::stats::ObsStats;
+use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::config::OutputConfig;
+use i18n_embed_fl::fl;
 use std::time::Instant;
 
 // ── Navigation ────────────────────────────────────────────────────────────────
@@ -39,14 +41,14 @@ impl Page {
         }
     }
 
-    pub const fn title(self) -> &'static str {
+    pub fn title(self) -> String {
         match self {
-            Self::Live => "Live",
-            Self::Mixer => "Mixer",
-            Self::Graph => "Graph",
-            Self::Inventory => "Inventory",
-            Self::Doctor => "Doctor",
-            Self::Settings => "Settings",
+            Self::Live => fl!(LANGUAGE_LOADER, "page-live"),
+            Self::Mixer => fl!(LANGUAGE_LOADER, "page-mixer"),
+            Self::Graph => fl!(LANGUAGE_LOADER, "page-graph"),
+            Self::Inventory => fl!(LANGUAGE_LOADER, "page-inventory"),
+            Self::Doctor => fl!(LANGUAGE_LOADER, "page-doctor"),
+            Self::Settings => fl!(LANGUAGE_LOADER, "page-settings"),
         }
     }
 
@@ -74,12 +76,12 @@ pub enum ObsStatus {
 }
 
 impl ObsStatus {
-    pub fn label(&self) -> &str {
+    pub fn label(&self) -> String {
         match self {
-            Self::Disconnected => "Disconnected",
-            Self::Connecting => "Connecting…",
-            Self::Connected { .. } => "Connected",
-            Self::Error(_) => "Error",
+            Self::Disconnected => fl!(LANGUAGE_LOADER, "obs-status-disconnected"),
+            Self::Connecting => fl!(LANGUAGE_LOADER, "obs-status-connecting"),
+            Self::Connected { .. } => fl!(LANGUAGE_LOADER, "obs-status-connected"),
+            Self::Error(_) => fl!(LANGUAGE_LOADER, "obs-status-error"),
         }
     }
 

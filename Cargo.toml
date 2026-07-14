@@ -20,3 +20,8 @@ obws         = { version = "0.15", features = ["events"] }
 futures-util = "0.3"
 # Pure-Rust secret-service backend (zbus) — no system libdbus dependency.
 keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+i18n-embed = { version = "0.16.0", features = ["fluent-system", "desktop-requester"] }
+i18n-embed-fl = "0.10.0"
+fluent-bundle = "0.16.0"
+rust-embed = { version = "8.12.0", features = ["debug-embed"] }
+unic-langid = { version = "0.9.6", features = ["serde"] }
