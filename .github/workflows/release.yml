@@ -51,7 +51,8 @@ jobs:
             librsvg2-bin \
             patchelf \
             pkg-config \
-            wget
+            wget \
+            zsync
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -164,7 +165,10 @@ jobs:
 
           install -Dm755 packaging/appimage/AppRun "${appdir}/AppRun"
 
+          update_info="gh-releases-zsync|worxbend|scenedeck|latest|${BIN_NAME}-*-linux-${{ matrix.artifact_arch }}.AppImage"
+
           ARCH=${{ matrix.appimage_arch }} APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool-${{ matrix.appimage_arch }}.AppImage \
+            --updateinformation "${update_info}" \
             "${appdir}" \
             "${BIN_NAME}-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.AppImage"
 
@@ -177,6 +181,7 @@ jobs:
             scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.tar.gz
             scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.flatpak
             scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.AppImage
+            scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.AppImage.zsync
 
   publish-release:
     name: Publish GitHub Release
