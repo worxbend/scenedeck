@@ -118,3 +118,23 @@ Add a built-in theme:
 
 Flatpak packaging lives in `packaging/flatpak/`. See
 [../packaging/flatpak/README.md](../packaging/flatpak/README.md).
+
+## Release Notes
+
+Pushing a semantic version tag such as `v0.2.0` runs the Linux release workflow.
+After the packages build, `git-cliff` generates the GitHub release body from
+commits since the previous version tag using `cliff.toml`.
+
+Use Conventional Commit subjects so changes land in the intended section:
+
+- `feat: add a user-visible capability`
+- `fix: correct broken behavior`
+- `perf: reduce runtime overhead`
+- `refactor: reorganize internals`
+- `docs: update documentation`
+- `test: expand automated coverage`
+- `build:`, `ci:`, or `chore:` for maintenance
+
+Older imperative subjects are also categorized. Version-only subjects such as
+`Bump version to 0.2.0` and `Release v0.2.0` are excluded automatically. The
+release job fails before publication if note generation produces an empty file.

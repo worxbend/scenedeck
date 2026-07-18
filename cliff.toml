@@ -1,0 +1,54 @@
+# Automated GitHub release-note configuration.
+# See https://git-cliff.org/docs/configuration
+
+[remote.github]
+owner = "worxbend"
+repo = "scenedeck"
+
+[changelog]
+header = ""
+body = """
+## What's Changed
+
+{% for group, commits in commits | group_by(attribute="group") %}\
+### {{ group }}
+
+{% for commit in commits %}\
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | upper_first }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/worxbend/scenedeck/commit/{{ commit.id }}))
+{% endfor %}\
+{% endfor %}\
+{% if previous.version and version %}\
+**Full changelog:** https://github.com/worxbend/scenedeck/compare/{{ previous.version }}...{{ version }}
+{% endif %}
+"""
+footer = ""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+split_commits = false
+commit_preprocessors = [
+  # Release notes use the subject; implementation details and trailers stay in Git.
+  { pattern = '(?s)\n.*', replace = '' },
+]
+commit_parsers = [
+  { message = '^Release v|^Bump version', skip = true },
+  { message = '^feat', group = 'Features' },
+  { message = '(?i)^(add|introduce|implement|support|enable)', group = 'Features' },
+  { message = '^fix', group = 'Fixes' },
+  { message = '(?i)^(fix|correct|prevent|restore|resolve)', group = 'Fixes' },
+  { message = '^perf', group = 'Performance' },
+  { message = '^refactor', group = 'Refactoring' },
+  { message = '(?i)^(refactor|split|extract)', group = 'Refactoring' },
+  { message = '^docs?', group = 'Documentation' },
+  { message = '(?i)^(document|update (the )?(readme|documentation))', group = 'Documentation' },
+  { message = '^test', group = 'Testing' },
+  { message = '^build|^ci|^chore', group = 'Maintenance' },
+  { message = '(?i)^(update|bump|remove|clean|polish)', group = 'Maintenance' },
+  { message = '.*', group = 'Other Changes' },
+]
+protect_breaking_commits = true
+filter_commits = false
+tag_pattern = '^v[0-9]+\.[0-9]+\.[0-9]+$'
+sort_commits = "oldest"
