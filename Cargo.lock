@@ -1931,7 +1931,7 @@ dependencies = [
 
 [[package]]
 name = "scenedeck"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "fluent-bundle",
  "futures-util",

@@ -89,7 +89,7 @@ disabled during transitions, and disabled confirmations run immediately.
 
 ### Recording Path Copy
 
-1. Start a recording from Live.
+1. Start a recording from the sidebar.
 2. Stop the recording and wait for OBS to report the final output path.
 3. Use the recording path copy button.
 4. Paste into a text field outside SceneDeck.

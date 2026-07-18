@@ -42,7 +42,9 @@ the Doctor page is rebuilt.
 
 ## Command Flow
 
-User actions dispatch `AppCommand` through `NavigationContext`.
+User actions dispatch executable `AppCommand` values through
+`NavigationContext`. Commands that are purely local UI decisions are not kept
+as placeholder controller variants.
 
 ```text
 GTK signal
@@ -55,7 +57,11 @@ GTK signal
 ```
 
 The GTK side polls the event receiver every 50 ms. This keeps all widget
-mutation on the GTK main thread.
+mutation on the GTK main thread. The widgets needed by event application are
+grouped in an `EventUiContext`, keeping the event adapter's dependency boundary
+explicit as the window grows. Connection and output event families are applied
+by focused handlers; the general handler owns scene, audio, graph, diagnostic,
+and statistics updates.
 
 ## OBS Session Lifecycle
 
@@ -71,7 +77,8 @@ Arc<Mutex<Option<ObsClient>>>
 The mutex is only held long enough to clone the cheap `ObsClient` handle. It
 must not be held across `.await`.
 
-After connection:
+Configuration and Secret Service reads needed for connection and OBS refreshes
+run on Tokio's blocking pool rather than the GTK thread. After connection:
 
 1. SceneDeck verifies the OBS version.
 2. It publishes the client into the shared slot.
@@ -92,6 +99,14 @@ mapped to domain types before crossing into the controller or UI.
 events into GTK-side updates. Runtime dependencies such as config loading and
 OBS password retrieval are injected through `controller::dependencies`; the
 default production adapters still use local storage and the system keyring.
+Stream and recording command guards, status refreshes, fake-client injection,
+and graceful shutdown are isolated in `controller::output_controller` rather
+than growing the main application controller.
+OBS connect/reconnect/disconnect task ownership lives in
+`controller::session_controller`, behind an injectable session-runner boundary.
+Protocol refresh helpers and the OBS event stream live in
+`controller::refresh_controller`. Fake session-runner tests cover connect,
+reconnect, and disconnect lifecycle event sequences without a running OBS.
 
 `src/domain/` contains stable app concepts such as scenes, roles, audio inputs,
 output status, graph, diagnostics, registry snapshots, graph dependency
@@ -106,6 +121,14 @@ paths, and keyring integration. The scene registry storage type remains the
 serde representation for JSON/YAML, and converts to `SceneRegistrySnapshot`
 before application services use it.
 
+Local persistence is deliberately not routed through the OBS `AppCommand` /
+`AppEvent` stream. Config, registry, and password snapshots are preloaded on a
+startup worker and cached in `AppState`. GTK page callbacks mutate those
+snapshots and use `ui::background_io` for filesystem and Secret Service work;
+completion callbacks return to the GTK thread for status updates. This keeps
+the OBS controller contract focused while preventing blocking persistence calls
+from running in GTK callbacks.
+
 Configuration should prefer domain types over raw strings where the value has a
 closed set of valid states. For example, `theme_mode` is stored as the same
 lowercase string on disk but is represented as `ThemeMode` in Rust.
@@ -118,6 +141,8 @@ SceneDeck CSS, the selected built-in theme family's effective light or dark
 variant, and optional user CSS for the same effective side. `ThemeMode::System`
 continues to use libadwaita's system preference; custom themes must provide
 separate light and dark CSS paths when they need side-specific styling.
+Custom CSS file contents are read through `ui::background_io`; only CSS parsing
+and provider installation run on GTK.
 
 The Mixer page lives in `src/ui/pages/mixer.rs`. Its mode, scene selection,
 search, and grouping controls are stored in `AppState` as a `MixerSelection`.
@@ -145,7 +170,7 @@ the whole mixer.
 ## Error Handling
 
 Operational errors are converted into `AppError` and sent as `AppEvent::Error`.
-The UI updates sidebar status, disables live output controls, shows the
+The UI updates sidebar status and output controls, shows the
 disconnected Live view, and displays a toast.
 
 Warnings that do not need user interruption use `tracing`.

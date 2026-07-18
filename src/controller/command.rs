@@ -1,5 +1,4 @@
 use crate::domain::audio::InputId;
-use crate::domain::role::SceneRole;
 use crate::domain::scene::SceneId;
 
 #[derive(Debug, Clone)]
@@ -19,12 +18,6 @@ pub enum AppCommand {
     SetCurrentSceneCollection(String),
     CreateSceneCollection(String),
 
-    // Role management
-    SetSceneRole {
-        scene: SceneId,
-        role: SceneRole,
-    },
-
     // Audio
     SetInputMute {
         input: InputId,
@@ -42,16 +35,11 @@ pub enum AppCommand {
     // Outputs
     StartStreaming,
     StopStreaming,
-    ToggleStreaming,
     SetStreaming(bool),
     StartRecording,
     StopRecording,
-    ToggleRecording,
     SetRecording(bool),
     RefreshOutputStatus,
     /// Poll `GetStats` and stream byte counters for the status bar.
     RefreshStats,
-
-    // Diagnostics
-    RunDoctor,
 }

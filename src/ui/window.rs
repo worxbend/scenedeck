@@ -59,11 +59,11 @@ pub fn build_main_window(
     apply_color_scheme(&style_manager, state.borrow().theme_mode);
 
     register_resources();
-    let theme_report =
-        ThemeManager::apply(&crate::storage::config::read_config().config.appearance);
-    for warning in &theme_report.warnings {
-        tracing::warn!(%warning, "theme warning");
-    }
+    ThemeManager::apply_async(state.borrow().config.appearance.clone(), |report| {
+        for warning in report.warnings {
+            tracing::warn!(%warning, "theme warning");
+        }
+    });
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
@@ -84,7 +84,7 @@ pub fn build_main_window(
     let nav = NavigationContext::new(state.clone(), content_stack.clone(), controller);
 
     // Build pages — live returns a handle; others return (widget, refresh_fn).
-    let live_handle = crate::ui::pages::live::build(nav.clone());
+    let live_handle = Rc::new(crate::ui::pages::live::build(nav.clone()));
     let (mixer_widget, mixer_refresh) = crate::ui::pages::mixer::build(nav.clone());
     let (graph_widget, graph_refresh) = crate::ui::pages::graph::build(nav.clone());
     let (inventory_widget, inventory_refresh) = crate::ui::pages::inventory::build(nav.clone());
@@ -136,10 +136,15 @@ pub fn build_main_window(
 
     sidebar_list.connect_row_selected({
         let nav = nav.clone();
+        let live_handle = Rc::clone(&live_handle);
         move |_, row| {
             if let Some(row) = row {
                 if let Some(&page) = NAV_PAGES.get(row.index() as usize) {
                     nav.switch_to_page(page);
+                    if page == Page::Live {
+                        let inventory = nav.state.borrow().scene_inventory.clone();
+                        crate::ui::pages::live::rebuild_scene_cards(&live_handle, &inventory, &nav);
+                    }
                 }
             }
         }
@@ -147,33 +152,25 @@ pub fn build_main_window(
 
     // ── Toast overlay (created early so the event poller can reference it) ────
     let toast_overlay = adw::ToastOverlay::new();
-    let elapsed_stream_label = live_handle.stream_label.clone();
-    let elapsed_record_label = live_handle.record_label.clone();
+    let event_ui = EventUiContext {
+        live: live_handle.clone(),
+        toast: toast_overlay.clone(),
+        refreshers: refreshers.clone(),
+        header_selectors: header_selectors.clone(),
+        sidebar_controls: sidebar_controls.clone(),
+        streaming_chrome: streaming_chrome.clone(),
+        status_bar: status_bar.clone(),
+    };
 
     // ── Event polling ─────────────────────────────────────────────────────────
     // 50 ms gives responsive-enough UI updates without burning CPU.
     glib::timeout_add_local(Duration::from_millis(50), {
         let nav = nav.clone();
-        let toast_overlay = toast_overlay.clone();
-        let refreshers = refreshers.clone();
-        let header_selectors = header_selectors.clone();
-        let sidebar_controls = sidebar_controls.clone();
-        let streaming_chrome = streaming_chrome.clone();
-        let status_bar = status_bar.clone();
+        let event_ui = event_ui.clone();
         move || {
             loop {
                 match event_rx.try_recv() {
-                    Ok(event) => apply_event(
-                        &nav,
-                        event,
-                        &live_handle,
-                        &toast_overlay,
-                        &refreshers,
-                        &header_selectors,
-                        &sidebar_controls,
-                        &streaming_chrome,
-                        &status_bar,
-                    ),
+                    Ok(event) => apply_event(&nav, event, &event_ui),
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => {
                         return glib::ControlFlow::Break;
@@ -186,23 +183,9 @@ pub fn build_main_window(
 
     glib::timeout_add_local(Duration::from_secs(1), {
         let state = state.clone();
-        let stream_label = elapsed_stream_label;
-        let record_label = elapsed_record_label;
         let status_bar = status_bar.clone();
         move || {
             let state = state.borrow();
-            stream_label.set_text(&fl!(
-                LANGUAGE_LOADER,
-                "window-stream-status-line",
-                state = state.stream_status.state.label(),
-                elapsed = elapsed_suffix(state.stream_active_since)
-            ));
-            record_label.set_text(&fl!(
-                LANGUAGE_LOADER,
-                "window-record-status-line",
-                state = state.record_status.state.label(),
-                elapsed = elapsed_suffix(state.record_active_since)
-            ));
             status_bar::set_stream(
                 &status_bar,
                 &fl!(
@@ -317,127 +300,42 @@ pub fn build_main_window(
 
 // ── Event handler ─────────────────────────────────────────────────────────────
 
-fn apply_event(
-    nav: &NavigationContext,
-    event: AppEvent,
-    live: &LivePageHandle,
-    toast: &adw::ToastOverlay,
-    refreshers: &PageRefreshers,
-    header_selectors: &HeaderSelectors,
-    sidebar_controls: &SidebarControls,
-    streaming_chrome: &StreamingChromeRef,
-    status_bar: &StatusBarHandle,
-) {
+fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
+    if matches!(
+        &event,
+        AppEvent::Connecting | AppEvent::Connected(_) | AppEvent::Disconnected
+    ) {
+        apply_connection_event(nav, event, ui);
+        return;
+    }
+    if matches!(
+        &event,
+        AppEvent::StreamStatusUpdated(_)
+            | AppEvent::RecordStatusUpdated(_)
+            | AppEvent::StreamCommandPending(_)
+            | AppEvent::RecordCommandPending(_)
+            | AppEvent::StreamCommandSucceeded
+            | AppEvent::RecordCommandSucceeded
+            | AppEvent::StreamCommandFailed(_)
+            | AppEvent::RecordCommandFailed(_)
+    ) {
+        apply_output_event(nav, event, ui);
+        return;
+    }
+    let EventUiContext {
+        live,
+        toast,
+        refreshers,
+        header_selectors,
+        sidebar_controls,
+        streaming_chrome,
+        status_bar,
+    } = ui;
     use crate::ui::pages::live::{
-        rebuild_audio_cards, rebuild_scene_cards, reset_output_controls, show_disconnected_view,
-        show_live_view, update_record_status, update_stream_status,
+        rebuild_audio_cards, rebuild_scene_cards, show_disconnected_view, show_live_view,
     };
 
     match event {
-        AppEvent::Connecting => {
-            {
-                let mut state = nav.state.borrow_mut();
-                state.set_obs_status(ObsStatus::Connecting);
-                state.set_stream_status(OutputStatus::default());
-                state.set_record_status(OutputStatus::default());
-                state.scene_inventory = Default::default();
-                state.stream_active_since = None;
-                state.record_active_since = None;
-                state.clear_pending_mixer_audio_refresh();
-                state.clear_output_command_errors();
-                state.clear_obs_stats();
-            }
-            sidebar_controls
-                .status_label
-                .set_text(&fl!(LANGUAGE_LOADER, "window-status-connecting"));
-            set_status_class(&sidebar_controls.status_label, "obs-connecting");
-            sidebar_controls
-                .connect_btn
-                .set_label(&fl!(LANGUAGE_LOADER, "window-connect-btn-connecting"));
-            sidebar_controls.connect_btn.set_sensitive(false);
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
-            status_bar::set_connection(status_bar, &ObsStatus::Connecting);
-            status_bar::clear_stats(status_bar);
-            show_disconnected_view(live, &fl!(LANGUAGE_LOADER, "window-status-connecting"));
-            live.current_scene_label
-                .set_text(&fl!(LANGUAGE_LOADER, "window-current-scene-none"));
-            rebuild_audio_cards(live, &[], nav);
-            reset_output_controls(live);
-            update_named_selector(&header_selectors.profiles, &ObsNamedList::default());
-            update_named_selector(
-                &header_selectors.scene_collections,
-                &ObsNamedList::default(),
-            );
-        }
-
-        AppEvent::Connected(info) => {
-            let obs_status = ObsStatus::Connected {
-                obs_version: info.obs_version.clone(),
-            };
-            nav.state.borrow_mut().set_obs_status(obs_status.clone());
-            sidebar_controls.status_label.set_text(&fl!(
-                LANGUAGE_LOADER,
-                "window-status-connected",
-                version = info.obs_version.clone()
-            ));
-            set_status_class(&sidebar_controls.status_label, "obs-connected");
-            sidebar_controls
-                .connect_btn
-                .set_label(&fl!(LANGUAGE_LOADER, "window-connect-btn-disconnect"));
-            sidebar_controls.connect_btn.set_sensitive(true);
-            sidebar_controls
-                .connect_btn
-                .remove_css_class("suggested-action");
-            sidebar_controls
-                .connect_btn
-                .add_css_class("destructive-action");
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
-            status_bar::set_connection(status_bar, &obs_status);
-            show_live_view(live);
-        }
-
-        AppEvent::Disconnected => {
-            {
-                let mut state = nav.state.borrow_mut();
-                state.set_obs_status(ObsStatus::Disconnected);
-                state.set_stream_status(OutputStatus::default());
-                state.set_record_status(OutputStatus::default());
-                state.scene_inventory = Default::default();
-                state.stream_active_since = None;
-                state.record_active_since = None;
-                state.clear_pending_mixer_audio_refresh();
-                state.clear_output_command_errors();
-                state.clear_obs_stats();
-            }
-            sidebar_controls
-                .status_label
-                .set_text(&fl!(LANGUAGE_LOADER, "window-status-disconnected"));
-            set_status_class(&sidebar_controls.status_label, "obs-disconnected");
-            sidebar_controls
-                .connect_btn
-                .set_label(&fl!(LANGUAGE_LOADER, "window-connect-btn-connect"));
-            sidebar_controls.connect_btn.set_sensitive(true);
-            sidebar_controls
-                .connect_btn
-                .add_css_class("suggested-action");
-            sidebar_controls
-                .connect_btn
-                .remove_css_class("destructive-action");
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
-            status_bar::set_connection(status_bar, &ObsStatus::Disconnected);
-            status_bar::clear_stats(status_bar);
-            show_disconnected_view(live, &fl!(LANGUAGE_LOADER, "window-live-disconnected-hint"));
-            live.current_scene_label
-                .set_text(&fl!(LANGUAGE_LOADER, "window-current-scene-none"));
-            rebuild_audio_cards(live, &[], nav);
-            reset_output_controls(live);
-            update_named_selector(&header_selectors.profiles, &ObsNamedList::default());
-            update_named_selector(
-                &header_selectors.scene_collections,
-                &ObsNamedList::default(),
-            );
-        }
-
         AppEvent::SceneInventoryUpdated(inventory) => {
             show_live_view(live);
             let inventory = {
@@ -526,7 +424,6 @@ fn apply_event(
             sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
             status_bar::set_connection(status_bar, &obs_status);
             status_bar::clear_stats(status_bar);
-            reset_output_controls(live);
             show_disconnected_view(live, &fl!(LANGUAGE_LOADER, "window-obs-connection-failed"));
             live.current_scene_label
                 .set_text(&fl!(LANGUAGE_LOADER, "window-current-scene-none"));
@@ -640,213 +537,6 @@ fn apply_event(
             }
         }
 
-        AppEvent::StreamStatusUpdated(status) => {
-            let (elapsed, error) = {
-                let mut state = nav.state.borrow_mut();
-                update_active_since(status.active, &mut state.stream_active_since);
-                state.set_stream_status(status.clone());
-                (
-                    state.stream_active_since.map(format_elapsed),
-                    state.last_stream_command_error.clone(),
-                )
-            };
-            status_bar::set_stream(
-                status_bar,
-                &output_label(
-                    &fl!(LANGUAGE_LOADER, "window-output-kind-stream"),
-                    &status,
-                    elapsed.as_deref(),
-                ),
-                status.active,
-            );
-            update_stream_status(live, &status, elapsed, error.as_deref());
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
-        }
-
-        AppEvent::RecordStatusUpdated(status) => {
-            let (elapsed, last_path, error) = {
-                let mut state = nav.state.borrow_mut();
-                update_active_since(status.active, &mut state.record_active_since);
-                if let Some(path) = status.detail.as_ref().filter(|path| !path.is_empty()) {
-                    state.last_recording_path = Some(path.clone());
-                }
-                state.set_record_status(status.clone());
-                (
-                    state.record_active_since.map(format_elapsed),
-                    state.last_recording_path.clone(),
-                    state.last_record_command_error.clone(),
-                )
-            };
-            status_bar::set_record(
-                status_bar,
-                &output_label(
-                    &fl!(LANGUAGE_LOADER, "window-output-kind-record"),
-                    &status,
-                    elapsed.as_deref(),
-                ),
-                status.active,
-            );
-            update_record_status(
-                live,
-                &status,
-                elapsed,
-                last_path.as_deref(),
-                error.as_deref(),
-            );
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
-        }
-
-        AppEvent::StreamCommandPending(status) => {
-            let (elapsed, error) = {
-                let mut state = nav.state.borrow_mut();
-                update_active_since(status.active, &mut state.stream_active_since);
-                state.set_stream_command_pending(status.clone());
-                (
-                    state.stream_active_since.map(format_elapsed),
-                    state.last_stream_command_error.clone(),
-                )
-            };
-            status_bar::set_stream(
-                status_bar,
-                &output_label(
-                    &fl!(LANGUAGE_LOADER, "window-output-kind-stream"),
-                    &status,
-                    elapsed.as_deref(),
-                ),
-                status.active,
-            );
-            update_stream_status(live, &status, elapsed, error.as_deref());
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
-        }
-
-        AppEvent::RecordCommandPending(status) => {
-            let (elapsed, last_path, error) = {
-                let mut state = nav.state.borrow_mut();
-                update_active_since(status.active, &mut state.record_active_since);
-                state.set_record_command_pending(status.clone());
-                (
-                    state.record_active_since.map(format_elapsed),
-                    state.last_recording_path.clone(),
-                    state.last_record_command_error.clone(),
-                )
-            };
-            status_bar::set_record(
-                status_bar,
-                &output_label(
-                    &fl!(LANGUAGE_LOADER, "window-output-kind-record"),
-                    &status,
-                    elapsed.as_deref(),
-                ),
-                status.active,
-            );
-            update_record_status(
-                live,
-                &status,
-                elapsed,
-                last_path.as_deref(),
-                error.as_deref(),
-            );
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
-        }
-
-        AppEvent::StreamCommandSucceeded => {
-            let (status, elapsed) = {
-                let mut state = nav.state.borrow_mut();
-                state.set_stream_command_success();
-                (
-                    state.stream_status.clone(),
-                    state.stream_active_since.map(format_elapsed),
-                )
-            };
-            status_bar::set_stream(
-                status_bar,
-                &output_label(
-                    &fl!(LANGUAGE_LOADER, "window-output-kind-stream"),
-                    &status,
-                    elapsed.as_deref(),
-                ),
-                status.active,
-            );
-            update_stream_status(live, &status, elapsed, None);
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
-        }
-
-        AppEvent::RecordCommandSucceeded => {
-            let (status, elapsed, last_path) = {
-                let mut state = nav.state.borrow_mut();
-                state.set_record_command_success();
-                (
-                    state.record_status.clone(),
-                    state.record_active_since.map(format_elapsed),
-                    state.last_recording_path.clone(),
-                )
-            };
-            status_bar::set_record(
-                status_bar,
-                &output_label(
-                    &fl!(LANGUAGE_LOADER, "window-output-kind-record"),
-                    &status,
-                    elapsed.as_deref(),
-                ),
-                status.active,
-            );
-            update_record_status(live, &status, elapsed, last_path.as_deref(), None);
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
-        }
-
-        AppEvent::StreamCommandFailed(failure) => {
-            let (status, elapsed, error) = {
-                let mut state = nav.state.borrow_mut();
-                state.set_stream_command_failure_with_recovery(failure);
-                (
-                    state.stream_status.clone(),
-                    state.stream_active_since.map(format_elapsed),
-                    state.last_stream_command_error.clone(),
-                )
-            };
-            status_bar::set_stream(
-                status_bar,
-                &output_label(
-                    &fl!(LANGUAGE_LOADER, "window-output-kind-stream"),
-                    &status,
-                    elapsed.as_deref(),
-                ),
-                status.active,
-            );
-            update_stream_status(live, &status, elapsed, error.as_deref());
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
-        }
-
-        AppEvent::RecordCommandFailed(failure) => {
-            let (status, elapsed, last_path, error) = {
-                let mut state = nav.state.borrow_mut();
-                state.set_record_command_failure_with_recovery(failure);
-                (
-                    state.record_status.clone(),
-                    state.record_active_since.map(format_elapsed),
-                    state.last_recording_path.clone(),
-                    state.last_record_command_error.clone(),
-                )
-            };
-            status_bar::set_record(
-                status_bar,
-                &output_label(
-                    &fl!(LANGUAGE_LOADER, "window-output-kind-record"),
-                    &status,
-                    elapsed.as_deref(),
-                ),
-                status.active,
-            );
-            update_record_status(
-                live,
-                &status,
-                elapsed,
-                last_path.as_deref(),
-                error.as_deref(),
-            );
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
-        }
-
         AppEvent::GraphUpdated(graph) => {
             nav.state.borrow_mut().scene_graph = graph;
             // Refresh pages that display graph data if they're currently visible.
@@ -871,6 +561,318 @@ fn apply_event(
             };
             status_bar::set_stats(status_bar, &stats, bitrate_kbps, streaming);
         }
+        _ => unreachable!("specialized event was not routed before general event handling"),
+    }
+}
+
+fn apply_connection_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
+    let EventUiContext {
+        live,
+        header_selectors,
+        sidebar_controls,
+        streaming_chrome,
+        status_bar,
+        ..
+    } = ui;
+    use crate::ui::pages::live::{rebuild_audio_cards, show_disconnected_view, show_live_view};
+
+    match event {
+        AppEvent::Connecting => {
+            {
+                let mut state = nav.state.borrow_mut();
+                state.set_obs_status(ObsStatus::Connecting);
+                state.set_stream_status(OutputStatus::default());
+                state.set_record_status(OutputStatus::default());
+                state.scene_inventory = Default::default();
+                state.stream_active_since = None;
+                state.record_active_since = None;
+                state.clear_pending_mixer_audio_refresh();
+                state.clear_output_command_errors();
+                state.clear_obs_stats();
+            }
+            sidebar_controls
+                .status_label
+                .set_text(&fl!(LANGUAGE_LOADER, "window-status-connecting"));
+            set_status_class(&sidebar_controls.status_label, "obs-connecting");
+            sidebar_controls
+                .connect_btn
+                .set_label(&fl!(LANGUAGE_LOADER, "window-connect-btn-connecting"));
+            sidebar_controls.connect_btn.set_sensitive(false);
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+            status_bar::set_connection(status_bar, &ObsStatus::Connecting);
+            status_bar::clear_stats(status_bar);
+            show_disconnected_view(live, &fl!(LANGUAGE_LOADER, "window-status-connecting"));
+            live.current_scene_label
+                .set_text(&fl!(LANGUAGE_LOADER, "window-current-scene-none"));
+            rebuild_audio_cards(live, &[], nav);
+            update_named_selector(&header_selectors.profiles, &ObsNamedList::default());
+            update_named_selector(
+                &header_selectors.scene_collections,
+                &ObsNamedList::default(),
+            );
+        }
+
+        AppEvent::Connected(info) => {
+            let obs_status = ObsStatus::Connected {
+                obs_version: info.obs_version.clone(),
+            };
+            nav.state.borrow_mut().set_obs_status(obs_status.clone());
+            sidebar_controls.status_label.set_text(&fl!(
+                LANGUAGE_LOADER,
+                "window-status-connected",
+                version = info.obs_version.clone()
+            ));
+            set_status_class(&sidebar_controls.status_label, "obs-connected");
+            sidebar_controls
+                .connect_btn
+                .set_label(&fl!(LANGUAGE_LOADER, "window-connect-btn-disconnect"));
+            sidebar_controls.connect_btn.set_sensitive(true);
+            sidebar_controls
+                .connect_btn
+                .remove_css_class("suggested-action");
+            sidebar_controls
+                .connect_btn
+                .add_css_class("destructive-action");
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+            status_bar::set_connection(status_bar, &obs_status);
+            show_live_view(live);
+        }
+
+        AppEvent::Disconnected => {
+            {
+                let mut state = nav.state.borrow_mut();
+                state.set_obs_status(ObsStatus::Disconnected);
+                state.set_stream_status(OutputStatus::default());
+                state.set_record_status(OutputStatus::default());
+                state.scene_inventory = Default::default();
+                state.stream_active_since = None;
+                state.record_active_since = None;
+                state.clear_pending_mixer_audio_refresh();
+                state.clear_output_command_errors();
+                state.clear_obs_stats();
+            }
+            sidebar_controls
+                .status_label
+                .set_text(&fl!(LANGUAGE_LOADER, "window-status-disconnected"));
+            set_status_class(&sidebar_controls.status_label, "obs-disconnected");
+            sidebar_controls
+                .connect_btn
+                .set_label(&fl!(LANGUAGE_LOADER, "window-connect-btn-connect"));
+            sidebar_controls.connect_btn.set_sensitive(true);
+            sidebar_controls
+                .connect_btn
+                .add_css_class("suggested-action");
+            sidebar_controls
+                .connect_btn
+                .remove_css_class("destructive-action");
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+            status_bar::set_connection(status_bar, &ObsStatus::Disconnected);
+            status_bar::clear_stats(status_bar);
+            show_disconnected_view(live, &fl!(LANGUAGE_LOADER, "window-live-disconnected-hint"));
+            live.current_scene_label
+                .set_text(&fl!(LANGUAGE_LOADER, "window-current-scene-none"));
+            rebuild_audio_cards(live, &[], nav);
+            update_named_selector(&header_selectors.profiles, &ObsNamedList::default());
+            update_named_selector(
+                &header_selectors.scene_collections,
+                &ObsNamedList::default(),
+            );
+        }
+
+        _ => unreachable!("non-connection event routed to connection handler"),
+    }
+}
+
+fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
+    let EventUiContext {
+        sidebar_controls,
+        streaming_chrome,
+        status_bar,
+        ..
+    } = ui;
+
+    match event {
+        AppEvent::StreamStatusUpdated(status) => {
+            let (elapsed, _error) = {
+                let mut state = nav.state.borrow_mut();
+                update_active_since(status.active, &mut state.stream_active_since);
+                state.set_stream_status(status.clone());
+                (
+                    state.stream_active_since.map(format_elapsed),
+                    state.last_stream_command_error.clone(),
+                )
+            };
+            status_bar::set_stream(
+                status_bar,
+                &output_label(
+                    &fl!(LANGUAGE_LOADER, "window-output-kind-stream"),
+                    &status,
+                    elapsed.as_deref(),
+                ),
+                status.active,
+            );
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+        }
+
+        AppEvent::RecordStatusUpdated(status) => {
+            let (elapsed, _last_path, _error) = {
+                let mut state = nav.state.borrow_mut();
+                update_active_since(status.active, &mut state.record_active_since);
+                if let Some(path) = status.detail.as_ref().filter(|path| !path.is_empty()) {
+                    state.last_recording_path = Some(path.clone());
+                }
+                state.set_record_status(status.clone());
+                (
+                    state.record_active_since.map(format_elapsed),
+                    state.last_recording_path.clone(),
+                    state.last_record_command_error.clone(),
+                )
+            };
+            status_bar::set_record(
+                status_bar,
+                &output_label(
+                    &fl!(LANGUAGE_LOADER, "window-output-kind-record"),
+                    &status,
+                    elapsed.as_deref(),
+                ),
+                status.active,
+            );
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+        }
+
+        AppEvent::StreamCommandPending(status) => {
+            let (elapsed, _error) = {
+                let mut state = nav.state.borrow_mut();
+                update_active_since(status.active, &mut state.stream_active_since);
+                state.set_stream_command_pending(status.clone());
+                (
+                    state.stream_active_since.map(format_elapsed),
+                    state.last_stream_command_error.clone(),
+                )
+            };
+            status_bar::set_stream(
+                status_bar,
+                &output_label(
+                    &fl!(LANGUAGE_LOADER, "window-output-kind-stream"),
+                    &status,
+                    elapsed.as_deref(),
+                ),
+                status.active,
+            );
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+        }
+
+        AppEvent::RecordCommandPending(status) => {
+            let (elapsed, _last_path, _error) = {
+                let mut state = nav.state.borrow_mut();
+                update_active_since(status.active, &mut state.record_active_since);
+                state.set_record_command_pending(status.clone());
+                (
+                    state.record_active_since.map(format_elapsed),
+                    state.last_recording_path.clone(),
+                    state.last_record_command_error.clone(),
+                )
+            };
+            status_bar::set_record(
+                status_bar,
+                &output_label(
+                    &fl!(LANGUAGE_LOADER, "window-output-kind-record"),
+                    &status,
+                    elapsed.as_deref(),
+                ),
+                status.active,
+            );
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+        }
+
+        AppEvent::StreamCommandSucceeded => {
+            let (status, elapsed) = {
+                let mut state = nav.state.borrow_mut();
+                state.set_stream_command_success();
+                (
+                    state.stream_status.clone(),
+                    state.stream_active_since.map(format_elapsed),
+                )
+            };
+            status_bar::set_stream(
+                status_bar,
+                &output_label(
+                    &fl!(LANGUAGE_LOADER, "window-output-kind-stream"),
+                    &status,
+                    elapsed.as_deref(),
+                ),
+                status.active,
+            );
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+        }
+
+        AppEvent::RecordCommandSucceeded => {
+            let (status, elapsed, _last_path) = {
+                let mut state = nav.state.borrow_mut();
+                state.set_record_command_success();
+                (
+                    state.record_status.clone(),
+                    state.record_active_since.map(format_elapsed),
+                    state.last_recording_path.clone(),
+                )
+            };
+            status_bar::set_record(
+                status_bar,
+                &output_label(
+                    &fl!(LANGUAGE_LOADER, "window-output-kind-record"),
+                    &status,
+                    elapsed.as_deref(),
+                ),
+                status.active,
+            );
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+        }
+
+        AppEvent::StreamCommandFailed(failure) => {
+            let (status, elapsed, _error) = {
+                let mut state = nav.state.borrow_mut();
+                state.set_stream_command_failure_with_recovery(failure);
+                (
+                    state.stream_status.clone(),
+                    state.stream_active_since.map(format_elapsed),
+                    state.last_stream_command_error.clone(),
+                )
+            };
+            status_bar::set_stream(
+                status_bar,
+                &output_label(
+                    &fl!(LANGUAGE_LOADER, "window-output-kind-stream"),
+                    &status,
+                    elapsed.as_deref(),
+                ),
+                status.active,
+            );
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+        }
+
+        AppEvent::RecordCommandFailed(failure) => {
+            let (status, elapsed, _last_path, _error) = {
+                let mut state = nav.state.borrow_mut();
+                state.set_record_command_failure_with_recovery(failure);
+                (
+                    state.record_status.clone(),
+                    state.record_active_since.map(format_elapsed),
+                    state.last_recording_path.clone(),
+                    state.last_record_command_error.clone(),
+                )
+            };
+            status_bar::set_record(
+                status_bar,
+                &output_label(
+                    &fl!(LANGUAGE_LOADER, "window-output-kind-record"),
+                    &status,
+                    elapsed.as_deref(),
+                ),
+                status.active,
+            );
+            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+        }
+        _ => unreachable!("non-output event routed to output handler"),
     }
 }
 
@@ -1250,13 +1252,7 @@ fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, Side
     stream_btn.add_css_class("sidebar-output-button");
     stream_btn.connect_clicked({
         let nav = nav.clone();
-        move |_| {
-            if nav.state.borrow().stream_status.active {
-                nav.dispatch(AppCommand::StopStreaming);
-            } else {
-                nav.dispatch(AppCommand::StartStreaming);
-            }
-        }
+        move |button| crate::ui::pages::live::handle_stream_output_toggle(button, &nav)
     });
 
     let record_btn = Button::builder()
@@ -1268,13 +1264,7 @@ fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, Side
     record_btn.add_css_class("sidebar-output-button");
     record_btn.connect_clicked({
         let nav = nav.clone();
-        move |_| {
-            if nav.state.borrow().record_status.active {
-                nav.dispatch(AppCommand::StopRecording);
-            } else {
-                nav.dispatch(AppCommand::StartRecording);
-            }
-        }
+        move |button| crate::ui::pages::live::handle_record_output_toggle(button, &nav)
     });
 
     let footer = GtkBox::builder()
@@ -1379,6 +1369,17 @@ struct PageRefreshers {
     settings: RefreshFn,
 }
 
+#[derive(Clone)]
+struct EventUiContext {
+    live: Rc<LivePageHandle>,
+    toast: adw::ToastOverlay,
+    refreshers: PageRefreshers,
+    header_selectors: HeaderSelectors,
+    sidebar_controls: SidebarControls,
+    streaming_chrome: StreamingChromeRef,
+    status_bar: StatusBarHandle,
+}
+
 impl PageRefreshers {
     /// Call the refresh function for `page` if it has one.
     /// Live page is always kept current by `apply_event`, so it is a no-op here.
@@ -1407,8 +1408,7 @@ pub(crate) fn apply_color_scheme(style_manager: &adw::StyleManager, mode: ThemeM
 mod tests {
     use super::*;
     use crate::domain::audio::AudioInput;
-    use crate::domain::mixer::{MixerMode, MixerSelection};
-    use crate::storage::config::OutputConfig;
+    use crate::domain::mixer::MixerMode;
 
     fn input(id: &str) -> AudioInput {
         AudioInput::new(id.to_string(), false, 1.0, 0.0)
@@ -1416,9 +1416,9 @@ mod tests {
 
     fn app_state() -> AppState {
         AppState::new(
-            ThemeMode::default(),
-            MixerSelection::default(),
-            OutputConfig::default(),
+            crate::storage::config::AppConfig::default(),
+            crate::storage::registry::SceneRegistry::default(),
+            None,
             None,
         )
     }

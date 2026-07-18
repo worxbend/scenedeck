@@ -67,13 +67,13 @@ Fields:
   Empty means discover all active scene audio inputs.
 - `live.allow_switching_only`: roles intended for scene switching. Current Live
   switching uses scenes whose role is `Primary`.
-- `outputs.confirm_start_stream`: whether the Live page asks before starting
+- `outputs.confirm_start_stream`: whether the sidebar asks before starting
   the stream. Defaults to `false`.
-- `outputs.confirm_stop_stream`: whether the Live page asks before stopping the
+- `outputs.confirm_stop_stream`: whether the sidebar asks before stopping the
   stream. Defaults to `true`.
-- `outputs.confirm_start_recording`: whether the Live page asks before starting
+- `outputs.confirm_start_recording`: whether the sidebar asks before starting
   a recording. Defaults to `false`.
-- `outputs.confirm_stop_recording`: whether the Live page asks before stopping a
+- `outputs.confirm_stop_recording`: whether the sidebar asks before stopping a
   recording. Defaults to `true`.
 - `appearance.mode`: `system`, `light`, or `dark`.
 - `appearance.theme`: selected built-in theme id. `adwaita-default` is the
@@ -140,6 +140,7 @@ Example:
   "scenes": {
     "Main": {
       "role": "primary",
+      "accent_color": "#336699",
       "tags": [],
       "protected": false
     },
@@ -149,6 +150,7 @@ Example:
       "protected": true
     }
   },
+  "scene_order": ["Main", "Camera Frame"],
   "rules": {
     "primary_can_depend_on": [],
     "module_can_depend_on": [],
@@ -166,15 +168,19 @@ Roles:
 - `debug`: temporary test scene.
 - `archive`: preserved but excluded from workflows.
 
-The UI currently edits scene roles and stale entries. Tags, protected flags, and
-custom rule fields are available in the file for deeper workflows and Doctor
-logic.
+The UI edits scene roles, optional scene accent colors, scene ordering, and stale entries.
+Accent colors use `#RRGGBB`; Live always renders them at 50% alpha. Tags,
+protected flags, and custom rule fields remain available in the file for deeper
+workflows and Doctor logic.
+
+`scene_order` stores the order chosen by dragging scenes in Inventory. Inventory
+and Live use this order; newly discovered scenes not yet listed are appended.
 
 ## YAML Import and Export
 
 Inventory can export the scene registry to YAML and import it back from YAML.
 The YAML structure mirrors `registry.json`, so it preserves scenes, roles, tags,
-protected flags, and rule fields.
+accent colors, scene order, protected flags, and rule fields.
 
 Example:
 
@@ -182,9 +188,12 @@ Example:
 scenes:
   Main:
     role: primary
+    accent_color: "#336699"
     tags:
       - live
     protected: false
+scene_order:
+  - Main
 rules:
   primary_can_depend_on: []
   module_can_depend_on: []

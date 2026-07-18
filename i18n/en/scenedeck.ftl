@@ -207,12 +207,12 @@ inventory-page-title = Inventory
 inventory-empty-state-title = No Scenes
 inventory-empty-state-description = Connect to OBS to load the scene list.
 inventory-scenes-group-title = OBS Scenes
-inventory-scenes-group-description = Assign roles to control which scenes appear on the Live page.
+inventory-scenes-group-description = Drag scenes to order them, and assign roles to control which appear on Live.
 inventory-stale-group-title = Stale Registry Entries
 inventory-stale-group-description = These scenes are in your local registry but no longer exist in OBS.
 inventory-remove-stale-tooltip = Remove stale entry
 inventory-yaml-row-title = Scene Registry YAML
-inventory-yaml-row-subtitle = Export or import scene roles, tags, protection flags, and graph rules.
+inventory-yaml-row-subtitle = Export or import scene roles, colors, order, tags, protection flags, and graph rules.
 inventory-yaml-filter-name = YAML files
 
 # Shared between the row's Export button, the export FileChooserNative's

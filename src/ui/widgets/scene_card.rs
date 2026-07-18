@@ -1,13 +1,17 @@
 //! Primary-scene card for the Live page.
 
 use gtk4::prelude::*;
-use gtk4::{Align, Box as GtkBox, Button, Label, Orientation};
+use std::cell::RefCell;
+use std::collections::HashSet;
+
+use gtk4::{gdk, Align, Box as GtkBox, Button, CssProvider, Label, Orientation};
 use i18n_embed_fl::fl;
 
 use crate::controller::command::AppCommand;
 use crate::domain::role::SceneRole;
 use crate::domain::scene::SceneId;
 use crate::infra::i18n::LANGUAGE_LOADER;
+use crate::storage::registry::parse_scene_accent;
 use crate::ui::navigation::NavigationContext;
 
 /// Build a scene-switch card.
@@ -20,6 +24,7 @@ pub(crate) fn build(
     scene_role: SceneRole,
     is_active: bool,
     is_previous: bool,
+    accent_color: Option<&str>,
     nav: NavigationContext,
 ) -> Button {
     let presentation = SceneCardPresentation::for_state(is_active, is_previous);
@@ -31,6 +36,9 @@ pub(crate) fn build(
         .build();
     card.add_css_class("card");
     card.add_css_class("scene-card");
+    if let Some(class) = accent_color.and_then(install_accent_class) {
+        card.add_css_class(&class);
+    }
     card.set_tooltip_text(Some(&fl!(
         LANGUAGE_LOADER,
         "scene-card-tooltip",
@@ -98,6 +106,35 @@ pub(crate) fn build(
     card
 }
 
+thread_local! {
+    static INSTALLED_ACCENTS: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+}
+
+fn install_accent_class(value: &str) -> Option<String> {
+    let (red, green, blue) = parse_scene_accent(value)?;
+    let class = format!("scene-accent-{red:02x}{green:02x}{blue:02x}");
+    let is_new = INSTALLED_ACCENTS.with(|installed| installed.borrow_mut().insert(class.clone()));
+    if is_new {
+        let Some(display) = gdk::Display::default() else {
+            return Some(class);
+        };
+        let provider = CssProvider::new();
+        provider.load_from_data(&accent_css(&class, red, green, blue));
+        gtk4::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION + 1,
+        );
+    }
+    Some(class)
+}
+
+fn accent_css(class: &str, red: u8, green: u8, blue: u8) -> String {
+    format!(
+        "button.scene-card.{class} {{ background-image: none; background-color: rgba({red}, {green}, {blue}, 0.5); }}"
+    )
+}
+
 fn scene_role_subtitle(role: SceneRole) -> String {
     fl!(
         LANGUAGE_LOADER,
@@ -120,14 +157,14 @@ impl SceneCardPresentation {
         if active {
             Self {
                 tooltip: "Current program scene",
-                status_label: "Live",
-                status_css_class: "scene-card-status-live",
+                status_label: "Active",
+                status_css_class: "scene-card-status-active",
                 marker_label: "On",
                 card_css_class: Some("scene-card-active"),
             }
         } else if previous {
             Self {
-                tooltip: "Previously live scene",
+                tooltip: "Previously active scene",
                 status_label: "Prev",
                 status_css_class: "scene-card-status-previous",
                 marker_label: "Last",
@@ -150,13 +187,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scene_card_presentation_marks_active_scene_as_live() {
+    fn scene_card_presentation_marks_active_scene_as_active() {
         assert_eq!(
             SceneCardPresentation::for_state(true, false),
             SceneCardPresentation {
                 tooltip: "Current program scene",
-                status_label: "Live",
-                status_css_class: "scene-card-status-live",
+                status_label: "Active",
+                status_css_class: "scene-card-status-active",
                 marker_label: "On",
                 card_css_class: Some("scene-card-active")
             }
@@ -168,7 +205,7 @@ mod tests {
         assert_eq!(
             SceneCardPresentation::for_state(false, true),
             SceneCardPresentation {
-                tooltip: "Previously live scene",
+                tooltip: "Previously active scene",
                 status_label: "Prev",
                 status_css_class: "scene-card-status-previous",
                 marker_label: "Last",
@@ -195,5 +232,11 @@ mod tests {
     fn scene_role_subtitle_uses_assigned_role_label() {
         assert_eq!(scene_role_subtitle(SceneRole::Primary), "Primary scene");
         assert_eq!(scene_role_subtitle(SceneRole::Secondary), "Secondary scene");
+    }
+
+    #[test]
+    fn accent_css_always_uses_half_transparency() {
+        let css = accent_css("scene-accent-123456", 18, 52, 86);
+        assert!(css.contains("rgba(18, 52, 86, 0.5)"));
     }
 }

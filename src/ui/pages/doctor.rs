@@ -13,7 +13,6 @@ use i18n_embed_fl::fl;
 use crate::domain::diagnostic::{Diagnostic, DiagnosticSeverity};
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::doctor_service::DoctorService;
-use crate::storage::registry::read_registry;
 use crate::ui::navigation::NavigationContext;
 
 fn no_diagnostics_summary() -> String {
@@ -71,7 +70,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
         return;
     }
 
-    let registry = read_registry();
+    let registry = nav.state.borrow().registry.clone();
     let registry_snapshot = registry.snapshot();
     let diagnostics = DoctorService::run(&inventory, &registry_snapshot, &graph);
 

@@ -17,11 +17,11 @@
 }
 
 .scene-card-active,
-.scene-card-status-live {
+.scene-card-status-active {
   outline-color: @scenedeck_accent;
 }
 
 .status-pill-live,
-.scene-card-status-live {
+.scene-card-status-active {
   background-color: @scenedeck_accent;
 }

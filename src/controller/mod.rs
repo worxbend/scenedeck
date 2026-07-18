@@ -7,4 +7,7 @@ pub(crate) mod app_controller;
 pub(crate) mod command;
 pub(crate) mod dependencies;
 pub(crate) mod event;
+pub(crate) mod output_controller;
+pub(crate) mod refresh_controller;
+pub(crate) mod session_controller;
 pub(crate) mod state;

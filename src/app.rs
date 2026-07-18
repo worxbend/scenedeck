@@ -16,6 +16,8 @@ use crate::controller::event::AppEvent;
 use crate::controller::state::AppState;
 use crate::infra::i18n;
 use crate::storage::config::read_config;
+use crate::storage::registry::read_registry;
+use crate::storage::secret;
 use crate::ui;
 
 /// Initialize runtime state and run the GTK application.
@@ -29,6 +31,28 @@ pub fn run() {
 
     let tokio_handle = runtime.handle().clone();
     let (event_tx, event_rx) = mpsc::sync_channel::<AppEvent>(128);
+    let startup = std::thread::spawn(|| {
+        (
+            read_config(),
+            read_registry(),
+            secret::get_obs_password().unwrap_or_else(|error| {
+                tracing::warn!(%error, "could not preload OBS password from keyring");
+                None
+            }),
+        )
+    })
+    .join()
+    .unwrap_or_else(|_| {
+        tracing::error!("startup persistence worker panicked; using defaults");
+        (
+            crate::storage::config::LoadedConfig {
+                config: Default::default(),
+                startup_notice: None,
+            },
+            Default::default(),
+            None,
+        )
+    });
 
     let event_rx = Rc::new(RefCell::new(Some(event_rx)));
 
@@ -51,7 +75,7 @@ pub fn run() {
             event_tx.clone(),
         )));
 
-        build_ui(app, controller, rx);
+        build_ui(app, controller, rx, &startup);
     });
 
     app.run();
@@ -66,18 +90,20 @@ fn build_ui(
     app: &adw::Application,
     controller: Rc<RefCell<AppController>>,
     event_rx: mpsc::Receiver<AppEvent>,
+    startup: &(
+        crate::storage::config::LoadedConfig,
+        crate::storage::registry::SceneRegistry,
+        Option<String>,
+    ),
 ) {
-    let loaded = read_config();
+    let loaded = &startup.0;
     i18n::init(loaded.config.language);
-    let theme_mode = loaded.config.appearance.mode;
-    let mixer = loaded.config.mixer;
-    let output_confirmations = loaded.config.outputs;
-    let notice = loaded.startup_notice.map(|n| n.user_message());
+    let notice = loaded.startup_notice.as_ref().map(|n| n.user_message());
 
     let state = Rc::new(RefCell::new(AppState::new(
-        theme_mode,
-        mixer,
-        output_confirmations,
+        loaded.config.clone(),
+        startup.1.clone(),
+        startup.2.clone(),
         notice,
     )));
 

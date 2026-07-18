@@ -68,7 +68,7 @@ preference in the local config file. The search field is session-only.
 SceneDeck shows scene cards for OBS scenes that are marked as `Primary` in the
 Inventory page. Selecting a card switches the OBS program scene.
 
-The active scene is marked as Live. Other switchable scenes are marked as Ready.
+The current program scene is marked as Active. Other switchable scenes are marked as Ready.
 
 If no scene cards appear after connecting, open Inventory and assign the
 `Primary` role to the scenes you want to switch from Live.
@@ -91,18 +91,13 @@ source in OBS.
 
 ### Stream and Record
 
-The top Live controls display streaming and recording state. Use Start Stream,
-Stop Stream, Start Record, and Stop Record to control OBS outputs. When OBS
-reports output state changes directly, SceneDeck updates the labels.
+Use the Start/Stop Stream and Start/Stop Recording buttons at the bottom of the
+sidebar to control OBS outputs. The status bar shows output state and elapsed
+time. When OBS reports a state change, SceneDeck updates both surfaces.
 
-The Live page asks for confirmation before stream or recording actions whose
-Output Safety toggles are enabled in Settings. By default, SceneDeck confirms
-Stop Stream and Stop Recording, while Start Stream and Start Recording run
-immediately.
-
-When streaming or recording is active, SceneDeck shows a local elapsed timer in
-the output label. If recording stops and OBS returns a file path, the record
-status tooltip shows that path and the copy button copies it to the clipboard.
+The sidebar buttons ask for confirmation when their Output Safety toggles are
+enabled in Settings. By default, SceneDeck confirms Stop Stream and Stop
+Recording, while starting either output runs immediately.
 
 ## Header Selectors
 
@@ -118,6 +113,11 @@ OBS lists yet.
 
 Inventory lists OBS scenes and lets you assign local roles. Roles are stored in
 SceneDeck's local registry and do not rename or modify scenes in OBS.
+Drag a scene by its handle to set the display order. The same persisted order is
+used for scene cards on the Live page.
+Assigned scenes also have an optional accent-color picker and clear button.
+SceneDeck uses that accent to highlight the scene's Live card with a fixed 50%
+alpha; picker alpha values are not stored.
 If the registry file cannot be loaded, Inventory shows a warning row and falls
 back to unassigned roles until the file is fixed and the page is refreshed.
 
@@ -134,7 +134,8 @@ Inventory also shows stale registry entries when a locally remembered scene no
 longer exists in OBS. You can remove stale entries from this page.
 
 The Scene Registry YAML row exports or imports the local registry as a YAML
-file. This includes scene roles, tags, protection flags, and graph rule fields.
+file. This includes scene roles, accent colors, scene order, tags, protection
+flags, and graph rule fields.
 Use export to back up a scene setup or move it to another machine; use import to
 replace the local registry from a YAML file.
 If the local registry file is invalid, export reports the parse error instead

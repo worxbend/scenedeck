@@ -22,7 +22,7 @@ use crate::controller::state::{
     MixerVisibleRenderSource,
 };
 use crate::domain::audio::AudioInput;
-use crate::domain::mixer::{MixerGrouping, MixerMode, MixerSelection};
+use crate::domain::mixer::{MixerGrouping, MixerMode};
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::audio_service::AudioService;
 use crate::storage::config::write_config;
@@ -869,16 +869,19 @@ fn index_to_grouping(index: u32) -> MixerGrouping {
 }
 
 fn persist_mixer_selection(nav: &NavigationContext) {
-    let selection = nav.state.borrow().mixer.clone();
-    if let Err(err) = write_mixer_selection(selection) {
-        tracing::warn!(%err, "failed to save mixer preference");
-    }
-}
-
-fn write_mixer_selection(selection: MixerSelection) -> Result<(), std::io::Error> {
-    let mut cfg = crate::storage::config::read_config().config;
-    cfg.mixer = selection;
-    write_config(&cfg)
+    let config = {
+        let mut state = nav.state.borrow_mut();
+        state.config.mixer = state.mixer.clone();
+        state.config.clone()
+    };
+    crate::ui::background_io::run(
+        move || write_config(&config),
+        |result| {
+            if let Err(error) = result {
+                tracing::warn!(%error, "failed to save mixer preference");
+            }
+        },
+    );
 }
 
 #[cfg(test)]
@@ -893,17 +896,15 @@ mod tests {
         AppState, MixerAudioError, MixerInspectionStatus, MixerSceneRefreshTargetReason,
         MixerVisibleAudioStatus,
     };
-    use crate::domain::appearance::ThemeMode;
     use crate::domain::audio::AudioInput;
-    use crate::domain::mixer::{MixerMode, MixerSelection};
+    use crate::domain::mixer::MixerMode;
     use crate::services::audio_service::AudioService;
-    use crate::storage::config::OutputConfig;
 
     fn app_state() -> AppState {
         AppState::new(
-            ThemeMode::default(),
-            MixerSelection::default(),
-            OutputConfig::default(),
+            crate::storage::config::AppConfig::default(),
+            crate::storage::registry::SceneRegistry::default(),
+            None,
             None,
         )
     }

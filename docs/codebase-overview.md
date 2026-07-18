@@ -33,20 +33,30 @@ Application orchestration.
 - `command.rs`: user and UI commands.
 - `event.rs`: events sent back to GTK.
 - `state.rs`: UI-facing app state.
-- `app_controller.rs`: OBS session lifecycle, command handling, event loop, and
-  refresh helpers.
+- `app_controller.rs`: top-level command routing and small per-command task
+  dispatch. It delegates session, refresh, and output lifecycles to focused
+  controller components.
+- `output_controller.rs`: stream/record command guards, status refreshes,
+  graceful disconnect shutdown, and the injectable output-client boundary.
+- `session_controller.rs`: connection task ownership, reconnect replacement,
+  graceful disconnect, and the injectable session-runner boundary.
+- `refresh_controller.rs`: OBS list/data refresh helpers, stats/bitrate polling,
+  and OBS event-stream routing.
 
 `src/domain/`
 
 Application data types that do not depend on GTK or OBS crate types.
 
 - `audio.rs`: OBS audio input identity and volume state.
+- `appearance.rs`: language, color mode, density, and theme preferences.
 - `diagnostic.rs`: Doctor diagnostic model.
 - `graph.rs`: scene dependency graph.
+- `mixer.rs`: Mixer modes and persisted selection/grouping preferences.
 - `obs.rs`: named OBS lists such as profiles and scene collections.
 - `output.rs`: stream and record status.
 - `role.rs`: local scene roles.
 - `scene.rs`: scene inventory.
+- `stats.rs`: OBS performance statistics.
 
 `src/infra/`
 
@@ -71,6 +81,7 @@ Higher-level logic over domain types.
 - `doctor_service.rs`: architecture diagnostics.
 - `graph_service.rs`: graph edge classification.
 - `scene_service.rs`: scene-related service functions.
+- `audio_service.rs`: dB conversion, volume sanitization, and slider debouncing.
 
 `src/storage/`
 
@@ -88,7 +99,9 @@ GTK and libadwaita UI.
 - `window.rs`: main shell, sidebar, header selectors, event application.
 - `navigation.rs`: page switching and command dispatch helper.
 - `actions.rs`: app-level actions and keyboard shortcuts.
-- `pages/`: Live, Graph, Inventory, Doctor, and Settings pages.
+- `background_io.rs`: runs blocking local persistence on worker threads and
+  returns completion callbacks to GTK.
+- `pages/`: Live, Mixer, Graph, Inventory, Doctor, and Settings pages.
 - `widgets/`: reusable scene and audio cards.
 
 ## Assets and Resources

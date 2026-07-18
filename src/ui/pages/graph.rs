@@ -23,7 +23,6 @@ use crate::domain::role::SceneRole;
 use crate::domain::scene::SceneInventory;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::graph_service::classify_edge;
-use crate::storage::registry::read_registry;
 use crate::ui::navigation::NavigationContext;
 
 const NODE_WIDTH: f64 = 190.0;
@@ -82,7 +81,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
         return;
     }
 
-    let registry = read_registry().snapshot();
+    let registry = nav.state.borrow().registry.snapshot();
     let model = GraphModel::build(&graph, &inventory, &registry);
     let edge_summary = model.edge_summary;
     let model = Rc::new(RefCell::new(model));

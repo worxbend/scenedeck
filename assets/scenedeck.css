@@ -148,43 +148,6 @@
     min-height: 34px;
 }
 
-/* ── Live output controls ──────────────────────────────────────────────────── */
-.output-control button {
-    min-width: 132px;
-}
-
-.output-card {
-    min-width: 260px;
-    min-height: 0;
-    padding: 6px 10px;
-    border-radius: 8px;
-    background-color: alpha(@scenedeck_fg, 0.04);
-}
-
-.output-card-title {
-    color: @scenedeck_muted_fg;
-    font-weight: 700;
-}
-
-.output-card button.circular {
-    min-width: 32px;
-    min-height: 32px;
-    padding: 0;
-}
-
-.output-progress {
-    color: @scenedeck_muted_fg;
-}
-
-.output-detail {
-    color: @scenedeck_muted_fg;
-}
-
-.output-command-error {
-    color: @scenedeck_error;
-    font-weight: 700;
-}
-
 /* ── Header OBS selectors ──────────────────────────────────────────────────── */
 .header-selector {
     margin-left: 6px;
@@ -291,7 +254,7 @@ window.scenedeck-about-window preferencesgroup row {
     outline: 1px solid alpha(@scenedeck_accent, 0.45);
 }
 
-.scene-card-status-live,
+.scene-card-status-active,
 .scene-card-status-previous,
 .scene-card-status-ready {
     border-radius: 4px;
@@ -300,7 +263,7 @@ window.scenedeck-about-window preferencesgroup row {
     font-size: 0.78em;
 }
 
-.scene-card-status-live {
+.scene-card-status-active {
     background-color: @scenedeck_accent;
     color: @scenedeck_accent_fg;
 }

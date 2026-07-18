@@ -5,6 +5,7 @@
 //! `NavigationContext` type shared by all pages.
 
 pub(crate) mod actions;
+pub(crate) mod background_io;
 pub(crate) mod navigation;
 pub(crate) mod pages;
 pub(crate) mod theme;

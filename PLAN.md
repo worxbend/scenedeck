@@ -39,7 +39,13 @@ cargo test --workspace --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
-Status: all passed on 2026-06-21 after the mixer refresh contract, optimistic
+Status: all passed on 2026-07-18, including the normally ignored single-threaded
+locale validation. The current baseline also includes an `EventUiContext` with
+focused connection/output event handlers, removal of non-executable
+placeholder commands, and blocking-pool loading for controller-side config and
+Secret Service access. Local config, registry, YAML, and keyring snapshots are
+now cached in `AppState`; startup reads and page-triggered writes use worker
+threads rather than GTK callbacks. The validation run followed the mixer refresh contract, optimistic
 audio update, output confirmation decision-helper work, mixer retry-intent fix,
 reducer-owned mixer input mirror containment, selected/pinned and Active-mode
 Mixer input-event reconciliation, Mixer render-source reconciliation, legacy
@@ -81,12 +87,10 @@ output-status refresh calls fail. The fallback calculation is covered for every
 event-level tests prove transition fallback inputs are normalized before
 storage. Output status refresh logic is unified through a narrow
 `OutputStatusReader` helper shared by `ObsClient` and the output-command
-wrapper. Live output controls now render as two output cards with stable slots
-for state/elapsed copy, pending command progress, concise errors, and the last
-recording path. Backend error details remain in tooltips. The remaining output
-layout gap is proof and truncation: the visible recording path is still the raw
-path string, and no GTK render/manual check has proved that long paths cannot
-stretch or destabilize the card.
+wrapper. Stream and recording actions now live only in the persistent sidebar;
+their duplicate Live-page cards were removed. Output state and elapsed time
+remain visible in the status bar, and the sidebar actions retain the configured
+start/stop confirmation behavior.
 
 ## Completed Phases
 

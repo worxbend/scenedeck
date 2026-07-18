@@ -86,6 +86,14 @@ pub(crate) struct ThemeApplyReport {
     pub(crate) warnings: Vec<String>,
 }
 
+#[derive(Debug)]
+pub(crate) enum CustomCssLoad {
+    Disabled,
+    MissingPath,
+    Loaded { path: PathBuf, css: String },
+    Failed { path: PathBuf, error: String },
+}
+
 impl ThemeApplyReport {
     pub(crate) fn is_ok(&self) -> bool {
         self.warnings.is_empty()
@@ -116,6 +124,49 @@ impl ThemeManager {
     }
 
     pub(crate) fn apply(preference: &ThemePreference) -> ThemeApplyReport {
+        Self::apply_with_custom_css(preference, CustomCssLoad::Disabled)
+    }
+
+    pub(crate) fn apply_async(
+        preference: ThemePreference,
+        complete: impl FnOnce(ThemeApplyReport) + 'static,
+    ) {
+        if !preference.custom_css_enabled() {
+            complete(Self::apply(&preference));
+            return;
+        }
+        let worker_preference = preference.clone();
+        crate::ui::background_io::run(
+            move || Self::load_custom_css(&worker_preference),
+            move |custom_css| complete(Self::apply_with_custom_css(&preference, custom_css)),
+        );
+    }
+
+    /// Read the effective custom stylesheet. This is blocking and must be
+    /// called through `ui::background_io` in production.
+    pub(crate) fn load_custom_css(preference: &ThemePreference) -> CustomCssLoad {
+        if !preference.custom_css_enabled() {
+            return CustomCssLoad::Disabled;
+        }
+        let Some(path) = preference
+            .custom_css_path_for_mode(preference.mode)
+            .cloned()
+        else {
+            return CustomCssLoad::MissingPath;
+        };
+        match fs::read_to_string(&path) {
+            Ok(css) => CustomCssLoad::Loaded { path, css },
+            Err(error) => CustomCssLoad::Failed {
+                path,
+                error: error.to_string(),
+            },
+        }
+    }
+
+    pub(crate) fn apply_with_custom_css(
+        preference: &ThemePreference,
+        custom_css: CustomCssLoad,
+    ) -> ThemeApplyReport {
         let variant = effective_variant(preference.mode);
         let theme = Self::find_theme(preference.selected_theme_id());
 
@@ -125,27 +176,26 @@ impl ThemeManager {
         install_css_provider(BASE_CSS, "base app CSS", &mut warnings);
         install_css_provider(theme.css_for(variant), theme.id, &mut warnings);
 
-        let mut custom_css_path = None;
-        if preference.custom_css_enabled() {
-            custom_css_path = preference
-                .custom_css_path_for_mode(preference.mode)
-                .cloned();
-            if let Some(path) = custom_css_path.as_deref() {
-                match fs::read_to_string(path) {
-                    Ok(css) => {
-                        install_css_provider(&css, &path.display().to_string(), &mut warnings)
-                    }
-                    Err(err) => warnings.push(fl!(
-                        LANGUAGE_LOADER,
-                        "theme-custom-css-read-failed",
-                        path = path.display().to_string(),
-                        err = err.to_string()
-                    )),
-                }
-            } else {
+        let custom_css_path = match custom_css {
+            CustomCssLoad::Disabled => None,
+            CustomCssLoad::MissingPath => {
                 warnings.push(fl!(LANGUAGE_LOADER, "theme-custom-css-no-matching-file"));
+                None
             }
-        }
+            CustomCssLoad::Loaded { path, css } => {
+                install_css_provider(&css, &path.display().to_string(), &mut warnings);
+                Some(path)
+            }
+            CustomCssLoad::Failed { path, error } => {
+                warnings.push(fl!(
+                    LANGUAGE_LOADER,
+                    "theme-custom-css-read-failed",
+                    path = path.display().to_string(),
+                    err = error
+                ));
+                Some(path)
+            }
+        };
 
         ThemeApplyReport {
             theme_id: theme.id.to_string(),

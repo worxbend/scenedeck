@@ -12,7 +12,8 @@ use crate::domain::output::OutputStatus;
 use crate::domain::scene::{SceneId, SceneInventory};
 use crate::domain::stats::ObsStats;
 use crate::infra::i18n::LANGUAGE_LOADER;
-use crate::storage::config::OutputConfig;
+use crate::storage::config::{AppConfig, OutputConfig};
+use crate::storage::registry::SceneRegistry;
 use i18n_embed_fl::fl;
 use std::time::Instant;
 
@@ -245,6 +246,11 @@ impl MixerAudioRefreshState {
 
 #[derive(Debug, Clone)]
 pub struct AppState {
+    /// Cached local persistence snapshots. GTK reads these values only from
+    /// memory; blocking adapters update them through the background-I/O bridge.
+    pub config: AppConfig,
+    pub registry: SceneRegistry,
+    pub obs_password: Option<String>,
     pub current_page: Page,
     pub theme_mode: ThemeMode,
     pub obs_status: ObsStatus,
@@ -275,12 +281,18 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(
-        theme_mode: ThemeMode,
-        mixer: MixerSelection,
-        output_confirmations: OutputConfig,
+        config: AppConfig,
+        registry: SceneRegistry,
+        obs_password: Option<String>,
         startup_notice: Option<String>,
     ) -> Self {
+        let theme_mode = config.appearance.mode;
+        let mixer = config.mixer.clone();
+        let output_confirmations = config.outputs.clone();
         Self {
+            config,
+            registry,
+            obs_password,
             current_page: Page::Live,
             theme_mode,
             obs_status: ObsStatus::Disconnected,
@@ -630,12 +642,7 @@ mod tests {
     }
 
     fn app_state() -> AppState {
-        AppState::new(
-            ThemeMode::default(),
-            MixerSelection::default(),
-            OutputConfig::default(),
-            None,
-        )
+        AppState::new(AppConfig::default(), SceneRegistry::default(), None, None)
     }
 
     fn visible_loaded_input<'a>(state: &'a AppState, scene: &str, id: &str) -> &'a AudioInput {

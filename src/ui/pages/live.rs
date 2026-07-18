@@ -15,11 +15,8 @@ use crate::domain::output::OutputStatus;
 use crate::domain::scene::SceneInventory;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::config::OutputConfig;
-use crate::storage::registry::read_registry;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::widgets::{audio_card, scene_card};
-
-const EMPTY_OUTPUT_SLOT: &str = "";
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum OutputKind {
@@ -38,19 +35,6 @@ enum OutputConfirmationAppearance {
     Suggested,
     Destructive,
 }
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-struct OutputCommandErrorDisplay<'a> {
-    label: String,
-    tooltip: &'a str,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-struct OutputRecordingPathDisplay<'a> {
-    label: String,
-    tooltip: &'a str,
-}
-
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct OutputConfirmationDialog {
     heading: String,
@@ -62,23 +46,13 @@ struct OutputConfirmationDialog {
 /// Widget handles that `ui::window` updates when `AppEvent`s arrive.
 pub(crate) struct LivePageHandle {
     pub(crate) root: Stack,
-    pub(crate) stream_label: Label,
-    pub(crate) stream_progress_label: Label,
-    pub(crate) stream_error_label: Label,
-    pub(crate) stream_btn: Button,
-    pub(crate) record_label: Label,
-    pub(crate) record_progress_label: Label,
-    pub(crate) record_error_label: Label,
-    pub(crate) record_path_label: Label,
-    pub(crate) record_btn: Button,
-    pub(crate) record_path_btn: Button,
     pub(crate) current_scene_label: Label,
     pub(crate) scenes_box: FlowBox,
     pub(crate) audio_box: FlowBox,
     pub(crate) audio_cards: std::cell::RefCell<Vec<audio_card::AudioCardHandle>>,
 }
 
-pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
+pub(crate) fn build(_nav: NavigationContext) -> LivePageHandle {
     let root = Stack::builder()
         .vexpand(true)
         .hexpand(true)
@@ -103,115 +77,6 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
         .build();
     root.add_named(&page, Some("live"));
     root.set_visible_child_name("disconnected");
-
-    // ── Output controls ──────────────────────────────────────────────────────
-    let banner = GtkBox::new(Orientation::Horizontal, 0);
-    banner.add_css_class("card");
-
-    // Inner box carries the padding so the card class doesn't need to.
-    let banner_inner = GtkBox::builder()
-        .orientation(Orientation::Horizontal)
-        .spacing(12)
-        .margin_start(16)
-        .margin_end(12)
-        .margin_top(6)
-        .margin_bottom(6)
-        .hexpand(true)
-        .build();
-    banner.append(&banner_inner);
-
-    let stream_btn = Button::builder()
-        .label(fl!(LANGUAGE_LOADER, "live-start-stream-label"))
-        .valign(Align::Center)
-        .sensitive(false)
-        .build();
-    stream_btn.set_tooltip_text(Some(&fl!(LANGUAGE_LOADER, "live-stream-toggle-tooltip")));
-    stream_btn.connect_clicked({
-        let nav = nav.clone();
-        move |button| handle_stream_output_toggle(button, &nav)
-    });
-
-    let stream_label = Label::builder()
-        .label(fl!(LANGUAGE_LOADER, "live-stream-inactive-label"))
-        .xalign(0.0)
-        .build();
-    stream_label.add_css_class("caption");
-    stream_label.add_css_class("dim-label");
-
-    let stream_progress_label = build_output_progress_label();
-    let stream_error_label = build_output_error_label();
-
-    let record_btn = Button::builder()
-        .label(fl!(LANGUAGE_LOADER, "live-start-record-label"))
-        .valign(Align::Center)
-        .sensitive(false)
-        .build();
-    record_btn.set_tooltip_text(Some(&fl!(LANGUAGE_LOADER, "live-record-toggle-tooltip")));
-    record_btn.connect_clicked({
-        let nav = nav.clone();
-        move |button| handle_record_output_toggle(button, &nav)
-    });
-
-    let record_label = Label::builder()
-        .label(fl!(LANGUAGE_LOADER, "live-record-inactive-label"))
-        .xalign(0.0)
-        .build();
-    record_label.add_css_class("caption");
-    record_label.add_css_class("dim-label");
-
-    let record_progress_label = build_output_progress_label();
-    let record_error_label = build_output_error_label();
-    let record_path_label = build_output_detail_label();
-
-    let record_path_btn = Button::builder()
-        .icon_name("edit-copy-symbolic")
-        .tooltip_text(fl!(
-            LANGUAGE_LOADER,
-            "live-copy-last-recording-path-tooltip"
-        ))
-        .valign(Align::Center)
-        .sensitive(false)
-        .build();
-    record_path_btn.add_css_class("flat");
-    record_path_btn.add_css_class("circular");
-    record_path_btn.connect_clicked({
-        let nav = nav.clone();
-        move |button| {
-            let Some(path) = nav.state.borrow().last_recording_path.clone() else {
-                return;
-            };
-            if let Some(display) = gtk4::gdk::Display::default() {
-                display.clipboard().set_text(&path);
-                button.set_tooltip_text(Some(&fl!(
-                    LANGUAGE_LOADER,
-                    "live-copied-recording-path-tooltip"
-                )));
-            }
-        }
-    });
-
-    let stream_control = build_output_card(
-        &fl!(LANGUAGE_LOADER, "live-stream-card-title"),
-        &stream_btn,
-        &stream_label,
-        &stream_progress_label,
-        &stream_error_label,
-        None,
-        None,
-    );
-    let record_control = build_output_card(
-        &fl!(LANGUAGE_LOADER, "live-recording-card-title"),
-        &record_btn,
-        &record_label,
-        &record_progress_label,
-        &record_error_label,
-        Some(&record_path_label),
-        Some(&record_path_btn),
-    );
-
-    banner_inner.append(&stream_control);
-    banner_inner.append(&record_control);
-    page.append(&banner);
 
     // ── Program scene label ───────────────────────────────────────────────────
     let current_label = Label::builder()
@@ -238,6 +103,7 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
     let scenes_pane = GtkBox::builder()
         .orientation(Orientation::Vertical)
         .spacing(4)
+        .margin_bottom(8)
         .vexpand(false)
         .hexpand(true)
         .build();
@@ -285,6 +151,7 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
     let audio_pane = GtkBox::builder()
         .orientation(Orientation::Vertical)
         .spacing(8)
+        .margin_top(8)
         .vexpand(true)
         .hexpand(true)
         .build();
@@ -323,16 +190,6 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
 
     LivePageHandle {
         root,
-        stream_label,
-        stream_progress_label,
-        stream_error_label,
-        stream_btn,
-        record_label,
-        record_progress_label,
-        record_error_label,
-        record_path_label,
-        record_btn,
-        record_path_btn,
         current_scene_label: current_label,
         scenes_box,
         audio_box,
@@ -352,7 +209,7 @@ pub(crate) fn show_disconnected_view(handle: &LivePageHandle, message: &str) {
     }
 }
 
-fn handle_stream_output_toggle(button: &Button, nav: &NavigationContext) {
+pub(crate) fn handle_stream_output_toggle(button: &Button, nav: &NavigationContext) {
     let active = nav.state.borrow().stream_status.active;
     let command = if active {
         AppCommand::StopStreaming
@@ -373,7 +230,7 @@ fn handle_stream_output_toggle(button: &Button, nav: &NavigationContext) {
     }
 }
 
-fn handle_record_output_toggle(button: &Button, nav: &NavigationContext) {
+pub(crate) fn handle_record_output_toggle(button: &Button, nav: &NavigationContext) {
     let active = nav.state.borrow().record_status.active;
     let command = if active {
         AppCommand::StopRecording
@@ -396,260 +253,6 @@ fn handle_record_output_toggle(button: &Button, nav: &NavigationContext) {
 
 pub(crate) fn show_live_view(handle: &LivePageHandle) {
     handle.root.set_visible_child_name("live");
-}
-
-pub(crate) fn update_stream_status(
-    handle: &LivePageHandle,
-    status: &OutputStatus,
-    elapsed: Option<String>,
-    error: Option<&str>,
-) {
-    handle.stream_label.set_text(&output_label(
-        &fl!(LANGUAGE_LOADER, "live-output-kind-stream"),
-        status,
-        elapsed.as_deref(),
-    ));
-    update_output_progress(&handle.stream_progress_label, OutputKind::Stream, status);
-    update_output_error(&handle.stream_error_label, OutputKind::Stream, error);
-    set_output_button(
-        &handle.stream_btn,
-        status,
-        &fl!(LANGUAGE_LOADER, "live-start-stream-label"),
-        &fl!(LANGUAGE_LOADER, "live-stop-stream-label"),
-    );
-}
-
-pub(crate) fn update_record_status(
-    handle: &LivePageHandle,
-    status: &OutputStatus,
-    elapsed: Option<String>,
-    last_path: Option<&str>,
-    error: Option<&str>,
-) {
-    handle.record_label.set_text(&output_label(
-        &fl!(LANGUAGE_LOADER, "live-output-kind-record"),
-        status,
-        elapsed.as_deref(),
-    ));
-    update_output_progress(&handle.record_progress_label, OutputKind::Recording, status);
-    update_output_error(&handle.record_error_label, OutputKind::Recording, error);
-    handle.record_label.set_tooltip_text(last_path);
-    update_recording_path_detail(&handle.record_path_label, last_path);
-    handle.record_path_btn.set_sensitive(last_path.is_some());
-    if let Some(path) = last_path {
-        handle.record_path_btn.set_tooltip_text(Some(&fl!(
-            LANGUAGE_LOADER,
-            "live-copy-recording-path-with-value-tooltip",
-            path = path
-        )));
-    } else {
-        handle.record_path_btn.set_tooltip_text(Some(&fl!(
-            LANGUAGE_LOADER,
-            "live-copy-last-recording-path-tooltip"
-        )));
-    }
-    set_output_button(
-        &handle.record_btn,
-        status,
-        &fl!(LANGUAGE_LOADER, "live-start-record-label"),
-        &fl!(LANGUAGE_LOADER, "live-stop-record-label"),
-    );
-}
-
-pub(crate) fn reset_output_controls(handle: &LivePageHandle) {
-    handle
-        .stream_label
-        .set_text(&fl!(LANGUAGE_LOADER, "live-stream-inactive-label"));
-    handle
-        .record_label
-        .set_text(&fl!(LANGUAGE_LOADER, "live-record-inactive-label"));
-    update_output_progress(
-        &handle.stream_progress_label,
-        OutputKind::Stream,
-        &OutputStatus::default(),
-    );
-    update_output_progress(
-        &handle.record_progress_label,
-        OutputKind::Recording,
-        &OutputStatus::default(),
-    );
-    update_output_error(&handle.stream_error_label, OutputKind::Stream, None);
-    update_output_error(&handle.record_error_label, OutputKind::Recording, None);
-    handle.record_label.set_tooltip_text(None);
-    update_recording_path_detail(&handle.record_path_label, None);
-    handle.record_path_btn.set_sensitive(false);
-    handle.record_path_btn.set_tooltip_text(Some(&fl!(
-        LANGUAGE_LOADER,
-        "live-copy-last-recording-path-tooltip"
-    )));
-    handle
-        .stream_btn
-        .set_label(&fl!(LANGUAGE_LOADER, "live-start-stream-label"));
-    handle
-        .record_btn
-        .set_label(&fl!(LANGUAGE_LOADER, "live-start-record-label"));
-    handle.stream_btn.set_sensitive(false);
-    handle.record_btn.set_sensitive(false);
-    handle.stream_btn.remove_css_class("destructive-action");
-    handle.record_btn.remove_css_class("destructive-action");
-}
-
-fn build_output_card(
-    title: &str,
-    button: &Button,
-    label: &Label,
-    progress_label: &Label,
-    error_label: &Label,
-    detail_label: Option<&Label>,
-    suffix: Option<&Button>,
-) -> GtkBox {
-    let card = GtkBox::builder()
-        .orientation(Orientation::Vertical)
-        .spacing(4)
-        .valign(Align::Center)
-        .hexpand(true)
-        .build();
-    card.add_css_class("output-control");
-    card.add_css_class("output-card");
-
-    let title_label = Label::builder().label(title).xalign(0.0).build();
-    title_label.add_css_class("caption-heading");
-    title_label.add_css_class("output-card-title");
-    card.append(&title_label);
-
-    let row = GtkBox::builder()
-        .orientation(Orientation::Horizontal)
-        .spacing(8)
-        .valign(Align::Center)
-        .build();
-    row.append(button);
-    row.append(label);
-    if let Some(suffix) = suffix {
-        row.append(suffix);
-    }
-    card.append(&row);
-    card.append(progress_label);
-    card.append(error_label);
-    if let Some(detail_label) = detail_label {
-        card.append(detail_label);
-    }
-    card
-}
-
-fn build_output_progress_label() -> Label {
-    let label = Label::builder()
-        .label(EMPTY_OUTPUT_SLOT)
-        .xalign(0.0)
-        .wrap(true)
-        .visible(false)
-        .build();
-    label.add_css_class("caption");
-    label.add_css_class("dim-label");
-    label.add_css_class("output-progress");
-    label
-}
-
-fn build_output_detail_label() -> Label {
-    let label = Label::builder()
-        .label(EMPTY_OUTPUT_SLOT)
-        .xalign(0.0)
-        .wrap(true)
-        .visible(false)
-        .build();
-    label.add_css_class("caption");
-    label.add_css_class("dim-label");
-    label.add_css_class("output-detail");
-    label
-}
-
-fn build_output_error_label() -> Label {
-    let label = Label::builder()
-        .label(EMPTY_OUTPUT_SLOT)
-        .xalign(0.0)
-        .wrap(true)
-        .visible(false)
-        .build();
-    label.add_css_class("caption");
-    label.add_css_class("output-command-error");
-    label
-}
-
-fn update_output_progress(label: &Label, kind: OutputKind, status: &OutputStatus) {
-    set_optional_output_text(label, &output_progress_copy(kind, status));
-}
-
-fn update_output_error(label: &Label, kind: OutputKind, error: Option<&str>) {
-    if let Some(display) = output_command_error_display(kind, error) {
-        set_optional_output_text(label, &display.label);
-        label.set_tooltip_text(Some(display.tooltip));
-    } else {
-        set_optional_output_text(label, EMPTY_OUTPUT_SLOT);
-        label.set_tooltip_text(None);
-    }
-}
-
-fn update_recording_path_detail(label: &Label, last_path: Option<&str>) {
-    if let Some(display) = output_recording_path_display(last_path) {
-        set_optional_output_text(label, &display.label);
-        label.set_tooltip_text(Some(display.tooltip));
-    } else {
-        set_optional_output_text(label, EMPTY_OUTPUT_SLOT);
-        label.set_tooltip_text(None);
-    }
-}
-
-fn set_optional_output_text(label: &Label, text: &str) {
-    label.set_text(text);
-    label.set_visible(!text.is_empty());
-}
-
-fn output_command_error_display(
-    kind: OutputKind,
-    error: Option<&str>,
-) -> Option<OutputCommandErrorDisplay<'_>> {
-    let tooltip = error.filter(|error| !error.is_empty())?;
-    let label = match kind {
-        OutputKind::Stream => fl!(LANGUAGE_LOADER, "live-stream-command-error-label"),
-        OutputKind::Recording => fl!(LANGUAGE_LOADER, "live-recording-command-error-label"),
-    };
-
-    Some(OutputCommandErrorDisplay { label, tooltip })
-}
-
-fn output_recording_path_display(path: Option<&str>) -> Option<OutputRecordingPathDisplay<'_>> {
-    let tooltip = path.filter(|path| !path.is_empty())?;
-    Some(OutputRecordingPathDisplay {
-        label: fl!(
-            LANGUAGE_LOADER,
-            "live-last-recording-detail",
-            path = tooltip
-        ),
-        tooltip,
-    })
-}
-
-fn output_progress_copy(kind: OutputKind, status: &OutputStatus) -> String {
-    match (kind, status.state) {
-        (OutputKind::Stream, crate::domain::output::OutputRunState::Starting) => {
-            fl!(LANGUAGE_LOADER, "live-starting-stream")
-        }
-        (OutputKind::Stream, crate::domain::output::OutputRunState::Stopping) => {
-            fl!(LANGUAGE_LOADER, "live-stopping-stream")
-        }
-        (OutputKind::Stream, crate::domain::output::OutputRunState::Reconnecting) => {
-            fl!(LANGUAGE_LOADER, "live-reconnecting-stream")
-        }
-        (OutputKind::Recording, crate::domain::output::OutputRunState::Starting) => {
-            fl!(LANGUAGE_LOADER, "live-starting-recording")
-        }
-        (OutputKind::Recording, crate::domain::output::OutputRunState::Stopping) => {
-            fl!(LANGUAGE_LOADER, "live-stopping-recording")
-        }
-        (OutputKind::Recording, crate::domain::output::OutputRunState::Reconnecting) => {
-            fl!(LANGUAGE_LOADER, "live-reconnecting-recording")
-        }
-        _ => EMPTY_OUTPUT_SLOT.to_string(),
-    }
 }
 
 fn build_disconnected_view() -> GtkBox {
@@ -837,16 +440,19 @@ pub(crate) fn rebuild_scene_cards(
         handle.scenes_box.remove(&child);
     }
 
-    let registry = read_registry();
+    let registry = nav.state.borrow().registry.clone();
 
-    let primary_scenes: Vec<_> = inventory
-        .scenes
+    let ordered_scene_ids =
+        registry.ordered_scene_ids(inventory.scenes.iter().map(|scene| scene.id.as_str()));
+    let primary_scenes: Vec<_> = ordered_scene_ids
         .iter()
+        .filter_map(|scene_id| inventory.scenes.iter().find(|scene| &scene.id == scene_id))
         .filter(|s| {
             registry
                 .scenes
                 .get(&s.id)
-                .map(|e| e.role.is_live_switchable())
+                .and_then(|e| e.role)
+                .map(|role| role.is_live_switchable())
                 .unwrap_or(false)
         })
         .collect();
@@ -865,10 +471,9 @@ pub(crate) fn rebuild_scene_cards(
     for scene in primary_scenes {
         let is_active = inventory.current_id.as_deref() == Some(&scene.id);
         let is_previous = inventory.previous_id.as_deref() == Some(&scene.id);
-        let scene_role = registry
-            .scenes
-            .get(&scene.id)
-            .map(|entry| entry.role)
+        let registry_entry = registry.scenes.get(&scene.id);
+        let scene_role = registry_entry
+            .and_then(|entry| entry.role)
             .unwrap_or_default();
         let card = scene_card::build(
             &scene.name,
@@ -876,6 +481,7 @@ pub(crate) fn rebuild_scene_cards(
             scene_role,
             is_active,
             is_previous,
+            registry_entry.and_then(|entry| entry.accent_color.as_deref()),
             nav.clone(),
         );
         insert_compact_flow_child(&handle.scenes_box, &card);
@@ -1062,110 +668,6 @@ mod tests {
     }
 
     #[test]
-    fn stream_command_error_display_uses_concise_label_and_raw_tooltip() {
-        assert_eq!(
-            output_command_error_display(OutputKind::Stream, Some("OBS said no: backend details")),
-            Some(OutputCommandErrorDisplay {
-                label: "Stream command failed".to_string(),
-                tooltip: "OBS said no: backend details",
-            })
-        );
-    }
-
-    #[test]
-    fn recording_command_error_display_uses_concise_label_and_raw_tooltip() {
-        assert_eq!(
-            output_command_error_display(
-                OutputKind::Recording,
-                Some("recording output unavailable")
-            ),
-            Some(OutputCommandErrorDisplay {
-                label: "Recording command failed".to_string(),
-                tooltip: "recording output unavailable",
-            })
-        );
-    }
-
-    #[test]
-    fn command_error_display_ignores_absent_or_empty_errors() {
-        assert_eq!(output_command_error_display(OutputKind::Stream, None), None);
-        assert_eq!(
-            output_command_error_display(OutputKind::Recording, Some("")),
-            None
-        );
-    }
-
-    #[test]
-    fn output_progress_copy_reports_stream_pending_states() {
-        assert_eq!(
-            output_progress_copy(
-                OutputKind::Stream,
-                &output_status(false, OutputRunState::Starting)
-            ),
-            "Starting stream…"
-        );
-        assert_eq!(
-            output_progress_copy(
-                OutputKind::Stream,
-                &output_status(true, OutputRunState::Stopping)
-            ),
-            "Stopping stream…"
-        );
-        assert_eq!(
-            output_progress_copy(
-                OutputKind::Stream,
-                &output_status(true, OutputRunState::Reconnecting)
-            ),
-            "Reconnecting stream…"
-        );
-    }
-
-    #[test]
-    fn output_progress_copy_reports_recording_pending_states() {
-        assert_eq!(
-            output_progress_copy(
-                OutputKind::Recording,
-                &output_status(false, OutputRunState::Starting)
-            ),
-            "Starting recording…"
-        );
-        assert_eq!(
-            output_progress_copy(
-                OutputKind::Recording,
-                &output_status(true, OutputRunState::Stopping)
-            ),
-            "Stopping recording…"
-        );
-        assert_eq!(
-            output_progress_copy(
-                OutputKind::Recording,
-                &output_status(true, OutputRunState::Reconnecting)
-            ),
-            "Reconnecting recording…"
-        );
-    }
-
-    #[test]
-    fn output_progress_copy_is_empty_for_inactive_states() {
-        for kind in [OutputKind::Stream, OutputKind::Recording] {
-            for state in [
-                OutputRunState::Inactive,
-                OutputRunState::Active,
-                OutputRunState::Paused,
-                OutputRunState::Unknown,
-            ] {
-                assert_eq!(
-                    output_progress_copy(
-                        kind,
-                        &output_status(state == OutputRunState::Active, state)
-                    ),
-                    EMPTY_OUTPUT_SLOT
-                );
-            }
-        }
-    }
-
-    #[test]
     fn output_label_shows_elapsed_time_only_while_active() {
         assert_eq!(
             output_label(
@@ -1187,22 +689,5 @@ mod tests {
             output_label("Stream", &output_status(true, OutputRunState::Active), None),
             "Stream: Active"
         );
-    }
-
-    #[test]
-    fn recording_path_display_uses_visible_copy_and_raw_tooltip() {
-        assert_eq!(
-            output_recording_path_display(Some("/tmp/scenedeck-output.mkv")),
-            Some(OutputRecordingPathDisplay {
-                label: "Last recording: /tmp/scenedeck-output.mkv".to_string(),
-                tooltip: "/tmp/scenedeck-output.mkv",
-            })
-        );
-    }
-
-    #[test]
-    fn recording_path_display_ignores_absent_or_empty_paths() {
-        assert_eq!(output_recording_path_display(None), None);
-        assert_eq!(output_recording_path_display(Some("")), None);
     }
 }

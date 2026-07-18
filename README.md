@@ -25,6 +25,9 @@ keep local metadata about how scenes are used.
 - Lock an audio card slider locally to prevent accidental UI changes.
 - Display and control streaming and recording state.
 - Assign local scene roles in Inventory.
+- Assign optional scene accent colors in Inventory for 50%-alpha Live-card
+  highlights.
+- Drag scenes into a persistent Inventory order that is also used on Live.
 - Export and import the local scene registry as YAML from Inventory.
 - Show nested scene dependencies in Graph.
 - Run Doctor diagnostics over scene roles and scene dependency structure.
@@ -63,8 +66,8 @@ those lists from OBS.
 
 Use the sidebar to move between the app views:
 
-- Live: switch Primary scenes, control active scene audio, and control stream
-  and record outputs.
+- Live: switch Primary scenes and control active scene audio. Stream and record
+  outputs are controlled from the persistent sidebar.
 - Graph: inspect nested scene dependencies.
 - Inventory: assign local roles to OBS scenes.
 - Doctor: run structural checks over scenes, roles, and dependencies.

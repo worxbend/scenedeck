@@ -6,15 +6,15 @@ use std::rc::Rc;
 
 use adw::{prelude::*, ActionRow, ComboRow, PreferencesGroup, PreferencesPage, StatusPage};
 use gtk4::{
-    Align, Box as GtkBox, Button, FileChooserAction, FileChooserNative, FileFilter, Orientation,
-    ResponseType,
+    gdk, Align, Box as GtkBox, Button, ColorButton, DragSource, DropTarget, FileChooserAction,
+    FileChooserNative, FileFilter, Image, Orientation, ResponseType,
 };
 
 use crate::domain::role::SceneRole;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::registry::{
-    read_registry, read_registry_yaml_from_path, write_registry, write_registry_yaml_to_path,
-    SceneEntry,
+    parse_scene_accent, read_registry_yaml_from_path, scene_accent_hex, write_registry,
+    write_registry_yaml_to_path, SceneEntry,
 };
 use crate::ui::navigation::NavigationContext;
 use i18n_embed_fl::fl;
@@ -94,7 +94,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
         return;
     }
 
-    let registry = read_registry();
+    let registry = nav.state.borrow().registry.clone();
 
     let page = PreferencesPage::builder()
         .title(fl!(LANGUAGE_LOADER, "inventory-page-title"))
@@ -112,9 +112,20 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
     let yaml_row = build_yaml_actions_row(container, nav);
     scenes_group.add(&yaml_row);
 
-    for scene in &inventory.scenes {
+    let ordered_scene_ids =
+        registry.ordered_scene_ids(inventory.scenes.iter().map(|scene| scene.id.as_str()));
+    let inventory_scene_ids: Vec<String> = inventory
+        .scenes
+        .iter()
+        .map(|scene| scene.id.clone())
+        .collect();
+
+    for scene in ordered_scene_ids
+        .iter()
+        .filter_map(|scene_id| inventory.scenes.iter().find(|scene| &scene.id == scene_id))
+    {
         // Look up the current role from the registry (source of truth).
-        let current_role = registry.scenes.get(&scene.id).map(|e| e.role);
+        let current_role = registry.scenes.get(&scene.id).and_then(|e| e.role);
 
         let subtitle = current_role
             .map(SceneRole::description)
@@ -133,12 +144,118 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
             .build();
         combo_row.add_css_class("scenedeck-combo-row");
 
-        combo_row.connect_selected_notify({
+        let drag_handle = Image::from_icon_name("list-drag-handle-symbolic");
+        drag_handle.set_tooltip_text(Some("Drag to reorder scene"));
+        drag_handle.set_valign(Align::Center);
+        drag_handle.add_css_class("dim-label");
+
+        let drag_source = DragSource::builder().actions(gdk::DragAction::MOVE).build();
+        drag_source.connect_prepare({
             let scene_id = scene.id.clone();
-            move |row| {
-                handle_scene_role_change(row, &scene_id);
+            move |_, _, _| Some(gdk::ContentProvider::for_value(&scene_id.to_value()))
+        });
+        drag_handle.add_controller(drag_source);
+
+        let drop_target = DropTarget::new(String::static_type(), gdk::DragAction::MOVE);
+        drop_target.connect_drop({
+            let target_scene_id = scene.id.clone();
+            let inventory_scene_ids = inventory_scene_ids.clone();
+            let nav = nav.clone();
+            let container = container.clone();
+            move |target, value, _, y| {
+                let Ok(source_scene_id) = value.get::<String>() else {
+                    return false;
+                };
+                let insert_after = target
+                    .widget()
+                    .is_some_and(|widget| y >= f64::from(widget.height()) / 2.0);
+                if !reorder_scenes(
+                    &nav,
+                    &inventory_scene_ids,
+                    &source_scene_id,
+                    &target_scene_id,
+                    insert_after,
+                ) {
+                    return false;
+                }
+                glib::idle_add_local_once({
+                    let nav = nav.clone();
+                    let container = container.clone();
+                    move || rebuild(&container, &nav)
+                });
+                true
             }
         });
+        combo_row.add_controller(drop_target);
+
+        let current_accent = registry
+            .scenes
+            .get(&scene.id)
+            .and_then(|entry| entry.accent_color.as_deref())
+            .map(str::to_owned);
+
+        let clear_accent_button = Button::builder()
+            .icon_name("edit-clear-symbolic")
+            .tooltip_text("Clear scene accent color")
+            .valign(Align::Center)
+            .sensitive(
+                registry
+                    .scenes
+                    .get(&scene.id)
+                    .and_then(|entry| entry.accent_color.as_ref())
+                    .is_some(),
+            )
+            .build();
+        clear_accent_button.add_css_class("flat");
+
+        let accent_box = GtkBox::new(Orientation::Horizontal, 0);
+        let accent_button = build_accent_button(
+            &scene.id,
+            current_accent.as_deref(),
+            nav,
+            &clear_accent_button,
+        );
+        accent_box.append(&accent_button);
+
+        combo_row.connect_selected_notify({
+            let scene_id = scene.id.clone();
+            let nav = nav.clone();
+            let clear_accent_button = clear_accent_button.clone();
+            move |row| {
+                handle_scene_role_change(row, &scene_id, &nav);
+                clear_accent_button.set_sensitive(
+                    nav.state
+                        .borrow()
+                        .registry
+                        .scenes
+                        .get(&scene_id)
+                        .and_then(|entry| entry.accent_color.as_ref())
+                        .is_some(),
+                );
+            }
+        });
+
+        clear_accent_button.connect_clicked({
+            let scene_id = scene.id.clone();
+            let nav = nav.clone();
+            let clear_accent_button = clear_accent_button.clone();
+            let accent_box = accent_box.clone();
+            move |_| {
+                if set_scene_accent(&nav, &scene_id, None) {
+                    if let Some(previous_picker) = accent_box.first_child() {
+                        accent_box.remove(&previous_picker);
+                    }
+                    let unset_picker =
+                        build_accent_button(&scene_id, None, &nav, &clear_accent_button);
+                    accent_box.append(&unset_picker);
+                    clear_accent_button.set_sensitive(false);
+                }
+            }
+        });
+
+        combo_row.add_suffix(&drag_handle);
+        combo_row.add_suffix(&accent_box);
+        combo_row.add_suffix(&clear_accent_button);
 
         scenes_group.add(&combo_row);
     }
@@ -166,7 +283,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
         for (entry_name, entry) in stale {
             let stale_row = adw::ActionRow::builder()
                 .title(entry_name.as_str())
-                .subtitle(entry.role.label())
+                .subtitle(SceneRole::label_or_unassigned(entry.role))
                 .build();
 
             let remove_btn = Button::builder()
@@ -180,7 +297,8 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
             remove_btn.connect_clicked({
                 let entry_name = entry_name.clone();
                 let stale_row = stale_row.clone();
-                move |_| handle_stale_entry_remove(entry_name.as_str(), &stale_row)
+                let nav = nav.clone();
+                move |_| handle_stale_entry_remove(entry_name.as_str(), &stale_row, &nav)
             });
 
             stale_row.add_suffix(&remove_btn);
@@ -191,6 +309,99 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
     }
 
     container.append(&page);
+}
+
+fn reorder_scenes(
+    nav: &NavigationContext,
+    inventory_scene_ids: &[String],
+    source_scene_id: &str,
+    target_scene_id: &str,
+    insert_after: bool,
+) -> bool {
+    if source_scene_id == target_scene_id {
+        return false;
+    }
+
+    let registry = {
+        let mut state = nav.state.borrow_mut();
+        let order = state
+            .registry
+            .ordered_scene_ids(inventory_scene_ids.iter().map(String::as_str));
+        let Some(order) =
+            reordered_scene_ids(order, source_scene_id, target_scene_id, insert_after)
+        else {
+            return false;
+        };
+        if !state.registry.set_scene_order(order) {
+            return false;
+        }
+        state.registry.clone()
+    };
+
+    crate::ui::background_io::run(
+        move || write_registry(&registry),
+        |result| {
+            if let Err(error) = result {
+                tracing::warn!(%error, "failed to persist scene order");
+            }
+        },
+    );
+    true
+}
+
+fn reordered_scene_ids(
+    mut order: Vec<String>,
+    source_scene_id: &str,
+    target_scene_id: &str,
+    insert_after: bool,
+) -> Option<Vec<String>> {
+    if source_scene_id == target_scene_id {
+        return None;
+    }
+    let source_index = order.iter().position(|id| id == source_scene_id)?;
+    order.remove(source_index);
+    let target_index = order.iter().position(|id| id == target_scene_id)?;
+    order.insert(
+        target_index + usize::from(insert_after),
+        source_scene_id.to_string(),
+    );
+    Some(order)
+}
+
+fn build_accent_button(
+    scene_id: &str,
+    accent: Option<&str>,
+    nav: &NavigationContext,
+    clear_accent_button: &Button,
+) -> ColorButton {
+    let button = ColorButton::new();
+    button.set_title("Scene accent color");
+    button.set_tooltip_text(Some("Choose scene accent color"));
+    button.set_use_alpha(false);
+    button.set_valign(Align::Center);
+    if let Some((red, green, blue)) = accent.and_then(parse_scene_accent) {
+        button.set_rgba(&gtk4::gdk::RGBA::new(
+            f32::from(red) / 255.0,
+            f32::from(green) / 255.0,
+            f32::from(blue) / 255.0,
+            1.0,
+        ));
+    }
+
+    button.connect_rgba_notify({
+        let scene_id = scene_id.to_string();
+        let nav = nav.clone();
+        let clear_accent_button = clear_accent_button.clone();
+        move |button| {
+            let rgba = button.rgba();
+            let accent = scene_accent_hex(rgba.red(), rgba.green(), rgba.blue());
+            if set_scene_accent(&nav, &scene_id, Some(accent)) {
+                clear_accent_button.set_sensitive(true);
+            }
+        }
+    });
+
+    button
 }
 
 fn build_yaml_actions_row(container: &GtkBox, nav: &NavigationContext) -> ActionRow {
@@ -217,7 +428,8 @@ fn build_yaml_actions_row(container: &GtkBox, nav: &NavigationContext) -> Action
 
     export_btn.connect_clicked({
         let row = row.clone();
-        move |button| handle_export_click(button, &row)
+        let nav = nav.clone();
+        move |button| handle_export_click(button, &row, &nav)
     });
 
     import_btn.connect_clicked({
@@ -232,43 +444,106 @@ fn build_yaml_actions_row(container: &GtkBox, nav: &NavigationContext) -> Action
     row
 }
 
-fn handle_scene_role_change(row: &ComboRow, scene_id: &str) {
+fn handle_scene_role_change(row: &ComboRow, scene_id: &str, nav: &NavigationContext) {
     let new_role = index_to_role(row.selected());
-    let mut reg = read_registry();
-    match new_role {
-        Some(role) => {
-            reg.scenes
-                .entry(scene_id.to_string())
-                .and_modify(|e| e.role = role)
-                .or_insert_with(|| SceneEntry {
-                    role,
-                    tags: Vec::new(),
-                    protected: false,
-                });
+    let registry = {
+        let mut state = nav.state.borrow_mut();
+        match new_role {
+            Some(role) => {
+                state
+                    .registry
+                    .scenes
+                    .entry(scene_id.to_string())
+                    .and_modify(|e| e.role = Some(role))
+                    .or_insert_with(|| SceneEntry {
+                        role: Some(role),
+                        tags: Vec::new(),
+                        protected: false,
+                        accent_color: None,
+                    });
+            }
+            None => {
+                state.registry.set_scene_role(scene_id, None);
+            }
         }
-        None => {
-            reg.scenes.remove(scene_id);
-        }
-    }
-
-    if let Err(e) = write_registry(&reg) {
-        tracing::warn!(%e, scene = scene_id, "failed to write registry");
-    }
+        state.registry.clone()
+    };
+    let scene_id = scene_id.to_string();
+    crate::ui::background_io::run(
+        move || write_registry(&registry),
+        move |result| {
+            if let Err(error) = result {
+                tracing::warn!(%error, scene = scene_id, "failed to write registry");
+            }
+        },
+    );
     let subtitle = new_role
         .map(SceneRole::description)
         .unwrap_or_else(|| fl!(LANGUAGE_LOADER, "inventory-no-role-assigned"));
     row.set_subtitle(&subtitle);
 }
 
-fn handle_stale_entry_remove(entry_name: &str, stale_row: &ActionRow) {
-    let mut reg = read_registry();
-    reg.scenes.remove(entry_name);
-    let _ = write_registry(&reg);
+fn handle_stale_entry_remove(entry_name: &str, stale_row: &ActionRow, nav: &NavigationContext) {
+    let registry = {
+        let mut state = nav.state.borrow_mut();
+        state.registry.scenes.remove(entry_name);
+        state.registry.clone()
+    };
+    crate::ui::background_io::run(
+        move || write_registry(&registry),
+        |result| {
+            if let Err(error) = result {
+                tracing::warn!(%error, "failed to remove stale registry entry");
+            }
+        },
+    );
     stale_row.set_visible(false);
 }
 
-fn handle_export_click(button: &Button, status_row: &ActionRow) {
-    show_export_dialog(button, status_row);
+fn set_scene_accent(nav: &NavigationContext, scene_id: &str, accent_color: Option<String>) -> bool {
+    let registry = {
+        let mut state = nav.state.borrow_mut();
+        if !state.registry.scenes.contains_key(scene_id) && accent_color.is_some() {
+            state.registry.scenes.insert(
+                scene_id.to_string(),
+                SceneEntry {
+                    role: None,
+                    tags: Vec::new(),
+                    protected: false,
+                    accent_color: None,
+                },
+            );
+        }
+        let Some(entry) = state.registry.scenes.get_mut(scene_id) else {
+            return false;
+        };
+        if entry.accent_color == accent_color {
+            return false;
+        }
+        entry.accent_color = accent_color;
+        if entry.role.is_none()
+            && entry.accent_color.is_none()
+            && entry.tags.is_empty()
+            && !entry.protected
+        {
+            state.registry.scenes.remove(scene_id);
+        }
+        state.registry.clone()
+    };
+    let scene_id = scene_id.to_string();
+    crate::ui::background_io::run(
+        move || write_registry(&registry),
+        move |result| {
+            if let Err(error) = result {
+                tracing::warn!(%error, scene = scene_id, "failed to save scene accent");
+            }
+        },
+    );
+    true
+}
+
+fn handle_export_click(button: &Button, status_row: &ActionRow, nav: &NavigationContext) {
+    show_export_dialog(button, status_row, nav);
 }
 
 fn handle_import_click(
@@ -280,7 +555,7 @@ fn handle_import_click(
     show_import_dialog(button, status_row, container, nav);
 }
 
-fn show_export_dialog(button: &Button, status_row: &ActionRow) {
+fn show_export_dialog(button: &Button, status_row: &ActionRow, nav: &NavigationContext) {
     let dialog = FileChooserNative::new(
         Some(&fl!(LANGUAGE_LOADER, "inventory-export-dialog-title")),
         parent_window(button).as_ref(),
@@ -293,24 +568,29 @@ fn show_export_dialog(button: &Button, status_row: &ActionRow) {
     dialog.set_filter(&yaml_file_filter());
 
     let status_row = status_row.clone();
+    let registry = nav.state.borrow().registry.clone();
     dialog.run_async(move |dialog, response| {
         if response == ResponseType::Accept {
             match dialog.file().and_then(|file| file.path()) {
                 Some(path) => {
                     let path = ensure_yaml_extension(path);
-                    let registry = read_registry();
-                    match write_registry_yaml_to_path(&path, &registry) {
-                        Ok(()) => status_row.set_subtitle(&fl!(
-                            LANGUAGE_LOADER,
-                            "inventory-export-success",
-                            path = path.display().to_string()
-                        )),
-                        Err(err) => status_row.set_subtitle(&fl!(
-                            LANGUAGE_LOADER,
-                            "inventory-export-error",
-                            error = err.to_string()
-                        )),
-                    }
+                    let status_row = status_row.clone();
+                    let display_path = path.display().to_string();
+                    crate::ui::background_io::run(
+                        move || write_registry_yaml_to_path(&path, &registry),
+                        move |result| match result {
+                            Ok(()) => status_row.set_subtitle(&fl!(
+                                LANGUAGE_LOADER,
+                                "inventory-export-success",
+                                path = display_path
+                            )),
+                            Err(error) => status_row.set_subtitle(&fl!(
+                                LANGUAGE_LOADER,
+                                "inventory-export-error",
+                                error = error.to_string()
+                            )),
+                        },
+                    );
                 }
                 None => status_row.set_subtitle(&fl!(LANGUAGE_LOADER, "inventory-export-no-file")),
             }
@@ -341,16 +621,30 @@ fn show_import_dialog(
     dialog.run_async(move |dialog, response| {
         if response == ResponseType::Accept {
             match dialog.file().and_then(|file| file.path()) {
-                Some(path) => match read_registry_yaml_from_path(&path)
-                    .and_then(|registry| write_registry(&registry))
-                {
-                    Ok(()) => rebuild(&container, &nav),
-                    Err(err) => status_row.set_subtitle(&fl!(
-                        LANGUAGE_LOADER,
-                        "inventory-import-error",
-                        error = err.to_string()
-                    )),
-                },
+                Some(path) => {
+                    let status_row = status_row.clone();
+                    let container = container.clone();
+                    let nav = nav.clone();
+                    crate::ui::background_io::run(
+                        move || {
+                            read_registry_yaml_from_path(&path).and_then(|registry| {
+                                write_registry(&registry)?;
+                                Ok(registry)
+                            })
+                        },
+                        move |result| match result {
+                            Ok(registry) => {
+                                nav.state.borrow_mut().registry = registry;
+                                rebuild(&container, &nav);
+                            }
+                            Err(error) => status_row.set_subtitle(&fl!(
+                                LANGUAGE_LOADER,
+                                "inventory-import-error",
+                                error = error.to_string()
+                            )),
+                        },
+                    );
+                }
                 None => status_row.set_subtitle(&fl!(LANGUAGE_LOADER, "inventory-import-no-file")),
             }
         }
@@ -384,4 +678,37 @@ fn ensure_yaml_extension(mut path: PathBuf) -> PathBuf {
     }
 
     path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reordered_scene_ids;
+
+    fn order() -> Vec<String> {
+        ["One", "Two", "Three", "Four"]
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn dragging_to_top_half_inserts_before_target() {
+        assert_eq!(
+            reordered_scene_ids(order(), "Four", "Two", false).unwrap(),
+            ["One", "Four", "Two", "Three"]
+        );
+    }
+
+    #[test]
+    fn dragging_to_bottom_half_inserts_after_target() {
+        assert_eq!(
+            reordered_scene_ids(order(), "One", "Three", true).unwrap(),
+            ["Two", "Three", "One", "Four"]
+        );
+    }
+
+    #[test]
+    fn dropping_scene_on_itself_does_not_reorder() {
+        assert!(reordered_scene_ids(order(), "Two", "Two", false).is_none());
+    }
 }

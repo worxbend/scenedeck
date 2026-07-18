@@ -36,7 +36,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         .description(fl!(LANGUAGE_LOADER, "settings-appearance-description"))
         .build();
 
-    let cfg = crate::storage::config::read_config().config;
+    let cfg = nav.state.borrow().config.clone();
 
     let theme_mode_strings: Vec<String> = vec![
         fl!(LANGUAGE_LOADER, "settings-theme-mode-system"),
@@ -68,14 +68,8 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
             };
             nav.state.borrow_mut().set_theme_mode(mode);
             apply_color_scheme(&adw::StyleManager::default(), mode);
-            if let Err(err) = persist_config(&nav) {
-                tracing::warn!(%err, "failed to save theme preference");
-            }
-            let report =
-                ThemeManager::apply(&crate::storage::config::read_config().config.appearance);
-            for warning in report.warnings {
-                tracing::warn!(%warning, "theme warning");
-            }
+            persist_config(&nav, |config| config.appearance.mode = mode);
+            apply_theme_logging(nav.state.borrow().config.appearance.clone());
         }
     });
 
@@ -109,26 +103,30 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
 
     family_row.connect_selected_notify({
         let theme_status_row = theme_status_row.clone();
+        let nav = nav.clone();
         move |row| {
             let selected = row.selected() as usize;
             let Some(theme) = ThemeManager::built_in_themes().get(selected).copied() else {
                 return;
             };
 
-            let mut cfg = crate::storage::config::read_config().config;
-            cfg.appearance.selected_theme = Some(ThemeId::new(theme.id));
-            match write_config(&cfg) {
-                Ok(()) => {
-                    let report = ThemeManager::apply(&cfg.appearance);
-                    row.set_subtitle(&theme_subtitle(theme));
-                    theme_status_row.set_subtitle(&theme_report_text(&report));
-                }
-                Err(err) => theme_status_row.set_subtitle(&fl!(
-                    LANGUAGE_LOADER,
-                    "settings-failed-to-save",
-                    err = err.to_string()
-                )),
-            }
+            let row = row.clone();
+            let theme_status_row = theme_status_row.clone();
+            persist_config_with(
+                &nav,
+                move |config| config.appearance.selected_theme = Some(ThemeId::new(theme.id)),
+                move |result, config| match result {
+                    Ok(()) => {
+                        row.set_subtitle(&theme_subtitle(theme));
+                        apply_theme_with_status(config.appearance, theme_status_row);
+                    }
+                    Err(err) => theme_status_row.set_subtitle(&fl!(
+                        LANGUAGE_LOADER,
+                        "settings-failed-to-save",
+                        err = err.to_string()
+                    )),
+                },
+            );
         }
     });
 
@@ -154,31 +152,37 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
 
     custom_css_row.connect_active_notify({
         let theme_status_row = theme_status_row.clone();
+        let nav = nav.clone();
         move |row| {
-            let mut cfg = crate::storage::config::read_config().config;
-            cfg.appearance.custom_css.enabled = row.is_active();
-            match write_config(&cfg) {
-                Ok(()) => {
-                    let report = ThemeManager::apply(&cfg.appearance);
-                    theme_status_row.set_subtitle(&theme_report_text(&report));
-                }
-                Err(err) => theme_status_row.set_subtitle(&fl!(
-                    LANGUAGE_LOADER,
-                    "settings-failed-to-save",
-                    err = err.to_string()
-                )),
-            }
+            let active = row.is_active();
+            let theme_status_row = theme_status_row.clone();
+            persist_config_with(
+                &nav,
+                move |config| config.appearance.custom_css.enabled = active,
+                move |result, config| match result {
+                    Ok(()) => {
+                        apply_theme_with_status(config.appearance, theme_status_row);
+                    }
+                    Err(err) => theme_status_row.set_subtitle(&fl!(
+                        LANGUAGE_LOADER,
+                        "settings-failed-to-save",
+                        err = err.to_string()
+                    )),
+                },
+            );
         }
     });
 
     light_css_row.connect_apply({
         let theme_status_row = theme_status_row.clone();
-        move |row| save_custom_css_path(row, CssPathKind::Light, &theme_status_row)
+        let nav = nav.clone();
+        move |row| save_custom_css_path(row, CssPathKind::Light, &theme_status_row, &nav)
     });
 
     dark_css_row.connect_apply({
         let theme_status_row = theme_status_row.clone();
-        move |row| save_custom_css_path(row, CssPathKind::Dark, &theme_status_row)
+        let nav = nav.clone();
+        move |row| save_custom_css_path(row, CssPathKind::Dark, &theme_status_row, &nav)
     });
 
     let reload_css_row = ActionRow::builder()
@@ -192,10 +196,10 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     reload_btn.add_css_class("flat");
     reload_btn.connect_clicked({
         let theme_status_row = theme_status_row.clone();
+        let nav = nav.clone();
         move |_| {
-            let cfg = crate::storage::config::read_config().config;
-            let report = ThemeManager::apply(&cfg.appearance);
-            theme_status_row.set_subtitle(&theme_report_text(&report));
+            let cfg = nav.state.borrow().config.clone();
+            apply_theme_with_status(cfg.appearance, theme_status_row.clone());
         }
     });
     reload_css_row.add_suffix(&reload_btn);
@@ -233,28 +237,32 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
 
     language_row.connect_selected_notify({
         let language_status_row = language_status_row.clone();
+        let nav = nav.clone();
         move |row| {
             let selected = row.selected() as usize;
             let Some(language) = Language::ALL.get(selected).copied() else {
                 return;
             };
 
-            let mut cfg = crate::storage::config::read_config().config;
-            cfg.language = language;
-            match write_config(&cfg) {
-                Ok(()) => {
-                    i18n::init(language);
-                    language_status_row
-                        .set_subtitle(&fl!(LANGUAGE_LOADER, "settings-language-saved"));
-                }
-                Err(err) => {
-                    language_status_row.set_subtitle(&fl!(
-                        LANGUAGE_LOADER,
-                        "settings-failed-to-save",
-                        err = err.to_string()
-                    ));
-                }
-            }
+            let language_status_row = language_status_row.clone();
+            persist_config_with(
+                &nav,
+                move |config| config.language = language,
+                move |result, _| match result {
+                    Ok(()) => {
+                        i18n::init(language);
+                        language_status_row
+                            .set_subtitle(&fl!(LANGUAGE_LOADER, "settings-language-saved"));
+                    }
+                    Err(err) => {
+                        language_status_row.set_subtitle(&fl!(
+                            LANGUAGE_LOADER,
+                            "settings-failed-to-save",
+                            err = err.to_string()
+                        ));
+                    }
+                },
+            );
         }
     });
 
@@ -285,8 +293,8 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         .title(fl!(LANGUAGE_LOADER, "settings-password-title"))
         .show_apply_button(true)
         .build();
-    if let Ok(Some(existing)) = secret::get_obs_password() {
-        password_row.set_text(&existing);
+    if let Some(existing) = nav.state.borrow().obs_password.as_ref() {
+        password_row.set_text(existing);
     }
 
     let status_row = ActionRow::builder()
@@ -295,7 +303,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         .build();
 
     let save_handler = {
-        let _nav = nav.clone();
+        let nav = nav.clone();
         let host_row = host_row.clone();
         let port_row = port_row.clone();
         let status_row = status_row.clone();
@@ -308,18 +316,22 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
                     return;
                 }
             };
-            // Persist to disk
-            let mut cfg = crate::storage::config::read_config().config;
-            cfg.obs.host = host;
-            cfg.obs.port = port;
-            match write_config(&cfg) {
-                Ok(()) => status_row.set_subtitle(&fl!(LANGUAGE_LOADER, "settings-saved")),
-                Err(err) => status_row.set_subtitle(&fl!(
-                    LANGUAGE_LOADER,
-                    "settings-failed-to-save",
-                    err = err.to_string()
-                )),
-            }
+            let status_row = status_row.clone();
+            persist_config_with(
+                &nav,
+                move |config| {
+                    config.obs.host = host;
+                    config.obs.port = port;
+                },
+                move |result, _| match result {
+                    Ok(()) => status_row.set_subtitle(&fl!(LANGUAGE_LOADER, "settings-saved")),
+                    Err(err) => status_row.set_subtitle(&fl!(
+                        LANGUAGE_LOADER,
+                        "settings-failed-to-save",
+                        err = err.to_string()
+                    )),
+                },
+            );
         }
     };
 
@@ -334,21 +346,27 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
 
     password_row.connect_apply({
         let status_row = status_row.clone();
+        let nav = nav.clone();
         move |row| {
-            let text = row.text();
-            let result = if text.is_empty() {
-                secret::delete_obs_password()
-            } else {
-                secret::set_obs_password(&text)
-            };
-            match result {
-                Ok(()) => status_row.set_subtitle(&fl!(LANGUAGE_LOADER, "settings-password-saved")),
-                Err(err) => status_row.set_subtitle(&fl!(
-                    LANGUAGE_LOADER,
-                    "settings-keyring-error",
-                    err = err.to_string()
-                )),
-            }
+            let password = (!row.text().is_empty()).then(|| row.text().to_string());
+            nav.state.borrow_mut().obs_password = password.clone();
+            let status_row = status_row.clone();
+            crate::ui::background_io::run(
+                move || match password {
+                    Some(password) => secret::set_obs_password(&password),
+                    None => secret::delete_obs_password(),
+                },
+                move |result| match result {
+                    Ok(()) => {
+                        status_row.set_subtitle(&fl!(LANGUAGE_LOADER, "settings-password-saved"))
+                    }
+                    Err(error) => status_row.set_subtitle(&fl!(
+                        LANGUAGE_LOADER,
+                        "settings-keyring-error",
+                        err = error.to_string()
+                    )),
+                },
+            );
         }
     });
 
@@ -441,11 +459,35 @@ fn obs_status_text(nav: &NavigationContext) -> String {
     }
 }
 
-fn persist_config(nav: &NavigationContext) -> Result<(), std::io::Error> {
-    let model = nav.state.borrow();
-    let mut cfg = crate::storage::config::read_config().config;
-    cfg.appearance.mode = model.theme_mode;
-    write_config(&cfg)
+fn persist_config(
+    nav: &NavigationContext,
+    update: impl FnOnce(&mut crate::storage::config::AppConfig),
+) {
+    persist_config_with(nav, update, |result, _| {
+        if let Err(error) = result {
+            tracing::warn!(%error, "failed to save configuration");
+        }
+    });
+}
+
+fn persist_config_with<Update, Complete>(
+    nav: &NavigationContext,
+    update: Update,
+    complete: Complete,
+) where
+    Update: FnOnce(&mut crate::storage::config::AppConfig),
+    Complete: FnOnce(std::io::Result<()>, crate::storage::config::AppConfig) + 'static,
+{
+    let config = {
+        let mut state = nav.state.borrow_mut();
+        update(&mut state.config);
+        state.config.clone()
+    };
+    let persisted = config.clone();
+    crate::ui::background_io::run(
+        move || write_config(&persisted),
+        move |result| complete(result, config),
+    );
 }
 
 fn output_switch_row(title: &str, subtitle: &str, active: bool) -> SwitchRow {
@@ -463,12 +505,13 @@ where
     row.connect_active_notify({
         let nav = nav.clone();
         move |row| {
-            let mut cfg = crate::storage::config::read_config().config;
-            update(&mut cfg.outputs, row.is_active());
-            nav.state.borrow_mut().output_confirmations = cfg.outputs.clone();
-            if let Err(err) = write_config(&cfg) {
-                tracing::warn!(%err, "failed to save output confirmation preference");
+            let active = row.is_active();
+            {
+                let mut state = nav.state.borrow_mut();
+                update(&mut state.config.outputs, active);
+                state.output_confirmations = state.config.outputs.clone();
             }
+            persist_config(&nav, |_| {});
         }
     });
 }
@@ -497,37 +540,60 @@ fn theme_report_text(report: &crate::ui::theme::ThemeApplyReport) -> String {
     }
 }
 
+fn apply_theme_with_status(
+    preference: crate::domain::appearance::ThemePreference,
+    status_row: ActionRow,
+) {
+    ThemeManager::apply_async(preference, move |report| {
+        status_row.set_subtitle(&theme_report_text(&report));
+    });
+}
+
+fn apply_theme_logging(preference: crate::domain::appearance::ThemePreference) {
+    ThemeManager::apply_async(preference, |report| {
+        for warning in report.warnings {
+            tracing::warn!(%warning, "theme warning");
+        }
+    });
+}
+
 #[derive(Debug, Clone, Copy)]
 enum CssPathKind {
     Light,
     Dark,
 }
 
-fn save_custom_css_path(row: &EntryRow, kind: CssPathKind, status_row: &ActionRow) {
+fn save_custom_css_path(
+    row: &EntryRow,
+    kind: CssPathKind,
+    status_row: &ActionRow,
+    nav: &NavigationContext,
+) {
     let text = row.text().trim().to_string();
-    let mut cfg = crate::storage::config::read_config().config;
     let path = if text.is_empty() {
         None
     } else {
         Some(PathBuf::from(text))
     };
 
-    match kind {
-        CssPathKind::Light => cfg.appearance.custom_css.light_path = path,
-        CssPathKind::Dark => cfg.appearance.custom_css.dark_path = path,
-    }
-
-    match write_config(&cfg) {
-        Ok(()) => {
-            let report = ThemeManager::apply(&cfg.appearance);
-            status_row.set_subtitle(&theme_report_text(&report));
-        }
-        Err(err) => status_row.set_subtitle(&fl!(
-            LANGUAGE_LOADER,
-            "settings-failed-to-save",
-            err = err.to_string()
-        )),
-    }
+    let status_row = status_row.clone();
+    persist_config_with(
+        nav,
+        move |config| match kind {
+            CssPathKind::Light => config.appearance.custom_css.light_path = path,
+            CssPathKind::Dark => config.appearance.custom_css.dark_path = path,
+        },
+        move |result, config| match result {
+            Ok(()) => {
+                apply_theme_with_status(config.appearance, status_row);
+            }
+            Err(err) => status_row.set_subtitle(&fl!(
+                LANGUAGE_LOADER,
+                "settings-failed-to-save",
+                err = err.to_string()
+            )),
+        },
+    );
 }
 
 fn path_text(path: Option<&PathBuf>) -> String {

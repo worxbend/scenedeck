@@ -567,6 +567,6 @@ mod tests {
 
     #[test]
     fn obs_fader_is_inverted_so_unity_is_at_the_top() {
-        assert!(OBS_FADER_INVERTED);
+        const { assert!(OBS_FADER_INVERTED) };
     }
 }

@@ -9,8 +9,9 @@ names the current state, known gaps, and files that future phases should touch.
 SceneDeck is a Rust 2021 GTK4/libadwaita desktop app for controlling OBS Studio
 over OBS WebSocket. The app currently has these pages:
 
-- Live: OBS connection-dependent operation surface with stream/record buttons,
-  current program scene, Primary scene cards, and active-scene audio cards.
+- Live: OBS connection-dependent operation surface with the current program
+  scene, Primary scene cards, and active-scene audio cards. Stream/record
+  buttons live in the persistent sidebar.
 - Graph: nested scene dependency display.
 - Inventory: local scene role registry editing, stale registry cleanup, and
   YAML import/export.
@@ -50,7 +51,7 @@ sidebar metadata, page construction, and refresh behavior.
 
 ## Current Stream and Record Behavior
 
-The Live page has a horizontal output banner with stream and record controls:
+The persistent sidebar has stream and record controls:
 
 - Stream button dispatches explicit start/stop commands.
 - Record button dispatches explicit start/stop commands.

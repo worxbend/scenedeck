@@ -14,7 +14,7 @@ stable classes listed here.
   `.graph-page`, `.inventory-page`, `.doctor-page`, `.settings-page`: page roots.
 - `.scene-card`: Live page scene card.
 - `.scene-card-active`: current program scene card.
-- `.scene-card-status-live`: live scene status pill.
+- `.scene-card-status-active`: active scene status pill.
 - `.scene-card-status-ready`: ready scene status pill.
 - `.audio-card`: Live page audio card.
 - `.audio-card-title`: audio card source name.
