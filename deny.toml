@@ -1,7 +1,9 @@
 [advisories]
 version = 2
 yanked = "deny"
-ignore = []
+# Transitive through the latest i18n-embed-fl release; informational only and
+# currently has no patched proc-macro-error2 version.
+ignore = ["RUSTSEC-2026-0173"]
 
 [licenses]
 version = 2

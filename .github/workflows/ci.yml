@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  checks: write
 
 jobs:
   rust:
@@ -58,6 +59,7 @@ jobs:
         uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          ignore: RUSTSEC-2026-0173
 
       - name: Check dependency policy
         uses: EmbarkStudios/cargo-deny-action@v2
