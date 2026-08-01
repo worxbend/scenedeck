@@ -1443,3 +1443,58 @@
     padding-block: var(--s-3);
   }
 }
+
+/* ---- Terminal (the TUI siblings) ----------------------------------------- */
+
+.tui-grid {
+  display: grid;
+  gap: var(--s-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+}
+
+.tui {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  height: 100%;
+  padding: var(--s-5);
+  color: inherit;
+  text-decoration: none;
+  transition:
+    transform var(--d-short4) var(--ease-detent),
+    box-shadow var(--d-short4) var(--ease-standard),
+    background-color var(--d-short4) var(--ease-standard);
+}
+
+.tui:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-3), var(--bevel);
+}
+
+.tui h3 {
+  /* A terminal tool's name is a command you type, so it is set as one. */
+  color: var(--md-primary);
+}
+
+.tui .body-md {
+  color: var(--md-on-surface-variant);
+  flex: 1;
+}
+
+.tui__go {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: 0.625rem;
+  overflow-wrap: anywhere;
+}
+
+.tui__go::before {
+  content: "→";
+  flex: none;
+  color: var(--md-primary);
+}
+
+.terminal__all {
+  margin-top: var(--s-5);
+}

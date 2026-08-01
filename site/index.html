@@ -100,6 +100,7 @@
           <a href="#audio">Audio</a>
           <a href="#structure">Graph</a>
           <a href="#settings">Settings</a>
+          <a href="#terminal">Terminal</a>
         </nav>
 
         <div class="rail__actions">
@@ -773,6 +774,76 @@
             Every archive is published on the
             <a href="https://github.com/worxbend/scenedeck/releases/latest">GitHub Releases page</a>
             for <span data-release-version>v0.1.21</span>.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================ TERMINAL ======================== -->
+      <section class="section" id="terminal">
+        <div class="shell">
+          <div class="section-head">
+            <p class="section-no" data-reveal>07 / Terminal</p>
+            <h2 class="display-lg" data-reveal>Not a desktop-app person?</h2>
+            <p class="body-lg prose" data-reveal>
+              SceneDeck is a GTK4 window. If you would rather stay in a terminal, these are
+              separate tools from the same author — three of them talk to the same
+              obs-websocket 5.x server SceneDeck does, and one keeps your chat off a browser tab.
+            </p>
+          </div>
+
+          <ul class="tui-grid" role="list">
+            <li>
+              <a class="tui panel" href="https://worxbend.github.io/obs-stats/" rel="noopener" data-reveal>
+                <span class="tui__lang legend">Rust · Ratatui</span>
+                <h3 class="title-lg mono">obs-stats</h3>
+                <p class="body-md">
+                  A btop-style terminal dashboard for OBS: live CPU, frame pacing, encoder
+                  health, outputs, scenes and audio.
+                </p>
+                <span class="tui__go legend">worxbend.github.io/obs-stats</span>
+              </a>
+            </li>
+
+            <li>
+              <a class="tui panel" href="https://worxbend.github.io/obsctl-rs/" rel="noopener" data-reveal style="--reveal-delay: 70ms">
+                <span class="tui__lang legend">Rust · Ratatui</span>
+                <h3 class="title-lg mono">obsctl-rs</h3>
+                <p class="body-md">
+                  A local OBS Studio controller in the terminal — the same job as SceneDeck,
+                  without leaving your shell.
+                </p>
+                <span class="tui__go legend">worxbend.github.io/obsctl-rs</span>
+              </a>
+            </li>
+
+            <li>
+              <a class="tui panel" href="https://worxbend.github.io/obsctl/" rel="noopener" data-reveal style="--reveal-delay: 140ms">
+                <span class="tui__lang legend">Crystal</span>
+                <h3 class="title-lg mono">obsctl</h3>
+                <p class="body-md">
+                  CLI and TUI for driving OBS through obs-websocket — scriptable, so it fits
+                  in a hotkey or a deploy step.
+                </p>
+                <span class="tui__go legend">worxbend.github.io/obsctl</span>
+              </a>
+            </li>
+
+            <li>
+              <a class="tui panel" href="https://worxbend.github.io/twi/" rel="noopener" data-reveal style="--reveal-delay: 210ms">
+                <span class="tui__lang legend">Go · Bubble Tea</span>
+                <h3 class="title-lg mono">twi</h3>
+                <p class="body-md">
+                  Terminal-native Twitch chat. Read and send, switch channels and watch raids
+                  without a browser tab open on your streaming rig.
+                </p>
+                <span class="tui__go legend">worxbend.github.io/twi</span>
+              </a>
+            </li>
+          </ul>
+
+          <p class="legend terminal__all">
+            Everything else is on
+            <a href="https://github.com/worxbend">github.com/worxbend</a>.
           </p>
         </div>
       </section>
