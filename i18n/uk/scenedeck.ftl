@@ -118,6 +118,7 @@ controller-not-connected = Немає підключення до OBS
 
 ## controller/state.rs — Page titles and ObsStatus labels
 page-live = Ефір
+page-stats = Статистика
 page-mixer = Мікшер
 page-graph = Граф
 page-inventory = Інвентар
@@ -354,6 +355,7 @@ status-bar-fps = FPS { $value }
 status-bar-cpu = CPU { $value }%
 status-bar-bitrate = Бітрейт { $value } kbps
 status-bar-dropped = { $count } втрачено
+status-bar-dropped-placeholder = Втрачено —
 
 ## settings.rs
 
@@ -439,3 +441,27 @@ theme-custom-css-read-failed = Не вдалося прочитати власн
 theme-custom-css-no-matching-file = Власний CSS увімкнено, але не встановлено відповідний файл для світлого/темного режиму.
 theme-css-no-display = { $label } не завантажено, оскільки немає доступного дисплея GTK.
 theme-css-parse-error = Помилка розбору CSS { $label }: { $message }
+## stats.rs — live streaming telemetry
+stats-page-title = Статистика трансляції
+stats-page-subtitle = Телеметрія в реальному часі, яку SceneDeck запитує в OBS щосекунди, поки є з'єднання.
+stats-gauge-fps = Кадри/с
+stats-gauge-frame-time = Час кадру (мс)
+stats-gauge-dropped = Втрачені кадри
+stats-gauge-congestion = Перевантаження
+stats-chart-fps = Кадрів на секунду
+stats-chart-frame-time = Середній час рендерингу кадру (мс)
+stats-chart-output-skipped = Пропущені вихідні кадри на вибірку
+stats-chart-render-skipped = Втрачені кадри рендерингу на вибірку
+stats-card-render-frames = Втрачені кадри рендерингу
+stats-card-output-frames = Пропущені вихідні кадри
+stats-card-stream-frames = Втрачені кадри трансляції
+stats-card-frame-time = Середній час рендерингу кадру
+stats-card-cpu = Використання ЦП OBS
+stats-card-memory = Використання пам'яті OBS
+stats-card-bitrate = Бітрейт трансляції
+stats-value-placeholder = —
+stats-value-frames = { $skipped } з { $total } ({ $percent } %)
+stats-value-ms = { $value } мс
+stats-value-percent = { $value } %
+stats-value-mb = { $value } МБ
+stats-value-kbps = { $value } кбіт/с

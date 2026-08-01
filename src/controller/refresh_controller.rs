@@ -2,7 +2,7 @@
 
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 
@@ -12,6 +12,11 @@ use crate::infra::error::AppError;
 use crate::obs::client::ObsClient;
 
 pub(crate) type BitrateSample = Arc<Mutex<Option<(Instant, u64)>>>;
+
+/// Cadence of the session-owned statistics poll. One second matches OBS's own
+/// stats dock and keeps the Stats page charts smooth without flooding the
+/// WebSocket connection.
+pub(crate) const STATS_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 // ── Shared OBS refresh helpers ────────────────────────────────────────────────
 
@@ -86,18 +91,46 @@ pub(crate) async fn refresh_obs_stats(
         }
     };
 
-    let bitrate_kbps = match client.get_stream_bytes().await {
-        Ok(bytes) => bitrate_kbps_since_last_sample(bitrate_sample, bytes),
+    let stream = match client.get_stream_health().await {
+        Ok(health) => Some(health),
         Err(e) => {
-            tracing::debug!(%e, "stream byte counter refresh failed");
+            tracing::debug!(%e, "stream status refresh failed");
             None
         }
     };
 
+    let bitrate_kbps =
+        stream.and_then(|health| bitrate_kbps_since_last_sample(bitrate_sample, health.bytes));
+
     let _ = tx.send(AppEvent::StatsUpdated {
         stats,
         bitrate_kbps,
+        stream,
     });
+}
+
+/// Poll OBS statistics for as long as the session lives.
+///
+/// obs-websocket v5 has no push event for `GetStats` or `GetStreamStatus`, so
+/// a live view of FPS and dropped frames has to be polled. This runs inside the
+/// session task rather than being driven by the GTK page that displays it, so
+/// the status bar and the Stats page history stay current no matter which page
+/// is open — and so it stops the moment the session task is aborted.
+///
+/// Never returns; callers race it against the OBS event loop.
+pub(crate) async fn run_stats_poll_loop(
+    client: ObsClient,
+    tx: SyncSender<AppEvent>,
+    bitrate_sample: BitrateSample,
+) {
+    let mut ticker = tokio::time::interval(STATS_POLL_INTERVAL);
+    // A slow OBS response should not queue up a burst of catch-up polls.
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    loop {
+        ticker.tick().await;
+        refresh_obs_stats(&client, &tx, &bitrate_sample).await;
+    }
 }
 
 /// Compute kbps from the delta against the last (time, bytes) sample, then

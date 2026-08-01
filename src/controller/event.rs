@@ -4,7 +4,7 @@ use crate::domain::graph::SceneGraph;
 use crate::domain::obs::ObsNamedList;
 use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::domain::scene::{SceneId, SceneInventory};
-use crate::domain::stats::ObsStats;
+use crate::domain::stats::{ObsStats, StreamHealth};
 use crate::infra::error::AppError;
 
 #[derive(Debug, Clone)]
@@ -248,10 +248,12 @@ pub enum AppEvent {
 
     // Performance
     /// OBS performance snapshot plus a derived stream bitrate, if a prior
-    /// sample exists to diff against.
+    /// sample exists to diff against, and stream output health when the
+    /// `GetStreamStatus` read succeeded alongside it.
     StatsUpdated {
         stats: ObsStats,
         bitrate_kbps: Option<f64>,
+        stream: Option<StreamHealth>,
     },
 
     Error(AppError),

@@ -87,6 +87,13 @@ run on Tokio's blocking pool rather than the GTK thread. After connection:
 5. It refreshes scene inventory, graph, and active scene audio.
 6. It enters the OBS event loop.
 
+The session task also owns a one-second statistics poll, raced against the OBS
+event loop with `tokio::select!`. obs-websocket has no push event for `GetStats`
+or `GetStreamStatus`, so live telemetry must be polled; running it inside the
+session — rather than from a GTK timer tied to a page — means the status bar and
+the Stats page history stay current no matter which page is visible, and the
+poll is torn down with the session on disconnect or reconnect.
+
 On disconnect or event-stream end, the client slot is cleared and a
 `Disconnected` event is sent.
 
@@ -143,6 +150,16 @@ continues to use libadwaita's system preference; custom themes must provide
 separate light and dark CSS paths when they need side-specific styling.
 Custom CSS file contents are read through `ui::background_io`; only CSS parsing
 and provider installation run on GTK.
+
+The Stats page lives in `src/ui/pages/stats.rs` and draws from
+`AppState::stats_history`, a bounded ring buffer filled by the session poll. Its
+widgets are built once and refreshed in place; the cairo chart and gauge
+renderers live in `src/ui/widgets/chart.rs` and read their values through a
+closure at draw time, so a new sample only needs a `queue_draw`. Its gauge,
+chart, and card sections are `FlowBox` containers with a per-section column
+maximum, so the layout reflows continuously with the window width instead of
+snapping at a single hand-picked breakpoint; the chart widget's minimum content
+width is what tells those containers when to drop a column.
 
 The Mixer page lives in `src/ui/pages/mixer.rs`. Its mode, scene selection,
 search, and grouping controls are stored in `AppState` as a `MixerSelection`.

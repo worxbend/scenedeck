@@ -11,7 +11,7 @@ use obws::responses::streaming::StreamStatus;
 use crate::controller::event::ConnectionInfo;
 use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::domain::scene::{Scene, SceneInventory};
-use crate::domain::stats::ObsStats;
+use crate::domain::stats::{ObsStats, StreamHealth};
 use crate::obs::event::ObsEvent;
 
 /// Convert OBS version metadata into controller connection info.
@@ -79,6 +79,21 @@ pub(super) fn map_stream_status(status: StreamStatus) -> OutputStatus {
             OutputRunState::Inactive
         },
     )
+}
+
+/// Convert `GetStreamStatus` into the app's stream health snapshot.
+///
+/// OBS reports congestion as an `f32` in `0.0..=1.0`; it is widened here and
+/// clamped so a malformed reading cannot skew a gauge.
+pub(super) fn map_stream_health(status: StreamStatus) -> StreamHealth {
+    StreamHealth {
+        active: status.active,
+        reconnecting: status.reconnecting,
+        congestion: f64::from(status.congestion).clamp(0.0, 1.0),
+        skipped_frames: status.skipped_frames,
+        total_frames: status.total_frames,
+        bytes: status.bytes,
+    }
 }
 
 /// Convert `GetStats` into the app's normalized OBS performance snapshot.
@@ -257,6 +272,41 @@ mod tests {
 
         assert_eq!(active.state, OutputRunState::Active);
         assert_eq!(inactive.state, OutputRunState::Inactive);
+    }
+
+    #[test]
+    fn stream_health_mapping_carries_congestion_and_frame_counters() {
+        let health = map_stream_health(StreamStatus {
+            active: true,
+            reconnecting: false,
+            congestion: 0.5,
+            bytes: 4_096,
+            skipped_frames: 12,
+            total_frames: 1_200,
+            ..Default::default()
+        });
+
+        assert!(health.active);
+        assert!(!health.reconnecting);
+        assert!((health.congestion - 0.5).abs() < f64::EPSILON);
+        assert_eq!(health.bytes, 4_096);
+        assert_eq!(health.skipped_frames, 12);
+        assert_eq!(health.total_frames, 1_200);
+    }
+
+    #[test]
+    fn stream_health_mapping_clamps_congestion_into_the_gauge_range() {
+        let over = map_stream_health(StreamStatus {
+            congestion: 3.5,
+            ..Default::default()
+        });
+        let under = map_stream_health(StreamStatus {
+            congestion: -1.0,
+            ..Default::default()
+        });
+
+        assert_eq!(over.congestion, 1.0);
+        assert_eq!(under.congestion, 0.0);
     }
 
     #[test]

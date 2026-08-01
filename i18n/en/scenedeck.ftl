@@ -112,6 +112,7 @@ controller-not-connected = Not connected to OBS
 
 ## controller/state.rs — Page titles and ObsStatus labels
 page-live = Live
+page-stats = Stats
 page-mixer = Mixer
 page-graph = Graph
 page-inventory = Inventory
@@ -348,6 +349,7 @@ status-bar-fps = FPS { $value }
 status-bar-cpu = CPU { $value }%
 status-bar-bitrate = Bitrate { $value } kbps
 status-bar-dropped = { $count } dropped
+status-bar-dropped-placeholder = Dropped —
 
 ## settings.rs
 
@@ -433,3 +435,27 @@ theme-custom-css-read-failed = Custom CSS could not be read from { $path }: { $e
 theme-custom-css-no-matching-file = Custom CSS is enabled but no matching light/dark file is set.
 theme-css-no-display = { $label } was not loaded because no GTK display is available.
 theme-css-parse-error = { $label } CSS parse error: { $message }
+## stats.rs — live streaming telemetry
+stats-page-title = Stream Statistics
+stats-page-subtitle = Live telemetry polled from OBS once a second while connected.
+stats-gauge-fps = FPS
+stats-gauge-frame-time = Frame time (ms)
+stats-gauge-dropped = Dropped frames
+stats-gauge-congestion = Congestion
+stats-chart-fps = Frames per second
+stats-chart-frame-time = Average frame render time (ms)
+stats-chart-output-skipped = Output frames skipped per sample
+stats-chart-render-skipped = Render frames missed per sample
+stats-card-render-frames = Render frames missed
+stats-card-output-frames = Output frames skipped
+stats-card-stream-frames = Stream frames dropped
+stats-card-frame-time = Average frame render time
+stats-card-cpu = OBS CPU usage
+stats-card-memory = OBS memory usage
+stats-card-bitrate = Stream bitrate
+stats-value-placeholder = —
+stats-value-frames = { $skipped } of { $total } ({ $percent }%)
+stats-value-ms = { $value } ms
+stats-value-percent = { $value }%
+stats-value-mb = { $value } MB
+stats-value-kbps = { $value } kbps

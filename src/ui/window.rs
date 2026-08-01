@@ -40,13 +40,14 @@ use crate::ui::widgets::status_bar::{self, StatusBarHandle};
 const DEFAULT_WIDTH: i32 = 1100;
 const DEFAULT_HEIGHT: i32 = 740;
 
-const NAV_PAGES: [Page; 6] = [
+const NAV_PAGES: [Page; 7] = [
     Page::Live,
     Page::Mixer,
     Page::Graph,
     Page::Inventory,
     Page::Doctor,
     Page::Settings,
+    Page::Stats,
 ];
 
 pub fn build_main_window(
@@ -85,6 +86,7 @@ pub fn build_main_window(
 
     // Build pages — live returns a handle; others return (widget, refresh_fn).
     let live_handle = Rc::new(crate::ui::pages::live::build(nav.clone()));
+    let (stats_widget, stats_refresh) = crate::ui::pages::stats::build(nav.clone());
     let (mixer_widget, mixer_refresh) = crate::ui::pages::mixer::build(nav.clone());
     let (graph_widget, graph_refresh) = crate::ui::pages::graph::build(nav.clone());
     let (inventory_widget, inventory_refresh) = crate::ui::pages::inventory::build(nav.clone());
@@ -113,8 +115,10 @@ pub fn build_main_window(
         Some(Page::Settings.id()),
         &Page::Settings.title(),
     );
+    content_stack.add_titled(&stats_widget, Some(Page::Stats.id()), &Page::Stats.title());
 
     let refreshers = PageRefreshers {
+        stats: stats_refresh,
         mixer: mixer_refresh,
         graph: graph_refresh,
         inventory: inventory_refresh,
@@ -210,18 +214,10 @@ pub fn build_main_window(
         }
     });
 
-    // Poll OBS performance stats on a slower cadence than the elapsed-time
-    // tick above — CPU/FPS/bitrate don't need per-second precision, and this
-    // keeps `GetStats` traffic light while OBS is otherwise idle.
-    glib::timeout_add_local(Duration::from_secs(2), {
-        let nav = nav.clone();
-        move || {
-            if matches!(nav.state.borrow().obs_status, ObsStatus::Connected { .. }) {
-                nav.dispatch(AppCommand::RefreshStats);
-            }
-            glib::ControlFlow::Continue
-        }
-    });
+    // OBS performance stats are not polled from here: the session task owns a
+    // poll loop that runs for as long as the connection is up, so the status
+    // bar and the Stats page history stay current regardless of the open page
+    // and regardless of whether the GTK timer fires.
 
     // ── Content header bar ────────────────────────────────────────────────────
     let content_header = adw::HeaderBar::new();
@@ -421,7 +417,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
             sidebar_controls
                 .connect_btn
                 .remove_css_class("destructive-action");
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
             status_bar::set_connection(status_bar, &obs_status);
             status_bar::clear_stats(status_bar);
             show_disconnected_view(live, &fl!(LANGUAGE_LOADER, "window-obs-connection-failed"));
@@ -553,13 +549,22 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
         AppEvent::StatsUpdated {
             stats,
             bitrate_kbps,
+            stream,
         } => {
-            let streaming = {
+            let (streaming, on_stats_page) = {
                 let mut state = nav.state.borrow_mut();
-                state.set_obs_stats(stats, bitrate_kbps);
-                state.stream_status.active
+                state.set_obs_stats(stats, bitrate_kbps, stream);
+                (
+                    state.stream_status.active,
+                    state.current_page == Page::Stats,
+                )
             };
             status_bar::set_stats(status_bar, &stats, bitrate_kbps, streaming);
+            // History is recorded on every sample; only redraw when the charts
+            // are actually on screen.
+            if on_stats_page {
+                refreshers.call(Page::Stats);
+            }
         }
         _ => unreachable!("specialized event was not routed before general event handling"),
     }
@@ -598,7 +603,7 @@ fn apply_connection_event(nav: &NavigationContext, event: AppEvent, ui: &EventUi
                 .connect_btn
                 .set_label(&fl!(LANGUAGE_LOADER, "window-connect-btn-connecting"));
             sidebar_controls.connect_btn.set_sensitive(false);
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
             status_bar::set_connection(status_bar, &ObsStatus::Connecting);
             status_bar::clear_stats(status_bar);
             show_disconnected_view(live, &fl!(LANGUAGE_LOADER, "window-status-connecting"));
@@ -633,7 +638,7 @@ fn apply_connection_event(nav: &NavigationContext, event: AppEvent, ui: &EventUi
             sidebar_controls
                 .connect_btn
                 .add_css_class("destructive-action");
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
             status_bar::set_connection(status_bar, &obs_status);
             show_live_view(live);
         }
@@ -665,7 +670,7 @@ fn apply_connection_event(nav: &NavigationContext, event: AppEvent, ui: &EventUi
             sidebar_controls
                 .connect_btn
                 .remove_css_class("destructive-action");
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
             status_bar::set_connection(status_bar, &ObsStatus::Disconnected);
             status_bar::clear_stats(status_bar);
             show_disconnected_view(live, &fl!(LANGUAGE_LOADER, "window-live-disconnected-hint"));
@@ -711,7 +716,7 @@ fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiCont
                 ),
                 status.active,
             );
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
         }
 
         AppEvent::RecordStatusUpdated(status) => {
@@ -737,7 +742,7 @@ fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiCont
                 ),
                 status.active,
             );
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
         }
 
         AppEvent::StreamCommandPending(status) => {
@@ -759,7 +764,7 @@ fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiCont
                 ),
                 status.active,
             );
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
         }
 
         AppEvent::RecordCommandPending(status) => {
@@ -782,7 +787,7 @@ fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiCont
                 ),
                 status.active,
             );
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
         }
 
         AppEvent::StreamCommandSucceeded => {
@@ -803,7 +808,7 @@ fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiCont
                 ),
                 status.active,
             );
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
         }
 
         AppEvent::RecordCommandSucceeded => {
@@ -825,7 +830,7 @@ fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiCont
                 ),
                 status.active,
             );
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
         }
 
         AppEvent::StreamCommandFailed(failure) => {
@@ -847,7 +852,7 @@ fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiCont
                 ),
                 status.active,
             );
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
         }
 
         AppEvent::RecordCommandFailed(failure) => {
@@ -870,7 +875,7 @@ fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiCont
                 ),
                 status.active,
             );
-            sync_output_indicators(sidebar_controls, streaming_chrome, &nav.state.borrow());
+            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
         }
         _ => unreachable!("non-output event routed to output handler"),
     }
@@ -1005,12 +1010,17 @@ fn apply_sidebar_output_button(button: &Button, model: SidebarOutputButtonModel)
 }
 
 fn sync_output_indicators(
+    nav: &NavigationContext,
     sidebar: &SidebarControls,
     streaming_chrome: &StreamingChromeRef,
-    state: &AppState,
 ) {
-    sync_sidebar_output_buttons(sidebar, state);
-    sync_streaming_chrome(streaming_chrome, state.stream_status.active);
+    let streaming = {
+        let state = nav.state.borrow();
+        sync_sidebar_output_buttons(sidebar, &state);
+        state.stream_status.active
+    };
+
+    sync_streaming_chrome(streaming_chrome, streaming);
 }
 
 fn sync_sidebar_output_buttons(sidebar: &SidebarControls, state: &AppState) {
@@ -1362,6 +1372,7 @@ struct StreamingChrome {
 
 #[derive(Clone)]
 struct PageRefreshers {
+    stats: RefreshFn,
     mixer: RefreshFn,
     graph: RefreshFn,
     inventory: RefreshFn,
@@ -1385,6 +1396,7 @@ impl PageRefreshers {
     /// Live page is always kept current by `apply_event`, so it is a no-op here.
     fn call(&self, page: Page) {
         match page {
+            Page::Stats => (self.stats)(),
             Page::Mixer => (self.mixer)(),
             Page::Graph => (self.graph)(),
             Page::Inventory => (self.inventory)(),

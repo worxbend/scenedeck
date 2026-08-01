@@ -24,6 +24,10 @@ keep local metadata about how scenes are used.
 - Control input volume with compact inverted vertical sliders.
 - Lock an audio card slider locally to prevent accidental UI changes.
 - Display and control streaming and recording state.
+- Show live telemetry on a Stats page — FPS, average frame render time,
+  render/output frames missed or skipped, congestion, and bitrate as gauges and
+  charts, in a layout that reflows for narrow windows.
+- Keep FPS and dropped frames visible in the bottom status bar on every page.
 - Assign local scene roles in Inventory.
 - Assign optional scene accent colors in Inventory for 50%-alpha Live-card
   highlights.
@@ -68,6 +72,7 @@ Use the sidebar to move between the app views:
 
 - Live: switch Primary scenes and control active scene audio. Stream and record
   outputs are controlled from the persistent sidebar.
+- Stats: live streaming and OBS performance telemetry.
 - Graph: inspect nested scene dependencies.
 - Inventory: assign local roles to OBS scenes.
 - Doctor: run structural checks over scenes, roles, and dependencies.

@@ -112,6 +112,7 @@ controller-not-connected = Nicht mit OBS verbunden
 
 ## controller/state.rs — Page titles and ObsStatus labels
 page-live = Live
+page-stats = Statistik
 page-mixer = Mixer
 page-graph = Graph
 page-inventory = Inventar
@@ -348,6 +349,7 @@ status-bar-fps = FPS { $value }
 status-bar-cpu = CPU { $value }%
 status-bar-bitrate = Bitrate { $value } kbps
 status-bar-dropped = { $count } verworfen
+status-bar-dropped-placeholder = Verworfen —
 
 ## settings.rs
 
@@ -433,3 +435,27 @@ theme-custom-css-read-failed = Eigenes CSS konnte nicht von { $path } gelesen we
 theme-custom-css-no-matching-file = Eigenes CSS ist aktiviert, aber es ist keine passende Hell-/Dunkel-Datei festgelegt.
 theme-css-no-display = { $label } wurde nicht geladen, da kein GTK-Display verfügbar ist.
 theme-css-parse-error = { $label } CSS-Parsefehler: { $message }
+## stats.rs — live streaming telemetry
+stats-page-title = Stream-Statistik
+stats-page-subtitle = Live-Telemetrie, die bei bestehender Verbindung einmal pro Sekunde von OBS abgefragt wird.
+stats-gauge-fps = FPS
+stats-gauge-frame-time = Bildzeit (ms)
+stats-gauge-dropped = Verworfene Bilder
+stats-gauge-congestion = Auslastung
+stats-chart-fps = Bilder pro Sekunde
+stats-chart-frame-time = Durchschnittliche Renderzeit pro Bild (ms)
+stats-chart-output-skipped = Übersprungene Ausgabebilder pro Messung
+stats-chart-render-skipped = Verpasste Renderbilder pro Messung
+stats-card-render-frames = Verpasste Renderbilder
+stats-card-output-frames = Übersprungene Ausgabebilder
+stats-card-stream-frames = Verworfene Stream-Bilder
+stats-card-frame-time = Durchschnittliche Renderzeit pro Bild
+stats-card-cpu = OBS-CPU-Auslastung
+stats-card-memory = OBS-Speichernutzung
+stats-card-bitrate = Stream-Bitrate
+stats-value-placeholder = —
+stats-value-frames = { $skipped } von { $total } ({ $percent } %)
+stats-value-ms = { $value } ms
+stats-value-percent = { $value } %
+stats-value-mb = { $value } MB
+stats-value-kbps = { $value } kbit/s

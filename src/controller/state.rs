@@ -10,7 +10,7 @@ use crate::domain::mixer::{MixerMode, MixerSelection};
 use crate::domain::obs::ObsNamedList;
 use crate::domain::output::OutputStatus;
 use crate::domain::scene::{SceneId, SceneInventory};
-use crate::domain::stats::ObsStats;
+use crate::domain::stats::{ObsStats, StatsHistory, StreamHealth};
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::config::{AppConfig, OutputConfig};
 use crate::storage::registry::SceneRegistry;
@@ -27,6 +27,8 @@ pub enum Page {
     Inventory,
     Doctor,
     Settings,
+    /// Live streaming telemetry, kept last in the sidebar.
+    Stats,
 }
 
 impl Page {
@@ -39,6 +41,7 @@ impl Page {
             Self::Inventory => "inventory",
             Self::Doctor => "doctor",
             Self::Settings => "settings",
+            Self::Stats => "stats",
         }
     }
 
@@ -50,6 +53,7 @@ impl Page {
             Self::Inventory => fl!(LANGUAGE_LOADER, "page-inventory"),
             Self::Doctor => fl!(LANGUAGE_LOADER, "page-doctor"),
             Self::Settings => fl!(LANGUAGE_LOADER, "page-settings"),
+            Self::Stats => fl!(LANGUAGE_LOADER, "page-stats"),
         }
     }
 
@@ -62,6 +66,7 @@ impl Page {
             Self::Inventory => "view-list-symbolic",
             Self::Doctor => "emblem-default-symbolic",
             Self::Settings => "preferences-system-symbolic",
+            Self::Stats => "power-profile-performance-symbolic",
         }
     }
 }
@@ -277,6 +282,12 @@ pub struct AppState {
     pub obs_stats: Option<ObsStats>,
     /// Rolling stream bitrate derived from consecutive stats polls.
     pub stream_bitrate_kbps: Option<f64>,
+    /// Latest `GetStreamStatus` health read, paired with `obs_stats`.
+    pub stream_health: Option<StreamHealth>,
+    /// Recent samples backing the Stats page charts. Filled by the session's
+    /// poll loop regardless of which page is open, so opening Stats shows
+    /// history rather than starting from an empty graph.
+    pub stats_history: StatsHistory,
 }
 
 impl AppState {
@@ -315,6 +326,8 @@ impl AppState {
             startup_notice,
             obs_stats: None,
             stream_bitrate_kbps: None,
+            stream_health: None,
+            stats_history: StatsHistory::default(),
         }
     }
 
@@ -407,18 +420,28 @@ impl AppState {
         self.last_record_command_error = None;
     }
 
-    pub fn set_obs_stats(&mut self, stats: ObsStats, bitrate_kbps: Option<f64>) {
+    pub fn set_obs_stats(
+        &mut self,
+        stats: ObsStats,
+        bitrate_kbps: Option<f64>,
+        stream: Option<StreamHealth>,
+    ) {
         self.obs_stats = Some(stats);
         self.stream_bitrate_kbps = if self.stream_status.active {
             bitrate_kbps
         } else {
             None
         };
+        self.stream_health = stream;
+        self.stats_history
+            .push(stats, self.stream_bitrate_kbps, stream);
     }
 
     pub fn clear_obs_stats(&mut self) {
         self.obs_stats = None;
         self.stream_bitrate_kbps = None;
+        self.stream_health = None;
+        self.stats_history.clear();
     }
 
     pub fn visible_mixer_audio_status(&self, scene: &str) -> MixerVisibleAudioStatus<'_> {
@@ -636,6 +659,7 @@ fn mixer_inspection_inputs(inputs: &[AudioInput]) -> Vec<MixerInspectionInput<'_
 mod tests {
     use super::*;
     use crate::domain::output::OutputRunState;
+    use crate::domain::stats::StatsMetric;
 
     fn input(id: &str) -> AudioInput {
         AudioInput::new(id.to_string(), false, 1.0, 0.0)
@@ -2014,5 +2038,83 @@ mod tests {
             visible_loaded_input(&state, "Scene A", "Music").volume_db,
             0.0
         );
+    }
+
+    fn obs_stats(active_fps: f64) -> ObsStats {
+        ObsStats {
+            cpu_usage_percent: 10.0,
+            memory_usage_mb: 400.0,
+            active_fps,
+            average_frame_render_time_ms: 3.0,
+            render_skipped_frames: 0,
+            render_total_frames: 100,
+            output_skipped_frames: 0,
+            output_total_frames: 100,
+        }
+    }
+
+    fn stream_health() -> StreamHealth {
+        StreamHealth {
+            active: true,
+            reconnecting: false,
+            congestion: 0.1,
+            skipped_frames: 2,
+            total_frames: 200,
+            bytes: 2_048,
+        }
+    }
+
+    #[test]
+    fn stats_updates_accumulate_history_for_the_charts() {
+        let mut state = app_state();
+
+        state.set_obs_stats(obs_stats(60.0), None, Some(stream_health()));
+        state.set_obs_stats(obs_stats(59.0), None, Some(stream_health()));
+
+        assert_eq!(state.stats_history.len(), 2);
+        assert_eq!(
+            state.stats_history.series(StatsMetric::Fps),
+            vec![60.0, 59.0]
+        );
+        assert_eq!(state.stream_health, Some(stream_health()));
+    }
+
+    #[test]
+    fn bitrate_is_dropped_from_state_and_history_while_not_streaming() {
+        let mut state = app_state();
+
+        state.set_obs_stats(obs_stats(60.0), Some(6_000.0), Some(stream_health()));
+
+        assert_eq!(state.stream_bitrate_kbps, None);
+        assert_eq!(
+            state.stats_history.series(StatsMetric::BitrateKbps),
+            vec![0.0]
+        );
+    }
+
+    #[test]
+    fn bitrate_is_recorded_once_the_stream_output_is_active() {
+        let mut state = app_state();
+        state.set_stream_status(OutputStatus::active());
+
+        state.set_obs_stats(obs_stats(60.0), Some(6_000.0), Some(stream_health()));
+
+        assert_eq!(state.stream_bitrate_kbps, Some(6_000.0));
+        assert_eq!(
+            state.stats_history.series(StatsMetric::BitrateKbps),
+            vec![6_000.0]
+        );
+    }
+
+    #[test]
+    fn clearing_stats_empties_the_history_and_stream_health() {
+        let mut state = app_state();
+        state.set_obs_stats(obs_stats(60.0), None, Some(stream_health()));
+
+        state.clear_obs_stats();
+
+        assert!(state.stats_history.is_empty());
+        assert_eq!(state.stream_health, None);
+        assert_eq!(state.obs_stats, None);
     }
 }

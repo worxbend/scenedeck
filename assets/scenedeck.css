@@ -404,7 +404,64 @@ window.scenedeck-about-window preferencesgroup row {
     font-weight: 700;
 }
 
+/* Always visible, but muted like the other metrics until frames are lost. */
 .scenedeck-status-bar-dropped {
+    color: @scenedeck_muted_fg;
+}
+
+.scenedeck-status-bar-dropped-active {
     color: @scenedeck_warning;
+    font-weight: 700;
+}
+
+/* ── Stats page ─────────────────────────────────────────────────────────────── */
+.stats-page {
+    padding: 18px;
+}
+
+/* Sections reflow via FlowBox; children must fill their column at every width. */
+.stats-gauge-row,
+.stats-chart-grid,
+.stats-card-row {
+    margin-top: 2px;
+}
+
+.stats-gauge-row > flowboxchild,
+.stats-chart-grid > flowboxchild,
+.stats-card-row > flowboxchild {
+    padding: 0;
+}
+
+.scenedeck-gauge,
+.scenedeck-chart {
+    background-color: alpha(@scenedeck_fg, 0.03);
+    border: 1px solid alpha(@scenedeck_fg, 0.08);
+    border-radius: 10px;
+}
+
+.stats-chart-frame {
+    padding: 2px;
+}
+
+.stats-chart-title {
+    color: @scenedeck_muted_fg;
+    font-size: 0.85em;
+    font-weight: 700;
+}
+
+.stats-card {
+    background-color: alpha(@scenedeck_fg, 0.03);
+    border: 1px solid alpha(@scenedeck_fg, 0.08);
+    border-radius: 8px;
+    padding: 8px 12px;
+}
+
+.stats-card-caption {
+    color: @scenedeck_muted_fg;
+    font-size: 0.9em;
+}
+
+.stats-card-value {
+    font-family: monospace;
     font-weight: 700;
 }

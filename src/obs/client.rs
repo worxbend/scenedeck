@@ -14,7 +14,7 @@ use crate::domain::graph::SceneGraph;
 use crate::domain::obs::ObsNamedList;
 use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::domain::scene::SceneInventory;
-use crate::domain::stats::ObsStats;
+use crate::domain::stats::{ObsStats, StreamHealth};
 use crate::infra::error::AppError;
 use crate::obs::mapper;
 
@@ -197,14 +197,15 @@ impl ObsClient {
             .map_err(|e| AppError::Request(e.to_string()))
     }
 
-    /// Cumulative bytes sent by the stream output, used to derive a rolling
-    /// bitrate. Zero while the stream is inactive.
-    pub async fn get_stream_bytes(&self) -> Result<u64, AppError> {
+    /// Stream output health (`GetStreamStatus`) — congestion, dropped frames,
+    /// and the cumulative byte counter used to derive a rolling bitrate. OBS
+    /// reports zeroed counters while the stream is inactive.
+    pub async fn get_stream_health(&self) -> Result<StreamHealth, AppError> {
         self.inner
             .streaming()
             .status()
             .await
-            .map(|status| status.bytes)
+            .map(mapper::map_stream_health)
             .map_err(|e| AppError::Request(e.to_string()))
     }
 

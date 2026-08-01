@@ -13,7 +13,8 @@ use crate::controller::output_controller::{
     refresh_output_statuses, stop_active_outputs_before_disconnect, OutputController,
 };
 use crate::controller::refresh_controller::{
-    refresh_live_data, refresh_profile_and_collection_lists, run_event_loop, BitrateSample,
+    refresh_live_data, refresh_profile_and_collection_lists, run_event_loop, run_stats_poll_loop,
+    BitrateSample,
 };
 use crate::obs::client::ObsClient;
 
@@ -34,13 +35,11 @@ impl SessionController {
         client_slot: Arc<Mutex<Option<ObsClient>>>,
         bitrate_sample: BitrateSample,
     ) -> Self {
-        Self::with_runner(
-            runtime,
-            event_tx,
-            Arc::new(ObsSessionRunner { dependencies }),
-            client_slot,
-            bitrate_sample,
-        )
+        let runner = Arc::new(ObsSessionRunner {
+            dependencies,
+            bitrate_sample: Arc::clone(&bitrate_sample),
+        });
+        Self::with_runner(runtime, event_tx, runner, client_slot, bitrate_sample)
     }
 
     pub(crate) fn with_runner(
@@ -126,6 +125,7 @@ pub(crate) trait SessionRunner: Send + Sync {
 
 struct ObsSessionRunner {
     dependencies: ControllerDependencies,
+    bitrate_sample: BitrateSample,
 }
 
 impl SessionRunner for ObsSessionRunner {
@@ -135,6 +135,7 @@ impl SessionRunner for ObsSessionRunner {
         client_slot: Arc<Mutex<Option<ObsClient>>>,
     ) -> BoxFuture<'static, ()> {
         let dependencies = self.dependencies.clone();
+        let bitrate_sample = Arc::clone(&self.bitrate_sample);
         Box::pin(async move {
             let (config, password) = tokio::task::spawn_blocking(move || {
                 let config = dependencies.load_config();
@@ -175,7 +176,19 @@ impl SessionRunner for ObsSessionRunner {
             refresh_profile_and_collection_lists(&client, &tx).await;
             refresh_output_statuses(&client, &tx).await;
             refresh_live_data(&client, &tx, &config.live.audio_inputs).await;
-            run_event_loop(client, events, tx, config.live.audio_inputs).await;
+
+            // The stats poll never finishes on its own; it is raced against the
+            // event loop so ending the session tears both down together.
+            tokio::select! {
+                () = run_event_loop(
+                    client.clone(),
+                    events,
+                    tx.clone(),
+                    config.live.audio_inputs,
+                ) => {}
+                () = run_stats_poll_loop(client.clone(), tx, bitrate_sample) => {}
+            }
+
             if let Ok(mut slot) = client_slot.lock() {
                 *slot = None;
             }

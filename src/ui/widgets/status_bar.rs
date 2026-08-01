@@ -57,8 +57,11 @@ pub(crate) fn build() -> StatusBarHandle {
     let cpu_label = segment_label("scenedeck-status-bar-metric");
     cpu_label.set_text(&fl!(LANGUAGE_LOADER, "status-bar-cpu-placeholder"));
 
+    // Dropped frames stay on screen at all times, including at zero: a counter
+    // that only appears once something is wrong cannot be checked at a glance
+    // mid-stream to confirm nothing is wrong.
     let dropped_label = segment_label("scenedeck-status-bar-dropped");
-    dropped_label.set_visible(false);
+    dropped_label.set_text(&fl!(LANGUAGE_LOADER, "status-bar-dropped-placeholder"));
 
     root.append(&connection_label);
     root.append(&separator());
@@ -119,13 +122,11 @@ pub(crate) fn set_stats(
         .bitrate_label
         .set_text(&format_bitrate(bitrate_kbps, streaming));
 
-    match format_dropped(stats.dropped_frames()) {
-        Some(text) => {
-            handle.dropped_label.set_text(&text);
-            handle.dropped_label.set_visible(true);
-        }
-        None => handle.dropped_label.set_visible(false),
-    }
+    let dropped_frames = stats.dropped_frames();
+    handle
+        .dropped_label
+        .set_text(&format_dropped(dropped_frames));
+    set_dropped_alert_class(&handle.dropped_label, dropped_frames > 0);
 }
 
 /// Reset performance segments to their placeholder state, e.g. on disconnect.
@@ -139,7 +140,10 @@ pub(crate) fn clear_stats(handle: &StatusBarHandle) {
     handle
         .bitrate_label
         .set_text(&fl!(LANGUAGE_LOADER, "status-bar-bitrate-placeholder"));
-    handle.dropped_label.set_visible(false);
+    handle
+        .dropped_label
+        .set_text(&fl!(LANGUAGE_LOADER, "status-bar-dropped-placeholder"));
+    set_dropped_alert_class(&handle.dropped_label, false);
 }
 
 // ── Formatting (pure, unit tested) ────────────────────────────────────────────
@@ -174,15 +178,12 @@ fn format_bitrate(bitrate_kbps: Option<f64>, streaming: bool) -> String {
     }
 }
 
-fn format_dropped(dropped_frames: u32) -> Option<String> {
-    if dropped_frames == 0 {
-        return None;
-    }
-    Some(fl!(
+fn format_dropped(dropped_frames: u32) -> String {
+    fl!(
         LANGUAGE_LOADER,
         "status-bar-dropped",
         count = dropped_frames
-    ))
+    )
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -198,6 +199,16 @@ fn separator() -> Separator {
     let separator = Separator::new(Orientation::Vertical);
     separator.add_css_class("scenedeck-status-bar-separator");
     separator
+}
+
+/// Highlight the dropped-frame counter only once frames are actually being
+/// lost, so the permanent segment does not read as a permanent warning.
+fn set_dropped_alert_class(label: &Label, dropping: bool) {
+    if dropping {
+        label.add_css_class("scenedeck-status-bar-dropped-active");
+    } else {
+        label.remove_css_class("scenedeck-status-bar-dropped-active");
+    }
 }
 
 fn set_live_class(label: &Label, active: bool) {
@@ -240,12 +251,12 @@ mod tests {
     }
 
     #[test]
-    fn dropped_frames_are_hidden_when_zero() {
-        assert_eq!(format_dropped(0), None);
+    fn dropped_frames_stay_on_screen_at_zero() {
+        assert_eq!(format_dropped(0), "0 dropped");
     }
 
     #[test]
     fn dropped_frames_are_shown_when_nonzero() {
-        assert_eq!(format_dropped(3), Some("3 dropped".to_string()));
+        assert_eq!(format_dropped(3), "3 dropped");
     }
 }

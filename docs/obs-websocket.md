@@ -26,8 +26,10 @@ SceneDeck currently reads:
 - Scene item enabled state.
 - OBS profiles and current profile.
 - OBS scene collections and current scene collection.
-- Stream status.
+- Stream status, including congestion, dropped frames, and sent bytes.
 - Record status.
+- OBS process statistics: CPU, memory, active FPS, average frame render time,
+  and render/output frame counters.
 - Special/global audio input names.
 - OBS input list when an explicit audio scan is needed.
 - Input mute state.
@@ -72,6 +74,24 @@ SceneDeck currently handles these OBS event categories:
 Events either update UI state directly or trigger a refresh of derived data such
 as active scene audio, profile lists, collection lists, scene inventory, or the
 dependency graph.
+
+## Statistics Polling
+
+obs-websocket v5 has no push event for performance statistics. `GetStats` and
+`GetStreamStatus` are request-only, so a live view has to poll them.
+
+SceneDeck polls both once per second from `refresh_controller::run_stats_poll_loop`.
+That loop is raced against the OBS event stream inside the session task, so it:
+
+- starts as soon as the session is established,
+- runs regardless of which page is open, or whether any page is open at all,
+- stops when the session task is aborted on disconnect or reconnect.
+
+Each poll emits one `AppEvent::StatsUpdated`. The GTK side appends it to
+`AppState::stats_history` — a bounded ring buffer of the last two minutes — which
+backs both the permanent status-bar counters and the Stats page charts. Deriving
+the rolling bitrate needs two consecutive byte-counter reads, so bitrate stays
+empty for the first sample after the stream (re)starts.
 
 ## Active Scene Audio Discovery
 

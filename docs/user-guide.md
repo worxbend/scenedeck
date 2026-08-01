@@ -45,6 +45,46 @@ When disconnected, it shows a placeholder message. After connection, it shows:
 - Scrollable scene cards.
 - Scrollable compact audio cards.
 
+The bottom status bar shows OBS connection state, stream and record state, and
+performance counters — FPS, dropped frames, CPU, and bitrate — on every page.
+FPS and dropped frames are always shown while connected; the dropped-frame
+counter is highlighted only once frames are actually being lost.
+
+## Stats Page
+
+The Stats page is the last entry in the sidebar and is always available.
+Process metrics such as FPS, frame render time, and CPU are reported by OBS
+whether or not you are streaming; the stream-only values — congestion, stream
+frame drops, and bitrate — stay blank until the stream output is running. While
+disconnected the whole page shows placeholders.
+
+It shows, refreshed once a second:
+
+- Gauges for FPS, average frame render time, dropped-frame percentage, and
+  network congestion. Gauges turn amber and then red as a value degrades:
+  dropped frames warn at 1% and turn critical at 5%, congestion at 30% and 60%,
+  frame render time at half and 80% of the frame budget, and FPS when it falls
+  below 95% and 80% of the highest rate seen this session.
+- Trend charts for frames per second and average frame render time.
+- Bar charts of output frames skipped and render frames missed per sample, which
+  show *when* frames were lost rather than the running total.
+- Counter cards for render, output, and stream frame totals, average frame
+  render time, OBS CPU and memory usage, and stream bitrate.
+
+Charts hold roughly the last two minutes. SceneDeck collects these samples for
+the whole time it is connected, not only while the page is open, so opening
+Stats mid-stream shows the preceding minutes rather than starting from empty.
+
+Frame counters come from OBS and are cumulative since OBS (or the stream output)
+started, so restarting a stream resets them.
+
+The layout adapts to the window width: gauges, charts, and counter cards each
+reflow to fewer columns as the window narrows, ending in a single column so the
+page stays readable in a narrow window without horizontal scrolling.
+
+Because obs-websocket has no push notification for statistics, these values are
+polled from OBS rather than pushed by it.
+
 ## Mixer Page
 
 The Mixer page is a dedicated audio control surface. It shows the same scoped

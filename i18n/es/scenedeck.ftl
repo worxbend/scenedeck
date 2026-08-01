@@ -115,6 +115,7 @@ controller-not-connected = No conectado a OBS
 
 ## controller/state.rs — Page titles and ObsStatus labels
 page-live = Directo
+page-stats = Estadísticas
 page-mixer = Mezclador
 page-graph = Grafo
 page-inventory = Inventario
@@ -351,6 +352,7 @@ status-bar-fps = FPS { $value }
 status-bar-cpu = CPU { $value }%
 status-bar-bitrate = Tasa de bits { $value } kbps
 status-bar-dropped = { $count } descartados
+status-bar-dropped-placeholder = Descartados —
 
 ## settings.rs
 
@@ -436,3 +438,27 @@ theme-custom-css-read-failed = No se pudo leer el CSS personalizado desde { $pat
 theme-custom-css-no-matching-file = El CSS personalizado está activado, pero no hay ningún archivo claro/oscuro correspondiente configurado.
 theme-css-no-display = { $label } no se cargó porque no hay ninguna pantalla de GTK disponible.
 theme-css-parse-error = Error al analizar el CSS de { $label }: { $message }
+## stats.rs — live streaming telemetry
+stats-page-title = Estadísticas de emisión
+stats-page-subtitle = Telemetría en directo consultada a OBS una vez por segundo mientras hay conexión.
+stats-gauge-fps = FPS
+stats-gauge-frame-time = Tiempo por fotograma (ms)
+stats-gauge-dropped = Fotogramas perdidos
+stats-gauge-congestion = Congestión
+stats-chart-fps = Fotogramas por segundo
+stats-chart-frame-time = Tiempo medio de renderizado por fotograma (ms)
+stats-chart-output-skipped = Fotogramas de salida omitidos por muestra
+stats-chart-render-skipped = Fotogramas de renderizado perdidos por muestra
+stats-card-render-frames = Fotogramas de renderizado perdidos
+stats-card-output-frames = Fotogramas de salida omitidos
+stats-card-stream-frames = Fotogramas perdidos en la emisión
+stats-card-frame-time = Tiempo medio de renderizado por fotograma
+stats-card-cpu = Uso de CPU de OBS
+stats-card-memory = Uso de memoria de OBS
+stats-card-bitrate = Tasa de bits de la emisión
+stats-value-placeholder = —
+stats-value-frames = { $skipped } de { $total } ({ $percent } %)
+stats-value-ms = { $value } ms
+stats-value-percent = { $value } %
+stats-value-mb = { $value } MB
+stats-value-kbps = { $value } kb/s

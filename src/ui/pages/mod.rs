@@ -9,3 +9,4 @@ pub(crate) mod inventory;
 pub(crate) mod live;
 pub(crate) mod mixer;
 pub(crate) mod settings;
+pub(crate) mod stats;

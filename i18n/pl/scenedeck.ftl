@@ -118,6 +118,7 @@ controller-not-connected = Brak połączenia z OBS
 
 ## controller/state.rs — Page titles and ObsStatus labels
 page-live = Na żywo
+page-stats = Statystyki
 page-mixer = Mikser
 page-graph = Graf
 page-inventory = Inwentarz
@@ -354,6 +355,7 @@ status-bar-fps = FPS { $value }
 status-bar-cpu = CPU { $value }%
 status-bar-bitrate = Przepływność { $value } kbps
 status-bar-dropped = Utracone: { $count }
+status-bar-dropped-placeholder = Utracone —
 
 ## settings.rs
 
@@ -439,3 +441,27 @@ theme-custom-css-read-failed = Nie udało się odczytać niestandardowego CSS z 
 theme-custom-css-no-matching-file = Niestandardowy CSS jest włączony, ale nie ustawiono odpowiedniego pliku jasny/ciemny.
 theme-css-no-display = { $label } nie został wczytany, ponieważ brak dostępnego wyświetlacza GTK.
 theme-css-parse-error = Błąd analizy CSS w { $label }: { $message }
+## stats.rs — live streaming telemetry
+stats-page-title = Statystyki transmisji
+stats-page-subtitle = Dane na żywo pobierane z OBS raz na sekundę, gdy połączenie jest aktywne.
+stats-gauge-fps = FPS
+stats-gauge-frame-time = Czas klatki (ms)
+stats-gauge-dropped = Zgubione klatki
+stats-gauge-congestion = Przeciążenie
+stats-chart-fps = Klatki na sekundę
+stats-chart-frame-time = Średni czas renderowania klatki (ms)
+stats-chart-output-skipped = Pominięte klatki wyjściowe na próbkę
+stats-chart-render-skipped = Utracone klatki renderowania na próbkę
+stats-card-render-frames = Utracone klatki renderowania
+stats-card-output-frames = Pominięte klatki wyjściowe
+stats-card-stream-frames = Zgubione klatki transmisji
+stats-card-frame-time = Średni czas renderowania klatki
+stats-card-cpu = Użycie procesora przez OBS
+stats-card-memory = Użycie pamięci przez OBS
+stats-card-bitrate = Bitrate transmisji
+stats-value-placeholder = —
+stats-value-frames = { $skipped } z { $total } ({ $percent }%)
+stats-value-ms = { $value } ms
+stats-value-percent = { $value }%
+stats-value-mb = { $value } MB
+stats-value-kbps = { $value } kb/s

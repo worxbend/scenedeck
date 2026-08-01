@@ -40,8 +40,8 @@ Application orchestration.
   graceful disconnect shutdown, and the injectable output-client boundary.
 - `session_controller.rs`: connection task ownership, reconnect replacement,
   graceful disconnect, and the injectable session-runner boundary.
-- `refresh_controller.rs`: OBS list/data refresh helpers, stats/bitrate polling,
-  and OBS event-stream routing.
+- `refresh_controller.rs`: OBS list/data refresh helpers, the session-owned
+  one-second stats/bitrate poll loop, and OBS event-stream routing.
 
 `src/domain/`
 
@@ -56,7 +56,8 @@ Application data types that do not depend on GTK or OBS crate types.
 - `output.rs`: stream and record status.
 - `role.rs`: local scene roles.
 - `scene.rs`: scene inventory.
-- `stats.rs`: OBS performance statistics.
+- `stats.rs`: OBS performance statistics, stream health, and the bounded
+  `StatsHistory` ring buffer backing the Stats page charts.
 
 `src/infra/`
 
@@ -101,8 +102,9 @@ GTK and libadwaita UI.
 - `actions.rs`: app-level actions and keyboard shortcuts.
 - `background_io.rs`: runs blocking local persistence on worker threads and
   returns completion callbacks to GTK.
-- `pages/`: Live, Mixer, Graph, Inventory, Doctor, and Settings pages.
-- `widgets/`: reusable scene and audio cards.
+- `pages/`: Live, Stats, Mixer, Graph, Inventory, Doctor, and Settings pages.
+- `widgets/`: reusable scene and audio cards, the bottom status bar, and the
+  cairo chart/gauge renderers used by Stats.
 
 ## Assets and Resources
 
