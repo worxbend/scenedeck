@@ -138,7 +138,7 @@
 .hero__grid {
   display: grid;
   gap: var(--s-8);
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
 }
 
@@ -347,7 +347,6 @@
   display: flex;
   align-items: flex-end;
   text-align: left;
-  cursor: pointer;
   transition:
     outline-color var(--d-short3) var(--ease-standard),
     transform var(--d-short4) var(--ease-detent);
@@ -427,7 +426,7 @@
 .faults {
   display: grid;
   gap: var(--s-6);
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (min-width: 700px) {
@@ -462,7 +461,7 @@
 .live__grid {
   display: grid;
   gap: var(--s-6);
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (min-width: 1000px) {
@@ -758,7 +757,7 @@
 .audio__grid {
   display: grid;
   gap: var(--s-6);
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (min-width: 1000px) {
@@ -918,7 +917,7 @@
 .structure__grid {
   display: grid;
   gap: var(--s-6);
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (min-width: 900px) {
@@ -1146,7 +1145,7 @@
 .patchbay {
   display: grid;
   gap: var(--s-5);
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (min-width: 900px) {
@@ -1299,7 +1298,7 @@
 .spec__grid {
   display: grid;
   gap: var(--s-6);
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (min-width: 900px) {
@@ -1384,7 +1383,7 @@
 .footer__inner {
   display: grid;
   gap: var(--s-7);
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (min-width: 800px) {
@@ -1428,4 +1427,19 @@
   margin-top: var(--s-8);
   padding-top: var(--s-5);
   border-top: 1px solid var(--md-outline-variant);
+}
+
+/* On a narrow screen the chart's live readout sits on top of the end of its
+   own caption, so the two stack instead. */
+@media (max-width: 520px) {
+  .chart__now {
+    position: static;
+    align-self: flex-start;
+  }
+}
+
+@media (pointer: coarse) {
+  .deck__page {
+    padding-block: var(--s-3);
+  }
 }

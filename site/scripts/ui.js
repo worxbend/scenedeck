@@ -257,7 +257,13 @@ export async function refreshRelease() {
   document.querySelectorAll("[data-copy]").forEach((el) => {
     el.setAttribute("data-copy", swap(el.getAttribute("data-copy")));
   });
-  document.querySelectorAll(".pane code").forEach((el) => {
-    if (el.textContent.includes("scenedeck-")) el.textContent = swap(el.textContent);
+  // Only the text nodes are rewritten. Replacing textContent wholesale would
+  // flatten the <span class="prompt">$</span> that colours the shell prompt.
+  document.querySelectorAll(".pane code, .hero__code code").forEach((el) => {
+    for (const node of el.childNodes) {
+      if (node.nodeType === Node.TEXT_NODE && node.nodeValue.includes("scenedeck-")) {
+        node.nodeValue = swap(node.nodeValue);
+      }
+    }
   });
 }

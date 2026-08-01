@@ -359,10 +359,6 @@ a:hover {
   max-width: var(--w-slab);
 }
 
-.shell--prose {
-  max-width: calc(var(--w-prose) + var(--page-margin) * 2);
-}
-
 .section-head {
   display: flex;
   flex-direction: column;

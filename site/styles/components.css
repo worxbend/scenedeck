@@ -506,3 +506,30 @@
   opacity: 1;
   transform: none;
 }
+
+/* ---- Touch targets ------------------------------------------------------- */
+/* The instrument controls are deliberately compact — that is what makes them
+   read as hardware. On a coarse pointer that stops being a style choice and
+   starts being a usability defect, so they grow to the 44px minimum there and
+   only there. */
+
+@media (pointer: coarse) {
+  .copy {
+    width: 44px;
+    height: 44px;
+  }
+
+  .chip {
+    height: 44px;
+  }
+
+  .strip__btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .icon-btn {
+    width: 48px;
+    height: 48px;
+  }
+}

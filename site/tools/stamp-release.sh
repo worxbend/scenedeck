@@ -49,9 +49,8 @@ find "${site_dir}" -type f \( -name '*.html' -o -name '*.js' -o -name '*.json' \
 find "${site_dir}" -type f -name '*.html' -print0 |
     xargs -0 sed -i -E "s/(data-release-version[^>]*>)v?[0-9]+\.[0-9]+\.[0-9]+/\1v${version}/g"
 
-# The JSON snapshot the page reads for its live download panel.
-if [[ -f "${site_dir}/release.json" ]]; then
-    printf '{\n  "tag": "%s",\n  "version": "%s"\n}\n' "${tag}" "${version}" >"${site_dir}/release.json"
-fi
+# The softwareVersion in the JSON-LD block, which search engines read.
+find "${site_dir}" -type f -name '*.html' -print0 |
+    xargs -0 sed -i -E "s/(\"softwareVersion\"[[:space:]]*:[[:space:]]*\")[0-9]+\.[0-9]+\.[0-9]+/\1${version}/g"
 
 echo "stamp-release: done"

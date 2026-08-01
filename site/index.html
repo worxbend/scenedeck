@@ -198,18 +198,18 @@
               </div>
 
               <div class="deck__body">
-                <nav class="deck__rail" aria-label="Application pages">
-                  <button class="deck__page is-active" type="button" data-page="live" aria-current="true">Live</button>
-                  <button class="deck__page" type="button" data-page="stats">Stats</button>
-                  <button class="deck__page" type="button" data-page="graph">Graph</button>
-                  <button class="deck__page" type="button" data-page="inventory">Inventory</button>
-                  <button class="deck__page" type="button" data-page="doctor">Doctor</button>
-                  <button class="deck__page" type="button" data-page="settings">Settings</button>
+                <div class="deck__rail" role="group" aria-label="Preview a SceneDeck page">
+                  <button class="deck__page is-active" type="button" data-page="live" aria-pressed="true">Live</button>
+                  <button class="deck__page" type="button" data-page="stats" aria-pressed="false">Stats</button>
+                  <button class="deck__page" type="button" data-page="graph" aria-pressed="false">Graph</button>
+                  <button class="deck__page" type="button" data-page="inventory" aria-pressed="false">Inventory</button>
+                  <button class="deck__page" type="button" data-page="doctor" aria-pressed="false">Doctor</button>
+                  <button class="deck__page" type="button" data-page="settings" aria-pressed="false">Settings</button>
                   <span class="deck__rail-spacer"></span>
                   <span class="deck__conn"><span class="pip pip--ok"></span> Connected</span>
-                </nav>
+                </div>
 
-                <div class="deck__screen" id="deck-screen" aria-live="polite"></div>
+                <div class="deck__screen" id="deck-screen"></div>
               </div>
 
               <!-- The status bar rides on every page in the real app, so it
@@ -537,9 +537,9 @@
               <ul class="swatches" role="list">
                 <li style="--a: #9d8cff; --b: #181421"><span></span>Studio Purple</li>
                 <li style="--a: #88c0d0; --b: #2e3440"><span></span>Nord</li>
-                <li style="--a: #bd93f9; --b: #282a36"><span></span>Dracula</li>
+                <li style="--a: #bd93f9; --b: #282a36"><span></span>Dracula-inspired</li>
                 <li style="--a: #ed333b; --b: #1b1b1b"><span></span>Stream Red</li>
-                <li style="--a: #b58900; --b: #002b36"><span></span>Solarized</li>
+                <li style="--a: #b58900; --b: #002b36"><span></span>Solarized Dark</li>
                 <li style="--a: #77216f; --b: #2c001e"><span></span>Ubuntu Violet</li>
               </ul>
             </article>
@@ -619,7 +619,7 @@
           </div>
 
           <div class="patchbay" data-reveal>
-            <div class="patchbay__tabs" role="tablist" aria-label="Installation method">
+            <div class="patchbay__tabs" role="tablist" aria-label="Installation method" aria-orientation="vertical">
               <button class="jack" role="tab" id="tab-snap" aria-controls="pane-snap" aria-selected="true" type="button">
                 <span class="jack__socket" aria-hidden="true"></span>
                 <span class="jack__name">Snap</span>

@@ -17,8 +17,7 @@ ES modules that the browser runs as written.
 | `vendor/` | Tree-shaken three.js and pixi.js bundles. Generated — see below. |
 | `fonts/` | Self-hosted variable woff2 + `fonts.css`. Generated — see below. |
 | `assets/` | Logo, icon, social preview image. |
-| `release.json` | Latest release tag. Rewritten at deploy time. |
-| `tools/` | The three generator scripts. Not deployed content, but harmless to ship. |
+| `tools/` | Generator scripts and the social-card source. Stripped before deploy. |
 
 ## Regenerating the vendored dependencies
 

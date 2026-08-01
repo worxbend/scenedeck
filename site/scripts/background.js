@@ -101,19 +101,46 @@ export async function initBackground() {
 
   if (!layers.length) return;
 
+  // Theme and accent are page state, not animation state, so they are wired up
+  // for everyone — including the reduced-motion path, which otherwise renders
+  // one frame in its boot palette and then silently disagrees with the rest of
+  // the page for the whole visit.
+  bindAppearance(layers, shared);
+
   // A single frame, then stop: the full composition with none of the motion.
   if (reducedMotion.matches) {
-    layers.forEach((layer) => layer.render(0));
+    const paint = () => layers.forEach((layer) => layer.render(0));
+    paint();
     layers.forEach((layer) => layer.canvas.setAttribute("data-live", ""));
-    window.addEventListener("resize", debounce(() => {
-      computeRackLines();
-      layers.forEach((layer) => layer.resize());
-      layers.forEach((layer) => layer.render(0));
-    }, 160));
+    window.addEventListener("appearance:repaint", paint);
+    window.addEventListener(
+      "resize",
+      debounce(() => {
+        computeRackLines();
+        layers.forEach((layer) => layer.resize());
+        paint();
+      }, 160)
+    );
     return;
   }
 
   drive(layers, shared);
+}
+
+/** Theme and accent listeners, shared by the animated and static paths. */
+function bindAppearance(layers, shared) {
+  const repaint = () => window.dispatchEvent(new CustomEvent("appearance:repaint"));
+
+  window.addEventListener("scenedeck:theme", (event) => {
+    shared.dark = event.detail.dark;
+    for (const layer of layers) layer.theme?.(event.detail.dark);
+    repaint();
+  });
+
+  window.addEventListener("scenedeck:accent", (event) => {
+    for (const layer of layers) layer.accent?.(event.detail.hex);
+    repaint();
+  });
 }
 
 /* ---- The driver ---------------------------------------------------------- */
@@ -170,15 +197,6 @@ function drive(layers, shared) {
       for (const layer of layers) layer.resize();
     }, 120)
   );
-
-  window.addEventListener("scenedeck:theme", (event) => {
-    shared.dark = event.detail.dark;
-    for (const layer of layers) layer.theme?.(event.detail.dark);
-  });
-
-  window.addEventListener("scenedeck:accent", (event) => {
-    for (const layer of layers) layer.accent?.(event.detail.hex);
-  });
 
   // A program take runs the tally lamps across an arc of panels, staggered.
   window.addEventListener("scenedeck:take", () => {
@@ -445,17 +463,22 @@ async function buildMetal(config, shared) {
   resize();
 
   let tallyDirty = false;
+  let accentHex = null;
 
   return {
     canvas,
     resize,
     theme(dark) {
       material.color.set(dark ? "#6f6a80" : "#b9b4c4");
-      uniforms.uAnodize.value.set(dark ? "#6f78ff" : "#4a4cbb");
+      // A chosen scene accent outranks the theme default, otherwise toggling
+      // the colour scheme would silently throw the accent away and leave the
+      // metal disagreeing with the rest of the page.
+      uniforms.uAnodize.value.set(accentHex ?? (dark ? "#6f78ff" : "#4a4cbb"));
       renderer.toneMappingExposure = dark ? 1.05 : 0.92;
       scene.fog.color.set(readVar("--md-surface") || (dark ? "#0e0c13" : "#faf9f8"));
     },
     accent(hex) {
+      accentHex = hex;
       uniforms.uAnodize.value.set(hex);
     },
     render() {
@@ -570,7 +593,7 @@ async function buildSignal(config, shared) {
   // Telemetry flowing along the seams between panel rows. One container, one
   // texture, one draw call.
   const flow = new PIXI.ParticleContainer({
-    dynamicProperties: { position: true, color: true, scale: false, rotation: false },
+    dynamicProperties: { position: true, color: true, vertex: false, rotation: false },
   });
   const particles = [];
 
@@ -598,7 +621,7 @@ async function buildSignal(config, shared) {
   // The VU field. All segments share one 1x1 texture, so pixi batches the
   // whole wall into a single draw.
   const meters = new PIXI.ParticleContainer({
-    dynamicProperties: { position: false, color: true, scale: true, rotation: false },
+    dynamicProperties: { position: false, color: true, vertex: false, rotation: false },
   });
   const meterCells = [];
   const SEGMENTS = 6;
@@ -616,7 +639,7 @@ async function buildSignal(config, shared) {
   // Tally lamps sitting on the seams. The one nearest the section in view
   // ignites; the rest stay at a resting glow.
   const leds = new PIXI.ParticleContainer({
-    dynamicProperties: { position: false, color: true, scale: false, rotation: false },
+    dynamicProperties: { position: false, color: true, vertex: false, rotation: false },
   });
   const ledList = [];
   for (let i = 0; i < config.leds; i++) {
@@ -657,6 +680,12 @@ async function buildSignal(config, shared) {
       led.x = ((i * 137.5) % 100) * (W / 100);
       led.y = H * rackLines[i % rackLines.length];
     });
+
+    // Both containers hold position static, so pixi only uploads their vertex
+    // buffer when it is told the children changed. Without this the meters and
+    // lamps stay at their pre-resize coordinates.
+    meters.update();
+    leds.update();
   };
 
   const resize = () => {

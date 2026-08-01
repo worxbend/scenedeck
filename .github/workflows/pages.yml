@@ -37,6 +37,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: site/tools/stamp-release.sh
 
+      # The generators and the site's own README are repository sources, not
+      # published content. Dropping them here keeps the deployed tree to what a
+      # visitor can actually use.
+      - name: Strip build sources from the artifact
+        run: rm -rf site/tools site/README.md
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
 

@@ -25,9 +25,13 @@ initGraph();
 // Reveals are wired after the demos so the nodes they create are observed too.
 initReveals();
 
-refreshRelease();
-
 const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 200));
+
+// The deploy already stamped the current release into the markup; this only
+// catches the window between a release and the next deploy. It is strictly a
+// nice-to-have, so it waits for an idle slot rather than opening a
+// third-party connection while the hero is still painting.
+idle(() => refreshRelease());
 
 const bootBackground = () => {
   idle(() => {

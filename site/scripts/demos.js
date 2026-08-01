@@ -169,6 +169,7 @@ export function initMixer() {
     fader.className = "fader";
     fader.tabIndex = 0;
     fader.setAttribute("role", "slider");
+    fader.setAttribute("aria-orientation", "vertical");
     fader.setAttribute("aria-label", `${channel.name} level`);
     fader.setAttribute("aria-valuemin", "0");
     fader.setAttribute("aria-valuemax", "100");
@@ -214,6 +215,7 @@ export function initMixer() {
       readout.textContent = state.muted ? "muted" : `${db} dB`;
       fader.setAttribute("aria-valuetext", state.muted ? "Muted" : `${db} decibels`);
       fader.dataset.locked = String(state.locked);
+      fader.setAttribute("aria-disabled", String(state.locked));
       fader.tabIndex = state.locked ? -1 : 0;
       mute.setAttribute("aria-pressed", String(state.muted));
       lock.setAttribute("aria-pressed", String(state.locked));
@@ -240,11 +242,15 @@ export function initMixer() {
       };
       move(event);
       fader.addEventListener("pointermove", move);
-      fader.addEventListener(
-        "pointerup",
-        () => fader.removeEventListener("pointermove", move),
-        { once: true }
-      );
+
+      const end = () => {
+        fader.removeEventListener("pointermove", move);
+        fader.removeEventListener("pointerup", end);
+        fader.removeEventListener("pointercancel", end);
+        if (fader.hasPointerCapture(event.pointerId)) fader.releasePointerCapture(event.pointerId);
+      };
+      fader.addEventListener("pointerup", end);
+      fader.addEventListener("pointercancel", end);
     });
 
     fader.addEventListener("keydown", (event) => {
@@ -291,7 +297,7 @@ export function initMixer() {
   }
 
   let t = 0;
-  setInterval(() => {
+  whileVisible(mixer, 100, () => {
     t += 0.1;
     strips.forEach(({ state, segments }, i) => {
       const envelope =
@@ -301,7 +307,31 @@ export function initMixer() {
       state.peak += (target - state.peak) * rate;
       paintMeter(segments, state.peak);
     });
-  }, 100);
+  });
+}
+
+/** Run `tick` on an interval, but only while `el` is on screen and the tab is
+ *  visible. A demo that animates in a scrolled-past section is pure waste. */
+function whileVisible(el, ms, tick) {
+  let timer = 0;
+
+  const start = () => {
+    if (!timer) timer = setInterval(tick, ms);
+  };
+  const stop = () => {
+    clearInterval(timer);
+    timer = 0;
+  };
+
+  const observer = new IntersectionObserver(([entry]) => {
+    if (entry.isIntersecting && !document.hidden) start();
+    else stop();
+  });
+  observer.observe(el);
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) stop();
+  });
 }
 
 function paintMeter(segments, level) {
@@ -539,9 +569,9 @@ const SCREENS = {
     <p class="screen-label">Scenes · Primary</p>
     <div class="deck-scenes">
       ${SCENES.map(
-        (s, i) => `<button class="deck-scene" type="button" style="--scene-accent:${cssVar(s.accent)}"
+        (s, i) => `<div class="deck-scene" style="--scene-accent:${cssVar(s.accent)}"
           ${i === 0 ? "data-program" : ""}>
-          <span class="deck-scene__pgm">PGM</span>${s.name}</button>`
+          <span class="deck-scene__pgm">PGM</span>${s.name}</div>`
       ).join("")}
     </div>
     <p class="screen-label">Audio</p>
@@ -647,13 +677,15 @@ export function initDeck() {
 
   const show = (name) => {
     screen.innerHTML = SCREENS[name]();
+    // Illustration only — the switcher buttons above it are the real controls.
+    screen.setAttribute("aria-hidden", "true");
     for (const page of pages) {
       const active = page.dataset.page === name;
       page.classList.toggle("is-active", active);
-      if (active) page.setAttribute("aria-current", "true");
-      else page.removeAttribute("aria-current");
+      page.setAttribute("aria-pressed", String(active));
     }
-    if (name === "live") animateDeckMeters(screen);
+    deckGeneration += 1;
+    if (name === "live") animateDeckMeters(screen, deckGeneration);
   };
 
   pages.forEach((page) => page.addEventListener("click", () => show(page.dataset.page)));
@@ -665,19 +697,25 @@ export function initDeck() {
   const fps = document.querySelector('[data-metric="fps"]');
   const bit = document.querySelector('[data-metric="bitrate"]');
   const cpu = document.querySelector('[data-metric="cpu"]');
-  setInterval(() => {
+  whileVisible(screen, 1400, () => {
     fps.textContent = `${(59.7 + Math.random() * 0.3).toFixed(1)} fps`;
     bit.textContent = `${Math.round(5900 + Math.random() * 220)} kb/s`;
     cpu.textContent = `CPU ${(3.8 + Math.random() * 1.2).toFixed(1)}%`;
-  }, 1400);
+  });
 }
 
-function animateDeckMeters(root) {
+/** Incremented on every screen swap; a running loop whose generation is stale
+ *  stops on its next tick. Without it, clicking Live twice left the first loop
+ *  running forever against nodes that had already been replaced. */
+let deckGeneration = 0;
+
+function animateDeckMeters(root, generation) {
   const meters = [...root.querySelectorAll("[data-deck-meter]")].map((m) => [...m.children]);
   if (!meters.length || reducedMotion.matches) return;
+
   let t = 0;
   const step = () => {
-    if (!root.isConnected || !root.querySelector("[data-deck-meter]")) return;
+    if (generation !== deckGeneration || !meters[0][0].isConnected) return;
     t += 0.12;
     meters.forEach((segs, i) => {
       const level = 0.45 + 0.3 * Math.sin(t * 1.6 + i * 0.7) + 0.12 * Math.sin(t * 3.9 + i);
