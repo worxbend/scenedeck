@@ -281,7 +281,8 @@ const FRAG = /* glsl */ `
   uniform vec3  uNear;      // #065dac, the near end of the OBS hero gradient
   uniform vec3  uFar;       // #280f83, the far end
   uniform vec3  uRail;      // lane rails, overridable by a scene accent
-  uniform vec3  uSurface;   // page surface, for the light-theme inversion
+  uniform vec3  uSurface;   // page surface — composited here, not by CSS
+  uniform float uStrength;  // how strongly the channel reads over the surface
 
   const float TAU    = 6.28318530718;
   const float FOCAL  = 1.7320508075688772;
@@ -324,9 +325,13 @@ const FRAG = /* glsl */ `
     // buffering rather than as water rippling.
     v += (vnoise(vec2(u * 6.0, v * 3.0 - uTime * 0.9)) - 0.5) * uCongestion * 0.30;
 
+    // Everything converges at the vanishing point, so that is the one place
+    // the structure terms stack into a hot core. Damp by distance from it.
+    float vpFall = 0.22 + 0.78 * smoothstep(0.0, 0.62, length(ndc));
+
     // 1. eight bit-lanes, brightening with bitrate
     float lane  = abs(fract(u * 8.0) - 0.5) * 2.0;
-    float rails = pow(1.0 - lane, 34.0) * (0.55 + 0.45 * uBitrate);
+    float rails = pow(1.0 - lane, 34.0) * (0.55 + 0.45 * uBitrate) * vpFall;
 
     // 2. the raster structure of the video signal itself
     float raster = pow(0.5 + 0.5 * sin(v * 62.0), 3.0);
@@ -347,23 +352,26 @@ const FRAG = /* glsl */ `
     float depth = clamp(z / 40.0, 0.0, 1.0);
     vec3  hue   = mix(uNear, uFar, depth);
 
-    float structure = raster * 0.55 + rails * 0.70 + rib * 0.45 + macro;
+    float structure = (raster * 0.55 + rib * 0.45 + macro) * vpFall + rails * 0.70;
     // Fade the far end out so the channel has no visible end wall.
     float fade = 1.0 - smoothstep(26.0, 40.0, z) * 0.85;
 
-    // DARK: the channel is emissive. Structure adds light.
-    vec3 lit = (hue * (0.30 + structure) + uRail * (rails * 0.30 + ring * 0.75)) * fade;
-    // A hard luminance ceiling, not a scale — so no accent, take or keyframe
+    // DARK: the channel is emissive over the page surface. The ceiling is a
+    // clamp on what it may add, not a scale — so no accent, take or keyframe
     // can push the background bright enough to hurt body copy.
-    float y = max(dot(lit, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
-    lit *= min(1.0, uCeil / y);
+    vec3 glow = (hue * (0.30 + structure) + uRail * (rails * 0.30 + ring * 0.75)) * fade;
+    float y = max(dot(glow, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
+    glow *= min(1.0, uCeil / y) * uStrength;
+    vec3 lit = uSurface + glow;
 
     // LIGHT: the same structure printed as ink. It has to darken the paper
     // TOWARD the wire's own hue — subtracting a blue glow from white paper
-    // would leave its complement, and the channel would come out orange.
+    // would leave its complement, and the first attempt came out orange.
     float density = clamp(structure * 0.85 + ring * 0.55, 0.0, 1.0) * fade;
-    vec3  ink     = mix(uSurface, hue * 0.40, density * 0.72);
+    vec3  ink     = mix(uSurface, hue * 0.40, density * 0.72 * uStrength);
 
+    // The canvas is opaque: the surface is composited here rather than by
+    // letting a translucent canvas reveal the CSS fallback underneath.
     gl_FragColor = vec4(mix(lit, ink, uInk), 1.0);
   }
 `;
@@ -397,7 +405,8 @@ async function buildChannel(config, shared) {
     uKeyZ: { value: wire.Z_FAR },
     uTake: { value: 0 },
     uInk: { value: shared.dark ? 0 : 1 },
-    uCeil: { value: 0.14 },
+    uCeil: { value: 0.1 },
+    uStrength: { value: 0.72 },
     uNear: { value: new THREE.Color("#065dac") },
     uFar: { value: new THREE.Color("#280f83") },
     uRail: { value: new THREE.Color("#256eff") },
@@ -419,7 +428,8 @@ async function buildChannel(config, shared) {
 
   const syncTheme = () => {
     uniforms.uInk.value = shared.dark ? 0 : 1;
-    uniforms.uCeil.value = parseFloat(readVar("--wire-ceiling")) || (shared.dark ? 0.14 : 0.3);
+    uniforms.uCeil.value = parseFloat(readVar("--wire-ceiling")) || (shared.dark ? 0.1 : 0.3);
+    uniforms.uStrength.value = parseFloat(readVar("--three-opacity")) || 0.72;
     uniforms.uSurface.value.set(readVar("--md-surface") || "#080f22");
     uniforms.uNear.value.set(readVar("--wire-near") || "#065dac");
     uniforms.uFar.value.set(readVar("--wire-far") || "#280f83");

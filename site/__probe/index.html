@@ -1,0 +1,52 @@
+<!doctype html><meta charset=utf-8><body><pre id=out>pending</pre>
+<canvas id=c1></canvas><canvas id=c2></canvas>
+<script type="module">
+const log=[];
+const p=(s)=>log.push(s);
+try{
+ const PIXI = await import('/vendor/pixi.min.js');
+ p('pixi keys: '+Object.keys(PIXI).join(','));
+ const cv=document.createElement('canvas');cv.width=8;cv.height=8;
+ const cx=cv.getContext('2d');cx.fillStyle='#fff';cx.fillRect(1,1,6,6);
+ let tex;
+ try{ tex=PIXI.Texture.from(cv); p('Texture.from(canvas) OK -> '+tex.constructor.name+' '+tex.width+'x'+tex.height+' src='+tex.source.constructor.name); }
+ catch(e){ p('Texture.from THREW: '+e); }
+ const r=new PIXI.WebGLRenderer();
+ await r.init({canvas:document.getElementById('c1'),width:200,height:200,backgroundAlpha:0,antialias:false,resolution:1,autoDensity:true,powerPreference:'high-performance'});
+ p('renderer.init OK');
+ const stage=new PIXI.Container();
+ const dyn={position:true,vertex:true,color:true,rotation:false};
+ const pc=new PIXI.ParticleContainer({dynamicProperties:dyn});
+ stage.addChild(pc);
+ const part=new PIXI.Particle({texture:tex,x:0,y:0,tint:0x72a2ff,alpha:0});
+ pc.addParticle(part);
+ p('particle props: '+['scaleX','scaleY','alpha','tint','x','y','rotation','anchorX'].map(k=>k+'='+part[k]).join(' '));
+ part.scaleX=2;part.scaleY=2;part.alpha=0.5;part.tint=0xffffff;
+ pc.blendMode='add';
+ p('blendMode set = '+pc.blendMode);
+ r.render(stage);
+ p('render OK');
+ r.resize(300,300); r.render(stage); p('resize+render OK');
+}catch(e){ p('FATAL: '+(e&&e.stack||e)); }
+try{
+ const T=await import('/vendor/three.min.js');
+ p('three keys: '+Object.keys(T).join(','));
+ const rr=new T.WebGLRenderer({canvas:document.getElementById('c2'),antialias:false,alpha:false,depth:false,stencil:false});
+ rr.outputColorSpace=T.SRGBColorSpace;
+ const sc=new T.Scene(); const cam=new T.OrthographicCamera(-1,1,1,-1,0,1);
+ const FRAGSRC = await (await fetch('/scripts/background.js')).text();
+ const frag = FRAGSRC.split('const FRAG = /* glsl */ `')[1].split('`;')[0];
+ const vert = FRAGSRC.split('const VERT = /* glsl */ `')[1].split('`;')[0];
+ const u={uTime:{value:0},uAspect:{value:1},uVp:{value:new T.Vector2(0.3,-0.02)},uPointer:{value:new T.Vector2(0,0)},uBitrate:{value:0.62},uCongestion:{value:0.1},uKeyZ:{value:40},uTake:{value:0},uInk:{value:0},uCeil:{value:0.14},uNear:{value:new T.Color('#065dac')},uFar:{value:new T.Color('#280f83')},uRail:{value:new T.Color('#256eff')},uSurface:{value:new T.Color('#080f22')}};
+ const m=new T.Mesh(new T.PlaneGeometry(2,2), new T.ShaderMaterial({vertexShader:vert,fragmentShader:frag,uniforms:u,depthTest:false,depthWrite:false}));
+ m.frustumCulled=false; sc.add(m);
+ rr.setSize(200,200,false);
+ const errs=[]; const oldErr=console.error; console.error=(...a)=>{errs.push(a.join(' '));};
+ rr.render(sc,cam);
+ console.error=oldErr;
+ const gl=rr.getContext();
+ p('three render done. glError='+gl.getError()+' shaderLog:'+JSON.stringify(errs).slice(0,3000));
+}catch(e){ p('THREE FATAL: '+(e&&e.stack||e)); }
+document.getElementById('out').textContent=log.join('\n');
+document.title='DONE';
+</script></body>

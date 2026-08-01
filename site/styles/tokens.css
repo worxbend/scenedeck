@@ -275,7 +275,7 @@
   --bg-canvas-blend: plus-lighter;
   --bg-canvas-opacity: 0.8;
   --three-opacity: 0.72;
-  --wire-ceiling: 0.14;
+  --wire-ceiling: 0.10;
   --packet-alpha: 0.55;
 
   --bevel: inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 -1px 0 rgba(0, 0, 0, 0.4);

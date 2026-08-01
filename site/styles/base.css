@@ -111,10 +111,12 @@ body {
   transition: opacity var(--d-xlong1) var(--ease-standard);
 }
 
-/* The channel sits behind body copy, so it is held below full strength and
-   the shader clamps its own luminance on top of that. */
+/* The canvas is fully opaque: it composites the page surface itself, so the
+   shader's luminance ceiling governs the final pixel rather than being undone
+   by a bright CSS layer showing through. --three-opacity is passed into the
+   shader as uStrength instead. */
 #bg-three[data-live] {
-  opacity: var(--three-opacity);
+  opacity: 1;
 }
 
 #bg-pixi[data-live] {
