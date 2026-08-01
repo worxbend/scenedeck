@@ -33,7 +33,7 @@
 
 import { frameState, reducedMotion } from "./ui.js";
 import { SPRING, Spring } from "./spring.js";
-import { wire, centreline, project } from "./wire.js";
+import { wire, project } from "./wire.js";
 
 const DPR = () => Math.min(window.devicePixelRatio || 1, 2);
 
@@ -57,9 +57,9 @@ function pickTier() {
 }
 
 const TIERS = {
-  3: { channel: true, packets: 3200, drops: 240, keys: 96, threeScale: 0.72, pixiRes: 1.5 },
-  2: { channel: true, packets: 1800, drops: 160, keys: 64, threeScale: 0.62, pixiRes: 1.25 },
-  1: { channel: false, packets: 700, drops: 80, keys: 40, threeScale: 0, pixiRes: 1 },
+  3: { channel: true, packets: 3200, drops: 240, threeScale: 0.72, pixiRes: 1.5 },
+  2: { channel: true, packets: 1800, drops: 160, threeScale: 0.62, pixiRes: 1.25 },
+  1: { channel: false, packets: 700, drops: 80, threeScale: 0, pixiRes: 1 },
 };
 
 const readVar = (name) =>
@@ -224,12 +224,14 @@ function drive(layers, shared) {
 
   // A program take forces an I-frame, which is literally true of an OBS scene
   // switch — so the take and the keyframe are the same gesture.
+  let takeRelease = 0;
   window.addEventListener("scenedeck:take", () => {
     shared.gopClock = 0;
     launchKeyframe(shared);
     shared.take.velocity += 9;
     shared.take.to(1);
-    setTimeout(() => shared.take.to(0), 420);
+    clearTimeout(takeRelease);
+    takeRelease = setTimeout(() => shared.take.to(0), 420);
     window.dispatchEvent(new CustomEvent("wire:flash"));
   });
 
@@ -312,7 +314,7 @@ const FRAG = /* glsl */ `
     // cylinder is closed form: no marching, constant cost per pixel.
     float rl = max(length(rd.xy), 1e-4);
     float s  = RADIUS / rl;
-    float z  = -rd.z * s;
+    float z  = min(-rd.z * s, 400.0);
 
     float ang = atan(rd.y, rd.x);
     float u   = ang / TAU + 0.5;
@@ -345,7 +347,8 @@ const FRAG = /* glsl */ `
     float rib = pow(1.0 - abs(fract(v * 0.25) * 2.0 - 1.0), 40.0);
 
     // 5. the keyframe ring, sweeping toward the eye
-    float ring = exp(-abs(z - uKeyZ) * (2.4 - uTake * 0.8)) * (0.60 + 0.90 * uTake);
+    float ring = exp(-abs(z - uKeyZ) * (2.4 - uTake * 0.8)) * (0.95 + 1.10 * uTake)
+                 * smoothstep(0.9, 5.5, uKeyZ);
 
     // Depth ramp: violet far, blue near. The OBS hero gradient emitted along
     // the channel rather than painted across it.
@@ -368,11 +371,23 @@ const FRAG = /* glsl */ `
     // TOWARD the wire's own hue — subtracting a blue glow from white paper
     // would leave its complement, and the first attempt came out orange.
     float density = clamp(structure * 0.85 + ring * 0.55, 0.0, 1.0) * fade;
-    vec3  ink     = mix(uSurface, hue * 0.40, density * 0.72 * uStrength);
+    vec3  ink     = mix(uSurface, hue * 0.40, density * uCeil * 2.4 * uStrength);
 
     // The canvas is opaque: the surface is composited here rather than by
     // letting a translucent canvas reveal the CSS fallback underneath.
-    gl_FragColor = vec4(mix(lit, ink, uInk), 1.0);
+    vec3 outc = max(mix(lit, ink, uInk), 0.0);
+
+    // three.js only injects its output-encoding chunk into its own materials,
+    // so a ShaderMaterial has to encode to sRGB itself. Without this the same
+    // --md-surface hex renders a visibly different tone on the canvas than the
+    // CSS around it. Including <colorspace_fragment> does not work here: it
+    // calls linearToOutputTexel, which is not declared for ShaderMaterial, and
+    // the program fails to link.
+    vec3 encoded = mix(outc * 12.92,
+                       1.055 * pow(outc, vec3(0.41666)) - 0.055,
+                       step(vec3(0.0031308), outc));
+
+    gl_FragColor = vec4(encoded, 1.0);
   }
 `;
 
@@ -491,14 +506,12 @@ async function buildPackets(config, shared) {
 
   const packetTexture = PIXI.Texture.from(packetCanvas());
   const dropTexture = PIXI.Texture.from(dropCanvas());
-  const glowTexture = PIXI.Texture.from(glowCanvas());
 
   // Position, size and tint all change every frame; rotation never does.
   const dynamic = { position: true, vertex: true, color: true, rotation: false };
   const flow = new PIXI.ParticleContainer({ dynamicProperties: dynamic });
   const drops = new PIXI.ParticleContainer({ dynamicProperties: dynamic });
-  const keys = new PIXI.ParticleContainer({ dynamicProperties: dynamic });
-  stage.addChild(flow, drops, keys);
+  stage.addChild(flow, drops);
 
   let W = window.innerWidth;
   let H = window.innerHeight;
@@ -506,20 +519,21 @@ async function buildPackets(config, shared) {
   let halfH = H / 2;
   wire.aspect = W / Math.max(1, H);
 
-  const proj = { ndcX: 0, ndcY: 0, scale: 1 };
-  const centre = { x: 0, y: 0 };
+  const proj = { ndcX: 0, ndcY: 0, scale: 1, shift: 0 };
 
   const packetTint = () => hexToInt(shared.accent || readVar("--wire-packet") || "#72a2ff");
   const dropTint = () => hexToInt(readVar("--wire-drop") || "#e74c3c");
-  const keyTint = () => hexToInt(readVar("--wire-key") || "#9146ff");
 
   let tint = packetTint();
   let alphaMax = parseFloat(readVar("--packet-alpha")) || 0.55;
+  // On paper a glow sprite is subtractive: the same alpha that reads as bloom
+  // on navy prints as a dark patch on white, and the ring was the darkest
+  // thing on the light page while it was travelling.
 
   /* -- the flow ---------------------------------------------------------- */
   const packets = [];
   for (let i = 0; i < config.packets; i++) {
-    const particle = new PIXI.Particle({ texture: packetTexture, x: 0, y: 0, tint, alpha: 0 });
+    const particle = new PIXI.Particle({ texture: packetTexture, x: 0, y: 0, tint, alpha: 0, anchorX: 0.5, anchorY: 0.5 });
     flow.addParticle(particle);
     // A fifth of the traffic runs the other way on a tighter radius: video in,
     // commands out. Two machines, one wire, traffic in both directions.
@@ -539,25 +553,16 @@ async function buildPackets(config, shared) {
   /* -- dropped frames ----------------------------------------------------- */
   const dropList = [];
   for (let i = 0; i < config.drops; i++) {
-    const particle = new PIXI.Particle({ texture: dropTexture, x: 0, y: 0, tint: dropTint(), alpha: 0 });
+    const particle = new PIXI.Particle({ texture: dropTexture, x: 0, y: 0, tint: dropTint(), alpha: 0, anchorX: 0.5, anchorY: 0.5 });
     drops.addParticle(particle);
     dropList.push({ p: particle, life: 0, x: 0, y: 0, scale: 1 });
   }
   let dropCursor = 0;
 
-  /* -- the keyframe ring -------------------------------------------------- */
-  const keyList = [];
-  for (let i = 0; i < config.keys; i++) {
-    const particle = new PIXI.Particle({ texture: glowTexture, x: 0, y: 0, tint: keyTint(), alpha: 0 });
-    keys.addParticle(particle);
-    keyList.push({ p: particle, angle: (i / config.keys) * Math.PI * 2 });
-  }
-
   const applyBlend = (dark) => {
     const mode = dark ? "add" : "normal";
     flow.blendMode = mode;
     drops.blendMode = mode;
-    keys.blendMode = mode;
   };
   applyBlend(shared.dark);
 
@@ -568,6 +573,9 @@ async function buildPackets(config, shared) {
     halfH = H / 2;
     wire.aspect = W / Math.max(1, H);
     renderer.resize(W, H);
+    // The reduced-motion path paints one frame and never ticks, so without
+    // this the packets keep the pixel coordinates of the previous aspect.
+    stepLogic();
   };
 
   const spawnDrop = (x, y, scale) => {
@@ -591,7 +599,8 @@ async function buildPackets(config, shared) {
       const sprite = packet.p;
 
       // Bitrate is literally packet density. Inactive packets collapse to a
-      // degenerate quad: no branch in the draw, no fill cost.
+      // degenerate quad, so they cost no fill — though pixi still uploads
+      // their buffer entries, so they are cheap rather than free.
       if (i >= activeCount) {
         sprite.scaleX = 0;
         sprite.scaleY = 0;
@@ -605,7 +614,7 @@ async function buildPackets(config, shared) {
       if (packet.z <= wire.Z_NEAR || packet.z >= wire.Z_FAR) {
         // A congested link loses packets: this one never arrives.
         if (!packet.outbound && sprite.alpha > 0.01 && Math.random() < dropChance) {
-          spawnDrop(sprite.x, sprite.y, proj.scale);
+          spawnDrop(sprite.x, sprite.y, wire.FOCAL / packet.z);
         }
         packet.z = packet.outbound ? wire.Z_NEAR : wire.Z_FAR;
       }
@@ -627,7 +636,7 @@ async function buildPackets(config, shared) {
       sprite.alpha =
         alphaMax *
         smoothstep(2, 6.5, packet.z) *
-        (1 - smoothstep(24, 40, packet.z)) *
+        (1 - smoothstep(13, 26, packet.z)) *
         (packet.outbound ? 0.55 : 1) *
         (1 + packet.hot * 1.6);
       sprite.tint = packet.hot > 0.02 ? 0xffffff : tint;
@@ -636,6 +645,8 @@ async function buildPackets(config, shared) {
     for (const drop of dropList) {
       if (drop.life <= 0) {
         drop.p.alpha = 0;
+        drop.p.scaleX = 0;
+        drop.p.scaleY = 0;
         continue;
       }
       drop.life -= STEP;
@@ -649,22 +660,6 @@ async function buildPackets(config, shared) {
       drop.p.alpha = Math.max(0, 0.9 * (1 - t));
     }
 
-    // The ring of glow sprites rides the sprung keyframe depth.
-    const z = Math.max(wire.keyZ, 0.08);
-    const visible = wire.keyZ > 0 ? 1 - smoothstep(28, 40, wire.keyZ) : 0;
-    centreline(z, wire.time, wire.pointerX, wire.pointerY, centre);
-    const inv = wire.FOCAL / z;
-
-    for (const key of keyList) {
-      const x = Math.cos(key.angle) * wire.RADIUS * 1.02 + centre.x;
-      const y = Math.sin(key.angle) * wire.RADIUS * 1.02 + centre.y;
-      key.p.x = halfW + ((x * inv) / wire.aspect + wire.vpX) * halfW;
-      key.p.y = halfH - (y * inv + wire.vpY) * halfH;
-      const s = inv * 0.9;
-      key.p.scaleX = s;
-      key.p.scaleY = s;
-      key.p.alpha = Math.min(0.85, visible * (0.3 + wire.takeEnergy * 0.6));
-    }
   };
 
   // Seed one pass so the reduced-motion path composes properly instead of
@@ -689,7 +684,6 @@ async function buildPackets(config, shared) {
       tint = packetTint();
       alphaMax = parseFloat(readVar("--packet-alpha")) || 0.55;
       for (const drop of dropList) drop.p.tint = dropTint();
-      for (const key of keyList) key.p.tint = keyTint();
       applyBlend(dark);
     },
     accent() {
@@ -745,19 +739,3 @@ function dropCanvas() {
   return canvas;
 }
 
-/** Pre-baked falloff: what makes additive blending look like bloom with no
- *  filter pass and no render target. */
-function glowCanvas() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 32;
-  canvas.height = 32;
-  const ctx = canvas.getContext("2d");
-  const glow = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
-  glow.addColorStop(0, "rgba(255,255,255,1)");
-  glow.addColorStop(0.35, "rgba(255,255,255,0.45)");
-  glow.addColorStop(0.65, "rgba(255,255,255,0.10)");
-  glow.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, 32, 32);
-  return canvas;
-}

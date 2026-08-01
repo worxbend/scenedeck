@@ -83,7 +83,7 @@
   --md-surface-container: #e8ecf6;
   --md-surface-container-high: #e1e7f3;
   --md-surface-container-highest: #d8e0ef;
-  --md-on-surface-variant: #3d4a6b;
+  --md-on-surface-variant: #333f5e;
   --md-outline: #6c789a;
   --md-outline-variant: #c4cde2;
   --md-inverse-surface: #101b41;
@@ -108,7 +108,6 @@
   --wire-near: #065dac;
   --wire-rail: #256eff;
   --wire-packet: #72a2ff;
-  --wire-key: #9146ff; /* the keyframe burst */
   --wire-drop: #e74c3c;
 
   /* ---- Scene accents ----------------------------------------------------- */
@@ -129,9 +128,12 @@
   /* ---- Canvas ------------------------------------------------------------ */
   /* In light the packets are ink printed on paper; in dark they are emissive. */
   --bg-canvas-blend: multiply;
-  --bg-canvas-opacity: 0.42;
-  --three-opacity: 0.55;
-  --wire-ceiling: 0.3; /* hard luminance ceiling in the channel shader */
+  --bg-canvas-opacity: 0.3;
+  --three-opacity: 0.5;
+  --wire-ceiling: 0.12; /* bounds how dark the channel may print on paper */
+  --scrim-floor: 30%;
+  --fallback-near: 12%;
+  --fallback-far: 9%;
   --packet-alpha: 0.38;
 
   /* ---- Shape ------------------------------------------------------------- */
@@ -252,8 +254,8 @@
   --md-surface-container: #0c1633;
   --md-surface-container-high: #101b41;
   --md-surface-container-highest: #162458;
-  --md-on-surface-variant: #a9b4d4;
-  --md-outline: #7b88ad;
+  --md-on-surface-variant: #c6cfe6;
+  --md-outline: #96a3c7;
   --md-outline-variant: #2b3765;
   --md-inverse-surface: #eceff7;
   --md-inverse-on-surface: #0c1633;
@@ -273,10 +275,13 @@
   --inst-warn: #f39c12;
 
   --bg-canvas-blend: plus-lighter;
-  --bg-canvas-opacity: 0.8;
+  --bg-canvas-opacity: 0.3;
   --three-opacity: 0.72;
-  --wire-ceiling: 0.10;
-  --packet-alpha: 0.55;
+  --wire-ceiling: 0.06;
+  --scrim-floor: 38%;
+  --fallback-near: 24%;
+  --fallback-far: 18%;
+  --packet-alpha: 0.28;
 
   --bevel: inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 -1px 0 rgba(0, 0, 0, 0.4);
   --bevel-recessed: inset 0 2px 4px rgba(0, 0, 0, 0.35), inset 0 -1px 0 rgba(255, 255, 255, 0.06);

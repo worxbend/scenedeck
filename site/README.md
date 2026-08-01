@@ -48,6 +48,20 @@ exactly on the channel axis, intersecting the cylinder is closed form, so there
 is no ray marching: two triangles, one draw call, no textures and no render
 targets. pixi.js owns the packets, which is what its sprite batcher is for.
 
+The keyframe ring is drawn **only** in the shader. It was originally also a
+field of additive glow sprites, which had no upper bound — enough of them
+overlapping saturates to white however small each alpha is — and that was the
+one thing on the page that could push body copy under WCAG AA. The shader's
+version is clamped by `--wire-ceiling`, so it is the one that survives.
+
+Legibility is enforced in three places and each has a number: the shader clamps
+the luminance it may *add* (`--wire-ceiling`), the packet layer is bounded by
+`--packet-alpha` and `--bg-canvas-opacity`, and `--scrim-floor` lays a flat veil
+over the whole composite. That last one matters most: the channel is brightest
+around the vanishing point, which is exactly where a classic radial vignette is
+most transparent. Measured worst case over ten frames: background luminance
+0.067 dark / 0.760 light, which keeps every text role at AA or better.
+
 `wire.js` is what stops them looking like two stacked canvases: both layers use
 the same projection and the same `centreline()`, so a packet on lane 3 at z = 12
 lands on the shader's rail for lane 3 at z = 12. **`centreline()` exists twice —

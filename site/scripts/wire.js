@@ -69,11 +69,15 @@ const _c = { x: 0, y: 0 };
 export function project(lane, radius, z, out) {
   if (z <= 0.05) return false;
 
-  const angle = ((lane + 0.5) / wire.LANES) * Math.PI * 2 - Math.PI;
-  centreline(z, wire.time, wire.pointerX, wire.pointerY, _c);
+  // The shader does not translate the channel by the centreline — it rotates
+  // the lane pattern around the wall by `(c.x*0.11 + c.y*0.07) / max(z,1)`.
+  // Translating here instead put packets up to 0.72 of a lane off their rail.
+  // This has to be the same operation, not merely the same function.
+  out.shift = laneShift(z);
+  const angle = ((lane + 0.5) / wire.LANES - 0.5 - out.shift) * Math.PI * 2;
 
-  const x = Math.cos(angle) * wire.RADIUS * radius + _c.x;
-  const y = Math.sin(angle) * wire.RADIUS * radius + _c.y;
+  const x = Math.cos(angle) * wire.RADIUS * radius;
+  const y = Math.sin(angle) * wire.RADIUS * radius;
 
   // Perspective divide, then the same NDC shear the shader applies to move
   // the vanishing point off centre.
@@ -82,4 +86,10 @@ export function project(lane, radius, z, out) {
   out.ndcY = y * inv + wire.vpY;
   out.scale = inv;
   return Math.abs(out.ndcX) < 2.4 && Math.abs(out.ndcY) < 2.4;
+}
+
+/** How far the lane pattern is rotated around the wall at depth z. */
+export function laneShift(z) {
+  centreline(z, wire.time, wire.pointerX, wire.pointerY, _c);
+  return (_c.x * 0.11 + _c.y * 0.07) / Math.max(z, 1);
 }

@@ -136,15 +136,19 @@ body {
 
 .bg-vignette {
   z-index: var(--z-vignette);
-  /* The scrim is centred on the vanishing point (62% / 34%), which is empty
-     page — the prose column is left-aligned and sits entirely in the band
-     where the surface has already taken over. */
-  background: radial-gradient(
-    130% 108% at 62% 34%,
-    transparent 40%,
-    color-mix(in oklab, var(--md-surface) 62%, transparent) 74%,
-    var(--md-surface) 100%
-  );
+  /* Two jobs. The radial darkens the edges into the page. The flat floor
+     underneath it is the one that matters for legibility: the channel is
+     brightest around the vanishing point, which is exactly where a classic
+     vignette is most transparent, so a uniform veil bounds the whole
+     composite rather than only its corners. */
+  background:
+    radial-gradient(
+      130% 108% at 62% 34%,
+      transparent 40%,
+      color-mix(in oklab, var(--md-surface) 55%, transparent) 74%,
+      var(--md-surface) 100%
+    ),
+    color-mix(in oklab, var(--md-surface) var(--scrim-floor), transparent);
 }
 
 /* The static composition. It is what the page looks like before WebGL boots,
@@ -158,8 +162,8 @@ body {
   background:
     radial-gradient(
       60ch 44ch at 62% 34%,
-      color-mix(in oklab, var(--wire-near) 55%, transparent),
-      color-mix(in oklab, var(--wire-far) 42%, transparent) 46%,
+      color-mix(in oklab, var(--wire-near) var(--fallback-near), transparent),
+      color-mix(in oklab, var(--wire-far) var(--fallback-far), transparent) 46%,
       transparent 78%
     ),
     linear-gradient(180deg, var(--md-surface-container) 0%, var(--md-surface) 58%);

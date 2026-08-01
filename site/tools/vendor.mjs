@@ -46,8 +46,7 @@ const ENTRIES = {
   'pixi.min.js': {
     pkg: PIXI,
     source: `export {
-      WebGLRenderer, Container, Graphics, Sprite, Texture,
-      ParticleContainer, Particle
+      WebGLRenderer, Container, Texture, ParticleContainer, Particle
     } from 'pixi.js'`,
   },
 }
