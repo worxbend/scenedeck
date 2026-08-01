@@ -8,26 +8,35 @@
    is the whole point — it is what makes motion read as physical rather than
    as a timed interpolation.
 
-   The token values below are Material's own expressive MotionScheme:
+   The values below are Material's own ExpressiveMotionTokens, read from the
+   androidx source rather than from a summary — several write-ups on the web
+   quote the Standard scheme's stiffnesses next to Expressive's damping, which
+   is a different, stiffer curve:
 
-     spatial  fast     stiffness 1400  damping ratio 0.6
-     spatial  default  stiffness  700  damping ratio 0.6
-     spatial  slow     stiffness  300  damping ratio 0.6
+     compose/material3/.../tokens/ExpressiveMotionTokens.kt
+
+     spatial  fast     stiffness  800  damping ratio 0.6
+     spatial  default  stiffness  380  damping ratio 0.8
+     spatial  slow     stiffness  200  damping ratio 0.8
      effects  fast     stiffness 3800  damping ratio 1.0
      effects  default  stiffness 1600  damping ratio 1.0
      effects  slow     stiffness  800  damping ratio 1.0
 
-   Spatial springs move things — position, scale, rotation, shape. Effects
-   springs change colour and opacity, and are critically damped (ratio 1.0)
-   because a colour that overshoots reads as a bug rather than as energy.
+   For contrast, Standard runs its spatial springs at damping 0.9 and roughly
+   double the stiffness — tighter, quicker, no real overshoot. Expressive is
+   deliberately looser, and that is the whole personality of the scheme.
+
+   Spatial springs move things: position, scale, rotation, shape. Effects
+   springs change colour and opacity, and are critically damped at 1.0 because
+   a colour that overshoots reads as a bug rather than as energy.
 
    Damping coefficient for unit mass is c = 2 * ratio * sqrt(stiffness).
    ========================================================================== */
 
 export const SPRING = {
-  spatialFast: { stiffness: 1400, damping: 0.6 },
-  spatialDefault: { stiffness: 700, damping: 0.6 },
-  spatialSlow: { stiffness: 300, damping: 0.6 },
+  spatialFast: { stiffness: 800, damping: 0.6 },
+  spatialDefault: { stiffness: 380, damping: 0.8 },
+  spatialSlow: { stiffness: 200, damping: 0.8 },
   effectsFast: { stiffness: 3800, damping: 1 },
   effectsDefault: { stiffness: 1600, damping: 1 },
   effectsSlow: { stiffness: 800, damping: 1 },

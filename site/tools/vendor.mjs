@@ -27,19 +27,20 @@ const THREE = 'three@0.185.1'
 const PIXI = 'pixi.js@8.19.0'
 
 // The exact public surface the background uses. Keeping this list minimal is
-// what makes the bundles small — three is shader-only (no lights, no standard
-// materials, no loaders) and pixi is driven through its raw WebGLRenderer
-// rather than the much heavier Application/Assets front door.
+// what makes the bundles small: three draws one full-screen shader, so it
+// needs no lights, no materials, no geometry beyond a quad and no loaders, and
+// pixi is driven through its raw WebGLRenderer rather than the much heavier
+// Application/Assets front door.
+//
+// Anything the background imports that is missing here fails at runtime with
+// "X is not a constructor", so add it and regenerate before using it.
 const ENTRIES = {
   'three.min.js': {
     pkg: THREE,
     source: `export {
-      WebGLRenderer, Scene, PerspectiveCamera, Group, Object3D,
-      Shape, ExtrudeGeometry, InstancedMesh, InstancedBufferAttribute,
-      MeshStandardMaterial, DirectionalLight, AmbientLight,
-      PMREMGenerator, CanvasTexture, EquirectangularReflectionMapping,
-      FogExp2, Color, Vector2, Vector3, Matrix4, MathUtils,
-      SRGBColorSpace, ACESFilmicToneMapping
+      WebGLRenderer, Scene, OrthographicCamera,
+      PlaneGeometry, ShaderMaterial, Mesh,
+      Color, Vector2, SRGBColorSpace
     } from 'three'`,
   },
   'pixi.min.js': {

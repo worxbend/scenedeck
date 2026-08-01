@@ -13,7 +13,7 @@ ES modules that the browser runs as written.
 | --- | --- |
 | `index.html` | The whole page. Single document, semantic landmarks. |
 | `styles/` | Design tokens, base styles, components, sections. Plain CSS, cascade layers. |
-| `scripts/` | ES modules. `main.js` is the only entry point in the document. |
+| `scripts/` | ES modules. `main.js` is the only entry point in the document. `wire.js` holds the background's shared geometry; `spring.js` is the M3 Expressive motion physics. |
 | `vendor/` | Tree-shaken three.js and pixi.js bundles. Generated — see below. |
 | `fonts/` | Self-hosted variable woff2 + `fonts.css`. Generated — see below. |
 | `assets/` | Logo, icon, social preview image. |
@@ -33,7 +33,25 @@ node site/tools/fonts.mjs    # Unbounded, Inter, JetBrains Mono as woff2
 imports. That is what keeps the two renderers to roughly a quarter of a megabyte
 gzipped between them instead of the ~405 KB the stock builds cost. If the
 background starts importing something new from either library, add it to the
-`ENTRIES` list in `vendor.mjs` and re-run, or the import will fail at runtime.
+`ENTRIES` list in `vendor.mjs` and re-run — otherwise it fails at runtime with
+`X is not a constructor`, which is exactly how the `Vector2` regression showed up.
+
+## The background
+
+`scripts/background.js` draws the OBS WebSocket link from the inside: a channel
+receding to a vanishing point with eight bit-lanes on its wall, video packets
+travelling up it and commands going the other way, and a GOP ring sweeping down
+it every 2000 ms — OBS's own default keyframe interval.
+
+three.js owns the channel as a single full-screen shader. Because the eye sits
+exactly on the channel axis, intersecting the cylinder is closed form, so there
+is no ray marching: two triangles, one draw call, no textures and no render
+targets. pixi.js owns the packets, which is what its sprite batcher is for.
+
+`wire.js` is what stops them looking like two stacked canvases: both layers use
+the same projection and the same `centreline()`, so a packet on lane 3 at z = 12
+lands on the shader's rail for lane 3 at z = 12. **`centreline()` exists twice —
+once in JS and once in GLSL — and the two copies must stay identical.**
 
 ## Release stamping
 

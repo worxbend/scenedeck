@@ -2,27 +2,26 @@
    SceneDeck — design tokens
    ============================================================================
 
-   The site is a rack unit you scroll down, panel by panel. That is not a
-   decorative conceit: SceneDeck is a remote control surface for a broadcast
-   rig, and a broadcast rig is a rack full of panels with meters on them.
+   The site is the link between two machines, seen from inside it. That is not
+   a decorative conceit: SceneDeck runs on one machine and OBS runs on another,
+   and everything between them crosses a WebSocket.
 
-   Material 3 and Diia fuse at exactly one place — the surface:
+   Two things define it:
 
-   - DIIA supplies the chassis. Theme-invariant near-black slabs at 40px
-     radius, poster type set tight, and the two flag colours (#0057B7 blue,
-     #FFD700 yellow) used as tally punctuation — one word per section, never
-     wallpaper.
-   - MATERIAL 3 supplies the electronics. The tonal surface-container ramp,
-     elevation-as-tone, state layers, emphasized easing — applied only to
-     things that are genuinely operable.
+   - THE OBS PALETTE supplies the colour, measured from obsproject.com's own
+     stylesheet: the #280f83 -> #065dac hero gradient, the #256eff accent, and
+     the navy surface ramp #080f22 .. #162458. Dark mode is the palette in its
+     native habitat; light mode is the same hues printed on cool paper.
+   - MATERIAL 3 EXPRESSIVE supplies the structure and the motion: the tonal
+     surface-container ramp, elevation-as-tone, state layers, and spring
+     physics instead of duration-and-curve (see scripts/spring.js).
 
-   The fusion rule is literal: one M3 tonal step IS one physical panel depth.
-   surface-container-low is a recessed panel; surface-container-highest is a
-   fader cap. If it does not do something, it does not get a bevel.
+   The rule that keeps it coherent: one M3 tonal step is one physical panel
+   depth. surface-container-low is a recessed panel; surface-container-highest
+   is a fader cap. If it does not do something, it does not get a bevel.
 
-   Every hex has one of three provenances: the SceneDeck indigo->purple brand
-   ramp, the Adwaita neutrals the app already lives in, or the two Diia signal
-   colours.
+   Every hex traces back to obsproject.com, to a Material tonal step derived
+   from the OBS accent, or to a status colour OBS itself uses.
 
    --src-h / --src-c are registered so they can be *interpolated*. That is what
    lets the whole page retint as one motion when a scene accent is picked,
@@ -32,73 +31,85 @@
 @property --src-h {
   syntax: "<number>";
   inherits: true;
-  initial-value: 258;
+  initial-value: 262;
 }
 
 @property --src-c {
   syntax: "<number>";
   inherits: true;
-  initial-value: 0.17;
+  initial-value: 0.2;
 }
 
 :root {
   color-scheme: light;
 
-  /* The source colour: SceneDeck indigo #6f78ff expressed in OKLCH. */
-  --src-h: 258;
-  --src-c: 0.17;
+  /* The source colour: the OBS accent #256eff in OKLCH. Chroma is clamped at
+     0.20 — #256eff is 0.227, saturated enough that the light tones lose
+     contrast if it is carried up the ramp unmodified. */
+  --src-h: 262;
+  --src-c: 0.2;
 
-  /* ---- Primary: SceneDeck indigo (key #6f78ff) --------------------------- */
-  --md-primary: #4a4cbb;
+  /* ---- Primary: the OBS accent (key #256eff) ----------------------------- */
+  /* #256eff itself is only 4.31:1 on the darkest OBS navy, so it is a fill
+     colour here and never body text; the text-safe tones sit either side. */
+  --md-primary: #1b52d6;
   --md-on-primary: #ffffff;
-  --md-primary-container: #e1e0ff;
-  --md-on-primary-container: #0d0b47;
+  --md-primary-container: #d9e2ff;
+  --md-on-primary-container: #001845;
 
-  /* ---- Secondary: SceneDeck purple #9141ac ------------------------------- */
-  --md-secondary: #77268f;
+  /* ---- Secondary: the violet end of the OBS hero gradient (#280f83) ------ */
+  --md-secondary: #4b3f9e;
   --md-on-secondary: #ffffff;
-  --md-secondary-container: #f9d8ff;
-  --md-on-secondary-container: #35003f;
+  --md-secondary-container: #e3dfff;
+  --md-on-secondary-container: #180066;
 
-  /* ---- Tertiary: the Diia yellow tonal family ---------------------------- */
-  --md-tertiary: #6d5300;
+  /* ---- Tertiary: the OBS amber ------------------------------------------- */
+  --md-tertiary: #7a5300;
   --md-on-tertiary: #ffffff;
-  --md-tertiary-container: #ffd700;
-  --md-on-tertiary-container: #241a00;
+  --md-tertiary-container: #f39c12;
+  --md-on-tertiary-container: #261a00;
 
   --md-error: #ba1a1a;
   --md-on-error: #ffffff;
   --md-error-container: #ffdad6;
   --md-on-error-container: #410002;
 
-  /* ---- Neutrals: Adwaita-warm, the app's native light habitat ------------ */
-  --md-surface: #faf9f8;
-  --md-on-surface: #1a1720;
+  /* ---- Neutrals: cool, blue-leaning paper to match the OBS navies -------- */
+  --md-surface: #f4f6fb;
+  --md-on-surface: #0c1633;
   --md-surface-bright: #ffffff;
   --md-surface-container-lowest: #ffffff;
-  --md-surface-container-low: #f6f5f4; /* Adwaita light-2 */
-  --md-surface-container: #f1f0ee;
-  --md-surface-container-high: #ebe9e7;
-  --md-surface-container-highest: #deddda; /* Adwaita light-4 */
-  --md-on-surface-variant: #4a4552;
-  --md-outline: #7b7484;
-  --md-outline-variant: #d0cdc9;
-  --md-inverse-surface: #241f31;
-  --md-inverse-on-surface: #f3eff8;
+  --md-surface-container-low: #eef1f8;
+  --md-surface-container: #e8ecf6;
+  --md-surface-container-high: #e1e7f3;
+  --md-surface-container-highest: #d8e0ef;
+  --md-on-surface-variant: #3d4a6b;
+  --md-outline: #6c789a;
+  --md-outline-variant: #c4cde2;
+  --md-inverse-surface: #101b41;
+  --md-inverse-on-surface: #eceff7;
   --md-scrim: #000000;
 
   /* ---- Instrument roles -------------------------------------------------- */
-  /* Site-only. The slab is theme-invariant — the same hex in light and dark —
-     because a chassis does not change colour when you turn the lights on. */
-  --inst-slab: #151220;
-  --inst-on-slab: #f4f1fa;
-  --inst-slab-variant: #221d33;
-  --inst-rail: #0057b7; /* Diia blue: structural rails */
-  --inst-signal: #ffd700; /* Diia yellow: one word per section, max */
-  --inst-live: #ed333b; /* tally / on-air */
-  --inst-armed: #ffbe6f; /* record-armed */
+  /* The slab is theme-invariant: #0a1129, straight off obsproject.com. */
+  --inst-slab: #0a1129;
+  --inst-on-slab: #eceff7;
+  --inst-rail: #1b52d6; /* structural rails and the focus ring */
+  --inst-signal: #f39c12; /* the OBS amber: one word per section, max */
+  --inst-live: #e74c3c; /* tally / on-air, OBS's own red */
+  --inst-armed: #ffbe6f;
   --inst-ok: #2ec27e;
-  --inst-warn: #ff7800;
+  --inst-warn: #f39c12;
+
+  /* ---- The wire ---------------------------------------------------------- */
+  /* The OBS hero gradient, linear-gradient(45deg, #280f83, #065dac), is the
+     colour of the channel itself: far end violet, near end blue. */
+  --wire-far: #280f83;
+  --wire-near: #065dac;
+  --wire-rail: #256eff;
+  --wire-packet: #72a2ff;
+  --wire-key: #9146ff; /* the keyframe burst */
+  --wire-drop: #e74c3c;
 
   /* ---- Scene accents ----------------------------------------------------- */
   /* The app's real per-scene accent colours. These drive the retint. */
@@ -116,11 +127,12 @@
   --state-press: 0.1;
 
   /* ---- Canvas ------------------------------------------------------------ */
-  /* In light the signal is ink printed on paper; in dark it is emissive. */
-  --bg-canvas-tint: #241f31;
+  /* In light the packets are ink printed on paper; in dark they are emissive. */
   --bg-canvas-blend: multiply;
-  --bg-canvas-opacity: 0.5;
-  --three-opacity: 0.42;
+  --bg-canvas-opacity: 0.42;
+  --three-opacity: 0.55;
+  --wire-ceiling: 0.3; /* hard luminance ceiling in the channel shader */
+  --packet-alpha: 0.38;
 
   /* ---- Shape ------------------------------------------------------------- */
   /* Radius encodes scale, never decoration: two elements sharing a radius
@@ -131,7 +143,7 @@
   --r-m: 12px;
   --r-l: 16px;
   --r-xl: 28px;
-  --r-xxl: clamp(24px, 5vw, 40px); /* the Diia monolith */
+  --r-xxl: clamp(24px, 5vw, 40px); /* the full-bleed slab */
   --r-full: 9999px;
 
   /* ---- Spacing ----------------------------------------------------------- */
@@ -210,56 +222,61 @@
 }
 
 /* ---- Dark ---------------------------------------------------------------- */
-/* Neutrals are cool-violet, seeded from the brand near-black #241f31 — which
-   appears here exactly, as surface-container-high. */
+/* Neutrals are the OBS navy ramp. #080f22 through #162458 are obsproject.com's
+   own surface colours, so dark mode is the palette in its native habitat. */
 
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --md-primary: #c2c3ff;
-  --md-on-primary: #1d1a6e;
-  --md-primary-container: #3a3aa0;
-  --md-on-primary-container: #e1e0ff;
+  --md-secondary: #c4c0ff;
+  --md-on-secondary: #2c1b78;
+  --md-secondary-container: #423490;
+  --md-on-secondary-container: #e3dfff;
 
-  --md-secondary: #eeb3ff;
-  --md-on-secondary: #530063;
-  --md-secondary-container: #741a88;
-  --md-on-secondary-container: #f9d8ff;
-
-  --md-tertiary: #ffd700;
-  --md-on-tertiary: #3d2f00;
-  --md-tertiary-container: #584500;
-  --md-on-tertiary-container: #ffe895;
+  --md-tertiary: #f39c12;
+  --md-on-tertiary: #422c00;
+  --md-tertiary-container: #5e4100;
+  --md-on-tertiary-container: #ffddab;
 
   --md-error: #ffb4ab;
   --md-on-error: #690005;
   --md-error-container: #93000a;
   --md-on-error-container: #ffdad6;
 
-  --md-surface: #0e0c13;
-  --md-on-surface: #e7e1f0;
-  --md-surface-bright: #35303f;
-  --md-surface-container-lowest: #08070c;
-  --md-surface-container-low: #17141f;
-  --md-surface-container: #1b1824;
-  --md-surface-container-high: #241f31; /* the brand near-black, exactly */
-  --md-surface-container-highest: #302b3d;
-  --md-on-surface-variant: #c9c2d6;
-  --md-outline: #928a9f;
-  --md-outline-variant: #494252;
-  --md-inverse-surface: #e7e1f0;
-  --md-inverse-on-surface: #322d3b;
+  /* The OBS navy ramp, straight off obsproject.com. */
+  --md-surface: #080f22;
+  --md-on-surface: #eceff7;
+  --md-surface-bright: #2d3243;
+  --md-surface-container-lowest: #060b1a;
+  --md-surface-container-low: #0a1129;
+  --md-surface-container: #0c1633;
+  --md-surface-container-high: #101b41;
+  --md-surface-container-highest: #162458;
+  --md-on-surface-variant: #a9b4d4;
+  --md-outline: #7b88ad;
+  --md-outline-variant: #2b3765;
+  --md-inverse-surface: #eceff7;
+  --md-inverse-on-surface: #0c1633;
 
-  /* #0057B7 lifted until it reaches AA on the dark surface. */
-  --inst-rail: #4d8ff0;
-  --inst-live: #ff6069;
+  /* The OBS accent lifted until it clears AA on the navy: #72a2ff is 7.56:1
+     where #256eff is only 4.31:1. */
+  --md-primary: #a8c4ff;
+  --md-on-primary: #002a6b;
+  --md-primary-container: #16285c;
+  --md-on-primary-container: #d9e2ff;
+
+  --inst-slab: #0a1129;
+  --inst-on-slab: #eceff7;
+  --inst-rail: #72a2ff;
+  --inst-live: #ff6f63;
   --inst-ok: #57e19c;
-  --inst-warn: #ffa348;
+  --inst-warn: #f39c12;
 
-  --bg-canvas-tint: #8a90ff;
   --bg-canvas-blend: plus-lighter;
-  --bg-canvas-opacity: 0.9;
-  --three-opacity: 0.8;
+  --bg-canvas-opacity: 0.8;
+  --three-opacity: 0.72;
+  --wire-ceiling: 0.14;
+  --packet-alpha: 0.55;
 
   --bevel: inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 -1px 0 rgba(0, 0, 0, 0.4);
   --bevel-recessed: inset 0 2px 4px rgba(0, 0, 0, 0.35), inset 0 -1px 0 rgba(255, 255, 255, 0.06);

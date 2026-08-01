@@ -46,8 +46,8 @@
 }
 
 /* ---- The slab ------------------------------------------------------------ */
-/* The Diia monolith. Theme-invariant near-black, 40px radius, full bleed.
-   The only thing on the page that looks identical in both themes. */
+/* The monolith. Theme-invariant OBS navy, 40px radius, full bleed. The only
+   thing on the page that looks identical in both themes. */
 
 .slab {
   position: relative;

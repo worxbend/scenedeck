@@ -71,7 +71,8 @@ body {
 }
 
 /* ---- Background stack ---------------------------------------------------- */
-/* Bottom to top: three.js metal, pixi signal, grain, vignette, content.
+/* Bottom to top: the three.js channel, the pixi packets, grain, vignette,
+   content.
    Grain and vignette are CSS rather than post-processing passes — that saves
    a full-screen render target per frame for something the eye reads as film. */
 
@@ -110,8 +111,8 @@ body {
   transition: opacity var(--d-xlong1) var(--ease-standard);
 }
 
-/* The wall sits behind body copy, so it is held well below full strength —
-   the vignette and grain above it do the rest of the work. */
+/* The channel sits behind body copy, so it is held below full strength and
+   the shader clamps its own luminance on top of that. */
 #bg-three[data-live] {
   opacity: var(--three-opacity);
 }
@@ -133,10 +134,13 @@ body {
 
 .bg-vignette {
   z-index: var(--z-vignette);
+  /* The scrim is centred on the vanishing point (62% / 34%), which is empty
+     page — the prose column is left-aligned and sits entirely in the band
+     where the surface has already taken over. */
   background: radial-gradient(
-    135% 105% at 50% 38%,
-    transparent 52%,
-    color-mix(in oklab, var(--md-surface) 72%, transparent) 84%,
+    130% 108% at 62% 34%,
+    transparent 40%,
+    color-mix(in oklab, var(--md-surface) 62%, transparent) 74%,
     var(--md-surface) 100%
   );
 }
@@ -146,10 +150,17 @@ body {
    presentable on its own rather than a placeholder. */
 .bg-fallback {
   z-index: var(--z-three);
+  /* The channel, flattened: the OBS hero gradient concentrated at the same
+     vanishing point the shader uses, so the static and live versions read as
+     the same picture. */
   background:
-    radial-gradient(42ch 30ch at 24% 22%, color-mix(in oklab, var(--md-primary) 30%, transparent), transparent 70%),
-    radial-gradient(30ch 24ch at 78% 30%, color-mix(in oklab, var(--inst-armed) 16%, transparent), transparent 68%),
-    linear-gradient(180deg, var(--md-surface-container) 0%, var(--md-surface) 62%);
+    radial-gradient(
+      60ch 44ch at 62% 34%,
+      color-mix(in oklab, var(--wire-near) 55%, transparent),
+      color-mix(in oklab, var(--wire-far) 42%, transparent) 46%,
+      transparent 78%
+    ),
+    linear-gradient(180deg, var(--md-surface-container) 0%, var(--md-surface) 58%);
 }
 
 /* ---- Type scale ---------------------------------------------------------- */
@@ -302,15 +313,14 @@ body {
   background: var(--inst-rail);
 }
 
-/* The one word per section that carries the Diia yellow. */
+/* The one word per section that carries the OBS amber. */
 .signal {
   color: var(--inst-signal);
 }
 
-/* On paper the yellow cannot carry text — #ffd700 on #faf9f8 is about 1.4:1.
-   So on light surfaces it becomes what it actually is in the Diia stylebook:
-   a block of signal colour with ink on top (13.9:1). On the near-black slab
-   and in dark it stays as type, where it clears AA comfortably. */
+/* On paper the amber cannot carry text — #f39c12 on #f4f6fb is about 2.2:1.
+   So on light surfaces it becomes a block of signal colour with ink on top
+   (7.8:1). On the navy slab and in dark it stays as type, at 8.5:1. */
 :root:not([data-theme="dark"]) .signal {
   color: var(--md-on-tertiary-container);
   background: var(--inst-signal);
@@ -403,8 +413,8 @@ a:hover {
   transform: translateY(0);
 }
 
-/* One focus treatment for the whole page, drawn in the Diia structural blue
-   so it reads as part of the chassis rather than as a browser default. */
+/* One focus treatment for the whole page, drawn in the OBS accent so it reads
+   as part of the system rather than as a browser default. */
 :where(a, button, input, select, summary, [tabindex]):focus-visible {
   outline: 3px solid var(--inst-rail);
   outline-offset: 3px;

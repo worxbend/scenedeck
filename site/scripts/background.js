@@ -1,33 +1,41 @@
 /* ============================================================================
-   The living background: a rack of anodized panels with signal running across
-   them.
+   The living background: the OBS WebSocket link, seen from inside it.
    ============================================================================
 
-   Two renderers, one machine. The division of labour is real rather than
-   decorative:
+   SceneDeck runs on one machine and OBS runs on another with a WebSocket
+   between them, so the background is that link: a channel receding to a
+   vanishing point, eight bit-lanes along its wall, encoded video travelling up
+   it toward the camera and a thinner counter-flow of commands going the other
+   way. Every two seconds — OBS's default keyframe interval — a GOP boundary
+   sweeps down the channel and the stream resets.
 
-   - three.js owns THE METAL. Lit geometry, a genuine studio reflection off a
-     procedural environment map, and real z-separation across three depth
-     bands. One instanced draw call for every panel on screen.
-   - pixi.js owns THE SIGNAL. Thousands of unlit, individually tinted, batched
-     2D sprites — telemetry flowing along the panel seams, VU meters, tally
-     lamps. That is precisely what pixi's batcher is best at, and doing it in
-     three.js would mean hand-rolling a points pipeline for no gain.
+   The division of labour is real:
 
-   What makes them read as one image rather than two canvases is `rackLines`:
-   seven normalised screen-space Y positions computed once per resize and
-   consumed by BOTH renderers, so the signal travels exactly along the seams
-   between panel rows. Both also share one scroll value, one pointer value and
-   one rAF.
+   - three.js owns THE CHANNEL. One full-screen shader with a closed-form
+     infinite-cylinder intersection: because the eye sits on the channel axis
+     the intersection solves analytically, so there is no ray marching and the
+     cost is constant per pixel. Two triangles, one draw call, no textures, no
+     render targets, no depth buffer.
+   - pixi.js owns THE PACKETS. Thousands of individually positioned, scaled and
+     tinted sprites, which is exactly what its batcher exists for. In three.js
+     this would mean hand-rolling a points pipeline with custom attributes for
+     perspective-correct size and per-particle tint, for more code and no gain.
 
-   Everything is gated: no WebGL means neither module is even fetched.
+   What makes them one image is wire.js: both layers use the same projection
+   and the same centreline, so a packet on lane 3 at z = 12 sits exactly on the
+   shader's rail for lane 3 at z = 12, at any aspect ratio.
+
+   Motion is Material 3 Expressive — springs, not curves. Anything physical
+   moves on a spatial spring and is allowed to overshoot. Telemetry (the raster
+   scroll, packet velocity, the GOP clock, a dropped frame fading out) is
+   strictly linear, because easing a meter is a lie.
    ========================================================================== */
 
 import { frameState, reducedMotion } from "./ui.js";
+import { SPRING, Spring } from "./spring.js";
+import { wire, centreline, project } from "./wire.js";
 
 const DPR = () => Math.min(window.devicePixelRatio || 1, 2);
-
-/* ---- Capability and tier ------------------------------------------------- */
 
 function hasWebGL() {
   try {
@@ -38,9 +46,8 @@ function hasWebGL() {
   }
 }
 
-/** Tier 3 is the full rack; tier 1 drops the metal entirely and keeps the
- *  signal, because the lit layer is the expensive half and reads least on a
- *  narrow screen — while the signal is what carries the identity. */
+/** Tier 1 drops the channel shader and keeps the packets: the shader is the
+ *  expensive half, and the packets are what carries the idea. */
 function pickTier() {
   const w = window.innerWidth;
   let tier = w >= 1280 ? 3 : w >= 768 ? 2 : 1;
@@ -50,20 +57,19 @@ function pickTier() {
 }
 
 const TIERS = {
-  3: { panels: 48, particles: 2000, meters: 56, leds: 18, threeScale: 0.85 },
-  2: { panels: 32, particles: 1200, meters: 36, leds: 12, threeScale: 0.75 },
-  1: { panels: 0, particles: 520, meters: 20, leds: 8, threeScale: 0 },
+  3: { channel: true, packets: 3200, drops: 240, keys: 96, threeScale: 0.72, pixiRes: 1.5 },
+  2: { channel: true, packets: 1800, drops: 160, keys: 64, threeScale: 0.62, pixiRes: 1.25 },
+  1: { channel: false, packets: 700, drops: 80, keys: 40, threeScale: 0, pixiRes: 1 },
 };
 
-/* ---- Shared layout model ------------------------------------------------- */
+const readVar = (name) =>
+  getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
-const rackLines = [];
+const hexToInt = (hex) => Number(`0x${(hex || "#ffffff").replace("#", "")}`);
 
-function computeRackLines() {
-  rackLines.length = 0;
-  // Seven seams, inset from the edges so the outermost never sits under the
-  // sticky header or the footer rule.
-  for (let i = 0; i < 7; i++) rackLines.push(0.08 + (i / 6) * 0.84);
+function smoothstep(a, b, x) {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
 }
 
 /* ---- Entry --------------------------------------------------------------- */
@@ -71,43 +77,39 @@ function computeRackLines() {
 export async function initBackground() {
   if (!hasWebGL()) return; // The CSS fallback composition is already showing.
 
-  const tier = pickTier();
-  const config = TIERS[tier];
-  computeRackLines();
+  const config = TIERS[pickTier()];
 
   const shared = {
-    time: 0,
-    scroll: 0,
-    pointer: { x: 0, y: 0 },
-    tally: new Float32Array(Math.max(config.panels, 1)),
     dark: document.documentElement.dataset.theme === "dark",
+    // The keyframe ring's depth, on the one Expressive token with real
+    // overshoot — so the ring visibly punches past the eye before settling.
+    keyZ: new Spring(wire.Z_FAR, SPRING.spatialFast),
+    take: new Spring(0, SPRING.spatialFast),
+    vpX: new Spring(0.3, SPRING.spatialSlow),
+    vpY: new Spring(-0.02, SPRING.spatialSlow),
+    accent: null,
+    gopClock: 0,
   };
 
   const layers = [];
 
-  // Both renderers are imported after first paint, and failure to build one
-  // must never take the other — or the page — down with it.
   try {
-    if (config.panels > 0) layers.push(await buildMetal(config, shared));
+    if (config.channel) layers.push(await buildChannel(config, shared));
   } catch (error) {
-    console.warn("[scenedeck] metal layer unavailable:", error);
+    console.warn("[scenedeck] channel layer unavailable:", error);
   }
 
   try {
-    layers.push(await buildSignal(config, shared));
+    layers.push(await buildPackets(config, shared));
   } catch (error) {
-    console.warn("[scenedeck] signal layer unavailable:", error);
+    console.warn("[scenedeck] packet layer unavailable:", error);
   }
 
   if (!layers.length) return;
 
-  // Theme and accent are page state, not animation state, so they are wired up
-  // for everyone — including the reduced-motion path, which otherwise renders
-  // one frame in its boot palette and then silently disagrees with the rest of
-  // the page for the whole visit.
   bindAppearance(layers, shared);
 
-  // A single frame, then stop: the full composition with none of the motion.
+  // One frame, then stop: the full composition with none of the motion.
   if (reducedMotion.matches) {
     const paint = () => layers.forEach((layer) => layer.render(0));
     paint();
@@ -116,7 +118,6 @@ export async function initBackground() {
     window.addEventListener(
       "resize",
       debounce(() => {
-        computeRackLines();
         layers.forEach((layer) => layer.resize());
         paint();
       }, 160)
@@ -127,7 +128,8 @@ export async function initBackground() {
   drive(layers, shared);
 }
 
-/** Theme and accent listeners, shared by the animated and static paths. */
+/** Theme and accent are page state, not animation state, so they are wired up
+ *  for everyone — including the reduced-motion path. */
 function bindAppearance(layers, shared) {
   const repaint = () => window.dispatchEvent(new CustomEvent("appearance:repaint"));
 
@@ -138,15 +140,16 @@ function bindAppearance(layers, shared) {
   });
 
   window.addEventListener("scenedeck:accent", (event) => {
+    shared.accent = event.detail.hex;
     for (const layer of layers) layer.accent?.(event.detail.hex);
     repaint();
   });
 }
 
 /* ---- The driver ---------------------------------------------------------- */
-/* One requestAnimationFrame for the entire page. It pauses outright when the
-   tab is hidden or the window loses focus — both renderers then cost nothing
-   at all rather than idling. */
+/* One requestAnimationFrame for the page. It cancels outright when the tab is
+   hidden or the window loses focus, so both renderers cost nothing at all
+   rather than idling. */
 
 function drive(layers, shared) {
   let raf = 0;
@@ -157,18 +160,40 @@ function drive(layers, shared) {
     raf = requestAnimationFrame(frame);
     const dt = Math.min((now - last) / 1000, 0.0333);
     last = now;
-    shared.time += dt;
 
-    shared.scroll = frameState.progress;
-    // Delta-normalised damping, so the follow speed is the same at 60Hz and
-    // 144Hz rather than three times faster on the better monitor.
+    wire.time += dt;
+    wire.scroll = frameState.progress;
+
+    // The pointer is damped rather than sprung: it is a follow, not an event,
+    // and a cursor that overshoots reads as lag.
     const k = 1 - Math.pow(1 - 0.06, dt * 60);
-    shared.pointer.x += (frameState.pointerX - shared.pointer.x) * k;
-    shared.pointer.y += (frameState.pointerY - shared.pointer.y) * k;
+    wire.pointerX += (frameState.pointerX - wire.pointerX) * k;
+    wire.pointerY += (frameState.pointerY - wire.pointerY) * k;
 
-    for (let i = 0; i < shared.tally.length; i++) {
-      if (shared.tally[i] > 0) shared.tally[i] = Math.max(0, shared.tally[i] - dt * 1.6);
+    // The vanishing point leans with the pointer and rises as you scroll, so
+    // the channel appears to bank. Slow spatial spring.
+    shared.vpX.to(0.3 + wire.pointerX * 0.07);
+    shared.vpY.to(-0.02 - wire.pointerY * 0.05 - wire.scroll * 0.18);
+    wire.vpX = shared.vpX.step(dt);
+    wire.vpY = shared.vpY.step(dt);
+
+    // The GOP clock is a wall clock, not an animation, so it is linear.
+    shared.gopClock += dt * 1000;
+    if (shared.gopClock >= wire.GOP_MS) {
+      shared.gopClock -= wire.GOP_MS;
+      launchKeyframe(shared);
     }
+
+    wire.keyZ = shared.keyZ.step(dt);
+    wire.takeEnergy = shared.take.step(dt);
+
+    // Bitrate and congestion wander the way a real encoder does: mostly
+    // steady, with occasional pressure. Linear — they are telemetry.
+    wire.bitrate = 0.62 + 0.2 * Math.sin(wire.time * 0.23) + 0.08 * Math.sin(wire.time * 0.77);
+    wire.congestion = Math.max(
+      0,
+      0.1 + 0.12 * Math.sin(wire.time * 0.11) + 0.08 * Math.sin(wire.time * 0.41 + 2.1)
+    );
 
     for (const layer of layers) layer.render(dt);
   };
@@ -193,24 +218,30 @@ function drive(layers, shared) {
   window.addEventListener(
     "resize",
     debounce(() => {
-      computeRackLines();
       for (const layer of layers) layer.resize();
     }, 120)
   );
 
-  // A program take runs the tally lamps across an arc of panels, staggered.
+  // A program take forces an I-frame, which is literally true of an OBS scene
+  // switch — so the take and the keyframe are the same gesture.
   window.addEventListener("scenedeck:take", () => {
-    const n = shared.tally.length;
-    const start = Math.floor(Math.random() * Math.max(1, n - 6));
-    for (let i = 0; i < 6 && start + i < n; i++) {
-      setTimeout(() => {
-        shared.tally[start + i] = 1;
-      }, i * 18);
-    }
+    shared.gopClock = 0;
+    launchKeyframe(shared);
+    shared.take.velocity += 9;
+    shared.take.to(1);
+    setTimeout(() => shared.take.to(0), 420);
+    window.dispatchEvent(new CustomEvent("wire:flash"));
   });
 
   start();
   layers.forEach((layer) => layer.canvas.setAttribute("data-live", ""));
+}
+
+/** Relaunch the GOP ring from the far end of the channel. */
+function launchKeyframe(shared) {
+  shared.keyZ.set(wire.Z_FAR);
+  shared.keyZ.velocity = -34;
+  shared.keyZ.to(-2);
 }
 
 function debounce(fn, ms) {
@@ -221,352 +252,216 @@ function debounce(fn, ms) {
   };
 }
 
-const readVar = (name) =>
-  getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-
 /* ============================================================================
-   THE METAL — three.js
+   THE CHANNEL — three.js
    ========================================================================== */
 
-async function buildMetal(config, shared) {
+const VERT = /* glsl */ `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+  }
+`;
+
+const FRAG = /* glsl */ `
+  precision highp float;
+  varying vec2 vUv;
+
+  uniform float uTime;
+  uniform float uAspect;
+  uniform vec2  uVp;
+  uniform vec2  uPointer;
+  uniform float uBitrate;
+  uniform float uCongestion;
+  uniform float uKeyZ;
+  uniform float uTake;
+  uniform float uInk;       // 0 dark, 1 light
+  uniform float uCeil;      // hard luminance ceiling
+  uniform vec3  uNear;      // #065dac, the near end of the OBS hero gradient
+  uniform vec3  uFar;       // #280f83, the far end
+  uniform vec3  uRail;      // lane rails, overridable by a scene accent
+  uniform vec3  uSurface;   // page surface, for the light-theme inversion
+
+  const float TAU    = 6.28318530718;
+  const float FOCAL  = 1.7320508075688772;
+  const float RADIUS = 1.35;
+
+  // MUST match centreline() in wire.js exactly, or the layers separate.
+  vec2 centreline(float z, float t, vec2 ptr) {
+    float k = z * 0.0125;
+    return vec2(0.62 * sin(z * 0.0600 + t * 0.150) + ptr.x * k,
+                0.44 * cos(z * 0.0450 + t * 0.110) + ptr.y * k);
+  }
+
+  float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+
+  float vnoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x),
+               mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y);
+  }
+
+  void main() {
+    vec2 ndc = (vUv * 2.0 - 1.0) - uVp;
+    vec3 rd  = normalize(vec3(ndc.x * uAspect / FOCAL, ndc.y / FOCAL, -1.0));
+
+    // The eye sits exactly on the channel axis, so intersecting an infinite
+    // cylinder is closed form: no marching, constant cost per pixel.
+    float rl = max(length(rd.xy), 1e-4);
+    float s  = RADIUS / rl;
+    float z  = -rd.z * s;
+
+    float ang = atan(rd.y, rd.x);
+    float u   = ang / TAU + 0.5;
+    float v   = z * 0.075 - uTime * 0.42;   // raster scroll: strictly linear
+
+    vec2 c = centreline(z, uTime, uPointer);
+    u += (c.x * 0.11 + c.y * 0.07) / max(z, 1.0);
+
+    // Congestion warps depth rather than the surface, so it reads as the link
+    // buffering rather than as water rippling.
+    v += (vnoise(vec2(u * 6.0, v * 3.0 - uTime * 0.9)) - 0.5) * uCongestion * 0.30;
+
+    // 1. eight bit-lanes, brightening with bitrate
+    float lane  = abs(fract(u * 8.0) - 0.5) * 2.0;
+    float rails = pow(1.0 - lane, 34.0) * (0.55 + 0.45 * uBitrate);
+
+    // 2. the raster structure of the video signal itself
+    float raster = pow(0.5 + 0.5 * sin(v * 62.0), 3.0);
+
+    // 3. 4:2:0 macroblocks, visible only when the link is congested
+    vec2  mb    = floor(vec2(u * 64.0, v * 22.0));
+    float macro = step(1.0 - uCongestion * 0.55, vnoise(mb + floor(uTime * 6.0) * 7.13))
+                  * uCongestion * 0.55;
+
+    // 4. GOP ribs running down the channel
+    float rib = pow(1.0 - abs(fract(v * 0.25) * 2.0 - 1.0), 40.0);
+
+    // 5. the keyframe ring, sweeping toward the eye
+    float ring = exp(-abs(z - uKeyZ) * (2.4 - uTake * 0.8)) * (0.60 + 0.90 * uTake);
+
+    // Depth ramp: violet far, blue near. The OBS hero gradient emitted along
+    // the channel rather than painted across it.
+    float depth = clamp(z / 40.0, 0.0, 1.0);
+    vec3  hue   = mix(uNear, uFar, depth);
+
+    float structure = raster * 0.55 + rails * 0.70 + rib * 0.45 + macro;
+    // Fade the far end out so the channel has no visible end wall.
+    float fade = 1.0 - smoothstep(26.0, 40.0, z) * 0.85;
+
+    // DARK: the channel is emissive. Structure adds light.
+    vec3 lit = (hue * (0.30 + structure) + uRail * (rails * 0.30 + ring * 0.75)) * fade;
+    // A hard luminance ceiling, not a scale — so no accent, take or keyframe
+    // can push the background bright enough to hurt body copy.
+    float y = max(dot(lit, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
+    lit *= min(1.0, uCeil / y);
+
+    // LIGHT: the same structure printed as ink. It has to darken the paper
+    // TOWARD the wire's own hue — subtracting a blue glow from white paper
+    // would leave its complement, and the channel would come out orange.
+    float density = clamp(structure * 0.85 + ring * 0.55, 0.0, 1.0) * fade;
+    vec3  ink     = mix(uSurface, hue * 0.40, density * 0.72);
+
+    gl_FragColor = vec4(mix(lit, ink, uInk), 1.0);
+  }
+`;
+
+async function buildChannel(config, shared) {
   const THREE = await import("../vendor/three.min.js");
   const canvas = document.getElementById("bg-three");
 
   const renderer = new THREE.WebGLRenderer({
     canvas,
-    antialias: true,
-    alpha: true,
-    powerPreference: "high-performance",
+    antialias: false,
+    alpha: false,
+    depth: false,
     stencil: false,
+    powerPreference: "high-performance",
   });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = shared.dark ? 1.05 : 0.92;
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 40);
-  camera.position.set(0, 0, 8.2);
-
-  scene.fog = new THREE.FogExp2(new THREE.Color(readVar("--md-surface") || "#0e0c13"), 0.055);
-
-  // A rounded rack panel, extruded with a small bevel so its edges catch light.
-  const shape = roundedRect(THREE, 3.2, 0.62, 0.11);
-  const geometry = new THREE.ExtrudeGeometry(shape, {
-    depth: 0.14,
-    bevelEnabled: true,
-    bevelSegments: 2,
-    bevelSize: 0.012,
-    bevelThickness: 0.012,
-    curveSegments: 6,
-  });
-  geometry.center();
+  // The shader builds its own rays from vUv, so the camera never transforms
+  // anything — it exists because three.js requires one.
+  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
   const uniforms = {
     uTime: { value: 0 },
-    uBrush: { value: 0.045 },
-    uAnodize: { value: new THREE.Color(shared.dark ? "#6f78ff" : "#4a4cbb") },
-    uTallyColor: { value: new THREE.Color("#ed333b") },
+    uAspect: { value: 1 },
+    uVp: { value: new THREE.Vector2(0.3, -0.02) },
     uPointer: { value: new THREE.Vector2(0, 0) },
+    uBitrate: { value: 0.62 },
+    uCongestion: { value: 0.1 },
+    uKeyZ: { value: wire.Z_FAR },
+    uTake: { value: 0 },
+    uInk: { value: shared.dark ? 0 : 1 },
+    uCeil: { value: 0.14 },
+    uNear: { value: new THREE.Color("#065dac") },
+    uFar: { value: new THREE.Color("#280f83") },
+    uRail: { value: new THREE.Color("#256eff") },
+    uSurface: { value: new THREE.Color("#080f22") },
   };
 
-  const material = new THREE.MeshStandardMaterial({
-    metalness: 0.86,
-    roughness: 0.34,
-    color: new THREE.Color(shared.dark ? "#6f6a80" : "#b9b4c4"),
-    envMapIntensity: 1.15,
-  });
-
-  material.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, uniforms);
-
-    shader.vertexShader = shader.vertexShader
-      .replace(
-        "#include <common>",
-        `#include <common>
-         attribute float aPhase;
-         attribute float aTally;
-         attribute float aBand;
-         varying float vPhase;
-         varying float vTally;
-         varying vec2 vPanelUv;
-         uniform float uTime;
-         uniform vec2 uPointer;`
-      )
-      .replace(
-        "#include <begin_vertex>",
-        `#include <begin_vertex>
-         vPhase = aPhase;
-         vTally = aTally;
-         vPanelUv = vec2((position.x + 1.6) / 3.2, (position.y + 0.31) / 0.62);
-         float w = uTime * 0.28 + aPhase;
-         transformed.z += sin(w) * 0.09;
-         transformed.y += cos(w * 0.61) * 0.035;
-         float tilt = sin(w * 0.37) * 0.03 + aTally * 0.14;
-         float cs = cos(tilt);
-         float sn = sin(tilt);
-         transformed.xz = mat2(cs, -sn, sn, cs) * transformed.xz;`
-      )
-      // Per-band pointer parallax, applied after the instance matrix so it is
-      // a world-space offset rather than something the instance's own scale
-      // distorts. Doing it here — instead of with one group per band — is what
-      // buys genuine z-separation while the whole wall stays a single draw
-      // call.
-      .replace(
-        "#include <project_vertex>",
-        `vec4 mvPosition = vec4( transformed, 1.0 );
-         #ifdef USE_INSTANCING
-           mvPosition = instanceMatrix * mvPosition;
-         #endif
-         mvPosition.xy += uPointer * vec2(0.62, -0.44) * (0.25 + aBand * 0.375);
-         mvPosition = modelViewMatrix * mvPosition;
-         gl_Position = projectionMatrix * mvPosition;`
-      );
-
-    shader.fragmentShader = shader.fragmentShader
-      .replace(
-        "#include <common>",
-        `#include <common>
-         varying float vPhase;
-         varying float vTally;
-         varying vec2 vPanelUv;
-         uniform float uBrush;
-         uniform vec3 uAnodize;
-         uniform vec3 uTallyColor;`
-      )
-      // Anisotropic brushed metal. The grooves run along the panel, so the
-      // normal is perturbed on Y as a function of the panel's own U — three
-      // octaves is enough to stop it banding.
-      .replace(
-        "#include <normal_fragment_maps>",
-        `#include <normal_fragment_maps>
-         float bu = vPanelUv.x;
-         float brush = sin(bu * 420.0 + vPhase * 6.283) * 0.50
-                     + sin(bu * 1130.0 + vPhase * 2.700) * 0.28
-                     + sin(bu * 2600.0) * 0.12;
-         normal = normalize(normal + vec3(0.0, brush * uBrush, 0.0));
-         float fres = pow(1.0 - clamp(dot(normalize(vViewPosition), normal), 0.0, 1.0), 3.0);
-         diffuseColor.rgb = mix(diffuseColor.rgb, uAnodize, fres * 0.55);`
-      )
-      // The tally lamp sits in the right-hand 18% of the panel — a real tally
-      // position on real hardware.
-      .replace(
-        "#include <emissivemap_fragment>",
-        `#include <emissivemap_fragment>
-         totalEmissiveRadiance += uTallyColor * vTally * (0.35 + 0.65 * step(0.82, vPanelUv.x));`
-      );
-  };
-
-  // Three depth bands, each in its own group so pointer parallax can move them
-  // by different amounts — genuine z-separation rather than a uniform tilt.
-  const BANDS = [
-    { z: -3.5, scale: 0.72, parallax: 0.25 },
-    { z: -1.0, scale: 1.0, parallax: 0.6 },
-    { z: 1.4, scale: 1.34, parallax: 1.0 },
-  ];
-  const split = [0.42, 0.37, 0.21];
-
-  const mesh = new THREE.InstancedMesh(geometry, material, config.panels);
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(2, 2),
+    new THREE.ShaderMaterial({
+      vertexShader: VERT,
+      fragmentShader: FRAG,
+      uniforms,
+      depthTest: false,
+      depthWrite: false,
+    })
+  );
   mesh.frustumCulled = false;
+  scene.add(mesh);
 
-  const phases = new Float32Array(config.panels);
-  const tallies = new Float32Array(config.panels);
-  const dummy = new THREE.Object3D();
-  const bands = new Float32Array(config.panels);
-
-  // Panels are placed against the actual view frustum rather than in arbitrary
-  // world units, so the wall fills the screen at any aspect ratio instead of
-  // drifting off the sides of a wide monitor or emptying out on a narrow one.
-  const layoutPanels = () => {
-    const aspect = window.innerWidth / Math.max(1, window.innerHeight);
-    const halfFov = (camera.fov * Math.PI) / 360;
-    let index = 0;
-
-    BANDS.forEach((band, b) => {
-      const count =
-        b === BANDS.length - 1 ? config.panels - index : Math.round(config.panels * split[b]);
-
-      // What this band's depth can actually show.
-      const distance = camera.position.z - band.z;
-      const visibleH = Math.tan(halfFov) * distance;
-      const visibleW = visibleH * aspect;
-
-      // Panels are sized as a fraction of the visible width rather than in
-      // fixed world units, so the wall reads at the same density on a phone
-      // and on an ultrawide. A panel is background texture, not a slab: about
-      // a fifth of the screen wide at the nearest band.
-      const scale = ((visibleW * 2 * 0.17) / 3.2) * band.scale;
-      const columns = Math.max(3, Math.ceil(count / rackLines.length));
-
-      for (let i = 0; i < count && index < config.panels; i++, index++) {
-        const row = i % rackLines.length;
-        const column = Math.floor(i / rackLines.length) % columns;
-        const jitter = Math.sin(index * 12.9898) * 0.3;
-
-        // Spread a little past the edges so panels keep entering and leaving
-        // rather than stopping at a visible boundary.
-        const spread = visibleW * 1.3;
-        dummy.position.set(
-          -spread + ((column + 0.5 + jitter) / columns) * spread * 2,
-          (0.5 - rackLines[row]) * visibleH * 2.3 + Math.cos(index * 78.233) * 0.12,
-          band.z
-        );
-        dummy.rotation.set(0, Math.sin(index * 4.1) * 0.06, 0);
-        dummy.scale.setScalar(scale);
-        dummy.updateMatrix();
-        mesh.setMatrixAt(index, dummy.matrix);
-        phases[index] = (index * 2.399963) % 6.283185;
-        bands[index] = b;
-      }
-    });
-
-    // Matrices are written here and nowhere else. Every per-frame motion
-    // happens in the vertex shader from aPhase + uTime, so there is no
-    // per-frame CPU matrix work.
-    mesh.instanceMatrix.needsUpdate = true;
+  const syncTheme = () => {
+    uniforms.uInk.value = shared.dark ? 0 : 1;
+    uniforms.uCeil.value = parseFloat(readVar("--wire-ceiling")) || (shared.dark ? 0.14 : 0.3);
+    uniforms.uSurface.value.set(readVar("--md-surface") || "#080f22");
+    uniforms.uNear.value.set(readVar("--wire-near") || "#065dac");
+    uniforms.uFar.value.set(readVar("--wire-far") || "#280f83");
+    if (!shared.accent) uniforms.uRail.value.set(readVar("--wire-rail") || "#256eff");
   };
-
-  layoutPanels();
-  geometry.setAttribute("aPhase", new THREE.InstancedBufferAttribute(phases, 1));
-  geometry.setAttribute("aBand", new THREE.InstancedBufferAttribute(bands, 1));
-  const tallyAttr = new THREE.InstancedBufferAttribute(tallies, 1);
-  geometry.setAttribute("aTally", tallyAttr);
-
-  const group = new THREE.Group();
-  group.add(mesh);
-  scene.add(group);
-
-  const key = new THREE.DirectionalLight(0xffffff, 1.6);
-  key.position.set(4, 6, 5);
-  scene.add(key);
-  scene.add(new THREE.AmbientLight(0xffffff, shared.dark ? 0.18 : 0.5));
-
-  // The environment is generated, not downloaded: a 256x128 gradient with two
-  // elliptical softboxes. It is what produces the reflection that slides
-  // across the panels as they drift, and it costs one texture at boot.
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  const envTexture = new THREE.CanvasTexture(studioCanvas());
-  envTexture.mapping = THREE.EquirectangularReflectionMapping;
-  const env = pmrem.fromEquirectangular(envTexture).texture;
-  scene.environment = env;
-  envTexture.dispose();
-  pmrem.dispose();
+  syncTheme();
 
   const resize = () => {
     const w = window.innerWidth;
     const h = window.innerHeight;
     renderer.setPixelRatio(DPR() * config.threeScale);
     renderer.setSize(w, h, false);
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
-    layoutPanels();
+    uniforms.uAspect.value = w / Math.max(1, h);
+    wire.aspect = uniforms.uAspect.value;
   };
   resize();
-
-  let tallyDirty = false;
-  let accentHex = null;
 
   return {
     canvas,
     resize,
-    theme(dark) {
-      material.color.set(dark ? "#6f6a80" : "#b9b4c4");
-      // A chosen scene accent outranks the theme default, otherwise toggling
-      // the colour scheme would silently throw the accent away and leave the
-      // metal disagreeing with the rest of the page.
-      uniforms.uAnodize.value.set(accentHex ?? (dark ? "#6f78ff" : "#4a4cbb"));
-      renderer.toneMappingExposure = dark ? 1.05 : 0.92;
-      scene.fog.color.set(readVar("--md-surface") || (dark ? "#0e0c13" : "#faf9f8"));
-    },
+    theme: syncTheme,
     accent(hex) {
-      accentHex = hex;
-      uniforms.uAnodize.value.set(hex);
+      uniforms.uRail.value.set(hex);
     },
     render() {
-      uniforms.uTime.value = shared.time;
-
-      camera.position.z = 8.2 - shared.scroll * 2.8;
-      camera.position.y = -shared.scroll * 1.6;
-      camera.lookAt(0, -shared.scroll * 1.6, 0);
-
-      // A small whole-wall tilt on top of the per-band offset the shader
-      // applies, so the rack turns as well as separating.
-      group.rotation.y = shared.pointer.x * 0.03;
-      group.rotation.x = -shared.pointer.y * 0.02;
-      uniforms.uPointer.value.set(shared.pointer.x, shared.pointer.y);
-
-      // The tally attribute is only re-uploaded while something is actually
-      // lit, so the common case costs nothing.
-      let any = false;
-      for (let i = 0; i < tallies.length; i++) {
-        if (tallies[i] !== shared.tally[i]) {
-          tallies[i] = shared.tally[i];
-          tallyDirty = true;
-        }
-        if (tallies[i] > 0.001) any = true;
-      }
-      if (tallyDirty) {
-        tallyAttr.needsUpdate = true;
-        tallyDirty = any;
-      }
-
+      uniforms.uTime.value = wire.time;
+      uniforms.uVp.value.set(wire.vpX, wire.vpY);
+      uniforms.uPointer.value.set(wire.pointerX, wire.pointerY);
+      uniforms.uBitrate.value = wire.bitrate;
+      uniforms.uCongestion.value = wire.congestion;
+      uniforms.uKeyZ.value = wire.keyZ;
+      uniforms.uTake.value = wire.takeEnergy;
       renderer.render(scene, camera);
     },
   };
 }
 
-function roundedRect(THREE, w, h, r) {
-  const shape = new THREE.Shape();
-  const x = -w / 2;
-  const y = -h / 2;
-  shape.moveTo(x + r, y);
-  shape.lineTo(x + w - r, y);
-  shape.quadraticCurveTo(x + w, y, x + w, y + r);
-  shape.lineTo(x + w, y + h - r);
-  shape.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  shape.lineTo(x + r, y + h);
-  shape.quadraticCurveTo(x, y + h, x, y + h - r);
-  shape.lineTo(x, y + r);
-  shape.quadraticCurveTo(x, y, x + r, y);
-  return shape;
-}
-
-/** The studio: a vertical gradient with two softboxes and a warm bounce. */
-function studioCanvas() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 256;
-  canvas.height = 128;
-  const ctx = canvas.getContext("2d");
-
-  const gradient = ctx.createLinearGradient(0, 0, 0, 128);
-  gradient.addColorStop(0, "#ffffff");
-  gradient.addColorStop(0.42, "#cfd2ff");
-  gradient.addColorStop(0.55, "#3a3550");
-  gradient.addColorStop(1, "#0a0810");
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, 256, 128);
-
-  const softbox = (x, y, r, alpha) => {
-    const glow = ctx.createRadialGradient(x, y, 0, x, y, r);
-    glow.addColorStop(0, `rgba(255,255,255,${alpha})`);
-    glow.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = glow;
-    ctx.fillRect(x - r, y - r, r * 2, r * 2);
-  };
-
-  softbox(0.24 * 256, 0.22 * 128, 0.16 * 256, 0.9);
-  softbox(0.78 * 256, 0.3 * 128, 0.11 * 256, 0.65);
-
-  ctx.fillStyle = "rgba(255,190,111,0.35)";
-  ctx.fillRect(0, 0.66 * 128, 256, 5);
-
-  return canvas;
-}
-
 /* ============================================================================
-   THE SIGNAL — pixi.js
+   THE PACKETS — pixi.js
    ========================================================================== */
 
-async function buildSignal(config, shared) {
+async function buildPackets(config, shared) {
   const PIXI = await import("../vendor/pixi.min.js");
   const canvas = document.getElementById("bg-pixi");
 
@@ -577,219 +472,282 @@ async function buildSignal(config, shared) {
     height: window.innerHeight,
     backgroundAlpha: 0,
     antialias: false,
-    resolution: config.threeScale ? DPR() : 1,
+    resolution: Math.min(DPR(), config.pixiRes),
     autoDensity: true,
     powerPreference: "high-performance",
   });
 
   const stage = new PIXI.Container();
 
-  const dotTexture = PIXI.Texture.from(dotCanvas());
-  const pxTexture = PIXI.Texture.from(pixelCanvas());
+  const packetTexture = PIXI.Texture.from(packetCanvas());
+  const dropTexture = PIXI.Texture.from(dropCanvas());
+  const glowTexture = PIXI.Texture.from(glowCanvas());
 
-  const tint = () => Number(`0x${(readVar("--bg-canvas-tint") || "#8a90ff").replace("#", "")}`);
-  let currentTint = tint();
+  // Position, size and tint all change every frame; rotation never does.
+  const dynamic = { position: true, vertex: true, color: true, rotation: false };
+  const flow = new PIXI.ParticleContainer({ dynamicProperties: dynamic });
+  const drops = new PIXI.ParticleContainer({ dynamicProperties: dynamic });
+  const keys = new PIXI.ParticleContainer({ dynamicProperties: dynamic });
+  stage.addChild(flow, drops, keys);
 
-  // Telemetry flowing along the seams between panel rows. One container, one
-  // texture, one draw call.
-  const flow = new PIXI.ParticleContainer({
-    dynamicProperties: { position: true, color: true, vertex: false, rotation: false },
-  });
-  const particles = [];
+  let W = window.innerWidth;
+  let H = window.innerHeight;
+  let halfW = W / 2;
+  let halfH = H / 2;
+  wire.aspect = W / Math.max(1, H);
 
-  for (let i = 0; i < config.particles; i++) {
-    const bus = i % rackLines.length;
-    const particle = new PIXI.Particle({
-      texture: dotTexture,
-      x: Math.random() * window.innerWidth,
-      y: 0,
-      tint: currentTint,
-      alpha: [0.22, 0.38, 0.55][bus % 3],
-    });
-    const scale = 0.18 + Math.random() * 0.26;
-    particle.scaleX = scale;
-    particle.scaleY = scale;
+  const proj = { ndcX: 0, ndcY: 0, scale: 1 };
+  const centre = { x: 0, y: 0 };
+
+  const packetTint = () => hexToInt(shared.accent || readVar("--wire-packet") || "#72a2ff");
+  const dropTint = () => hexToInt(readVar("--wire-drop") || "#e74c3c");
+  const keyTint = () => hexToInt(readVar("--wire-key") || "#9146ff");
+
+  let tint = packetTint();
+  let alphaMax = parseFloat(readVar("--packet-alpha")) || 0.55;
+
+  /* -- the flow ---------------------------------------------------------- */
+  const packets = [];
+  for (let i = 0; i < config.packets; i++) {
+    const particle = new PIXI.Particle({ texture: packetTexture, x: 0, y: 0, tint, alpha: 0 });
     flow.addParticle(particle);
-    particles.push({
+    // A fifth of the traffic runs the other way on a tighter radius: video in,
+    // commands out. Two machines, one wire, traffic in both directions.
+    const outbound = i % 5 === 0;
+    packets.push({
       p: particle,
-      bus,
-      speed: 18 + (bus / rackLines.length) * 34 + Math.random() * 8,
-      seed: Math.random() * 6.283,
+      lane: i % wire.LANES,
+      radius: outbound ? 0.6 + Math.random() * 0.14 : 0.86 + Math.random() * 0.135,
+      z: wire.Z_NEAR + Math.random() * (wire.Z_FAR - wire.Z_NEAR),
+      speed: (5.4 + Math.random() * 3.7) * (outbound ? -1.35 : 1),
+      size: 0.55 + Math.random() * 0.7,
+      outbound,
+      hot: 0,
     });
   }
 
-  // The VU field. All segments share one 1x1 texture, so pixi batches the
-  // whole wall into a single draw.
-  const meters = new PIXI.ParticleContainer({
-    dynamicProperties: { position: false, color: true, vertex: false, rotation: false },
-  });
-  const meterCells = [];
-  const SEGMENTS = 6;
-
-  for (let m = 0; m < config.meters; m++) {
-    for (let s = 0; s < SEGMENTS; s++) {
-      const particle = new PIXI.Particle({ texture: pxTexture, x: 0, y: 0, tint: currentTint, alpha: 0 });
-      particle.scaleX = 5;
-      particle.scaleY = 9;
-      meters.addParticle(particle);
-      meterCells.push({ p: particle, meter: m, seg: s });
-    }
+  /* -- dropped frames ----------------------------------------------------- */
+  const dropList = [];
+  for (let i = 0; i < config.drops; i++) {
+    const particle = new PIXI.Particle({ texture: dropTexture, x: 0, y: 0, tint: dropTint(), alpha: 0 });
+    drops.addParticle(particle);
+    dropList.push({ p: particle, life: 0, x: 0, y: 0, scale: 1 });
   }
+  let dropCursor = 0;
 
-  // Tally lamps sitting on the seams. The one nearest the section in view
-  // ignites; the rest stay at a resting glow.
-  const leds = new PIXI.ParticleContainer({
-    dynamicProperties: { position: false, color: true, vertex: false, rotation: false },
-  });
-  const ledList = [];
-  for (let i = 0; i < config.leds; i++) {
-    const particle = new PIXI.Particle({ texture: pxTexture, x: 0, y: 0, tint: 0x8e8f9a, alpha: 0.12 });
-    particle.scaleX = 7;
-    particle.scaleY = 7;
-    leds.addParticle(particle);
-    ledList.push(particle);
+  /* -- the keyframe ring -------------------------------------------------- */
+  const keyList = [];
+  for (let i = 0; i < config.keys; i++) {
+    const particle = new PIXI.Particle({ texture: glowTexture, x: 0, y: 0, tint: keyTint(), alpha: 0 });
+    keys.addParticle(particle);
+    keyList.push({ p: particle, angle: (i / config.keys) * Math.PI * 2 });
   }
-
-  stage.addChild(flow, meters, leds);
 
   const applyBlend = (dark) => {
     const mode = dark ? "add" : "normal";
     flow.blendMode = mode;
-    meters.blendMode = mode;
-    leds.blendMode = mode;
-    const alphaScale = dark ? 1 : 0.55;
-    for (const entry of particles) entry.p.alpha = [0.22, 0.38, 0.55][entry.bus % 3] * alphaScale;
+    drops.blendMode = mode;
+    keys.blendMode = mode;
   };
   applyBlend(shared.dark);
 
-  let W = window.innerWidth;
-  let H = window.innerHeight;
-
-  const layout = () => {
+  const resize = () => {
     W = window.innerWidth;
     H = window.innerHeight;
-
-    // Meters sit along the bottom seam, evenly spread.
-    const meterGap = W / config.meters;
-    for (const cell of meterCells) {
-      cell.p.x = cell.meter * meterGap + meterGap * 0.3;
-      cell.p.y = H * rackLines[rackLines.length - 1] - cell.seg * 12;
-    }
-
-    ledList.forEach((led, i) => {
-      led.x = ((i * 137.5) % 100) * (W / 100);
-      led.y = H * rackLines[i % rackLines.length];
-    });
-
-    // Both containers hold position static, so pixi only uploads their vertex
-    // buffer when it is told the children changed. Without this the meters and
-    // lamps stay at their pre-resize coordinates.
-    meters.update();
-    leds.update();
+    halfW = W / 2;
+    halfH = H / 2;
+    wire.aspect = W / Math.max(1, H);
+    renderer.resize(W, H);
   };
 
-  const resize = () => {
-    renderer.resize(window.innerWidth, window.innerHeight);
-    layout();
+  const spawnDrop = (x, y, scale) => {
+    const drop = dropList[dropCursor];
+    dropCursor = (dropCursor + 1) % dropList.length;
+    drop.life = 0.42;
+    drop.x = x;
+    drop.y = y;
+    drop.scale = scale;
   };
-  layout();
 
-  // A fixed logical step, so the signal runs at the same speed on a 144Hz
-  // display as on a 60Hz one.
-  let accumulator = 0;
   const STEP = 1 / 60;
-  const envelopes = new Float32Array(config.meters);
+  let accumulator = 0;
 
-  const stepLogic = (t) => {
-    for (const entry of particles) {
-      entry.p.x += entry.speed * STEP;
-      if (entry.p.x > W + 8) entry.p.x = -8;
-      entry.p.y = H * rackLines[entry.bus] + Math.sin(t * 2.1 + entry.seed) * 3;
+  const stepLogic = () => {
+    const activeCount = Math.round(packets.length * (0.35 + 0.65 * wire.bitrate));
+    const dropChance = wire.congestion * wire.congestion * 0.3;
+
+    for (let i = 0; i < packets.length; i++) {
+      const packet = packets[i];
+      const sprite = packet.p;
+
+      // Bitrate is literally packet density. Inactive packets collapse to a
+      // degenerate quad: no branch in the draw, no fill cost.
+      if (i >= activeCount) {
+        sprite.scaleX = 0;
+        sprite.scaleY = 0;
+        sprite.alpha = 0;
+        continue;
+      }
+
+      packet.z -= packet.speed * STEP * (1 + packet.hot * 0.9);
+      if (packet.hot > 0) packet.hot = Math.max(0, packet.hot - STEP * 1.1);
+
+      if (packet.z <= wire.Z_NEAR || packet.z >= wire.Z_FAR) {
+        // A congested link loses packets: this one never arrives.
+        if (!packet.outbound && sprite.alpha > 0.01 && Math.random() < dropChance) {
+          spawnDrop(sprite.x, sprite.y, proj.scale);
+        }
+        packet.z = packet.outbound ? wire.Z_NEAR : wire.Z_FAR;
+      }
+
+      if (!project(packet.lane, packet.radius, packet.z, proj)) {
+        sprite.scaleX = 0;
+        sprite.scaleY = 0;
+        sprite.alpha = 0;
+        continue;
+      }
+
+      sprite.x = halfW + proj.ndcX * halfW;
+      sprite.y = halfH - proj.ndcY * halfH;
+      const scale = proj.scale * packet.size * 2.4;
+      sprite.scaleX = scale;
+      sprite.scaleY = scale;
+      // Packets fade as they reach the eye rather than becoming huge bright
+      // squares over the headline — they are consumed on arrival.
+      sprite.alpha =
+        alphaMax *
+        smoothstep(2, 6.5, packet.z) *
+        (1 - smoothstep(24, 40, packet.z)) *
+        (packet.outbound ? 0.55 : 1) *
+        (1 + packet.hot * 1.6);
+      sprite.tint = packet.hot > 0.02 ? 0xffffff : tint;
     }
 
-    for (let m = 0; m < config.meters; m++) {
-      const target =
-        0.5 + 0.28 * Math.sin(t * 1.7 + m * 0.41) + 0.14 * Math.sin(t * 4.3 + m * 1.13);
-      // Fast attack, slow release. That asymmetry is what makes a meter read
-      // as audio rather than as a sine wave.
-      const rate = target > envelopes[m] ? 0.18 : 0.045;
-      envelopes[m] += (target - envelopes[m]) * rate;
+    for (const drop of dropList) {
+      if (drop.life <= 0) {
+        drop.p.alpha = 0;
+        continue;
+      }
+      drop.life -= STEP;
+      const t = 1 - Math.max(0, drop.life) / 0.42;
+      drop.p.x = drop.x;
+      drop.p.y = drop.y;
+      const s = drop.scale * (1 + t * 0.9) * 2.4;
+      drop.p.scaleX = s;
+      drop.p.scaleY = s;
+      // A dropped frame does not bounce. Linear fade, no spring.
+      drop.p.alpha = Math.max(0, 0.9 * (1 - t));
     }
 
-    for (const cell of meterCells) {
-      const level = envelopes[cell.meter];
-      const on = cell.seg < Math.round(level * SEGMENTS);
-      cell.p.alpha = on ? 0.75 : 0.08;
-      cell.p.tint = !on
-        ? 0x494252
-        : level > 0.88
-          ? 0xed333b
-          : level > 0.72
-            ? 0xffbe6f
-            : currentTint;
-    }
+    // The ring of glow sprites rides the sprung keyframe depth.
+    const z = Math.max(wire.keyZ, 0.08);
+    const visible = wire.keyZ > 0 ? 1 - smoothstep(28, 40, wire.keyZ) : 0;
+    centreline(z, wire.time, wire.pointerX, wire.pointerY, centre);
+    const inv = wire.FOCAL / z;
 
-    const lit = Math.floor(shared.scroll * ledList.length);
-    ledList.forEach((led, i) => {
-      const active = i === lit;
-      led.alpha += ((active ? 0.95 : 0.12) - led.alpha) * 0.12;
-      led.tint = active ? 0xed333b : 0x8e8f9a;
-    });
+    for (const key of keyList) {
+      const x = Math.cos(key.angle) * wire.RADIUS * 1.02 + centre.x;
+      const y = Math.sin(key.angle) * wire.RADIUS * 1.02 + centre.y;
+      key.p.x = halfW + ((x * inv) / wire.aspect + wire.vpX) * halfW;
+      key.p.y = halfH - (y * inv + wire.vpY) * halfH;
+      const s = inv * 0.9;
+      key.p.scaleX = s;
+      key.p.scaleY = s;
+      key.p.alpha = Math.min(0.85, visible * (0.3 + wire.takeEnergy * 0.6));
+    }
   };
 
-  // Seed one logic pass so the signal is composed before the first render.
-  // Without it the reduced-motion path — which renders a single frame and then
-  // never ticks — would draw every particle stacked at the origin.
-  for (const entry of particles) entry.p.x = Math.random() * window.innerWidth;
-  stepLogic(0);
+  // Seed one pass so the reduced-motion path composes properly instead of
+  // drawing every packet stacked at the origin.
+  stepLogic();
+
+  // A take flashes the packets nearest the eye white and speeds them up.
+  window.addEventListener("wire:flash", () => {
+    let flashed = 0;
+    for (const packet of packets) {
+      if (packet.z < 14 && !packet.outbound && flashed < 220) {
+        packet.hot = 1;
+        flashed++;
+      }
+    }
+  });
 
   return {
     canvas,
     resize,
     theme(dark) {
-      currentTint = tint();
-      for (const entry of particles) entry.p.tint = currentTint;
+      tint = packetTint();
+      alphaMax = parseFloat(readVar("--packet-alpha")) || 0.55;
+      for (const drop of dropList) drop.p.tint = dropTint();
+      for (const key of keyList) key.p.tint = keyTint();
       applyBlend(dark);
     },
-    accent(hex) {
-      currentTint = Number(`0x${hex.replace("#", "")}`);
-      for (const entry of particles) entry.p.tint = currentTint;
+    accent() {
+      tint = packetTint();
     },
     render(dt) {
       accumulator += dt;
       let guard = 0;
       while (accumulator >= STEP && guard++ < 4) {
         accumulator -= STEP;
-        stepLogic(shared.time);
+        stepLogic();
       }
       renderer.render(stage);
     },
   };
 }
 
-/** A feathered dot. Pre-baking the falloff is what lets the additive blend
- *  look like bloom without a filter pass. */
-function dotCanvas() {
+/* ---- Procedural textures ------------------------------------------------- */
+/* Packets are squares because they are data blocks, and because Material 3
+   Expressive's shape direction is bolder, not rounder — so they keep a crisp
+   corner with only the extra-small radius softening it. */
+
+function packetCanvas() {
   const canvas = document.createElement("canvas");
-  canvas.width = 16;
-  canvas.height = 16;
+  canvas.width = 8;
+  canvas.height = 8;
   const ctx = canvas.getContext("2d");
-  const glow = ctx.createRadialGradient(8, 8, 0, 8, 8, 8);
-  glow.addColorStop(0, "rgba(255,255,255,1)");
-  glow.addColorStop(0.4, "rgba(255,255,255,0.55)");
-  glow.addColorStop(0.7, "rgba(255,255,255,0.18)");
-  glow.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, 16, 16);
+  ctx.fillStyle = "#ffffff";
+  if (ctx.roundRect) {
+    ctx.beginPath();
+    ctx.roundRect(1, 1, 6, 6, 1.5);
+    ctx.fill();
+  } else {
+    ctx.fillRect(1, 1, 6, 6);
+  }
   return canvas;
 }
 
-function pixelCanvas() {
+/** A broken square: a packet that failed. Reads at 3-9px. */
+function dropCanvas() {
   const canvas = document.createElement("canvas");
-  canvas.width = 1;
-  canvas.height = 1;
+  canvas.width = 8;
+  canvas.height = 8;
   const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, 1, 1);
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(1.5, 1.5);
+  ctx.lineTo(6.5, 6.5);
+  ctx.moveTo(6.5, 1.5);
+  ctx.lineTo(1.5, 6.5);
+  ctx.stroke();
+  return canvas;
+}
+
+/** Pre-baked falloff: what makes additive blending look like bloom with no
+ *  filter pass and no render target. */
+function glowCanvas() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 32;
+  canvas.height = 32;
+  const ctx = canvas.getContext("2d");
+  const glow = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+  glow.addColorStop(0, "rgba(255,255,255,1)");
+  glow.addColorStop(0.35, "rgba(255,255,255,0.45)");
+  glow.addColorStop(0.65, "rgba(255,255,255,0.10)");
+  glow.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, 32, 32);
   return canvas;
 }
