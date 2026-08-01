@@ -1,0 +1,307 @@
+/* ============================================================================
+   SceneDeck — design tokens
+   ============================================================================
+
+   The site is a rack unit you scroll down, panel by panel. That is not a
+   decorative conceit: SceneDeck is a remote control surface for a broadcast
+   rig, and a broadcast rig is a rack full of panels with meters on them.
+
+   Material 3 and Diia fuse at exactly one place — the surface:
+
+   - DIIA supplies the chassis. Theme-invariant near-black slabs at 40px
+     radius, poster type set tight, and the two flag colours (#0057B7 blue,
+     #FFD700 yellow) used as tally punctuation — one word per section, never
+     wallpaper.
+   - MATERIAL 3 supplies the electronics. The tonal surface-container ramp,
+     elevation-as-tone, state layers, emphasized easing — applied only to
+     things that are genuinely operable.
+
+   The fusion rule is literal: one M3 tonal step IS one physical panel depth.
+   surface-container-low is a recessed panel; surface-container-highest is a
+   fader cap. If it does not do something, it does not get a bevel.
+
+   Every hex has one of three provenances: the SceneDeck indigo->purple brand
+   ramp, the Adwaita neutrals the app already lives in, or the two Diia signal
+   colours.
+
+   --src-h / --src-c are registered so they can be *interpolated*. That is what
+   lets the whole page retint as one motion when a scene accent is picked,
+   rather than snapping between two palettes.
+   ========================================================================== */
+
+@property --src-h {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 258;
+}
+
+@property --src-c {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0.17;
+}
+
+:root {
+  color-scheme: light;
+
+  /* The source colour: SceneDeck indigo #6f78ff expressed in OKLCH. */
+  --src-h: 258;
+  --src-c: 0.17;
+
+  /* ---- Primary: SceneDeck indigo (key #6f78ff) --------------------------- */
+  --md-primary: #4a4cbb;
+  --md-on-primary: #ffffff;
+  --md-primary-container: #e1e0ff;
+  --md-on-primary-container: #0d0b47;
+
+  /* ---- Secondary: SceneDeck purple #9141ac ------------------------------- */
+  --md-secondary: #77268f;
+  --md-on-secondary: #ffffff;
+  --md-secondary-container: #f9d8ff;
+  --md-on-secondary-container: #35003f;
+
+  /* ---- Tertiary: the Diia yellow tonal family ---------------------------- */
+  --md-tertiary: #6d5300;
+  --md-on-tertiary: #ffffff;
+  --md-tertiary-container: #ffd700;
+  --md-on-tertiary-container: #241a00;
+
+  --md-error: #ba1a1a;
+  --md-on-error: #ffffff;
+  --md-error-container: #ffdad6;
+  --md-on-error-container: #410002;
+
+  /* ---- Neutrals: Adwaita-warm, the app's native light habitat ------------ */
+  --md-surface: #faf9f8;
+  --md-on-surface: #1a1720;
+  --md-surface-bright: #ffffff;
+  --md-surface-container-lowest: #ffffff;
+  --md-surface-container-low: #f6f5f4; /* Adwaita light-2 */
+  --md-surface-container: #f1f0ee;
+  --md-surface-container-high: #ebe9e7;
+  --md-surface-container-highest: #deddda; /* Adwaita light-4 */
+  --md-on-surface-variant: #4a4552;
+  --md-outline: #7b7484;
+  --md-outline-variant: #d0cdc9;
+  --md-inverse-surface: #241f31;
+  --md-inverse-on-surface: #f3eff8;
+  --md-scrim: #000000;
+
+  /* ---- Instrument roles -------------------------------------------------- */
+  /* Site-only. The slab is theme-invariant — the same hex in light and dark —
+     because a chassis does not change colour when you turn the lights on. */
+  --inst-slab: #151220;
+  --inst-on-slab: #f4f1fa;
+  --inst-slab-variant: #221d33;
+  --inst-rail: #0057b7; /* Diia blue: structural rails */
+  --inst-signal: #ffd700; /* Diia yellow: one word per section, max */
+  --inst-live: #ed333b; /* tally / on-air */
+  --inst-armed: #ffbe6f; /* record-armed */
+  --inst-ok: #2ec27e;
+  --inst-warn: #ff7800;
+
+  /* ---- Scene accents ----------------------------------------------------- */
+  /* The app's real per-scene accent colours. These drive the retint. */
+  --acc-indigo: #6f78ff;
+  --acc-purple: #9141ac;
+  --acc-blue: #3584e4;
+  --acc-teal: #00b0a8;
+  --acc-green: #2ec27e;
+  --acc-orange: #ff7800;
+  --acc-red: #e01b24;
+
+  /* ---- State layers (M3) ------------------------------------------------- */
+  --state-hover: 0.08;
+  --state-focus: 0.1;
+  --state-press: 0.1;
+
+  /* ---- Canvas ------------------------------------------------------------ */
+  /* In light the signal is ink printed on paper; in dark it is emissive. */
+  --bg-canvas-tint: #241f31;
+  --bg-canvas-blend: multiply;
+  --bg-canvas-opacity: 0.5;
+  --three-opacity: 0.42;
+
+  /* ---- Shape ------------------------------------------------------------- */
+  /* Radius encodes scale, never decoration: two elements sharing a radius
+     must share a hierarchy level. */
+  --r-none: 0px;
+  --r-xs: 4px;
+  --r-s: 8px;
+  --r-m: 12px;
+  --r-l: 16px;
+  --r-xl: 28px;
+  --r-xxl: clamp(24px, 5vw, 40px); /* the Diia monolith */
+  --r-full: 9999px;
+
+  /* ---- Spacing ----------------------------------------------------------- */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --s-8: 64px;
+  --s-9: 96px;
+  --s-10: 128px;
+
+  --section-pad: clamp(88px, 10.5vw, 176px);
+  --slab-pad: clamp(104px, 12vw, 208px);
+  --showpiece-pad: clamp(128px, 14vw, 256px);
+
+  --w-content: 1320px;
+  --w-slab: 1560px;
+  --w-prose: 640px; /* 68ch, never wider */
+
+  --page-margin: 20px;
+  --gutter: 16px;
+  --cols: 4;
+
+  /* ---- Typography -------------------------------------------------------- */
+  --font-display: "Unbounded", "Arial Black", system-ui, sans-serif;
+  --font-text: "Onest", -apple-system, "Segoe UI", Roboto, Cantarell, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", "Source Code Pro", monospace;
+
+  /* ---- Motion ------------------------------------------------------------ */
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized-decel: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --ease-emphasized-accel: cubic-bezier(0.3, 0, 0.8, 0.15);
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Slight overshoot: a fader cap hitting a detent, a needle settling. Used
+     only where something mechanical comes to rest. */
+  --ease-detent: cubic-bezier(0.34, 1.32, 0.36, 1);
+
+  /* Telemetry is strictly linear. Instruments do not ease; easing a meter is
+     a lie. Eased chrome against linear data is the whole motion idea here. */
+  --ease-mechanical: linear;
+
+  --d-short2: 100ms;
+  --d-short3: 150ms;
+  --d-short4: 200ms;
+  --d-medium2: 300ms;
+  --d-medium3: 350ms;
+  --d-medium4: 400ms;
+  --d-long2: 500ms;
+  --d-long3: 550ms;
+  --d-xlong1: 700ms;
+
+  /* ---- Bevel ------------------------------------------------------------- */
+  --bevel: inset 0 1px 0 #ffffff, inset 0 -1px 0 rgba(0, 0, 0, 0.07);
+  --bevel-recessed: inset 0 2px 4px rgba(0, 0, 0, 0.14), inset 0 -1px 0 rgba(255, 255, 255, 0.5);
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.1), 0 1px 3px 1px rgba(0, 0, 0, 0.06);
+  --shadow-2: 0 1px 2px rgba(0, 0, 0, 0.1), 0 2px 6px 2px rgba(0, 0, 0, 0.07);
+  --shadow-3: 0 1px 3px rgba(0, 0, 0, 0.1), 0 4px 8px 3px rgba(0, 0, 0, 0.07);
+  --shadow-4: 0 2px 3px rgba(0, 0, 0, 0.1), 0 6px 10px 4px rgba(0, 0, 0, 0.07);
+
+  /* ---- Z-index ladder ---------------------------------------------------- */
+  /* Locked. Nothing may invent a value outside this list. */
+  --z-three: -4;
+  --z-pixi: -3;
+  --z-grain: -2;
+  --z-vignette: -1;
+  --z-content: 0;
+  --z-spine: 5;
+  --z-nav: 50;
+  --z-toast: 80;
+  --z-skip: 100;
+}
+
+/* ---- Dark ---------------------------------------------------------------- */
+/* Neutrals are cool-violet, seeded from the brand near-black #241f31 — which
+   appears here exactly, as surface-container-high. */
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --md-primary: #c2c3ff;
+  --md-on-primary: #1d1a6e;
+  --md-primary-container: #3a3aa0;
+  --md-on-primary-container: #e1e0ff;
+
+  --md-secondary: #eeb3ff;
+  --md-on-secondary: #530063;
+  --md-secondary-container: #741a88;
+  --md-on-secondary-container: #f9d8ff;
+
+  --md-tertiary: #ffd700;
+  --md-on-tertiary: #3d2f00;
+  --md-tertiary-container: #584500;
+  --md-on-tertiary-container: #ffe895;
+
+  --md-error: #ffb4ab;
+  --md-on-error: #690005;
+  --md-error-container: #93000a;
+  --md-on-error-container: #ffdad6;
+
+  --md-surface: #0e0c13;
+  --md-on-surface: #e7e1f0;
+  --md-surface-bright: #35303f;
+  --md-surface-container-lowest: #08070c;
+  --md-surface-container-low: #17141f;
+  --md-surface-container: #1b1824;
+  --md-surface-container-high: #241f31; /* the brand near-black, exactly */
+  --md-surface-container-highest: #302b3d;
+  --md-on-surface-variant: #c9c2d6;
+  --md-outline: #928a9f;
+  --md-outline-variant: #494252;
+  --md-inverse-surface: #e7e1f0;
+  --md-inverse-on-surface: #322d3b;
+
+  /* #0057B7 lifted until it reaches AA on the dark surface. */
+  --inst-rail: #4d8ff0;
+  --inst-live: #ff6069;
+  --inst-ok: #57e19c;
+  --inst-warn: #ffa348;
+
+  --bg-canvas-tint: #8a90ff;
+  --bg-canvas-blend: plus-lighter;
+  --bg-canvas-opacity: 0.9;
+  --three-opacity: 0.8;
+
+  --bevel: inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 -1px 0 rgba(0, 0, 0, 0.4);
+  --bevel-recessed: inset 0 2px 4px rgba(0, 0, 0, 0.35), inset 0 -1px 0 rgba(255, 255, 255, 0.06);
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-2: 0 1px 2px rgba(0, 0, 0, 0.5), 0 2px 6px 2px rgba(0, 0, 0, 0.3);
+  --shadow-3: 0 1px 3px rgba(0, 0, 0, 0.55), 0 4px 8px 3px rgba(0, 0, 0, 0.35);
+  --shadow-4: 0 2px 3px rgba(0, 0, 0, 0.6), 0 6px 10px 4px rgba(0, 0, 0, 0.4);
+}
+
+@supports not (mix-blend-mode: plus-lighter) {
+  :root[data-theme="dark"] {
+    --bg-canvas-blend: screen;
+  }
+}
+
+/* ---- Grid ---------------------------------------------------------------- */
+
+@media (min-width: 600px) {
+  :root {
+    --cols: 8;
+    --gutter: 20px;
+    --page-margin: 32px;
+  }
+}
+
+@media (min-width: 905px) {
+  :root {
+    --cols: 12;
+    --gutter: 24px;
+    --page-margin: 48px;
+  }
+}
+
+@media (min-width: 1240px) {
+  :root {
+    --gutter: 32px;
+  }
+}
+
+@media (min-width: 1920px) {
+  :root {
+    --gutter: 40px;
+  }
+}

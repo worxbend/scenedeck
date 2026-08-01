@@ -134,6 +134,21 @@ helper over testing through GTK callbacks.
 `docs/custom-themes.md`, `docs/theme-css-reference.md`,
 `docs/manual-test-plan.md`.
 
+## Product site
+
+`site/` is the source of <https://worxbend.github.io/scenedeck/>, deployed
+verbatim by `.github/workflows/pages.yml` on every push to `main` that touches
+it. Plain HTML, CSS and ES modules — no bundler, no framework, no build step at
+deploy time. See `site/README.md` before changing it; the two things that are
+easy to get wrong are that `site/vendor/` and `site/fonts/` are *generated*
+(regenerate with `node site/tools/vendor.mjs` and `node site/tools/fonts.mjs`,
+and extend the export list in `vendor.mjs` before importing anything new from
+three.js or pixi.js), and that release version literals are rewritten at deploy
+time by `site/tools/stamp-release.sh`.
+
+Site copy makes product claims, so treat it like documentation: when a feature
+changes, check `site/index.html` still tells the truth.
+
 ## Commits and releases
 
 Use Conventional Commit subjects (`feat:`, `fix:`, `perf:`, `refactor:`,

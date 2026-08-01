@@ -1,0 +1,893 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SceneDeck — a native Linux control surface for OBS Studio</title>
+    <meta
+      name="description"
+      content="Stream from one machine, control it from another. SceneDeck is a native GTK4 remote for OBS Studio: role-filtered scene switching, a mixer that reaches into nested scenes, and live stream telemetry. Rust, MIT, Linux."
+    />
+    <meta name="theme-color" content="#0e0c13" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#faf9f8" media="(prefers-color-scheme: light)" />
+    <link rel="canonical" href="https://worxbend.github.io/scenedeck/" />
+    <link rel="icon" href="./assets/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./assets/icon.svg" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="SceneDeck" />
+    <meta property="og:title" content="SceneDeck — a native Linux control surface for OBS Studio" />
+    <meta
+      property="og:description"
+      content="Stream from one machine, control it from another. Role-filtered scene switching, a mixer that reaches into nested scenes, and live stream telemetry."
+    />
+    <meta property="og:url" content="https://worxbend.github.io/scenedeck/" />
+    <meta property="og:image" content="https://worxbend.github.io/scenedeck/assets/social.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- Only the latin subsets used above the fold are preloaded. The latin-ext
+         files stay lazy: their unicode-range keeps the browser from fetching
+         them unless the copy actually needs those glyphs. -->
+    <link rel="preload" href="./fonts/unbounded-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="./fonts/onest-latin.woff2" as="font" type="font/woff2" crossorigin />
+
+    <link rel="stylesheet" href="./fonts/fonts.css" />
+    <link rel="stylesheet" href="./styles/tokens.css" />
+    <link rel="stylesheet" href="./styles/base.css" />
+    <link rel="stylesheet" href="./styles/components.css" />
+    <link rel="stylesheet" href="./styles/sections.css" />
+
+    <!-- Resolve the stored colour scheme before first paint, so there is no flash. -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("scenedeck-theme");
+          var dark = stored ? stored === "dark" : !window.matchMedia("(prefers-color-scheme: light)").matches;
+          if (dark) document.documentElement.dataset.theme = "dark";
+        } catch (e) {
+          /* Storage blocked. The system preference applies via CSS defaults. */
+        }
+      })();
+    </script>
+
+    <script type="module" src="./scripts/main.js"></script>
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "SceneDeck",
+        "applicationCategory": "MultimediaApplication",
+        "operatingSystem": "Linux",
+        "url": "https://worxbend.github.io/scenedeck/",
+        "downloadUrl": "https://github.com/worxbend/scenedeck/releases/latest",
+        "softwareVersion": "0.1.21",
+        "license": "https://opensource.org/licenses/MIT",
+        "isAccessibleForFree": true,
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "description": "A native Linux desktop control surface for OBS Studio, built with Rust, GTK4 and libadwaita."
+      }
+    </script>
+  </head>
+
+  <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+
+    <div class="bg-fallback" aria-hidden="true"></div>
+    <canvas id="bg-three" aria-hidden="true"></canvas>
+    <canvas id="bg-pixi" aria-hidden="true"></canvas>
+    <div class="bg-grain" aria-hidden="true"></div>
+    <div class="bg-vignette" aria-hidden="true"></div>
+
+    <!-- The tally spine: a rail down the left edge, present from the first
+         frame to the last, filling linearly with scroll progress. -->
+    <div class="spine" aria-hidden="true"><span class="spine__fill"></span></div>
+
+    <!-- ============================ RAIL ============================ -->
+    <header class="rail" id="rail">
+      <div class="rail__inner">
+        <a class="rail__brand" href="#top">
+          <img src="./assets/icon.svg" alt="" width="32" height="32" />
+          <span>SceneDeck</span>
+          <span class="visually-hidden">— back to top</span>
+        </a>
+
+        <nav class="rail__nav" aria-label="Sections">
+          <a href="#live">Live</a>
+          <a href="#stats">Stats</a>
+          <a href="#audio">Audio</a>
+          <a href="#structure">Graph</a>
+          <a href="#settings">Settings</a>
+        </nav>
+
+        <div class="rail__actions">
+          <span class="pill rail__version" data-release-version>v0.1.21</span>
+
+          <button
+            class="icon-btn"
+            id="theme-toggle"
+            type="button"
+            aria-pressed="false"
+            aria-label="Switch colour scheme"
+          >
+            <svg class="icon icon--moon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12.3 3a1 1 0 0 0-.98 1.42 7.5 7.5 0 0 0 9.26 9.9A1 1 0 0 0 21.2 13 9 9 0 0 1 12.3 3Z" />
+            </svg>
+            <svg class="icon icon--sun" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10Zm0-6a1 1 0 0 1 1 1v2a1 1 0 1 1-2 0V2a1 1 0 0 1 1-1Zm0 18a1 1 0 0 1 1 1v2a1 1 0 1 1-2 0v-2a1 1 0 0 1 1-1ZM1 12a1 1 0 0 1 1-1h2a1 1 0 1 1 0 2H2a1 1 0 0 1-1-1Zm18 0a1 1 0 0 1 1-1h2a1 1 0 1 1 0 2h-2a1 1 0 0 1-1-1ZM4.2 4.2a1 1 0 0 1 1.42 0l1.4 1.4A1 1 0 0 1 5.6 7.03l-1.4-1.4a1 1 0 0 1 0-1.42Zm12.75 12.75a1 1 0 0 1 1.42 0l1.4 1.4a1 1 0 0 1-1.41 1.42l-1.41-1.4a1 1 0 0 1 0-1.42ZM19.8 4.2a1 1 0 0 1 0 1.42l-1.4 1.4A1 1 0 0 1 16.97 5.6l1.4-1.4a1 1 0 0 1 1.42 0ZM7.03 16.95a1 1 0 0 1 0 1.42l-1.4 1.4A1 1 0 0 1 4.2 18.36l1.4-1.41a1 1 0 0 1 1.42 0Z"
+              />
+            </svg>
+          </button>
+
+          <a
+            class="icon-btn"
+            href="https://github.com/worxbend/scenedeck"
+            aria-label="SceneDeck on GitHub"
+            rel="noopener"
+          >
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M12 .5a12 12 0 0 0-3.79 23.4c.6.1.82-.26.82-.58v-2.2c-3.34.73-4.04-1.42-4.04-1.42-.55-1.4-1.34-1.77-1.34-1.77-1.09-.74.08-.73.08-.73 1.2.09 1.84 1.24 1.84 1.24 1.07 1.84 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.34-5.47-5.96 0-1.32.47-2.4 1.24-3.24-.12-.31-.54-1.53.12-3.18 0 0 1.01-.32 3.3 1.24a11.4 11.4 0 0 1 6.02 0c2.29-1.56 3.3-1.24 3.3-1.24.66 1.65.24 2.87.12 3.18a4.65 4.65 0 0 1 1.24 3.24c0 4.63-2.8 5.65-5.48 5.95.43.37.82 1.1.82 2.22v3.29c0 .32.21.69.82.57A12 12 0 0 0 12 .5Z"
+              />
+            </svg>
+          </a>
+
+          <a class="btn btn--filled btn--sm rail__cta" href="#install">Install</a>
+        </div>
+      </div>
+    </header>
+
+    <main id="main">
+      <!-- ============================ HERO ============================ -->
+      <section class="hero" id="top">
+        <div class="shell shell--slab hero__grid">
+          <div class="hero__copy">
+            <p class="legend" data-reveal>
+              OBS Studio remote · Native Linux · <span data-release-version>v0.1.21</span>
+            </p>
+
+            <h1 class="poster hero__title" data-reveal style="--reveal-delay: 60ms">
+              Stream from<br />one machine.<br />Control it from
+              <span class="signal">another</span>.
+            </h1>
+
+            <p class="body-lg hero__lede prose" data-reveal style="--reveal-delay: 140ms">
+              SceneDeck is a native GTK4 control surface for OBS Studio. Scenes, audio and live
+              telemetry for your whole session — driven from the computer you actually work on.
+            </p>
+
+            <div class="hero__actions" data-reveal style="--reveal-delay: 200ms">
+              <a class="btn btn--filled" href="#install">
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M12 3a1 1 0 0 1 1 1v9.59l3.3-3.3a1 1 0 0 1 1.4 1.42l-5 5a1 1 0 0 1-1.4 0l-5-5a1 1 0 1 1 1.4-1.42l3.3 3.3V4a1 1 0 0 1 1-1ZM4 19a1 1 0 0 1 1-1h14a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Z"
+                  />
+                </svg>
+                Install SceneDeck
+              </a>
+              <a class="btn btn--outlined" href="https://github.com/worxbend/scenedeck" rel="noopener">
+                View source on GitHub
+              </a>
+            </div>
+
+            <div class="code hero__code" data-reveal style="--reveal-delay: 260ms">
+              <code><span class="prompt">$</span> sudo snap install scenedeck</code>
+              <button class="copy" type="button" data-copy="sudo snap install scenedeck" aria-label="Copy install command">
+                <svg class="icon icon--copy" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M9 2a2 2 0 0 0-2 2v1H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-1h1a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H9Zm0 2h9v13h-1V7a2 2 0 0 0-2-2H9V4ZM6 7h9v13H6V7Z"
+                  />
+                </svg>
+                <svg class="icon icon--check" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M9.55 17.6 4.4 12.45l1.42-1.42 3.73 3.73 8.63-8.63 1.42 1.42Z" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- The deck: a faithful recreation of the app's Live page. -->
+          <div class="hero__deck" data-reveal style="--reveal-delay: 180ms">
+            <div class="deck panel panel--raised">
+              <div class="deck__chrome">
+                <span class="deck__dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                <span class="deck__name">SceneDeck</span>
+                <span class="deck__sel legend">Profile: Streaming · Collection: Main</span>
+              </div>
+
+              <div class="deck__body">
+                <div class="deck__rail" role="group" aria-label="Preview a SceneDeck page">
+                  <button class="deck__page is-active" type="button" data-page="live" aria-pressed="true">Live</button>
+                  <button class="deck__page" type="button" data-page="stats" aria-pressed="false">Stats</button>
+                  <button class="deck__page" type="button" data-page="graph" aria-pressed="false">Graph</button>
+                  <button class="deck__page" type="button" data-page="inventory" aria-pressed="false">Inventory</button>
+                  <button class="deck__page" type="button" data-page="doctor" aria-pressed="false">Doctor</button>
+                  <button class="deck__page" type="button" data-page="settings" aria-pressed="false">Settings</button>
+                  <span class="deck__rail-spacer"></span>
+                  <span class="deck__conn"><span class="pip pip--ok"></span> Connected</span>
+                </div>
+
+                <div class="deck__screen" id="deck-screen"></div>
+              </div>
+
+              <!-- The status bar rides on every page in the real app, so it
+                   rides on every page of the mock too. -->
+              <div class="deck__status">
+                <span class="deck__status-cell"><span class="pip pip--live"></span> STREAM</span>
+                <span class="deck__status-cell"><span class="pip pip--armed"></span> RECORD</span>
+                <span class="deck__status-cell mono" data-metric="fps">60.0 fps</span>
+                <span class="deck__status-cell mono" data-metric="bitrate">6000 kb/s</span>
+                <span class="deck__status-cell mono" data-metric="cpu">CPU 4.2%</span>
+                <span class="deck__status-cell mono" data-metric="dropped">0 dropped</span>
+              </div>
+            </div>
+
+            <p class="legend hero__deck-note">
+              Illustration of the SceneDeck interface. Figures are representative, not a live feed.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========================== FRICTION ========================== -->
+      <section class="section" id="friction">
+        <div class="shell shell--slab">
+          <div class="slab">
+            <div class="shell">
+              <h2 class="poster poster--sm faults__title" data-reveal>
+                Four things that<br />break a <span class="signal">stream</span>.
+              </h2>
+
+              <ol class="faults" role="list">
+                <li class="fault" data-reveal>
+                  <span class="fault__no mono">01</span>
+                  <h3 class="title-lg">The alt-tab tax</h3>
+                  <p class="body-md">
+                    Your rig runs OBS. You run everything else — the code, the deck, the game — on a
+                    different machine. Every scene switch costs you a context switch.
+                  </p>
+                </li>
+                <li class="fault" data-reveal style="--reveal-delay: 70ms">
+                  <span class="fault__no mono">02</span>
+                  <h3 class="title-lg">A scene list out of control</h3>
+                  <p class="body-md">
+                    Real setups fill with utility scenes, camera-only scenes, overlays and source
+                    wrappers. Things that belong inside other scenes, and should never be clicked
+                    live by accident.
+                  </p>
+                </li>
+                <li class="fault" data-reveal style="--reveal-delay: 140ms">
+                  <span class="fault__no mono">03</span>
+                  <h3 class="title-lg">Fighting audio mid-stream</h3>
+                  <p class="body-md">
+                    The input you need to mute is nested three scenes deep, and the slider you must
+                    not touch is sitting right next to it.
+                  </p>
+                </li>
+                <li class="fault" data-reveal style="--reveal-delay: 210ms">
+                  <span class="fault__no mono">04</span>
+                  <h3 class="title-lg">Flying blind</h3>
+                  <p class="body-md">
+                    Frames are being dropped somewhere, and you will find out from chat.
+                  </p>
+                </li>
+              </ol>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================ LIVE ============================ -->
+      <section class="section" id="live">
+        <div class="shell">
+          <div class="section-head">
+            <p class="section-no" data-reveal>01 / Live &amp; Inventory</p>
+            <h2 class="display-lg" data-reveal>Only the scenes you actually switch to.</h2>
+            <p class="body-lg prose" data-reveal>
+              Tag scenes by role once. The Live page then shows only your primary scenes, as cards,
+              with your own accent colour behind each one. One click sends a scene to program. No
+              renaming your collection. No restructuring it.
+            </p>
+          </div>
+
+          <div class="live__grid">
+            <div class="live__demo panel panel--raised" data-reveal>
+              <div class="live__demo-head">
+                <p class="legend">Live · Primary scenes</p>
+                <p class="legend live__pgm">
+                  Program: <strong class="mono" id="live-program">Main Cam</strong>
+                </p>
+              </div>
+
+              <div class="live__cards" id="live-cards" role="group" aria-label="Primary scene cards"></div>
+
+              <!-- The retint. Picking an accent here re-tints the entire page,
+                   the WebGL panels and the particle signal in one motion — the
+                   same thing the app does with per-scene accent colours. -->
+              <div class="live__accents">
+                <p class="legend" id="accent-label">Scene accent colour</p>
+                <div class="live__chips" role="group" aria-labelledby="accent-label" id="accent-chips"></div>
+              </div>
+            </div>
+
+            <div class="live__side">
+              <article class="panel live__note" data-reveal>
+                <h3 class="title-lg">Six roles, stored on your machine</h3>
+                <p class="body-md prose">
+                  Primary, Secondary, Module, Raw, Debug and Archive. Roles live in SceneDeck's own
+                  local registry — your OBS scene collection is never touched.
+                </p>
+                <ul class="role-list" role="list">
+                  <li><span class="tag tag--primary">Primary</span> Live-switchable program scene</li>
+                  <li><span class="tag">Secondary</span> Valid scene, hidden from Live by default</li>
+                  <li><span class="tag tag--module">Module</span> Reusable nested building block</li>
+                  <li><span class="tag tag--raw">Raw</span> Source wrapper — a leaf in the graph</li>
+                  <li><span class="tag tag--debug">Debug</span> Temporary, never on a live path</li>
+                  <li><span class="tag tag--archive">Archive</span> Preserved, out of the workflow</li>
+                </ul>
+              </article>
+
+              <article class="panel live__note" data-reveal style="--reveal-delay: 80ms">
+                <h3 class="title-lg">Set it up once</h3>
+                <p class="body-md prose">
+                  Inventory is where you tell SceneDeck what your scenes are for. Assign a role,
+                  assign an accent colour, and drag them into an order that sticks — that order is
+                  the order the Live page uses.
+                </p>
+                <p class="legend">Export and import the whole registry as YAML</p>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================ STATS =========================== -->
+      <!-- The showpiece. Most vertical space, hardest tonal break. -->
+      <section class="section stats" id="stats">
+        <div class="shell shell--slab">
+          <div class="slab stats__slab">
+            <div class="shell">
+              <div class="section-head">
+                <p class="section-no" data-reveal>02 / Stats</p>
+                <h2 class="poster poster--sm" data-reveal>
+                  Flying <span class="signal">blind</span><br />is a choice.
+                </h2>
+                <p class="body-lg prose" data-reveal>
+                  The Stats page is a live instrument panel for your OBS session — gauges and charts,
+                  updating while you work, on the machine that is not busy encoding.
+                </p>
+              </div>
+
+              <div class="meterwall" data-reveal>
+                <div class="gauges" id="gauges"></div>
+
+                <div class="charts">
+                  <figure class="chart panel--recessed">
+                    <figcaption class="legend">Streaming bitrate (kb/s)</figcaption>
+                    <svg viewBox="0 0 320 96" preserveAspectRatio="none" aria-hidden="true">
+                      <path class="chart__area" id="chart-bitrate-area" d="" />
+                      <path class="chart__line" id="chart-bitrate" d="" />
+                    </svg>
+                    <span class="chart__now mono" id="chart-bitrate-now">6000</span>
+                  </figure>
+
+                  <figure class="chart panel--recessed">
+                    <figcaption class="legend">Average frame render time (ms)</figcaption>
+                    <svg viewBox="0 0 320 96" preserveAspectRatio="none" aria-hidden="true">
+                      <path class="chart__area" id="chart-frame-area" d="" />
+                      <path class="chart__line" id="chart-frame" d="" />
+                    </svg>
+                    <span class="chart__now mono" id="chart-frame-now">3.4</span>
+                  </figure>
+                </div>
+
+                <div class="counters" id="counters"></div>
+              </div>
+
+              <div class="stats__notes">
+                <p class="body-md" data-reveal>
+                  <strong>It reflows.</strong> The Stats page rearranges for narrow windows, so it
+                  still works parked in a column beside your editor.
+                </p>
+                <p class="body-md" data-reveal style="--reveal-delay: 80ms">
+                  <strong>And it never leaves.</strong> Connection state, stream and record status,
+                  FPS, streaming bitrate, OBS CPU usage and dropped frames sit in the status bar on
+                  every single page.
+                </p>
+              </div>
+
+              <p class="legend stats__foot">
+                Figures on this page illustrate the Stats layout. They are not a live feed.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================ AUDIO =========================== -->
+      <section class="section" id="audio">
+        <div class="shell">
+          <div class="section-head">
+            <p class="section-no" data-reveal>03 / Audio</p>
+            <h2 class="display-lg" data-reveal>The mixer follows the scene.</h2>
+            <p class="body-lg prose" data-reveal>
+              Global audio first, then every audio-capable input in the active scene — including
+              inputs nested inside other scenes and groups. Mute instantly. Ride levels on compact
+              vertical sliders. Lock a slider so you never nudge it on air.
+            </p>
+          </div>
+
+          <div class="audio__grid">
+            <div class="mixer panel panel--raised" data-reveal id="mixer" role="group" aria-label="Audio mixer demonstration"></div>
+
+            <ul class="audio__points" role="list">
+              <li class="panel audio__point" data-reveal>
+                <h3 class="title-lg">It reaches into nested scenes</h3>
+                <p class="body-md">
+                  If an input is buried inside a scene that is itself inside your program scene,
+                  it still shows up in the mixer. You do not have to go find it.
+                </p>
+              </li>
+              <li class="panel audio__point" data-reveal style="--reveal-delay: 70ms">
+                <h3 class="title-lg">The lock is the point</h3>
+                <p class="body-md">
+                  Locking a card freezes its slider locally. The fader stops responding to
+                  pointer and keyboard, so the one level you must not touch cannot be touched.
+                </p>
+                <p class="legend">Try the lock on any channel</p>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========================== STRUCTURE ========================= -->
+      <section class="section" id="structure">
+        <div class="shell">
+          <div class="section-head">
+            <p class="section-no" data-reveal>04 / Graph &amp; Doctor</p>
+            <h2 class="display-lg" data-reveal>See what is inside what.</h2>
+          </div>
+
+          <div class="structure__grid">
+            <article class="panel structure__card" data-reveal>
+              <h3 class="headline-sm">Graph</h3>
+              <p class="body-md prose">
+                The Graph page draws your nested scene dependencies — which scenes are embedded
+                inside which. The collection you have been building for eighteen months, as a
+                diagram, in one screen.
+              </p>
+              <div class="graphviz" aria-hidden="true">
+                <svg viewBox="0 0 420 220" role="presentation">
+                  <g class="graphviz__edges" id="graph-edges"></g>
+                  <g class="graphviz__nodes" id="graph-nodes"></g>
+                </svg>
+              </div>
+              <p class="legend">Directed edges — a parent scene nesting a child scene</p>
+            </article>
+
+            <article class="panel structure__card" data-reveal style="--reveal-delay: 90ms">
+              <h3 class="headline-sm">Doctor</h3>
+              <p class="body-md prose">
+                The Doctor page runs structural diagnostics across your scene roles and your scene
+                dependency structure, and tells you what it found.
+              </p>
+              <ul class="doctor" role="list">
+                <li class="doctor__row" data-state="ok">
+                  <span class="doctor__mark" aria-hidden="true"></span>
+                  <span>Every scene in the registry still exists in OBS</span>
+                </li>
+                <li class="doctor__row" data-state="warn">
+                  <span class="doctor__mark" aria-hidden="true"></span>
+                  <span>A scene in the collection has no assigned role</span>
+                </li>
+                <li class="doctor__row" data-state="warn">
+                  <span class="doctor__mark" aria-hidden="true"></span>
+                  <span>A Primary scene nests a Debug scene</span>
+                </li>
+                <li class="doctor__row" data-state="error">
+                  <span class="doctor__mark" aria-hidden="true"></span>
+                  <span>Dependency cycle detected between two scenes</span>
+                </li>
+                <li class="doctor__row" data-state="ok">
+                  <span class="doctor__mark" aria-hidden="true"></span>
+                  <span>No Raw scene nests another scene</span>
+                </li>
+              </ul>
+              <p class="legend">Each finding carries a suggested fix</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- =========================== SETTINGS ========================= -->
+      <section class="section" id="settings">
+        <div class="shell">
+          <div class="section-head">
+            <p class="section-no" data-reveal>05 / Settings</p>
+            <h2 class="display-lg" data-reveal>Your rig, your rules.</h2>
+          </div>
+
+          <div class="settings__grid">
+            <article class="panel settings__card" data-reveal>
+              <h3 class="title-lg">Connection</h3>
+              <p class="body-md prose">
+                Point SceneDeck at your OBS host and port — <code class="mono">127.0.0.1:4455</code>
+                by default — and connect. Your password is stored in the system Secret Service
+                keyring. Never in plaintext, never in a config file.
+              </p>
+              <p class="keyring legend">
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M12 1a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-1V6a5 5 0 0 0-5-5Zm3 8H9V6a3 3 0 1 1 6 0v3Z"
+                  />
+                </svg>
+                Stored in the system keyring
+              </p>
+            </article>
+
+            <article class="panel settings__card" data-reveal style="--reveal-delay: 70ms">
+              <h3 class="title-lg">Appearance</h3>
+              <p class="body-md prose">
+                Follow the system colour scheme, or pin light or dark. Choose a built-in theme
+                family, or point SceneDeck at your own light and dark CSS files.
+              </p>
+              <ul class="swatches" role="list">
+                <li style="--a: #9d8cff; --b: #181421"><span></span>Studio Purple</li>
+                <li style="--a: #88c0d0; --b: #2e3440"><span></span>Nord</li>
+                <li style="--a: #bd93f9; --b: #282a36"><span></span>Dracula-inspired</li>
+                <li style="--a: #ed333b; --b: #1b1b1b"><span></span>Stream Red</li>
+                <li style="--a: #b58900; --b: #002b36"><span></span>Solarized Dark</li>
+                <li style="--a: #77216f; --b: #2c001e"><span></span>Ubuntu Violet</li>
+              </ul>
+            </article>
+
+            <article class="panel settings__card" data-reveal style="--reveal-delay: 140ms">
+              <h3 class="title-lg">While connected</h3>
+              <p class="body-md prose">
+                Switch OBS profiles and scene collections straight from the SceneDeck header. Start
+                and stop streaming and recording from the sidebar, on any page.
+              </p>
+              <p class="legend">Internationalised with Fluent · English is the fallback locale</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- =========================== NATIVE =========================== -->
+      <section class="section native" id="native">
+        <div class="shell shell--slab">
+          <div class="slab native__slab">
+            <div class="shell">
+              <h2 class="poster native__title" data-reveal>
+                Not Electron.<br />Not a web <span class="signal">wrapper</span>.
+              </h2>
+
+              <p class="body-lg prose native__lede" data-reveal>
+                SceneDeck is a single small Rust binary built with GTK4 and libadwaita. It looks and
+                behaves like the rest of your desktop because it is built with the same toolkit your
+                desktop is.
+              </p>
+
+              <dl class="plates" data-reveal>
+                <div class="plate">
+                  <dt class="legend">Language</dt>
+                  <dd class="title-lg mono">Rust 2021</dd>
+                </div>
+                <div class="plate">
+                  <dt class="legend">Toolkit</dt>
+                  <dd class="title-lg mono">GTK4 + libadwaita</dd>
+                </div>
+                <div class="plate">
+                  <dt class="legend">Licence</dt>
+                  <dd class="title-lg mono">MIT</dd>
+                </div>
+                <div class="plate">
+                  <dt class="legend">Architectures</dt>
+                  <dd class="title-lg mono">amd64 · arm64</dd>
+                </div>
+              </dl>
+
+              <p class="body-md prose native__arch" data-reveal>
+                One GTK main thread owns every widget. A Tokio runtime owns every OBS WebSocket
+                call. Events cross back over an mpsc channel, polled every 50&nbsp;ms. That boundary
+                is why the interface does not stutter when the network does.
+              </p>
+            </div>
+
+            <div class="marquee" aria-hidden="true">
+              <div class="marquee__track">
+                <span>Rust 2021 · GTK4 · libadwaita · Tokio · OBS WebSocket · Fluent i18n · </span>
+                <span>Rust 2021 · GTK4 · libadwaita · Tokio · OBS WebSocket · Fluent i18n · </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- =========================== INSTALL ========================== -->
+      <section class="section" id="install">
+        <div class="shell">
+          <div class="section-head">
+            <p class="section-no" data-reveal>06 / Install</p>
+            <h2 class="display-lg" data-reveal>Patch it in.</h2>
+            <p class="body-lg prose" data-reveal>
+              Five ways in, on both amd64 and arm64. All of them are one command.
+            </p>
+          </div>
+
+          <div class="patchbay" data-reveal>
+            <div class="patchbay__tabs" role="tablist" aria-label="Installation method" aria-orientation="vertical">
+              <button class="jack" role="tab" id="tab-snap" aria-controls="pane-snap" aria-selected="true" type="button">
+                <span class="jack__socket" aria-hidden="true"></span>
+                <span class="jack__name">Snap</span>
+                <span class="jack__hint">Easiest · auto-updates</span>
+              </button>
+              <button class="jack" role="tab" id="tab-flatpak" aria-controls="pane-flatpak" aria-selected="false" tabindex="-1" type="button">
+                <span class="jack__socket" aria-hidden="true"></span>
+                <span class="jack__name">Flatpak</span>
+                <span class="jack__hint">Sandboxed bundle</span>
+              </button>
+              <button class="jack" role="tab" id="tab-appimage" aria-controls="pane-appimage" aria-selected="false" tabindex="-1" type="button">
+                <span class="jack__socket" aria-hidden="true"></span>
+                <span class="jack__name">AppImage</span>
+                <span class="jack__hint">Portable · no install</span>
+              </button>
+              <button class="jack" role="tab" id="tab-binary" aria-controls="pane-binary" aria-selected="false" tabindex="-1" type="button">
+                <span class="jack__socket" aria-hidden="true"></span>
+                <span class="jack__name">Binary</span>
+                <span class="jack__hint">The raw executable</span>
+              </button>
+              <button class="jack" role="tab" id="tab-source" aria-controls="pane-source" aria-selected="false" tabindex="-1" type="button">
+                <span class="jack__socket" aria-hidden="true"></span>
+                <span class="jack__name">Source</span>
+                <span class="jack__hint">Build it yourself</span>
+              </button>
+            </div>
+
+            <div class="patchbay__panes">
+              <div class="pane" role="tabpanel" id="pane-snap" aria-labelledby="tab-snap" tabindex="0">
+                <h3 class="headline-sm">Install from the Snap Store</h3>
+                <p class="body-md prose">
+                  The shortest path, and the one that keeps itself up to date.
+                </p>
+                <div class="code">
+                  <code><span class="prompt">$</span> sudo snap install scenedeck</code>
+                  <button class="copy" type="button" data-copy="sudo snap install scenedeck" aria-label="Copy command">
+                    <svg class="icon icon--copy" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy" /></svg>
+                    <svg class="icon icon--check" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check" /></svg>
+                  </button>
+                </div>
+                <a class="snapbadge" href="https://snapcraft.io/scenedeck" rel="noopener">
+                  <img
+                    src="./assets/snap-store.svg"
+                    alt="Get it from the Snap Store"
+                    width="182"
+                    height="56"
+                  />
+                </a>
+              </div>
+
+              <div class="pane" role="tabpanel" id="pane-flatpak" aria-labelledby="tab-flatpak" tabindex="0" hidden>
+                <h3 class="headline-sm">Install the Flatpak bundle</h3>
+                <p class="body-md prose">
+                  Built against the GNOME runtime and published with every release.
+                </p>
+                <div class="code">
+                  <code><span class="prompt">$</span> flatpak install --user ./scenedeck-0.1.21-linux-amd64.flatpak</code>
+                  <button class="copy" type="button" data-copy="flatpak install --user ./scenedeck-0.1.21-linux-amd64.flatpak" aria-label="Copy command">
+                    <svg class="icon icon--copy" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy" /></svg>
+                    <svg class="icon icon--check" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check" /></svg>
+                  </button>
+                </div>
+                <div class="code">
+                  <code><span class="prompt">$</span> flatpak run io.scenedeck.app</code>
+                  <button class="copy" type="button" data-copy="flatpak run io.scenedeck.app" aria-label="Copy command">
+                    <svg class="icon icon--copy" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy" /></svg>
+                    <svg class="icon icon--check" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check" /></svg>
+                  </button>
+                </div>
+                <div class="dl-row">
+                  <a class="btn btn--tonal btn--sm" href="https://github.com/worxbend/scenedeck/releases/latest/download/scenedeck-0.1.21-linux-amd64.flatpak">Download .flatpak — amd64</a>
+                  <a class="btn btn--outlined btn--sm" href="https://github.com/worxbend/scenedeck/releases/latest/download/scenedeck-0.1.21-linux-arm64.flatpak">arm64</a>
+                </div>
+              </div>
+
+              <div class="pane" role="tabpanel" id="pane-appimage" aria-labelledby="tab-appimage" tabindex="0" hidden>
+                <h3 class="headline-sm">Run the AppImage</h3>
+                <p class="body-md prose">
+                  Nothing to install. Delta updates are available through the published
+                  <code class="mono">.zsync</code> files.
+                </p>
+                <div class="code">
+                  <code><span class="prompt">$</span> chmod +x scenedeck-0.1.21-linux-amd64.AppImage</code>
+                  <button class="copy" type="button" data-copy="chmod +x scenedeck-0.1.21-linux-amd64.AppImage" aria-label="Copy command">
+                    <svg class="icon icon--copy" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy" /></svg>
+                    <svg class="icon icon--check" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check" /></svg>
+                  </button>
+                </div>
+                <div class="code">
+                  <code><span class="prompt">$</span> ./scenedeck-0.1.21-linux-amd64.AppImage</code>
+                  <button class="copy" type="button" data-copy="./scenedeck-0.1.21-linux-amd64.AppImage" aria-label="Copy command">
+                    <svg class="icon icon--copy" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy" /></svg>
+                    <svg class="icon icon--check" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check" /></svg>
+                  </button>
+                </div>
+                <div class="dl-row">
+                  <a class="btn btn--tonal btn--sm" href="https://github.com/worxbend/scenedeck/releases/latest/download/scenedeck-0.1.21-linux-amd64.AppImage">Download .AppImage — amd64</a>
+                  <a class="btn btn--outlined btn--sm" href="https://github.com/worxbend/scenedeck/releases/latest/download/scenedeck-0.1.21-linux-arm64.AppImage">arm64</a>
+                </div>
+              </div>
+
+              <div class="pane" role="tabpanel" id="pane-binary" aria-labelledby="tab-binary" tabindex="0" hidden>
+                <h3 class="headline-sm">Take the compiled binary</h3>
+                <p class="body-md prose">
+                  The bare executable, plus a <code class="mono">.tar.gz</code> if you would rather
+                  have an archive. You supply the GTK4 and libadwaita runtime libraries.
+                </p>
+                <div class="code">
+                  <code><span class="prompt">$</span> chmod +x scenedeck-0.1.21-linux-amd64 &amp;&amp; ./scenedeck-0.1.21-linux-amd64</code>
+                  <button class="copy" type="button" data-copy="chmod +x scenedeck-0.1.21-linux-amd64 && ./scenedeck-0.1.21-linux-amd64" aria-label="Copy command">
+                    <svg class="icon icon--copy" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy" /></svg>
+                    <svg class="icon icon--check" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check" /></svg>
+                  </button>
+                </div>
+                <div class="dl-row">
+                  <a class="btn btn--tonal btn--sm" href="https://github.com/worxbend/scenedeck/releases/latest/download/scenedeck-0.1.21-linux-amd64">Download binary — amd64</a>
+                  <a class="btn btn--outlined btn--sm" href="https://github.com/worxbend/scenedeck/releases/latest/download/scenedeck-0.1.21-linux-arm64">arm64</a>
+                  <a class="btn btn--outlined btn--sm" href="https://github.com/worxbend/scenedeck/releases/latest/download/scenedeck-0.1.21-linux-amd64.tar.gz">.tar.gz</a>
+                </div>
+              </div>
+
+              <div class="pane" role="tabpanel" id="pane-source" aria-labelledby="tab-source" tabindex="0" hidden>
+                <h3 class="headline-sm">Build from source</h3>
+                <p class="body-md prose">
+                  Needs the GTK4 and libadwaita development libraries,
+                  <code class="mono">glib-compile-resources</code>, and the Rust toolchain pinned in
+                  the repository.
+                </p>
+                <div class="code">
+                  <code><span class="prompt">$</span> git clone https://github.com/worxbend/scenedeck</code>
+                  <button class="copy" type="button" data-copy="git clone https://github.com/worxbend/scenedeck" aria-label="Copy command">
+                    <svg class="icon icon--copy" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy" /></svg>
+                    <svg class="icon icon--check" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check" /></svg>
+                  </button>
+                </div>
+                <div class="code">
+                  <code><span class="prompt">$</span> cargo build --release</code>
+                  <button class="copy" type="button" data-copy="cargo build --release" aria-label="Copy command">
+                    <svg class="icon icon--copy" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy" /></svg>
+                    <svg class="icon icon--check" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check" /></svg>
+                  </button>
+                </div>
+                <div class="dl-row">
+                  <a class="btn btn--outlined btn--sm" href="https://github.com/worxbend/scenedeck/blob/main/docs/developer-guide.md">Developer guide</a>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <p class="legend install__verify">
+            Every archive is published on the
+            <a href="https://github.com/worxbend/scenedeck/releases/latest">GitHub Releases page</a>
+            for <span data-release-version>v0.1.21</span>.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================ SPEC ============================ -->
+      <section class="section" id="spec">
+        <div class="shell">
+          <div class="section-head">
+            <p class="section-no" data-reveal>Spec sheet</p>
+            <h2 class="display-lg" data-reveal>What it needs, and what it does not do.</h2>
+          </div>
+
+          <div class="spec__grid">
+            <dl class="reqs panel" data-reveal>
+              <div><dt class="legend">OBS Studio</dt><dd class="body-md">28 or newer — the WebSocket server is built in from 28</dd></div>
+              <div><dt class="legend">Desktop</dt><dd class="body-md">Any Linux desktop with GTK4 and libadwaita</dd></div>
+              <div><dt class="legend">Connection</dt><dd class="body-md">OBS WebSocket, <code class="mono">127.0.0.1:4455</code> by default</dd></div>
+              <div><dt class="legend">Password storage</dt><dd class="body-md">The system Secret Service keyring</dd></div>
+            </dl>
+
+            <div class="faq" data-reveal style="--reveal-delay: 80ms">
+              <details class="qa">
+                <summary class="title-md">Does SceneDeck have to run on the same machine as OBS?</summary>
+                <p class="body-md">
+                  No — that is the point. Run OBS on your streaming rig and SceneDeck on whatever
+                  you are actually working on, and point it at the rig's host and port.
+                </p>
+              </details>
+              <details class="qa">
+                <summary class="title-md">Do I have to rename or restructure my scenes?</summary>
+                <p class="body-md">
+                  No. Roles and accent colours are stored locally by SceneDeck. Your OBS scene
+                  collection is untouched.
+                </p>
+              </details>
+              <details class="qa">
+                <summary class="title-md">Where is my OBS password kept?</summary>
+                <p class="body-md">
+                  In your system's Secret Service keyring. It is never written in plaintext and
+                  never stored in the config file.
+                </p>
+              </details>
+              <details class="qa">
+                <summary class="title-md">Can I use my own colours?</summary>
+                <p class="body-md">
+                  Yes. There are built-in light and dark theme families, and you can point SceneDeck
+                  at your own light and dark CSS files.
+                </p>
+              </details>
+              <details class="qa">
+                <summary class="title-md">Is it translated?</summary>
+                <p class="body-md">
+                  SceneDeck is internationalised with Fluent, and English is the fallback locale.
+                  Translations are welcome.
+                </p>
+              </details>
+              <details class="qa">
+                <summary class="title-md">Something is wrong.</summary>
+                <p class="body-md">
+                  Open an issue on
+                  <a href="https://github.com/worxbend/scenedeck/issues">GitHub</a>. This is a
+                  single-developer project, and bug reports are read.
+                </p>
+              </details>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- =========================== FOOTER =========================== -->
+    <footer class="footer">
+      <div class="shell footer__inner">
+        <div class="footer__brand">
+          <img src="./assets/icon.svg" alt="" width="40" height="40" />
+          <p class="title-lg">SceneDeck</p>
+          <p class="body-md">A native Linux control surface for OBS Studio.</p>
+          <p class="legend">MIT licensed · Built by worxbend</p>
+        </div>
+
+        <nav class="footer__links" aria-label="Project">
+          <p class="legend">Project</p>
+          <a href="https://github.com/worxbend/scenedeck">GitHub</a>
+          <a href="https://github.com/worxbend/scenedeck/releases">Releases</a>
+          <a href="https://github.com/worxbend/scenedeck/issues">Issues</a>
+          <a href="https://snapcraft.io/scenedeck">Snap Store</a>
+        </nav>
+
+        <nav class="footer__links" aria-label="Documentation">
+          <p class="legend">Docs</p>
+          <a href="https://github.com/worxbend/scenedeck/blob/main/docs/user-guide.md">User guide</a>
+          <a href="https://github.com/worxbend/scenedeck/blob/main/docs/configuration.md">Configuration</a>
+          <a href="https://github.com/worxbend/scenedeck/blob/main/docs/custom-themes.md">Custom themes</a>
+          <a href="https://github.com/worxbend/scenedeck/blob/main/docs/developer-guide.md">Developer guide</a>
+        </nav>
+      </div>
+
+      <div class="shell footer__bottom legend">
+        <span>© 2026 worxbend</span>
+        <span data-release-version>v0.1.21</span>
+        <span>Not affiliated with the OBS Project.</span>
+      </div>
+    </footer>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <!-- Icon defs, referenced by <use> above. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <defs>
+        <path
+          id="i-copy"
+          d="M9 2a2 2 0 0 0-2 2v1H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-1h1a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H9Zm0 2h9v13h-1V7a2 2 0 0 0-2-2H9V4ZM6 7h9v13H6V7Z"
+        />
+        <path id="i-check" d="M9.55 17.6 4.4 12.45l1.42-1.42 3.73 3.73 8.63-8.63 1.42 1.42Z" />
+      </defs>
+    </svg>
+  </body>
+</html>

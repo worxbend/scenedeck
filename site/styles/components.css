@@ -1,0 +1,535 @@
+/* ============================================================================
+   SceneDeck — components
+   ============================================================================
+   Elevation is tonal first: a level is a surface-container step, and the
+   shadow is a whisper on top. The bevel is the instrument tell, and it obeys
+   one rule — if it does not do something, it does not get a bevel. Controls
+   that recess (fader slots, meter wells, gauge dials) invert it.
+   ========================================================================== */
+
+/* ---- Panels -------------------------------------------------------------- */
+
+.panel {
+  position: relative;
+  border-radius: var(--r-l);
+  background: var(--md-surface-container-low);
+  box-shadow: var(--shadow-1), var(--bevel);
+}
+
+.panel--flush {
+  background: var(--md-surface-container-lowest);
+  box-shadow: inset 0 0 0 1px var(--md-outline-variant);
+}
+
+.panel--raised {
+  background: var(--md-surface-container);
+  box-shadow: var(--shadow-2), var(--bevel);
+}
+
+.panel--recessed {
+  background: var(--md-surface-container-lowest);
+  box-shadow: var(--bevel-recessed);
+}
+
+/* In dark, M3's surface tint puts a little of the primary hue into every
+   raised surface — which is also what stops a near-black page reading flat. */
+:root[data-theme="dark"] .panel {
+  background: color-mix(in oklab, var(--md-primary) 5%, var(--md-surface-container-low));
+}
+
+:root[data-theme="dark"] .panel--raised {
+  background: color-mix(in oklab, var(--md-primary) 8%, var(--md-surface-container));
+}
+
+:root[data-theme="dark"] .panel--recessed {
+  background: var(--md-surface-container-lowest);
+}
+
+/* ---- The slab ------------------------------------------------------------ */
+/* The Diia monolith. Theme-invariant near-black, 40px radius, full bleed.
+   The only thing on the page that looks identical in both themes. */
+
+.slab {
+  position: relative;
+  border-radius: var(--r-xxl);
+  background: var(--inst-slab);
+  color: var(--inst-on-slab);
+  padding-block: var(--slab-pad);
+  overflow: hidden;
+  /* The slab is the same hex in both themes, which in dark leaves it only a
+     few steps off the page. A hairline gives the monolith an edge so it still
+     reads as a discrete object rather than a tonal shift. */
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07), var(--shadow-3);
+}
+
+.slab .prose,
+.slab .body-md,
+.slab .body-lg {
+  color: color-mix(in oklab, var(--inst-on-slab) 74%, transparent);
+}
+
+.slab .legend,
+.slab .section-no {
+  color: color-mix(in oklab, var(--inst-on-slab) 66%, transparent);
+}
+
+.slab .section-no::before {
+  background: var(--inst-signal);
+}
+
+/* A hairline grid engraved into the slab face, at the panel pitch. */
+.slab::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 96px),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 96px);
+  mask-image: radial-gradient(120% 90% at 50% 20%, #000 20%, transparent 78%);
+}
+
+/* ---- Buttons ------------------------------------------------------------- */
+
+.btn {
+  --state: 0;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  padding-inline: var(--s-5);
+  height: 52px;
+  border: 1px solid transparent;
+  border-radius: var(--r-full);
+  font-family: var(--font-text);
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.1px;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  isolation: isolate;
+  transition:
+    background-color var(--d-short2) var(--ease-standard),
+    border-color var(--d-short2) var(--ease-standard),
+    box-shadow var(--d-short4) var(--ease-standard),
+    transform var(--d-short4) var(--ease-detent);
+}
+
+/* The M3 state layer: one tinted overlay at a fixed opacity per state, rather
+   than a different background colour per state. */
+.btn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: currentColor;
+  opacity: var(--state);
+  transition: opacity var(--d-short2) var(--ease-standard);
+}
+
+.btn:hover {
+  --state: var(--state-hover);
+}
+
+.btn:active {
+  --state: var(--state-press);
+  transform: scale(0.97);
+  transition-duration: var(--d-short2);
+}
+
+.btn--filled {
+  background: var(--md-primary);
+  color: var(--md-on-primary);
+  box-shadow: var(--shadow-1);
+}
+
+.btn--filled:hover {
+  box-shadow: var(--shadow-2);
+}
+
+.btn--tonal {
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+}
+
+.btn--outlined {
+  background: transparent;
+  color: var(--md-primary);
+  border-color: var(--md-outline);
+}
+
+.btn--outlined:hover {
+  border-color: var(--md-primary);
+}
+
+.slab .btn--outlined {
+  color: var(--inst-on-slab);
+  border-color: color-mix(in oklab, var(--inst-on-slab) 40%, transparent);
+}
+
+.slab .btn--filled {
+  background: var(--inst-signal);
+  color: #241a00;
+}
+
+.btn--sm {
+  height: 40px;
+  padding-inline: var(--s-4);
+  font-size: 0.875rem;
+}
+
+.btn .icon {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  fill: currentColor;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-full);
+  color: var(--md-on-surface-variant);
+  cursor: pointer;
+  transition:
+    background-color var(--d-short2) var(--ease-standard),
+    color var(--d-short2) var(--ease-standard);
+}
+
+.icon-btn:hover {
+  background: color-mix(in oklab, var(--md-on-surface) 8%, transparent);
+  color: var(--md-on-surface);
+}
+
+.icon-btn .icon {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+/* ---- Chips and pills ----------------------------------------------------- */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: 36px;
+  padding-inline: var(--s-3);
+  border: 1px solid var(--md-outline-variant);
+  border-radius: var(--r-full);
+  color: var(--md-on-surface-variant);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition:
+    background-color var(--d-short2) var(--ease-standard),
+    border-color var(--d-short2) var(--ease-standard),
+    color var(--d-short2) var(--ease-standard);
+}
+
+.chip:hover {
+  background: color-mix(in oklab, var(--md-on-surface) 6%, transparent);
+}
+
+.chip[aria-pressed="true"] {
+  background: var(--md-primary-container);
+  border-color: transparent;
+  color: var(--md-on-primary-container);
+}
+
+.chip__swatch {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: var(--r-xs);
+  background: var(--swatch, var(--md-primary));
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.22);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: 28px;
+  padding-inline: var(--s-3);
+  border-radius: var(--r-full);
+  border: 1px solid var(--md-outline-variant);
+  color: var(--md-on-surface-variant);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  text-decoration: none;
+}
+
+/* ---- Tag: role badges ---------------------------------------------------- */
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding-inline: var(--s-2);
+  border-radius: var(--r-xs);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  background: color-mix(in oklab, var(--md-on-surface) 10%, transparent);
+  color: var(--md-on-surface-variant);
+}
+
+.tag--primary {
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+}
+
+.tag--module {
+  background: color-mix(in oklab, var(--md-secondary) 22%, transparent);
+  color: var(--md-on-surface);
+}
+
+.tag--raw {
+  background: color-mix(in oklab, var(--md-outline) 24%, transparent);
+}
+
+.tag--debug {
+  background: color-mix(in oklab, var(--inst-warn) 26%, transparent);
+  color: var(--md-on-surface);
+}
+
+.tag--archive {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--md-outline-variant);
+}
+
+/* ---- Status pips --------------------------------------------------------- */
+
+.pip {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: var(--r-full);
+  background: var(--md-outline);
+}
+
+.pip--live {
+  background: var(--inst-live);
+  animation: pip-pulse 2s var(--ease-mechanical) infinite;
+}
+
+.pip--ok {
+  background: var(--inst-ok);
+}
+
+.pip--armed {
+  background: var(--inst-armed);
+}
+
+@keyframes pip-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--inst-live) 55%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 8px transparent;
+  }
+}
+
+/* ---- Code ---------------------------------------------------------------- */
+
+.code {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  padding: var(--s-3) var(--s-3) var(--s-3) var(--s-4);
+  border-radius: var(--r-m);
+  background: var(--md-surface-container-lowest);
+  box-shadow: var(--bevel-recessed);
+}
+
+.slab .code {
+  background: rgba(0, 0, 0, 0.4);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.code code {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: pre;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  scrollbar-width: thin;
+}
+
+.code .prompt {
+  color: var(--md-primary);
+  user-select: none;
+}
+
+.slab .code .prompt {
+  color: var(--inst-signal);
+}
+
+.copy {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--md-outline-variant);
+  border-radius: var(--r-s);
+  color: var(--md-on-surface-variant);
+  cursor: pointer;
+  transition:
+    background-color var(--d-short2) var(--ease-standard),
+    color var(--d-short2) var(--ease-standard),
+    border-color var(--d-short2) var(--ease-standard);
+}
+
+.copy:hover {
+  background: color-mix(in oklab, var(--md-primary) 14%, transparent);
+  color: var(--md-primary);
+  border-color: var(--md-primary);
+}
+
+.copy[data-copied="true"] {
+  background: var(--inst-ok);
+  border-color: var(--inst-ok);
+  color: #04140b;
+}
+
+.copy .icon {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.copy[data-copied="true"] .icon--copy,
+.copy:not([data-copied="true"]) .icon--check {
+  display: none;
+}
+
+.slab .copy {
+  border-color: rgba(255, 255, 255, 0.22);
+  color: var(--inst-on-slab);
+}
+
+/* ---- Meters -------------------------------------------------------------- */
+/* Telemetry moves linearly. See --ease-mechanical. */
+
+.meter {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 3px;
+  height: 100%;
+}
+
+.meter__seg {
+  height: 6px;
+  border-radius: 1px;
+  background: color-mix(in oklab, var(--md-on-surface) 12%, transparent);
+  transition: background-color var(--d-short2) var(--ease-mechanical);
+}
+
+.meter__seg[data-on] {
+  background: var(--md-primary);
+}
+
+.meter__seg[data-on][data-hot] {
+  background: var(--inst-armed);
+}
+
+.meter__seg[data-on][data-peak] {
+  background: var(--inst-live);
+}
+
+/* ---- Toast --------------------------------------------------------------- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: var(--s-6);
+  z-index: var(--z-toast);
+  translate: -50% 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-5);
+  border-radius: var(--r-full);
+  background: var(--md-inverse-surface);
+  color: var(--md-inverse-on-surface);
+  box-shadow: var(--shadow-4);
+  font-size: 0.875rem;
+  font-weight: 600;
+  opacity: 0;
+  transform: translateY(12px);
+  pointer-events: none;
+  transition:
+    opacity var(--d-short4) var(--ease-emphasized-accel),
+    transform var(--d-short4) var(--ease-emphasized-accel);
+}
+
+.toast[data-shown] {
+  opacity: 1;
+  transform: none;
+  transition-duration: var(--d-medium2);
+  transition-timing-function: var(--ease-emphasized-decel);
+}
+
+/* ---- Reveal -------------------------------------------------------------- */
+
+/* Content is visible by default and only hidden once the script has confirmed
+   it is going to animate it. Nothing on this page may become unreadable
+   because JavaScript failed, was slow, or was blocked — the entrance is an
+   enhancement, and a watchdog in ui.js clears the gate if the observer is ever
+   starved of frames. */
+:root[data-reveal-active] [data-reveal] {
+  opacity: 0;
+  transform: translateY(20px);
+  transition:
+    opacity var(--d-long3) var(--ease-emphasized-decel),
+    transform var(--d-long3) var(--ease-emphasized-decel);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+
+:root[data-reveal-active] [data-reveal][data-shown] {
+  opacity: 1;
+  transform: none;
+}
+
+/* ---- Touch targets ------------------------------------------------------- */
+/* The instrument controls are deliberately compact — that is what makes them
+   read as hardware. On a coarse pointer that stops being a style choice and
+   starts being a usability defect, so they grow to the 44px minimum there and
+   only there. */
+
+@media (pointer: coarse) {
+  .copy {
+    width: 44px;
+    height: 44px;
+  }
+
+  .chip {
+    height: 44px;
+  }
+
+  .strip__btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .icon-btn {
+    width: 48px;
+    height: 48px;
+  }
+}

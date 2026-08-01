@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://worxbend.github.io/scenedeck/sitemap.xml

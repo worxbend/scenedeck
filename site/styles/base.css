@@ -1,0 +1,439 @@
+/* ============================================================================
+   SceneDeck — reset, type scale, layout primitives
+   ========================================================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+  scroll-padding-top: 96px;
+}
+
+body,
+h1,
+h2,
+h3,
+h4,
+p,
+figure,
+dl,
+dd,
+ul,
+ol {
+  margin: 0;
+}
+
+ul[role="list"],
+ol[role="list"] {
+  list-style: none;
+  padding: 0;
+}
+
+img,
+svg,
+canvas {
+  display: block;
+  max-width: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+/* ---- Page ---------------------------------------------------------------- */
+
+body {
+  min-height: 100svh;
+  margin: 0;
+  background-color: var(--md-surface);
+  color: var(--md-on-surface);
+  font-family: var(--font-text);
+  font-size: 1rem;
+  line-height: 1.5;
+  letter-spacing: 0.5px;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: clip;
+}
+
+/* ---- Background stack ---------------------------------------------------- */
+/* Bottom to top: three.js metal, pixi signal, grain, vignette, content.
+   Grain and vignette are CSS rather than post-processing passes — that saves
+   a full-screen render target per frame for something the eye reads as film. */
+
+#bg-three,
+#bg-pixi,
+.bg-grain,
+.bg-vignette,
+.bg-fallback {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  /* Layout and paint containment only. `contain: strict` would add size
+     containment, which drops a canvas's intrinsic size to zero and collapses
+     the element entirely. */
+  contain: layout paint;
+}
+
+/* Canvases are replaced elements: without an explicit size they take their
+   intrinsic (drawing-buffer) size rather than stretching to the insets. */
+#bg-three,
+#bg-pixi {
+  width: 100%;
+  height: 100%;
+}
+
+#bg-three {
+  z-index: var(--z-three);
+  opacity: 0;
+  transition: opacity var(--d-xlong1) var(--ease-standard);
+}
+
+#bg-pixi {
+  z-index: var(--z-pixi);
+  mix-blend-mode: var(--bg-canvas-blend);
+  opacity: 0;
+  transition: opacity var(--d-xlong1) var(--ease-standard);
+}
+
+/* The wall sits behind body copy, so it is held well below full strength —
+   the vignette and grain above it do the rest of the work. */
+#bg-three[data-live] {
+  opacity: var(--three-opacity);
+}
+
+#bg-pixi[data-live] {
+  opacity: var(--bg-canvas-opacity);
+}
+
+.bg-grain {
+  z-index: var(--z-grain);
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.16) 0 1px,
+    transparent 1px 3px
+  );
+}
+
+.bg-vignette {
+  z-index: var(--z-vignette);
+  background: radial-gradient(
+    135% 105% at 50% 38%,
+    transparent 52%,
+    color-mix(in oklab, var(--md-surface) 72%, transparent) 84%,
+    var(--md-surface) 100%
+  );
+}
+
+/* The static composition. It is what the page looks like before WebGL boots,
+   if WebGL is missing, and under prefers-reduced-motion — so it has to be
+   presentable on its own rather than a placeholder. */
+.bg-fallback {
+  z-index: var(--z-three);
+  background:
+    radial-gradient(42ch 30ch at 24% 22%, color-mix(in oklab, var(--md-primary) 30%, transparent), transparent 70%),
+    radial-gradient(30ch 24ch at 78% 30%, color-mix(in oklab, var(--inst-armed) 16%, transparent), transparent 68%),
+    linear-gradient(180deg, var(--md-surface-container) 0%, var(--md-surface) 62%);
+}
+
+/* ---- Type scale ---------------------------------------------------------- */
+
+.poster,
+.display-lg,
+.display-md,
+.display-sm {
+  font-family: var(--font-display);
+  font-weight: 700;
+  text-wrap: balance;
+  margin: 0;
+}
+
+/* Poster scale. Reserved for the hero and the two full-bleed statements — at
+   this size type stops being a headline and becomes architecture, so spending
+   it more than a few times on the page would use up all its force. */
+.poster {
+  font-size: clamp(2.5rem, 8.4vw, 8.5rem);
+  line-height: 0.86;
+  letter-spacing: -0.04em;
+  font-weight: 800;
+}
+
+.poster--sm {
+  font-size: clamp(2rem, 5.6vw, 4.75rem);
+  line-height: 0.92;
+  letter-spacing: -0.035em;
+}
+
+.display-lg {
+  font-size: clamp(2.5rem, 5.2vw, 3.5625rem);
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  font-weight: 600;
+}
+
+.display-md {
+  font-size: clamp(2.125rem, 4.2vw, 2.8125rem);
+  line-height: 1.156;
+  font-weight: 600;
+}
+
+.display-sm {
+  font-size: clamp(1.875rem, 3.4vw, 2.25rem);
+  line-height: 1.222;
+  font-weight: 600;
+}
+
+.headline-lg {
+  font-size: 2rem;
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.headline-md {
+  font-size: 1.75rem;
+  line-height: 1.286;
+  font-weight: 600;
+}
+
+.headline-sm {
+  font-size: 1.5rem;
+  line-height: 1.333;
+  font-weight: 600;
+}
+
+.title-lg {
+  font-size: 1.375rem;
+  line-height: 1.273;
+  font-weight: 600;
+}
+
+.title-md {
+  font-size: 1rem;
+  line-height: 1.5;
+  letter-spacing: 0.15px;
+  font-weight: 600;
+}
+
+.title-sm {
+  font-size: 0.875rem;
+  line-height: 1.429;
+  letter-spacing: 0.1px;
+  font-weight: 600;
+}
+
+.body-lg {
+  font-size: 1.125rem;
+  line-height: 1.6;
+  letter-spacing: 0.4px;
+}
+
+.body-md {
+  font-size: 1rem;
+  line-height: 1.55;
+  letter-spacing: 0.25px;
+}
+
+.body-sm {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  letter-spacing: 0.25px;
+}
+
+.label-md {
+  font-size: 0.75rem;
+  line-height: 1.333;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+
+/* The engraved legend on a piece of hardware: small, uppercase, widely
+   tracked, monospaced. Every panel gets one. */
+.legend {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  line-height: 1.4545;
+  letter-spacing: 0.14em;
+  font-weight: 500;
+  text-transform: uppercase;
+  color: var(--md-on-surface-variant);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-ligatures: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Section numbers: 01 / LIVE */
+.section-no {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.18em;
+  font-weight: 500;
+  text-transform: uppercase;
+  color: var(--md-on-surface-variant);
+}
+
+.section-no::before {
+  content: "";
+  width: 28px;
+  height: 2px;
+  flex: none;
+  background: var(--inst-rail);
+}
+
+/* The one word per section that carries the Diia yellow. */
+.signal {
+  color: var(--inst-signal);
+}
+
+/* On paper the yellow cannot carry text — #ffd700 on #faf9f8 is about 1.4:1.
+   So on light surfaces it becomes what it actually is in the Diia stylebook:
+   a block of signal colour with ink on top (13.9:1). On the near-black slab
+   and in dark it stays as type, where it clears AA comfortably. */
+:root:not([data-theme="dark"]) .signal {
+  color: var(--md-on-tertiary-container);
+  background: var(--inst-signal);
+  padding-inline: 0.1em;
+  border-radius: var(--r-xs);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+:root:not([data-theme="dark"]) .slab .signal {
+  color: var(--inst-signal);
+  background: none;
+  padding-inline: 0;
+}
+
+.prose {
+  max-width: var(--w-prose);
+  color: var(--md-on-surface-variant);
+}
+
+a {
+  color: var(--md-primary);
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: 1px;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+/* ---- Layout -------------------------------------------------------------- */
+
+.section {
+  position: relative;
+  padding-block: var(--section-pad);
+}
+
+.shell {
+  width: 100%;
+  max-width: var(--w-content);
+  margin-inline: auto;
+  padding-inline: var(--page-margin);
+}
+
+.shell--slab {
+  max-width: var(--w-slab);
+}
+
+.section-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  margin-bottom: var(--s-7);
+}
+
+.section-head .prose {
+  margin-top: var(--s-2);
+}
+
+/* ---- Accessibility ------------------------------------------------------- */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: fixed;
+  top: var(--s-4);
+  left: var(--s-4);
+  z-index: var(--z-skip);
+  padding: var(--s-3) var(--s-5);
+  border-radius: var(--r-full);
+  background: var(--md-primary);
+  color: var(--md-on-primary);
+  font-weight: 600;
+  text-decoration: none;
+  transform: translateY(calc(-100% - var(--s-7)));
+  transition: transform var(--d-short4) var(--ease-emphasized-decel);
+}
+
+.skip-link:focus-visible {
+  transform: translateY(0);
+}
+
+/* One focus treatment for the whole page, drawn in the Diia structural blue
+   so it reads as part of the chassis rather than as a browser default. */
+:where(a, button, input, select, summary, [tabindex]):focus-visible {
+  outline: 3px solid var(--inst-rail);
+  outline-offset: 3px;
+  border-radius: var(--r-xs);
+}
+
+.slab :where(a, button, [tabindex]):focus-visible {
+  outline-color: var(--inst-signal);
+}
+
+/* ---- Reduced motion ------------------------------------------------------ */
+/* The page is complete and legible without a single animation. Entrance
+   states are neutralised rather than skipped, so nothing is left invisible. */
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  [data-reveal] {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
