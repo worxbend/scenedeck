@@ -53,4 +53,27 @@ find "${site_dir}" -type f -name '*.html' -print0 |
 find "${site_dir}" -type f -name '*.html' -print0 |
     xargs -0 sed -i -E "s/(\"softwareVersion\"[[:space:]]*:[[:space:]]*\")[0-9]+\.[0-9]+\.[0-9]+/\1${version}/g"
 
+# ---- Cache busting --------------------------------------------------------
+# GitHub Pages serves these assets with max-age=600 and no content hash in the
+# filename, so a visitor who loaded the page shortly before a deploy can end up
+# running the new HTML against a cached older stylesheet or module. Stamping a
+# build id onto every asset URL gives each deploy its own set of URLs, so that
+# mismatch cannot happen.
+#
+# The module specifiers inside the scripts are stamped too — versioning only
+# the entry point would leave its imports resolving to the same cached URLs.
+
+build="${GITHUB_SHA:-$(date -u +%Y%m%d%H%M%S)}"
+build="${build:0:12}"
+
+echo "stamp-release: cache-busting assets with build ${build}"
+
+find "${site_dir}" -type f -name '*.html' -print0 |
+    xargs -0 sed -i -E "s/\?v=[A-Za-z0-9]+/?v=${build}/g"
+
+find "${site_dir}/scripts" -type f -name '*.js' -print0 |
+    xargs -0 sed -i -E \
+        -e "s|(from \")(\.{1,2}/[A-Za-z0-9_./-]+\.js)(\")|\1\2?v=${build}\3|g" \
+        -e "s|(import\()(\")(\.{1,2}/[A-Za-z0-9_./-]+\.js)(\")|\1\2\3?v=${build}\4|g"
+
 echo "stamp-release: done"

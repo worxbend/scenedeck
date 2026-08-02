@@ -33,11 +33,11 @@
     <link rel="preload" href="./fonts/unbounded-latin.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="./fonts/onest-latin.woff2" as="font" type="font/woff2" crossorigin />
 
-    <link rel="stylesheet" href="./fonts/fonts.css" />
-    <link rel="stylesheet" href="./styles/tokens.css" />
-    <link rel="stylesheet" href="./styles/base.css" />
-    <link rel="stylesheet" href="./styles/components.css" />
-    <link rel="stylesheet" href="./styles/sections.css" />
+    <link rel="stylesheet" href="./fonts/fonts.css?v=dev" />
+    <link rel="stylesheet" href="./styles/tokens.css?v=dev" />
+    <link rel="stylesheet" href="./styles/base.css?v=dev" />
+    <link rel="stylesheet" href="./styles/components.css?v=dev" />
+    <link rel="stylesheet" href="./styles/sections.css?v=dev" />
 
     <!-- Resolve the stored colour scheme before first paint, so there is no flash. -->
     <script>
@@ -52,7 +52,7 @@
       })();
     </script>
 
-    <script type="module" src="./scripts/main.js"></script>
+    <script type="module" src="./scripts/main.js?v=dev"></script>
 
     <script type="application/ld+json">
       {
@@ -692,7 +692,7 @@
                 <img src="./assets/2-1784065965.webp" width="934" height="632" loading="lazy" decoding="async"
                      alt="The Live page: stream and recording controls, the current scene, scene cards marked Prev and Live, and the audio section with Desktop Audio and Mic/Aux faders." />
                 <span class="shot__zoom" aria-hidden="true">
-                  <svg viewBox="0 0 24 24"><path d="M15 3h6v6h-2V6.41l-3.3 3.3-1.4-1.42L17.58 5H15V3ZM3 15h2v2.59l3.3-3.3 1.4 1.42L6.42 19H9v2H3v-6Z"/></svg>
+                  <svg viewBox="0 0 24 24" width="16" height="16"><path d="M15 3h6v6h-2V6.41l-3.3 3.3-1.4-1.42L17.58 5H15V3ZM3 15h2v2.59l3.3-3.3 1.4 1.42L6.42 19H9v2H3v-6Z"/></svg>
                 </span>
               </button>
               <figcaption class="legend">Live — scenes, outputs and the audio for the active scene</figcaption>
@@ -704,7 +704,7 @@
                 <img src="./assets/3-1784065965.webp" width="934" height="632" loading="lazy" decoding="async"
                      alt="The Inventory page: the OBS scene list with a role selector on each row, set to Primary, Primary and Secondary, plus the scene registry YAML export and import controls." />
                 <span class="shot__zoom" aria-hidden="true">
-                  <svg viewBox="0 0 24 24"><path d="M15 3h6v6h-2V6.41l-3.3 3.3-1.4-1.42L17.58 5H15V3ZM3 15h2v2.59l3.3-3.3 1.4 1.42L6.42 19H9v2H3v-6Z"/></svg>
+                  <svg viewBox="0 0 24 24" width="16" height="16"><path d="M15 3h6v6h-2V6.41l-3.3 3.3-1.4-1.42L17.58 5H15V3ZM3 15h2v2.59l3.3-3.3 1.4 1.42L6.42 19H9v2H3v-6Z"/></svg>
                 </span>
               </button>
               <figcaption class="legend">Inventory — assign roles, export the registry as YAML</figcaption>
@@ -716,7 +716,7 @@
                 <img src="./assets/1-1784065965.webp" width="934" height="632" loading="lazy" decoding="async"
                      alt="The Settings page: OBS connection host, port and optional password, and the Output Safety switches for confirming start and stop of streaming and recording." />
                 <span class="shot__zoom" aria-hidden="true">
-                  <svg viewBox="0 0 24 24"><path d="M15 3h6v6h-2V6.41l-3.3 3.3-1.4-1.42L17.58 5H15V3ZM3 15h2v2.59l3.3-3.3 1.4 1.42L6.42 19H9v2H3v-6Z"/></svg>
+                  <svg viewBox="0 0 24 24" width="16" height="16"><path d="M15 3h6v6h-2V6.41l-3.3 3.3-1.4-1.42L17.58 5H15V3ZM3 15h2v2.59l3.3-3.3 1.4 1.42L6.42 19H9v2H3v-6Z"/></svg>
                 </span>
               </button>
               <figcaption class="legend">Settings — connection, and the output confirmations</figcaption>
@@ -1124,14 +1124,14 @@
       </figure>
 
       <button class="lightbox__close" type="button" data-close aria-label="Close the screenshot viewer">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 10.59 4.95-4.95 1.41 1.41L13.41 12l4.95 4.95-1.41 1.41L12 13.41l-4.95 4.95-1.41-1.41L10.59 12 5.64 7.05l1.41-1.41L12 10.59Z"/></svg>
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="m12 10.59 4.95-4.95 1.41 1.41L13.41 12l4.95 4.95-1.41 1.41L12 13.41l-4.95 4.95-1.41-1.41L10.59 12 5.64 7.05l1.41-1.41L12 10.59Z"/></svg>
       </button>
 
       <button class="lightbox__nav lightbox__nav--prev" type="button" data-step="-1" aria-label="Previous screenshot">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6 4.6-4.6Z"/></svg>
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6 4.6-4.6Z"/></svg>
       </button>
       <button class="lightbox__nav lightbox__nav--next" type="button" data-step="1" aria-label="Next screenshot">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6-4.6 4.6Z"/></svg>
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6-4.6 4.6Z"/></svg>
       </button>
 
       <p class="lightbox__count legend" id="lightbox-count"></p>
