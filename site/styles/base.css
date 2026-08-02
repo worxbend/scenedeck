@@ -136,18 +136,18 @@ body {
 
 .bg-vignette {
   z-index: var(--z-vignette);
-  /* Two jobs. The radial darkens the edges into the page. The flat floor
-     underneath it is the one that matters for legibility: it bounds the whole
-     composite uniformly, including the places a radial vignette leaves most
-     transparent. */
-  background:
-    radial-gradient(
-      130% 108% at 50% 38%,
-      transparent 44%,
-      color-mix(in oklab, var(--md-surface) 55%, transparent) 78%,
-      var(--md-surface) 100%
-    ),
-    color-mix(in oklab, var(--md-surface) var(--scrim-floor), transparent);
+  /* Inverted from a classic vignette: the surface is solid through the middle,
+     where the copy sits, and thins out toward the edges so the network reads
+     around the content rather than behind it. That is also why the mesh can be
+     drawn at full strength — the mask, not the shader, keeps the text clean. */
+  background: radial-gradient(
+    92% 74% at 50% 44%,
+    var(--md-surface) 0%,
+    var(--md-surface) 30%,
+    color-mix(in oklab, var(--md-surface) 84%, transparent) 52%,
+    color-mix(in oklab, var(--md-surface) 44%, transparent) 76%,
+    color-mix(in oklab, var(--md-surface) 18%, transparent) 100%
+  );
 }
 
 /* The static composition. It is what the page looks like before WebGL boots,

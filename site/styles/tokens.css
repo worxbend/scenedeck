@@ -104,6 +104,8 @@
   /* ---- The feed ---------------------------------------------------------- */
   /* The OBS hero gradient, linear-gradient(45deg, #280f83, #065dac), spans the
      depth of the source wall: the far plane violet, the near plane blue. */
+  --mesh-edge: #8ab4f8; /* Google blue: the network's own line colour */
+  --mesh-node: #6f8fd0;
   --feed-far: #280f83;
   --feed-near: #065dac;
   --feed-line: #256eff;
@@ -270,13 +272,15 @@
 
   --inst-slab: #0a1129;
   --inst-on-slab: #eceff7;
+  --mesh-edge: #8ab4f8;
+  --mesh-node: #c2d7ff;
   --inst-rail: #72a2ff;
   --inst-live: #ff6f63;
   --inst-ok: #57e19c;
   --inst-warn: #f39c12;
 
   --bg-canvas-blend: plus-lighter;
-  --bg-canvas-opacity: 0.3;
+  --bg-canvas-opacity: 0.5;
   --three-opacity: 0.72;
   --feed-ceiling: 0.08;
   --scrim-floor: 38%;
@@ -284,7 +288,7 @@
   --fallback-near: 24%;
   --fallback-far: 18%;
   --feed-packet: #72a2ff;
-  --packet-alpha: 0.28;
+  --packet-alpha: 0.34;
 
   --bevel: inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 -1px 0 rgba(0, 0, 0, 0.4);
   --bevel-recessed: inset 0 2px 4px rgba(0, 0, 0, 0.35), inset 0 -1px 0 rgba(255, 255, 255, 0.06);
