@@ -1910,13 +1910,207 @@
   overflow: hidden;
 }
 
+/* The thumbnail is a button, so it has to stop looking like one. */
+.shot__open {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border-radius: var(--r-m);
+  overflow: hidden;
+  cursor: zoom-in;
+  transition:
+    transform var(--d-short4) var(--ease-detent),
+    box-shadow var(--d-short4) var(--ease-standard);
+}
+
+.shot__open:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-3);
+}
+
 .shot img {
   width: 100%;
   height: auto;
   border-radius: var(--r-m);
-  /* The captures carry their own purple desktop wallpaper; clipping the frame
-     keeps the page's palette dominant. */
   box-shadow: var(--shadow-2);
+}
+
+/* An affordance that says "this opens", without covering the screenshot. */
+.shot__zoom {
+  position: absolute;
+  right: var(--s-3);
+  bottom: var(--s-3);
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-s);
+  background: color-mix(in oklab, var(--md-surface) 82%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: inset 0 0 0 1px var(--md-outline-variant);
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity var(--d-short3) var(--ease-standard),
+    transform var(--d-short3) var(--ease-emphasized-decel);
+}
+
+.shot__zoom svg {
+  width: 16px;
+  height: 16px;
+  fill: var(--md-on-surface);
+}
+
+.shot__open:hover .shot__zoom,
+.shot__open:focus-visible .shot__zoom {
+  opacity: 1;
+  transform: none;
+}
+
+/* Touch has no hover, so the affordance is simply always there. */
+@media (pointer: coarse) {
+  .shot__zoom {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---- The viewer ---------------------------------------------------------- */
+
+.lightbox {
+  width: 100vw;
+  max-width: 100vw;
+  height: 100dvh;
+  max-height: 100dvh;
+  margin: 0;
+  padding: clamp(16px, 4vw, 56px);
+  border: 0;
+  background: transparent;
+  color: var(--md-on-surface);
+  overscroll-behavior: contain;
+}
+
+.lightbox::backdrop {
+  background: color-mix(in oklab, var(--md-scrim) 78%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.lightbox[open] {
+  display: grid;
+  place-items: center;
+}
+
+.lightbox__frame {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  align-items: center;
+  max-width: min(1180px, 100%);
+  animation: lightbox-in var(--d-medium3) var(--ease-emphasized-decel) both;
+}
+
+@keyframes lightbox-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+.lightbox img {
+  max-width: 100%;
+  /* Leave room for the caption and the counter rather than letting the image
+     push them off a short viewport. */
+  max-height: calc(100dvh - 190px);
+  width: auto;
+  height: auto;
+  border-radius: var(--r-l);
+  box-shadow: var(--shadow-4);
+  background: var(--md-surface-container);
+}
+
+.lightbox figcaption {
+  text-align: center;
+  color: var(--md-on-surface-variant);
+}
+
+.lightbox__close,
+.lightbox__nav {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: var(--r-full);
+  cursor: pointer;
+  color: var(--md-on-surface);
+  background: color-mix(in oklab, var(--md-surface) 80%, transparent);
+  box-shadow: inset 0 0 0 1px var(--md-outline-variant), var(--shadow-2);
+  transition:
+    background-color var(--d-short2) var(--ease-standard),
+    transform var(--d-short2) var(--ease-detent);
+}
+
+.lightbox__close:hover,
+.lightbox__nav:hover {
+  background: var(--md-surface-container-high);
+  transform: scale(1.06);
+}
+
+.lightbox__close svg,
+.lightbox__nav svg {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+}
+
+.lightbox__close {
+  top: clamp(12px, 3vw, 28px);
+  right: clamp(12px, 3vw, 28px);
+}
+
+.lightbox__nav {
+  top: 50%;
+  translate: 0 -50%;
+}
+
+.lightbox__nav--prev {
+  left: clamp(8px, 2vw, 24px);
+}
+
+.lightbox__nav--next {
+  right: clamp(8px, 2vw, 24px);
+}
+
+.lightbox__count {
+  position: absolute;
+  bottom: clamp(12px, 3vw, 28px);
+  left: 50%;
+  translate: -50% 0;
+  color: var(--md-on-surface-variant);
+}
+
+/* On a phone the side arrows would sit on top of the image, so they move to
+   the bottom corners where thumbs already are. */
+@media (max-width: 600px) {
+  .lightbox__nav {
+    top: auto;
+    bottom: clamp(12px, 3vw, 28px);
+    translate: none;
+  }
+
+  .lightbox img {
+    max-height: calc(100dvh - 230px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lightbox__frame {
+    animation: none;
+  }
 }
 
 .shot figcaption {

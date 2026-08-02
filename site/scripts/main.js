@@ -7,7 +7,7 @@
    hero for bandwidth or main thread.
    ========================================================================== */
 
-import { initTheme, initScroll, initPointer, initReveals, initCopy, initTabs, refreshRelease } from "./ui.js";
+import { initTheme, initScroll, initPointer, initReveals, initCopy, initTabs, initLightbox, refreshRelease } from "./ui.js";
 import { initLive, initMixer, initStats, initGraph, initDeck } from "./demos.js";
 
 initTheme();
@@ -15,6 +15,7 @@ initScroll();
 initPointer();
 initCopy();
 initTabs();
+initLightbox();
 
 initDeck();
 initLive();

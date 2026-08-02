@@ -267,3 +267,80 @@ export async function refreshRelease() {
     }
   });
 }
+
+/* ---- Screenshot viewer --------------------------------------------------- */
+/* Built on <dialog>, which brings modal semantics, the focus trap, Escape
+   handling and inert-ing the rest of the page with it. Reimplementing any of
+   that by hand is how these end up unusable with a keyboard. */
+
+export function initLightbox() {
+  const dialog = document.getElementById("lightbox");
+  const triggers = [...document.querySelectorAll(".shot__open")];
+  if (!dialog || !triggers.length || !dialog.showModal) return;
+
+  const image = document.getElementById("lightbox-img");
+  const caption = document.getElementById("lightbox-cap");
+  const count = document.getElementById("lightbox-count");
+
+  const shots = triggers.map((button) => {
+    const img = button.querySelector("img");
+    return {
+      button,
+      src: img.getAttribute("src"),
+      alt: img.getAttribute("alt"),
+      caption: button.closest("figure").querySelector("figcaption").textContent.trim(),
+    };
+  });
+
+  let index = 0;
+  let opener = null;
+
+  const show = (next) => {
+    index = (next + shots.length) % shots.length;
+    const shot = shots[index];
+    image.src = shot.src;
+    image.alt = shot.alt;
+    caption.textContent = shot.caption;
+    count.textContent = `${index + 1} of ${shots.length}`;
+  };
+
+  const open = (from) => {
+    opener = triggers[from];
+    show(from);
+    dialog.showModal();
+  };
+
+  triggers.forEach((button, i) => button.addEventListener("click", () => open(i)));
+
+  dialog.addEventListener("click", (event) => {
+    if (event.target.closest("[data-step]")) {
+      show(index + Number(event.target.closest("[data-step]").dataset.step));
+      return;
+    }
+    // A click that lands on the dialog itself is a click on the backdrop: the
+    // frame and the controls are children, so they never match.
+    if (event.target === dialog || event.target.closest("[data-close]")) dialog.close();
+  });
+
+  dialog.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      show(index + 1);
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      show(index - 1);
+    }
+  });
+
+  // Returning focus to a thumbnail, rather than to the top of the page, is the
+  // difference between usable and merely accessible. It goes to whichever shot
+  // is on screen when the viewer closes, which may not be the one that opened
+  // it. Deferred a frame so it wins over the dialog's own restoration.
+  dialog.addEventListener("close", () => {
+    const target = shots[index].button || opener;
+    target.focus();
+    // Again next frame, because the dialog's own focus restoration runs after
+    // the close event and would otherwise put focus back where it was.
+    requestAnimationFrame(() => target.focus());
+  });
+}
