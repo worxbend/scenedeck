@@ -247,44 +247,84 @@
             </p>
           </div>
 
-          <div class="link__diagram" data-reveal role="img"
-               aria-label="Your workstation runs SceneDeck and sends commands over the OBS WebSocket to a streaming rig running OBS Studio, which returns scene, audio and telemetry updates and sends the encoded stream out.">
-            <article class="machine machine--you panel panel--raised">
-              <p class="legend machine__role">Your machine</p>
-              <h3 class="title-lg">Workstation</h3>
-              <p class="body-sm machine__body">You are coding, presenting or playing here. Nothing is being encoded.</p>
-              <ul class="machine__chips" role="list">
-                <li><span class="tag tag--primary">SceneDeck</span></li>
-                <li><span class="tag">GTK4</span></li>
-              </ul>
-            </article>
+          <div class="rig" data-reveal role="img"
+               aria-label="A diagram of two computers. On the left, your workstation running SceneDeck, showing scene cards with one on program. On the right, the streaming rig running OBS Studio, recording and encoding, with the stream leaving it for Twitch, YouTube or an RTMP target. Between the two machines a link labelled obs-websocket carries commands to the rig and scene, audio and telemetry updates back.">
 
-            <div class="link__wire" aria-hidden="true">
-              <span class="link__label legend">obs-websocket 5.x</span>
-              <div class="link__rail link__rail--out">
-                <span class="link__pulse"></span><span class="link__pulse"></span><span class="link__pulse"></span>
+            <!-- Your machine --------------------------------------------- -->
+            <figure class="box box--you">
+              <figcaption class="box__tag legend"><span class="pip pip--ok"></span> Your machine</figcaption>
+
+              <div class="screen">
+                <div class="screen__bar">
+                  <span class="screen__dots"><i></i><i></i><i></i></span>
+                  <span class="screen__name">SceneDeck</span>
+                </div>
+                <div class="screen__body screen__body--deck">
+                  <div class="mini-rail"><i></i><i></i><i></i><i></i><i></i></div>
+                  <div class="mini-scenes">
+                    <span class="mini-tile is-pgm"></span>
+                    <span class="mini-tile"></span>
+                    <span class="mini-tile"></span>
+                    <span class="mini-tile"></span>
+                    <span class="mini-tile"></span>
+                    <span class="mini-tile"></span>
+                  </div>
+                  <div class="mini-faders"><i></i><i></i><i></i><i></i></div>
+                </div>
               </div>
-              <span class="link__dir legend">commands out</span>
-              <div class="link__rail link__rail--back">
-                <span class="link__pulse"></span><span class="link__pulse"></span><span class="link__pulse"></span>
+
+              <div class="box__stand" aria-hidden="true"></div>
+              <p class="box__note legend">Coding, presenting, playing.<br />Nothing is being encoded here.</p>
+            </figure>
+
+            <!-- The link -------------------------------------------------- -->
+            <div class="wire">
+              <p class="wire__proto legend">obs-websocket 5.x</p>
+
+              <div class="wire__lane">
+                <span class="wire__cap legend">commands</span>
+                <span class="wire__line wire__line--out">
+                  <i></i><i></i><i></i>
+                </span>
               </div>
-              <span class="link__dir legend">scenes, audio, telemetry back</span>
-              <span class="link__label legend">127.0.0.1:4455 by default</span>
+
+              <div class="wire__lane">
+                <span class="wire__cap legend">scenes · audio · telemetry</span>
+                <span class="wire__line wire__line--back">
+                  <i></i><i></i><i></i>
+                </span>
+              </div>
+
+              <p class="wire__addr legend mono">127.0.0.1:4455</p>
             </div>
 
-            <article class="machine machine--rig panel panel--raised">
-              <p class="legend machine__role">Streaming rig</p>
-              <h3 class="title-lg">OBS Studio</h3>
-              <p class="body-sm machine__body">Capturing, encoding and sending the stream out. Busy, and left alone.</p>
-              <ul class="machine__chips" role="list">
-                <li><span class="tag tag--debug">Encoding</span></li>
-                <li><span class="tag">OBS 28+</span></li>
-              </ul>
-              <div class="machine__out">
-                <span class="pip pip--live"></span>
-                <span class="legend">to Twitch / YouTube / RTMP</span>
+            <!-- The streaming rig ----------------------------------------- -->
+            <figure class="box box--rig">
+              <figcaption class="box__tag legend"><span class="pip pip--live"></span> Streaming rig</figcaption>
+
+              <div class="screen">
+                <div class="screen__bar">
+                  <span class="screen__dots"><i></i><i></i><i></i></span>
+                  <span class="screen__name">OBS Studio</span>
+                  <span class="screen__rec legend">REC</span>
+                </div>
+                <div class="screen__body screen__body--obs">
+                  <div class="mini-preview">
+                    <span class="mini-cam"></span>
+                    <span class="mini-overlay"></span>
+                  </div>
+                  <div class="mini-meters"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+                </div>
               </div>
-            </article>
+
+              <div class="box__stand" aria-hidden="true"></div>
+              <p class="box__note legend">Capturing and encoding.<br />Busy, and left alone.</p>
+
+              <div class="uplink">
+                <span class="uplink__line"><i></i><i></i></span>
+                <span class="legend">to Twitch · YouTube · RTMP</span>
+              </div>
+            </figure>
           </div>
 
           <p class="legend link__note">

@@ -1499,131 +1499,398 @@
   margin-top: var(--s-5);
 }
 
-/* ---- The link (two machines) --------------------------------------------- */
+/* ---- The link: two machines ---------------------------------------------- */
+/* The premise of the whole product, drawn. Two computers with their screens
+   showing what each is actually doing, and the WebSocket between them carrying
+   commands one way and state the other. All CSS — a diagram this size does not
+   need a canvas, and this way it themes and scales with the page. */
 
-.link__diagram {
+.rig {
   display: grid;
-  gap: var(--s-4);
+  gap: var(--s-5);
   grid-template-columns: minmax(0, 1fr);
-  align-items: stretch;
+  align-items: start;
 }
 
-@media (min-width: 900px) {
-  .link__diagram {
-    grid-template-columns: minmax(0, 1fr) minmax(200px, 0.8fr) minmax(0, 1fr);
-    gap: var(--s-5);
+@media (min-width: 940px) {
+  .rig {
+    grid-template-columns: minmax(0, 1fr) minmax(180px, 0.72fr) minmax(0, 1fr);
+    gap: var(--s-4);
     align-items: center;
   }
 }
 
-.machine {
-  padding: var(--s-5);
+.box {
+  margin: 0;
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: var(--s-3);
 }
 
-.machine__role {
-  color: var(--md-primary);
-}
-
-.machine__body {
-  color: var(--md-on-surface-variant);
-  flex: 1;
-}
-
-.machine__chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s-2);
-}
-
-.machine__out {
+.box__tag {
   display: flex;
   align-items: center;
   gap: var(--s-2);
-  padding-top: var(--s-3);
-  border-top: 1px solid var(--md-outline-variant);
-}
-
-/* The wire itself. Two rails running opposite ways: commands out, state back.
-   Pure CSS — a diagram this small does not need a canvas. */
-.link__wire {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  padding: var(--s-4) 0;
-  text-align: center;
-}
-
-.link__rail {
-  position: relative;
-  height: 3px;
-  border-radius: var(--r-full);
-  background: color-mix(in oklab, var(--md-outline) 40%, transparent);
-  overflow: hidden;
-}
-
-.link__pulse {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 26%;
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, transparent, var(--md-primary), transparent);
-  animation: link-run 2.4s var(--ease-mechanical) infinite;
-}
-
-.link__pulse:nth-child(2) {
-  animation-delay: 0.8s;
-}
-
-.link__pulse:nth-child(3) {
-  animation-delay: 1.6s;
-}
-
-.link__rail--back .link__pulse {
-  background: linear-gradient(90deg, transparent, var(--inst-ok), transparent);
-  animation-name: link-run-back;
-}
-
-@keyframes link-run {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(400%);
-  }
-}
-
-@keyframes link-run-back {
-  from {
-    transform: translateX(400%);
-  }
-  to {
-    transform: translateX(-100%);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .link__pulse {
-    animation: none;
-    left: 38%;
-  }
-}
-
-.link__dir,
-.link__label {
-  font-size: 0.625rem;
-}
-
-.link__label {
   color: var(--md-on-surface-variant);
 }
 
+/* ---- The monitor --------------------------------------------------------- */
+
+.screen {
+  width: 100%;
+  /* A diagram, not a device mock: capped so the two machines read as a pair
+     at a glance rather than as two more panels. */
+  max-width: 320px;
+  border-radius: var(--r-l);
+  overflow: hidden;
+  background: var(--md-surface-container-low);
+  box-shadow: var(--shadow-3), var(--bevel), 0 0 0 1px var(--md-outline-variant);
+}
+
+:root[data-theme="dark"] .screen {
+  background: color-mix(in oklab, var(--md-primary) 6%, var(--md-surface-container-low));
+}
+
+.screen__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 7px var(--s-3);
+  background: var(--md-surface-container-high);
+  border-bottom: 1px solid var(--md-outline-variant);
+}
+
+.screen__dots {
+  display: flex;
+  gap: 4px;
+}
+
+.screen__dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--md-outline-variant);
+}
+
+.screen__name {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--md-on-surface-variant);
+}
+
+.screen__rec {
+  margin-inline-start: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.5625rem;
+  color: var(--inst-live);
+}
+
+.screen__rec::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--inst-live);
+  animation: rec-blink 1.8s var(--ease-mechanical) infinite;
+}
+
+@keyframes rec-blink {
+  0%, 55% { opacity: 1; }
+  75%, 100% { opacity: 0.25; }
+}
+
+.screen__body {
+  aspect-ratio: 16 / 9;
+  padding: var(--s-3);
+  display: flex;
+  gap: var(--s-2);
+}
+
+/* -- what SceneDeck is showing --------------------------------------------- */
+
+.screen__body--deck {
+  align-items: stretch;
+}
+
+.mini-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 17%;
+  flex: none;
+}
+
+.mini-rail i {
+  height: 8px;
+  border-radius: 2px;
+  background: color-mix(in oklab, var(--md-on-surface) 14%, transparent);
+}
+
+.mini-rail i:first-child {
+  background: var(--md-primary);
+}
+
+.mini-scenes {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-auto-rows: 1fr;
+  gap: 5px;
+  min-width: 0;
+}
+
+.mini-tile {
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--md-primary) 26%, var(--md-surface-container));
+  box-shadow: var(--bevel);
+}
+
+/* The scene that is on program, outlined in tally red — the one thing you are
+   reaching across the room to change. */
+.mini-tile.is-pgm {
+  outline: 2px solid var(--inst-live);
+  outline-offset: -2px;
+  animation: pgm-pulse 3.2s var(--ease-standard) infinite;
+}
+
+@keyframes pgm-pulse {
+  0%, 70%, 100% { outline-color: var(--inst-live); }
+  85% { outline-color: color-mix(in oklab, var(--inst-live) 45%, transparent); }
+}
+
+.mini-faders {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 4px;
+  width: 13%;
+  flex: none;
+}
+
+.mini-faders i {
+  height: 5px;
+  border-radius: 2px;
+  background: color-mix(in oklab, var(--md-primary) 45%, transparent);
+}
+
+.mini-faders i:nth-child(2) { width: 74%; }
+.mini-faders i:nth-child(3) { width: 88%; }
+.mini-faders i:nth-child(4) { width: 60%; }
+
+/* -- what OBS is showing --------------------------------------------------- */
+
+.screen__body--obs {
+  flex-direction: column;
+}
+
+.mini-preview {
+  position: relative;
+  flex: 1;
+  border-radius: 5px;
+  background:
+    radial-gradient(120% 100% at 30% 20%, color-mix(in oklab, var(--feed-near) 55%, transparent), transparent 70%),
+    color-mix(in oklab, var(--md-on-surface) 10%, var(--md-surface-container-lowest));
+  box-shadow: var(--bevel-recessed);
+  overflow: hidden;
+}
+
+/* A framed subject and a lower-third: enough to read as a composed scene. */
+.mini-cam {
+  position: absolute;
+  left: 13%;
+  top: 24%;
+  width: 17%;
+  aspect-ratio: 1;
+  border-radius: var(--r-full);
+  background: color-mix(in oklab, var(--inst-armed) 70%, transparent);
+}
+
+.mini-overlay {
+  position: absolute;
+  left: 10%;
+  right: 34%;
+  bottom: 14%;
+  height: 12%;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--md-primary) 60%, transparent);
+}
+
+.mini-meters {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 13px;
+  margin-top: var(--s-2);
+}
+
+.mini-meters i {
+  flex: 1;
+  border-radius: 1px;
+  background: color-mix(in oklab, var(--inst-ok) 65%, transparent);
+  animation: enc-bars 1.4s var(--ease-mechanical) infinite alternate;
+}
+
+.mini-meters i:nth-child(1) { height: 55%; animation-delay: 0s; }
+.mini-meters i:nth-child(2) { height: 80%; animation-delay: 0.15s; }
+.mini-meters i:nth-child(3) { height: 40%; animation-delay: 0.3s; }
+.mini-meters i:nth-child(4) { height: 92%; animation-delay: 0.45s; }
+.mini-meters i:nth-child(5) { height: 62%; animation-delay: 0.6s; }
+.mini-meters i:nth-child(6) { height: 75%; animation-delay: 0.75s; }
+
+@keyframes enc-bars {
+  to { transform: scaleY(0.45); transform-origin: bottom; }
+}
+
+/* ---- The stand ----------------------------------------------------------- */
+
+.box__stand {
+  width: 84px;
+  height: 10px;
+  border-radius: 0 0 var(--r-s) var(--r-s);
+  background: linear-gradient(180deg, var(--md-surface-container-highest), var(--md-surface-container));
+  box-shadow: var(--shadow-1);
+}
+
+.box__note {
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* ---- The wire ------------------------------------------------------------ */
+
+.wire {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  text-align: center;
+}
+
+.wire__proto,
+.wire__addr {
+  color: var(--md-on-surface-variant);
+  font-size: 0.625rem;
+}
+
+.wire__lane {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.wire__cap {
+  font-size: 0.5625rem;
+  color: var(--md-on-surface-variant);
+}
+
+.wire__line {
+  position: relative;
+  display: block;
+  height: 3px;
+  border-radius: var(--r-full);
+  background: color-mix(in oklab, var(--md-outline) 38%, transparent);
+  overflow: hidden;
+}
+
+.wire__line i {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 30%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, var(--md-primary), transparent);
+  animation: wire-out 2.6s var(--ease-mechanical) infinite;
+}
+
+.wire__line i:nth-child(2) { animation-delay: 0.85s; }
+.wire__line i:nth-child(3) { animation-delay: 1.7s; }
+
+/* State comes back the other way, in the healthy-signal green. */
+.wire__line--back i {
+  background: linear-gradient(90deg, transparent, var(--inst-ok), transparent);
+  animation-name: wire-back;
+}
+
+@keyframes wire-out {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(440%); }
+}
+
+@keyframes wire-back {
+  from { transform: translateX(440%); }
+  to { transform: translateX(-110%); }
+}
+
+/* On a narrow screen the machines stack, so the link runs vertically. */
+@media (max-width: 939px) {
+  .wire {
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+  }
+
+  .wire__lane {
+    flex: 1 1 160px;
+  }
+}
+
+/* ---- The uplink ---------------------------------------------------------- */
+
+.uplink {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+}
+
+.uplink__line {
+  position: relative;
+  display: block;
+  width: 44px;
+  height: 3px;
+  flex: none;
+  border-radius: var(--r-full);
+  background: color-mix(in oklab, var(--inst-live) 30%, transparent);
+  overflow: hidden;
+}
+
+.uplink__line i {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 40%;
+  border-radius: inherit;
+  background: var(--inst-live);
+  animation: wire-out 1.9s var(--ease-mechanical) infinite;
+}
+
+.uplink__line i:nth-child(2) { animation-delay: 0.95s; }
+
+.uplink .legend {
+  font-size: 0.5625rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wire__line i,
+  .uplink__line i,
+  .mini-meters i,
+  .screen__rec::before,
+  .mini-tile.is-pgm {
+    animation: none;
+  }
+
+  .wire__line i:first-child,
+  .uplink__line i:first-child {
+    transform: translateX(120%);
+  }
+}
+
 .link__note {
-  margin-top: var(--s-5);
+  margin-top: var(--s-6);
 }
 
 /* ---- Screenshots --------------------------------------------------------- */
