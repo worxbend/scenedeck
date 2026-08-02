@@ -84,7 +84,7 @@
   --md-surface-container-high: #e1e7f3;
   --md-surface-container-highest: #d8e0ef;
   --md-on-surface-variant: #333f5e;
-  --md-outline: #6c789a;
+  --md-outline: #57647f;
   --md-outline-variant: #c4cde2;
   --md-inverse-surface: #101b41;
   --md-inverse-on-surface: #eceff7;
@@ -101,14 +101,14 @@
   --inst-ok: #2ec27e;
   --inst-warn: #f39c12;
 
-  /* ---- The wire ---------------------------------------------------------- */
-  /* The OBS hero gradient, linear-gradient(45deg, #280f83, #065dac), is the
-     colour of the channel itself: far end violet, near end blue. */
-  --wire-far: #280f83;
-  --wire-near: #065dac;
-  --wire-rail: #256eff;
-  --wire-packet: #72a2ff;
-  --wire-drop: #e74c3c;
+  /* ---- The feed ---------------------------------------------------------- */
+  /* The OBS hero gradient, linear-gradient(45deg, #280f83, #065dac), spans the
+     depth of the source wall: the far plane violet, the near plane blue. */
+  --feed-far: #280f83;
+  --feed-near: #065dac;
+  --feed-line: #256eff;
+  --feed-packet: #93aede; /* pale on paper: multiply darkens, it must not print solid */
+  --feed-live: #e74c3c; /* tally on the source that is on air */
 
   /* ---- Scene accents ----------------------------------------------------- */
   /* The app's real per-scene accent colours. These drive the retint. */
@@ -130,11 +130,12 @@
   --bg-canvas-blend: multiply;
   --bg-canvas-opacity: 0.3;
   --three-opacity: 0.5;
-  --wire-ceiling: 0.12; /* bounds how dark the channel may print on paper */
-  --scrim-floor: 30%;
+  --feed-ceiling: 0.12; /* bounds how dark a source may print on paper */
+  --scrim-floor: 52%;
+  --fallback-grid: 7%;
   --fallback-near: 12%;
   --fallback-far: 9%;
-  --packet-alpha: 0.38;
+  --packet-alpha: 0.12;
 
   /* ---- Shape ------------------------------------------------------------- */
   /* Radius encodes scale, never decoration: two elements sharing a radius
@@ -277,10 +278,12 @@
   --bg-canvas-blend: plus-lighter;
   --bg-canvas-opacity: 0.3;
   --three-opacity: 0.72;
-  --wire-ceiling: 0.08;
+  --feed-ceiling: 0.08;
   --scrim-floor: 38%;
+  --fallback-grid: 12%;
   --fallback-near: 24%;
   --fallback-far: 18%;
+  --feed-packet: #72a2ff;
   --packet-alpha: 0.28;
 
   --bevel: inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 -1px 0 rgba(0, 0, 0, 0.4);

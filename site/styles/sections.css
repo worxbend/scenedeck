@@ -1498,3 +1498,160 @@
 .terminal__all {
   margin-top: var(--s-5);
 }
+
+/* ---- The link (two machines) --------------------------------------------- */
+
+.link__diagram {
+  display: grid;
+  gap: var(--s-4);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+}
+
+@media (min-width: 900px) {
+  .link__diagram {
+    grid-template-columns: minmax(0, 1fr) minmax(200px, 0.8fr) minmax(0, 1fr);
+    gap: var(--s-5);
+    align-items: center;
+  }
+}
+
+.machine {
+  padding: var(--s-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.machine__role {
+  color: var(--md-primary);
+}
+
+.machine__body {
+  color: var(--md-on-surface-variant);
+  flex: 1;
+}
+
+.machine__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.machine__out {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--md-outline-variant);
+}
+
+/* The wire itself. Two rails running opposite ways: commands out, state back.
+   Pure CSS — a diagram this small does not need a canvas. */
+.link__wire {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-4) 0;
+  text-align: center;
+}
+
+.link__rail {
+  position: relative;
+  height: 3px;
+  border-radius: var(--r-full);
+  background: color-mix(in oklab, var(--md-outline) 40%, transparent);
+  overflow: hidden;
+}
+
+.link__pulse {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 26%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, var(--md-primary), transparent);
+  animation: link-run 2.4s var(--ease-mechanical) infinite;
+}
+
+.link__pulse:nth-child(2) {
+  animation-delay: 0.8s;
+}
+
+.link__pulse:nth-child(3) {
+  animation-delay: 1.6s;
+}
+
+.link__rail--back .link__pulse {
+  background: linear-gradient(90deg, transparent, var(--inst-ok), transparent);
+  animation-name: link-run-back;
+}
+
+@keyframes link-run {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(400%);
+  }
+}
+
+@keyframes link-run-back {
+  from {
+    transform: translateX(400%);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .link__pulse {
+    animation: none;
+    left: 38%;
+  }
+}
+
+.link__dir,
+.link__label {
+  font-size: 0.625rem;
+}
+
+.link__label {
+  color: var(--md-on-surface-variant);
+}
+
+.link__note {
+  margin-top: var(--s-5);
+}
+
+/* ---- Screenshots --------------------------------------------------------- */
+
+.shots__grid {
+  display: grid;
+  gap: var(--s-5);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+}
+
+.shot {
+  margin: 0;
+  padding: var(--s-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  overflow: hidden;
+}
+
+.shot img {
+  width: 100%;
+  height: auto;
+  border-radius: var(--r-m);
+  /* The captures carry their own purple desktop wallpaper; clipping the frame
+     keeps the page's palette dominant. */
+  box-shadow: var(--shadow-2);
+}
+
+.shot figcaption {
+  padding-inline: var(--s-2);
+}

@@ -98,6 +98,7 @@
           <a href="#live">Live</a>
           <a href="#stats">Stats</a>
           <a href="#audio">Audio</a>
+          <a href="#screens">Screens</a>
           <a href="#structure">Graph</a>
           <a href="#settings">Settings</a>
           <a href="#terminal">Terminal</a>
@@ -201,6 +202,7 @@
               <div class="deck__body">
                 <div class="deck__rail" role="group" aria-label="Preview a SceneDeck page">
                   <button class="deck__page is-active" type="button" data-page="live" aria-pressed="true">Live</button>
+                  <button class="deck__page" type="button" data-page="mixer" aria-pressed="false">Mixer</button>
                   <button class="deck__page" type="button" data-page="stats" aria-pressed="false">Stats</button>
                   <button class="deck__page" type="button" data-page="graph" aria-pressed="false">Graph</button>
                   <button class="deck__page" type="button" data-page="inventory" aria-pressed="false">Inventory</button>
@@ -229,6 +231,65 @@
               Illustration of the SceneDeck interface. Figures are representative, not a live feed.
             </p>
           </div>
+        </div>
+      </section>
+
+      <!-- ============================ THE LINK ======================== -->
+      <section class="section link" id="link">
+        <div class="shell">
+          <div class="section-head">
+            <p class="section-no" data-reveal>The idea</p>
+            <h2 class="display-lg" data-reveal>Two machines, one link.</h2>
+            <p class="body-lg prose" data-reveal>
+              OBS runs on the rig that captures and encodes. SceneDeck runs on the machine you
+              actually work on. Between them is OBS's own WebSocket server — so the machine under
+              load never has to be the machine you touch.
+            </p>
+          </div>
+
+          <div class="link__diagram" data-reveal role="img"
+               aria-label="Your workstation runs SceneDeck and sends commands over the OBS WebSocket to a streaming rig running OBS Studio, which returns scene, audio and telemetry updates and sends the encoded stream out.">
+            <article class="machine machine--you panel panel--raised">
+              <p class="legend machine__role">Your machine</p>
+              <h3 class="title-lg">Workstation</h3>
+              <p class="body-sm machine__body">You are coding, presenting or playing here. Nothing is being encoded.</p>
+              <ul class="machine__chips" role="list">
+                <li><span class="tag tag--primary">SceneDeck</span></li>
+                <li><span class="tag">GTK4</span></li>
+              </ul>
+            </article>
+
+            <div class="link__wire" aria-hidden="true">
+              <span class="link__label legend">obs-websocket 5.x</span>
+              <div class="link__rail link__rail--out">
+                <span class="link__pulse"></span><span class="link__pulse"></span><span class="link__pulse"></span>
+              </div>
+              <span class="link__dir legend">commands out</span>
+              <div class="link__rail link__rail--back">
+                <span class="link__pulse"></span><span class="link__pulse"></span><span class="link__pulse"></span>
+              </div>
+              <span class="link__dir legend">scenes, audio, telemetry back</span>
+              <span class="link__label legend">127.0.0.1:4455 by default</span>
+            </div>
+
+            <article class="machine machine--rig panel panel--raised">
+              <p class="legend machine__role">Streaming rig</p>
+              <h3 class="title-lg">OBS Studio</h3>
+              <p class="body-sm machine__body">Capturing, encoding and sending the stream out. Busy, and left alone.</p>
+              <ul class="machine__chips" role="list">
+                <li><span class="tag tag--debug">Encoding</span></li>
+                <li><span class="tag">OBS 28+</span></li>
+              </ul>
+              <div class="machine__out">
+                <span class="pip pip--live"></span>
+                <span class="legend">to Twitch / YouTube / RTMP</span>
+              </div>
+            </article>
+          </div>
+
+          <p class="legend link__note">
+            Same machine works too — point SceneDeck at localhost and it behaves the same way.
+          </p>
         </div>
       </section>
 
@@ -411,12 +472,17 @@
       <section class="section" id="audio">
         <div class="shell">
           <div class="section-head">
-            <p class="section-no" data-reveal>03 / Audio</p>
+            <p class="section-no" data-reveal>03 / Mixer</p>
             <h2 class="display-lg" data-reveal>The mixer follows the scene.</h2>
             <p class="body-lg prose" data-reveal>
               Global audio first, then every audio-capable input in the active scene — including
               inputs nested inside other scenes and groups. Mute instantly. Ride levels on compact
               vertical sliders. Lock a slider so you never nudge it on air.
+            </p>
+            <p class="body-lg prose" data-reveal>
+              The Mixer is a page of its own, with three modes: <strong>Active</strong> follows the
+              OBS program scene, <strong>Selected</strong> inspects a scene without following OBS,
+              and <strong>Pinned</strong> holds one scene no matter what goes to program.
             </p>
           </div>
 
@@ -553,6 +619,50 @@
               </p>
               <p class="legend">Internationalised with Fluent · English is the fallback locale</p>
             </article>
+
+            <article class="panel settings__card" data-reveal style="--reveal-delay: 210ms">
+              <h3 class="title-lg">Output safety</h3>
+              <p class="body-md prose">
+                Going live and stopping a recording are the two clicks you cannot take back, so
+                each of the four output actions can ask first. Turn the confirmations on or off
+                independently — start stream, stop stream, start recording, stop recording.
+              </p>
+              <p class="legend">Off by default for recording, on for the stream</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========================== SCREENSHOTS ======================= -->
+      <section class="section shots" id="screens">
+        <div class="shell">
+          <div class="section-head">
+            <p class="section-no" data-reveal>The real thing</p>
+            <h2 class="display-lg" data-reveal>Screenshots.</h2>
+            <p class="body-lg prose" data-reveal>
+              The actual application, connected to OBS 32.1.2. Everything above this point is a
+              rebuild in HTML so it can theme with the page; these are not.
+            </p>
+          </div>
+
+          <div class="shots__grid">
+            <figure class="shot panel" data-reveal>
+              <img src="./assets/2-1784065965.webp" width="934" height="632" loading="lazy" decoding="async"
+                   alt="The Live page: stream and recording controls, the current scene, scene cards marked Prev and Live, and the audio section with Desktop Audio and Mic/Aux faders." />
+              <figcaption class="legend">Live — scenes, outputs and the audio for the active scene</figcaption>
+            </figure>
+
+            <figure class="shot panel" data-reveal style="--reveal-delay: 80ms">
+              <img src="./assets/3-1784065965.webp" width="934" height="632" loading="lazy" decoding="async"
+                   alt="The Inventory page: the OBS scene list with a role selector on each row, set to Primary, Primary and Secondary, plus the scene registry YAML export and import controls." />
+              <figcaption class="legend">Inventory — assign roles, export the registry as YAML</figcaption>
+            </figure>
+
+            <figure class="shot panel" data-reveal style="--reveal-delay: 160ms">
+              <img src="./assets/1-1784065965.webp" width="934" height="632" loading="lazy" decoding="async"
+                   alt="The Settings page: OBS connection host, port and optional password, and the Output Safety switches for confirming start and stop of streaming and recording." />
+              <figcaption class="legend">Settings — connection, and the output confirmations</figcaption>
+            </figure>
           </div>
         </div>
       </section>

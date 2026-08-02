@@ -39,14 +39,14 @@ const ENTRIES = {
     pkg: THREE,
     source: `export {
       WebGLRenderer, Scene, OrthographicCamera,
-      PlaneGeometry, ShaderMaterial, Mesh,
-      Color, Vector2, SRGBColorSpace
+      PlaneGeometry, InstancedBufferGeometry, InstancedBufferAttribute,
+      ShaderMaterial, Mesh, Color, SRGBColorSpace
     } from 'three'`,
   },
   'pixi.min.js': {
     pkg: PIXI,
     source: `export {
-      WebGLRenderer, Container, Texture, ParticleContainer, Particle
+      WebGLRenderer, Container, Texture, ParticleContainer, Particle, Rectangle
     } from 'pixi.js'`,
   },
 }

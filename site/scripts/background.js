@@ -1,39 +1,32 @@
 /* ============================================================================
-   The living background: the OBS WebSocket link, seen from inside it.
+   The living background: the link between two machines, drawn as a board.
    ============================================================================
 
-   SceneDeck runs on one machine and OBS runs on another with a WebSocket
-   between them, so the background is that link: a channel receding to a
-   vanishing point, eight bit-lanes along its wall, encoded video travelling up
-   it toward the camera and a thinner counter-flow of commands going the other
-   way. Every two seconds — OBS's default keyframe interval — a GOP boundary
-   sweeps down the channel and the stream resets.
+   Pads at the junctions, traces routed between them the way a PCB routes them
+   — a straight run, a 45-degree turn, another straight run — and data moving
+   along those traces. Three parallax layers give depth by moving at different
+   rates rather than by projection.
 
-   The division of labour is real:
+   The division of labour:
 
-   - three.js owns THE CHANNEL. One full-screen shader with a closed-form
-     infinite-cylinder intersection: because the eye sits on the channel axis
-     the intersection solves analytically, so there is no ray marching and the
-     cost is constant per pixel. Two triangles, one draw call, no textures, no
-     render targets, no depth buffer.
-   - pixi.js owns THE PACKETS. Thousands of individually positioned, scaled and
-     tinted sprites, which is exactly what its batcher exists for. In three.js
-     this would mean hand-rolling a points pipeline with custom attributes for
-     perspective-correct size and per-particle tint, for more code and no gain.
+   - three.js owns THE BOARD. Two instanced draw calls: one for the trace runs,
+     one for the pads. Every trace is a quad stretched between two points, so
+     the geometry is exact and cannot drift.
+   - pixi.js owns THE TRAFFIC. Packets running the traces, and byte glyphs
+     streaming along the busier ones. Thousands of individually positioned and
+     tinted sprites is precisely what its batcher exists for.
 
-   What makes them one image is wire.js: both layers use the same projection
-   and the same centreline, so a packet on lane 3 at z = 12 sits exactly on the
-   shader's rail for lane 3 at z = 12, at any aspect ratio.
+   Everything is placed by net.js in one flat space with no perspective divide.
+   Both renderers use the same `toScreen()`, so a packet is always exactly on
+   the trace three.js drew.
 
-   Motion is Material 3 Expressive — springs, not curves. Anything physical
-   moves on a spatial spring and is allowed to overshoot. Telemetry (the raster
-   scroll, packet velocity, the GOP clock, a dropped frame fading out) is
-   strictly linear, because easing a meter is a lie.
+   Motion is Material 3 Expressive: springs for anything physical, strictly
+   linear for anything that represents data in transit.
    ========================================================================== */
 
 import { frameState, reducedMotion } from "./ui.js";
 import { SPRING, Spring } from "./spring.js";
-import { wire, project } from "./wire.js";
+import { net, layout, offset, tracePath, pathLength, pathPoint, toScreen } from "./net.js";
 
 const DPR = () => Math.min(window.devicePixelRatio || 1, 2);
 
@@ -46,8 +39,8 @@ function hasWebGL() {
   }
 }
 
-/** Tier 1 drops the channel shader and keeps the packets: the shader is the
- *  expensive half, and the packets are what carries the idea. */
+/** Tier 1 drops the board and keeps the traffic: the shader is the expensive
+ *  half, and the moving data is what carries the idea. */
 function pickTier() {
   const w = window.innerWidth;
   let tier = w >= 1280 ? 3 : w >= 768 ? 2 : 1;
@@ -57,9 +50,9 @@ function pickTier() {
 }
 
 const TIERS = {
-  3: { channel: true, packets: 3200, drops: 240, threeScale: 0.72, pixiRes: 1.5 },
-  2: { channel: true, packets: 1800, drops: 160, threeScale: 0.62, pixiRes: 1.25 },
-  1: { channel: false, packets: 700, drops: 80, threeScale: 0, pixiRes: 1 },
+  3: { board: true, nodes: 54, packets: 1400, bytes: 260, threeScale: 0.85, pixiRes: 1.5 },
+  2: { board: true, nodes: 36, packets: 800, bytes: 150, threeScale: 0.75, pixiRes: 1.25 },
+  1: { board: false, nodes: 24, packets: 380, bytes: 70, threeScale: 0, pixiRes: 1 },
 };
 
 const readVar = (name) =>
@@ -67,42 +60,33 @@ const readVar = (name) =>
 
 const hexToInt = (hex) => Number(`0x${(hex || "#ffffff").replace("#", "")}`);
 
-function smoothstep(a, b, x) {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
-  return t * t * (3 - 2 * t);
-}
-
 /* ---- Entry --------------------------------------------------------------- */
 
 export async function initBackground() {
   if (!hasWebGL()) return; // The CSS fallback composition is already showing.
 
   const config = TIERS[pickTier()];
+  layout(window.innerWidth / Math.max(1, window.innerHeight), config.nodes);
 
   const shared = {
     dark: document.documentElement.dataset.theme === "dark",
-    // The keyframe ring's depth, on the one Expressive token with real
-    // overshoot — so the ring visibly punches past the eye before settling.
-    keyZ: new Spring(wire.Z_FAR, SPRING.spatialFast),
-    take: new Spring(0, SPRING.spatialFast),
-    vpX: new Spring(0.3, SPRING.spatialSlow),
-    vpY: new Spring(-0.02, SPRING.spatialSlow),
+    burst: new Spring(0, SPRING.spatialFast),
     accent: null,
-    gopClock: 0,
+    config,
   };
 
   const layers = [];
 
   try {
-    if (config.channel) layers.push(await buildChannel(config, shared));
+    if (config.board) layers.push(await buildBoard(config, shared));
   } catch (error) {
-    console.warn("[scenedeck] channel layer unavailable:", error);
+    console.warn("[scenedeck] board layer unavailable:", error);
   }
 
   try {
-    layers.push(await buildPackets(config, shared));
+    layers.push(await buildTraffic(config, shared));
   } catch (error) {
-    console.warn("[scenedeck] packet layer unavailable:", error);
+    console.warn("[scenedeck] traffic layer unavailable:", error);
   }
 
   if (!layers.length) return;
@@ -118,6 +102,7 @@ export async function initBackground() {
     window.addEventListener(
       "resize",
       debounce(() => {
+        layout(window.innerWidth / Math.max(1, window.innerHeight), config.nodes);
         layers.forEach((layer) => layer.resize());
         paint();
       }, 160)
@@ -147,9 +132,6 @@ function bindAppearance(layers, shared) {
 }
 
 /* ---- The driver ---------------------------------------------------------- */
-/* One requestAnimationFrame for the page. It cancels outright when the tab is
-   hidden or the window loses focus, so both renderers cost nothing at all
-   rather than idling. */
 
 function drive(layers, shared) {
   let raf = 0;
@@ -161,39 +143,16 @@ function drive(layers, shared) {
     const dt = Math.min((now - last) / 1000, 0.0333);
     last = now;
 
-    wire.time += dt;
-    wire.scroll = frameState.progress;
+    net.time += dt;
+    net.scroll = frameState.progress;
 
     // The pointer is damped rather than sprung: it is a follow, not an event,
     // and a cursor that overshoots reads as lag.
     const k = 1 - Math.pow(1 - 0.06, dt * 60);
-    wire.pointerX += (frameState.pointerX - wire.pointerX) * k;
-    wire.pointerY += (frameState.pointerY - wire.pointerY) * k;
+    net.pointerX += (frameState.pointerX - net.pointerX) * k;
+    net.pointerY += (frameState.pointerY - net.pointerY) * k;
 
-    // The vanishing point leans with the pointer and rises as you scroll, so
-    // the channel appears to bank. Slow spatial spring.
-    shared.vpX.to(0.3 + wire.pointerX * 0.07);
-    shared.vpY.to(-0.02 - wire.pointerY * 0.05 - wire.scroll * 0.18);
-    wire.vpX = shared.vpX.step(dt);
-    wire.vpY = shared.vpY.step(dt);
-
-    // The GOP clock is a wall clock, not an animation, so it is linear.
-    shared.gopClock += dt * 1000;
-    if (shared.gopClock >= wire.GOP_MS) {
-      shared.gopClock -= wire.GOP_MS;
-      launchKeyframe(shared);
-    }
-
-    wire.keyZ = shared.keyZ.step(dt);
-    wire.takeEnergy = shared.take.step(dt);
-
-    // Bitrate and congestion wander the way a real encoder does: mostly
-    // steady, with occasional pressure. Linear — they are telemetry.
-    wire.bitrate = 0.62 + 0.2 * Math.sin(wire.time * 0.23) + 0.08 * Math.sin(wire.time * 0.77);
-    wire.congestion = Math.max(
-      0,
-      0.1 + 0.12 * Math.sin(wire.time * 0.11) + 0.08 * Math.sin(wire.time * 0.41 + 2.1)
-    );
+    shared.burstEnergy = shared.burst.step(dt);
 
     for (const layer of layers) layer.render(dt);
   };
@@ -218,32 +177,22 @@ function drive(layers, shared) {
   window.addEventListener(
     "resize",
     debounce(() => {
+      layout(window.innerWidth / Math.max(1, window.innerHeight), shared.config.nodes);
       for (const layer of layers) layer.resize();
     }, 120)
   );
 
-  // A program take forces an I-frame, which is literally true of an OBS scene
-  // switch — so the take and the keyframe are the same gesture.
-  let takeRelease = 0;
+  // A program take pushes a burst of traffic down the board.
   window.addEventListener("scenedeck:take", () => {
-    shared.gopClock = 0;
-    launchKeyframe(shared);
-    shared.take.velocity += 9;
-    shared.take.to(1);
-    clearTimeout(takeRelease);
-    takeRelease = setTimeout(() => shared.take.to(0), 420);
-    window.dispatchEvent(new CustomEvent("wire:flash"));
+    shared.burst.velocity += 9;
+    shared.burst.to(1);
+    clearTimeout(shared.release);
+    shared.release = setTimeout(() => shared.burst.to(0), 380);
+    window.dispatchEvent(new CustomEvent("net:burst"));
   });
 
   start();
   layers.forEach((layer) => layer.canvas.setAttribute("data-live", ""));
-}
-
-/** Relaunch the GOP ring from the far end of the channel. */
-function launchKeyframe(shared) {
-  shared.keyZ.set(wire.Z_FAR);
-  shared.keyZ.velocity = -34;
-  shared.keyZ.to(-2);
 }
 
 function debounce(fn, ms) {
@@ -255,210 +204,238 @@ function debounce(fn, ms) {
 }
 
 /* ============================================================================
-   THE CHANNEL — three.js
+   THE BOARD — three.js
    ========================================================================== */
 
-const VERT = /* glsl */ `
-  varying vec2 vUv;
-  void main() {
-    vUv = uv;
-    gl_Position = vec4(position.xy, 0.0, 1.0);
-  }
-`;
+const COMMON = /* glsl */ `
+  uniform float uAspectRatio;
+  uniform float uCeil;
+  uniform float uStrength;
+  uniform float uInk;
+  uniform vec3  uSurface;
 
-const FRAG = /* glsl */ `
-  precision highp float;
-  varying vec2 vUv;
+  vec3 present(vec3 add) {
+    float y = max(dot(add, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
+    add *= min(1.0, uCeil / y) * uStrength;
 
-  uniform float uTime;
-  uniform float uAspect;
-  uniform vec2  uVp;
-  uniform vec2  uPointer;
-  uniform float uBitrate;
-  uniform float uCongestion;
-  uniform float uKeyZ;
-  uniform float uTake;
-  uniform float uInk;       // 0 dark, 1 light
-  uniform float uCeil;      // hard luminance ceiling
-  uniform vec3  uNear;      // #065dac, the near end of the OBS hero gradient
-  uniform vec3  uFar;       // #280f83, the far end
-  uniform vec3  uRail;      // lane rails, overridable by a scene accent
-  uniform vec3  uSurface;   // page surface — composited here, not by CSS
-  uniform float uStrength;  // how strongly the channel reads over the surface
-
-  const float TAU    = 6.28318530718;
-  const float FOCAL  = 1.7320508075688772;
-  const float RADIUS = 1.35;
-
-  // MUST match centreline() in wire.js exactly, or the layers separate.
-  vec2 centreline(float z, float t, vec2 ptr) {
-    float k = z * 0.0125;
-    return vec2(0.62 * sin(z * 0.0600 + t * 0.150) + ptr.x * k,
-                0.44 * cos(z * 0.0450 + t * 0.110) + ptr.y * k);
-  }
-
-  float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
-
-  float vnoise(vec2 p) {
-    vec2 i = floor(p), f = fract(p);
-    f = f * f * (3.0 - 2.0 * f);
-    return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x),
-               mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y);
-  }
-
-  void main() {
-    vec2 ndc = (vUv * 2.0 - 1.0) - uVp;
-    vec3 rd  = normalize(vec3(ndc.x * uAspect / FOCAL, ndc.y / FOCAL, -1.0));
-
-    // The eye sits exactly on the channel axis, so intersecting an infinite
-    // cylinder is closed form: no marching, constant cost per pixel.
-    float rl = max(length(rd.xy), 1e-4);
-    float s  = RADIUS / rl;
-    float z  = min(-rd.z * s, 400.0);
-
-    float ang = atan(rd.y, rd.x);
-    float u   = ang / TAU + 0.5;
-    float v   = z * 0.075 - uTime * 0.42;   // raster scroll: strictly linear
-
-    vec2 c = centreline(z, uTime, uPointer);
-    u += (c.x * 0.11 + c.y * 0.07) / max(z, 1.0);
-
-    // Congestion warps depth rather than the surface, so it reads as the link
-    // buffering rather than as water rippling.
-    v += (vnoise(vec2(u * 6.0, v * 3.0 - uTime * 0.9)) - 0.5) * uCongestion * 0.30;
-
-    // Everything converges at the vanishing point, so that is the one place
-    // the structure terms stack into a hot core. Damp by distance from it.
-    float vpFall = 0.22 + 0.78 * smoothstep(0.0, 0.62, length(ndc));
-
-    // 1. eight bit-lanes, brightening with bitrate
-    float lane  = abs(fract(u * 8.0) - 0.5) * 2.0;
-    float rails = pow(1.0 - lane, 34.0) * (0.55 + 0.45 * uBitrate) * vpFall;
-
-    // 2. the raster structure of the video signal itself
-    float raster = pow(0.5 + 0.5 * sin(v * 62.0), 3.0);
-
-    // 3. 4:2:0 macroblocks, visible only when the link is congested
-    vec2  mb    = floor(vec2(u * 64.0, v * 22.0));
-    float macro = step(1.0 - uCongestion * 0.55, vnoise(mb + floor(uTime * 6.0) * 7.13))
-                  * uCongestion * 0.55;
-
-    // 4. GOP ribs running down the channel
-    float rib = pow(1.0 - abs(fract(v * 0.25) * 2.0 - 1.0), 40.0);
-
-    // 5. the keyframe ring, sweeping toward the eye
-    float ring = exp(-abs(z - uKeyZ) * (2.4 - uTake * 0.8)) * (0.95 + 1.10 * uTake)
-                 * smoothstep(0.9, 5.5, uKeyZ);
-
-    // Depth ramp: violet far, blue near. The OBS hero gradient emitted along
-    // the channel rather than painted across it.
-    float depth = clamp(z / 40.0, 0.0, 1.0);
-    vec3  hue   = mix(uNear, uFar, depth);
-
-    float structure = (raster * 0.55 + rib * 0.45 + macro) * vpFall + rails * 0.70;
-    // Fade the far end out so the channel has no visible end wall.
-    float fade = 1.0 - smoothstep(26.0, 40.0, z) * 0.85;
-
-    // DARK: the channel is emissive over the page surface. The ceiling is a
-    // clamp on what it may add, not a scale — so no accent, take or keyframe
-    // can push the background bright enough to hurt body copy.
-    vec3 glow = (hue * (0.30 + structure) + uRail * (rails * 0.30 + ring * 0.75)) * fade;
-    float y = max(dot(glow, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
-    glow *= min(1.0, uCeil / y) * uStrength;
-    vec3 lit = uSurface + glow;
-
-    // LIGHT: the same structure printed as ink. It has to darken the paper
-    // TOWARD the wire's own hue — subtracting a blue glow from white paper
-    // would leave its complement, and the first attempt came out orange.
-    float density = clamp(structure * 0.85 + ring * 0.55, 0.0, 1.0) * fade;
-    vec3  ink     = mix(uSurface, hue * 0.40, density * uCeil * 2.4 * uStrength);
-
-    // The canvas is opaque: the surface is composited here rather than by
-    // letting a translucent canvas reveal the CSS fallback underneath.
+    // Dark emits over the surface; light prints the same structure as ink,
+    // bounded so a border colour keeps its contrast on paper.
+    float density = clamp(dot(add, vec3(0.2126, 0.7152, 0.0722)) / max(uCeil, 1e-4), 0.0, 1.0);
+    vec3 lit = uSurface + add;
+    vec3 ink = mix(uSurface, uSurface * 0.35, density * 0.42);
     vec3 outc = max(mix(lit, ink, uInk), 0.0);
 
-    // three.js only injects its output-encoding chunk into its own materials,
-    // so a ShaderMaterial has to encode to sRGB itself. Without this the same
-    // --md-surface hex renders a visibly different tone on the canvas than the
-    // CSS around it. Including <colorspace_fragment> does not work here: it
-    // calls linearToOutputTexel, which is not declared for ShaderMaterial, and
-    // the program fails to link.
-    vec3 encoded = mix(outc * 12.92,
-                       1.055 * pow(outc, vec3(0.41666)) - 0.055,
-                       step(vec3(0.0031308), outc));
-
-    gl_FragColor = vec4(encoded, 1.0);
+    // three.js only injects its output encoding into its own materials, so a
+    // ShaderMaterial has to encode to sRGB itself.
+    return mix(outc * 12.92,
+               1.055 * pow(outc, vec3(0.41666)) - 0.055,
+               step(vec3(0.0031308), outc));
   }
 `;
 
-async function buildChannel(config, shared) {
+const TRACE_VERT = /* glsl */ `
+  attribute vec4 aSeg;    // x0, y0, x1, y1
+  attribute vec2 aMeta;   // width, dim
+  varying vec2 vUv;
+  varying float vDim;
+
+  void main() {
+    vUv = uv;
+    vDim = aMeta.y;
+
+    vec2 a = aSeg.xy;
+    vec2 b = aSeg.zw;
+    vec2 d = b - a;
+    float len = max(length(d), 1e-5);
+    vec2 n = vec2(-d.y, d.x) / len;
+
+    vec2 p = a + d * uv.x + n * (uv.y - 0.5) * aMeta.x;
+    gl_Position = vec4(p.x / uAspectRatio, p.y, 0.0, 1.0);
+  }
+`;
+
+const TRACE_FRAG = /* glsl */ `
+  precision highp float;
+  varying vec2 vUv;
+  varying float vDim;
+  uniform vec3 uLine;
+
+  void main() {
+    // Soft across the width so a run has an edge rather than a stair.
+    float cov = 1.0 - smoothstep(0.28, 0.5, abs(vUv.y - 0.5));
+    vec3 col = present(uLine * 0.55 * vDim);
+    gl_FragColor = vec4(col * cov, cov);
+  }
+`;
+
+const PAD_VERT = /* glsl */ `
+  attribute vec3 aPos;    // x, y, size
+  attribute vec2 aMeta;   // dim, hub
+  varying vec2 vUv;
+  varying float vDim;
+  varying float vHub;
+
+  void main() {
+    vUv = uv;
+    vDim = aMeta.x;
+    vHub = aMeta.y;
+    vec2 p = position.xy * aPos.z + aPos.xy;
+    gl_Position = vec4(p.x / uAspectRatio, p.y, 0.0, 1.0);
+  }
+`;
+
+const PAD_FRAG = /* glsl */ `
+  precision highp float;
+  varying vec2 vUv;
+  varying float vDim;
+  varying float vHub;
+  uniform vec3 uLine;
+  uniform vec3 uNode;
+
+  void main() {
+    vec2 p = (vUv - 0.5) * 2.0;
+    float r = max(abs(p.x), abs(p.y));   // square pads, like a real footprint
+
+    // A solid centre, and for hubs a ring around it: a device rather than a via.
+    float core = 1.0 - smoothstep(0.30, 0.40, r);
+    float ring = (1.0 - smoothstep(0.80, 0.92, r)) * smoothstep(0.62, 0.74, r) * vHub;
+    float cov = clamp(core + ring, 0.0, 1.0);
+    if (cov < 0.004) discard;
+
+    vec3 col = present(mix(uNode, uLine, 0.35) * (core * 1.1 + ring * 0.8) * vDim);
+    gl_FragColor = vec4(col * cov, cov);
+  }
+`;
+
+async function buildBoard(config, shared) {
   const THREE = await import("../vendor/three.min.js");
   const canvas = document.getElementById("bg-three");
 
   const renderer = new THREE.WebGLRenderer({
     canvas,
-    antialias: false,
-    alpha: false,
+    antialias: true,
+    alpha: true,
     depth: false,
     stencil: false,
     powerPreference: "high-performance",
   });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.setClearAlpha(0);
 
   const scene = new THREE.Scene();
-  // The shader builds its own rays from vUv, so the camera never transforms
-  // anything — it exists because three.js requires one.
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
   const uniforms = {
-    uTime: { value: 0 },
-    uAspect: { value: 1 },
-    uVp: { value: new THREE.Vector2(0.3, -0.02) },
-    uPointer: { value: new THREE.Vector2(0, 0) },
-    uBitrate: { value: 0.62 },
-    uCongestion: { value: 0.1 },
-    uKeyZ: { value: wire.Z_FAR },
-    uTake: { value: 0 },
-    uInk: { value: shared.dark ? 0 : 1 },
-    uCeil: { value: 0.1 },
+    uAspectRatio: { value: 1 },
+    uCeil: { value: 0.08 },
     uStrength: { value: 0.72 },
-    uNear: { value: new THREE.Color("#065dac") },
-    uFar: { value: new THREE.Color("#280f83") },
-    uRail: { value: new THREE.Color("#256eff") },
+    uInk: { value: shared.dark ? 0 : 1 },
     uSurface: { value: new THREE.Color("#080f22") },
+    uLine: { value: new THREE.Color("#256eff") },
+    uNode: { value: new THREE.Color("#72a2ff") },
   };
 
-  const mesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(2, 2),
+  const quad = new THREE.PlaneGeometry(1, 1);
+  const clone = () => {
+    const g = new THREE.InstancedBufferGeometry();
+    g.index = quad.index;
+    g.setAttribute("position", quad.attributes.position);
+    g.setAttribute("uv", quad.attributes.uv);
+    return g;
+  };
+
+  /* -- trace runs -------------------------------------------------------- */
+  const SEGS = config.nodes * 3;
+  const traceGeo = clone();
+  const aSeg = new THREE.InstancedBufferAttribute(new Float32Array(SEGS * 4), 4);
+  const aSegMeta = new THREE.InstancedBufferAttribute(new Float32Array(SEGS * 2), 2);
+  traceGeo.setAttribute("aSeg", aSeg);
+  traceGeo.setAttribute("aMeta", aSegMeta);
+
+  const traceMesh = new THREE.Mesh(
+    traceGeo,
     new THREE.ShaderMaterial({
-      vertexShader: VERT,
-      fragmentShader: FRAG,
+      vertexShader: COMMON + TRACE_VERT,
+      fragmentShader: COMMON + TRACE_FRAG,
       uniforms,
+      transparent: true,
       depthTest: false,
       depthWrite: false,
     })
   );
-  mesh.frustumCulled = false;
-  scene.add(mesh);
+  traceMesh.frustumCulled = false;
+  scene.add(traceMesh);
+
+  /* -- pads -------------------------------------------------------------- */
+  const padGeo = clone();
+  const aPos = new THREE.InstancedBufferAttribute(new Float32Array(config.nodes * 3), 3);
+  const aPadMeta = new THREE.InstancedBufferAttribute(new Float32Array(config.nodes * 2), 2);
+  padGeo.setAttribute("aPos", aPos);
+  padGeo.setAttribute("aMeta", aPadMeta);
+
+  const padMesh = new THREE.Mesh(
+    padGeo,
+    new THREE.ShaderMaterial({
+      vertexShader: COMMON + PAD_VERT,
+      fragmentShader: COMMON + PAD_FRAG,
+      uniforms,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+    })
+  );
+  padMesh.frustumCulled = false;
+  scene.add(padMesh);
+
+  const pos = { x: 0, y: 0 };
+  const path = new Float32Array(8);
+
+  const writeInstances = () => {
+    net.nodes.forEach((node, i) => {
+      const l = net.layers[node.layer];
+      offset(node, pos);
+      aPos.array[i * 3] = pos.x;
+      aPos.array[i * 3 + 1] = pos.y;
+      aPos.array[i * 3 + 2] = (node.hub ? 0.062 : 0.03) * (0.7 + l.dim * 0.5);
+      aPadMeta.array[i * 2] = l.dim;
+      aPadMeta.array[i * 2 + 1] = node.hub ? 1 : 0;
+    });
+    padGeo.instanceCount = net.nodes.length;
+    aPos.needsUpdate = true;
+    aPadMeta.needsUpdate = true;
+
+    let s = 0;
+    for (const trace of net.traces) {
+      tracePath(trace, path);
+      const l = net.layers[trace.layer];
+      for (let k = 0; k < 3 && s < SEGS; k++, s++) {
+        aSeg.array[s * 4] = path[k * 2];
+        aSeg.array[s * 4 + 1] = path[k * 2 + 1];
+        aSeg.array[s * 4 + 2] = path[k * 2 + 2];
+        aSeg.array[s * 4 + 3] = path[k * 2 + 3];
+        aSegMeta.array[s * 2] = l.width;
+        aSegMeta.array[s * 2 + 1] = l.dim;
+      }
+    }
+    traceGeo.instanceCount = s;
+    aSeg.needsUpdate = true;
+    aSegMeta.needsUpdate = true;
+  };
 
   const syncTheme = () => {
     uniforms.uInk.value = shared.dark ? 0 : 1;
-    uniforms.uCeil.value = parseFloat(readVar("--wire-ceiling")) || (shared.dark ? 0.1 : 0.3);
+    uniforms.uCeil.value = parseFloat(readVar("--feed-ceiling")) || 0.08;
     uniforms.uStrength.value = parseFloat(readVar("--three-opacity")) || 0.72;
     uniforms.uSurface.value.set(readVar("--md-surface") || "#080f22");
-    uniforms.uNear.value.set(readVar("--wire-near") || "#065dac");
-    uniforms.uFar.value.set(readVar("--wire-far") || "#280f83");
-    if (!shared.accent) uniforms.uRail.value.set(readVar("--wire-rail") || "#256eff");
+    uniforms.uNode.value.set(readVar("--feed-near") || "#72a2ff");
+    if (!shared.accent) uniforms.uLine.value.set(readVar("--feed-line") || "#256eff");
   };
   syncTheme();
 
   const resize = () => {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
     renderer.setPixelRatio(DPR() * config.threeScale);
-    renderer.setSize(w, h, false);
-    uniforms.uAspect.value = w / Math.max(1, h);
-    wire.aspect = uniforms.uAspect.value;
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+    uniforms.uAspectRatio.value = net.aspect;
   };
   resize();
 
@@ -467,26 +444,21 @@ async function buildChannel(config, shared) {
     resize,
     theme: syncTheme,
     accent(hex) {
-      uniforms.uRail.value.set(hex);
+      uniforms.uLine.value.set(hex);
     },
     render() {
-      uniforms.uTime.value = wire.time;
-      uniforms.uVp.value.set(wire.vpX, wire.vpY);
-      uniforms.uPointer.value.set(wire.pointerX, wire.pointerY);
-      uniforms.uBitrate.value = wire.bitrate;
-      uniforms.uCongestion.value = wire.congestion;
-      uniforms.uKeyZ.value = wire.keyZ;
-      uniforms.uTake.value = wire.takeEnergy;
+      uniforms.uAspectRatio.value = net.aspect;
+      writeInstances();
       renderer.render(scene, camera);
     },
   };
 }
 
 /* ============================================================================
-   THE PACKETS — pixi.js
+   THE TRAFFIC — pixi.js
    ========================================================================== */
 
-async function buildPackets(config, shared) {
+async function buildTraffic(config, shared) {
   const PIXI = await import("../vendor/pixi.min.js");
   const canvas = document.getElementById("bg-pixi");
 
@@ -503,177 +475,158 @@ async function buildPackets(config, shared) {
   });
 
   const stage = new PIXI.Container();
+  const dynamic = { position: true, vertex: true, color: true, rotation: true };
 
   const packetTexture = PIXI.Texture.from(packetCanvas());
-  const dropTexture = PIXI.Texture.from(dropCanvas());
+  const glyphSheet = PIXI.Texture.from(glyphCanvas());
+  const glyphFrames = [];
+  for (let i = 0; i < 16; i++) {
+    glyphFrames.push(
+      new PIXI.Texture({
+        source: glyphSheet.source,
+        frame: new PIXI.Rectangle(i * 10, 0, 10, 14),
+      })
+    );
+  }
 
-  // Position, size and tint all change every frame; rotation never does.
-  const dynamic = { position: true, vertex: true, color: true, rotation: false };
   const flow = new PIXI.ParticleContainer({ dynamicProperties: dynamic });
-  const drops = new PIXI.ParticleContainer({ dynamicProperties: dynamic });
-  stage.addChild(flow, drops);
+  const bytes = new PIXI.ParticleContainer({ dynamicProperties: dynamic });
+  stage.addChild(flow, bytes);
 
   let W = window.innerWidth;
   let H = window.innerHeight;
-  let halfW = W / 2;
-  let halfH = H / 2;
-  wire.aspect = W / Math.max(1, H);
 
-  const proj = { ndcX: 0, ndcY: 0, scale: 1, shift: 0 };
-
-  const packetTint = () => hexToInt(shared.accent || readVar("--wire-packet") || "#72a2ff");
-  const dropTint = () => hexToInt(readVar("--wire-drop") || "#e74c3c");
-
+  const packetTint = () => hexToInt(shared.accent || readVar("--feed-packet") || "#72a2ff");
   let tint = packetTint();
-  let alphaMax = parseFloat(readVar("--packet-alpha")) || 0.55;
-  // On paper a glow sprite is subtractive: the same alpha that reads as bloom
-  // on navy prints as a dark patch on white, and the ring was the darkest
-  // thing on the light page while it was travelling.
+  let alphaMax = parseFloat(readVar("--packet-alpha")) || 0.28;
 
-  /* -- the flow ---------------------------------------------------------- */
+  const make = (container, texture, count, list, speedLo, speedHi) => {
+    for (let i = 0; i < count; i++) {
+      const particle = new PIXI.Particle({
+        texture,
+        x: 0,
+        y: 0,
+        tint,
+        alpha: 0,
+        anchorX: 0.5,
+        anchorY: 0.5,
+      });
+      container.addParticle(particle);
+      list.push({
+        p: particle,
+        trace: 0,
+        d: Math.random(),
+        speed: speedLo + Math.random() * (speedHi - speedLo),
+        size: 0.7 + Math.random() * 0.6,
+        hot: 0,
+      });
+    }
+  };
+
   const packets = [];
-  for (let i = 0; i < config.packets; i++) {
-    const particle = new PIXI.Particle({ texture: packetTexture, x: 0, y: 0, tint, alpha: 0, anchorX: 0.5, anchorY: 0.5 });
-    flow.addParticle(particle);
-    // A fifth of the traffic runs the other way on a tighter radius: video in,
-    // commands out. Two machines, one wire, traffic in both directions.
-    const outbound = i % 5 === 0;
-    packets.push({
+  const glyphs = [];
+  make(flow, packetTexture, config.packets, packets, 0.22, 0.46);
+  for (let i = 0; i < config.bytes; i++) {
+    const particle = new PIXI.Particle({
+      texture: glyphFrames[i % 16],
+      x: 0,
+      y: 0,
+      tint,
+      alpha: 0,
+      anchorX: 0.5,
+      anchorY: 0.5,
+    });
+    bytes.addParticle(particle);
+    glyphs.push({
       p: particle,
-      lane: i % wire.LANES,
-      radius: outbound ? 0.6 + Math.random() * 0.14 : 0.86 + Math.random() * 0.135,
-      z: wire.Z_NEAR + Math.random() * (wire.Z_FAR - wire.Z_NEAR),
-      speed: (5.4 + Math.random() * 3.7) * (outbound ? -1.35 : 1),
-      size: 0.55 + Math.random() * 0.7,
-      outbound,
+      trace: 0,
+      d: Math.random(),
+      speed: 0.12 + Math.random() * 0.14,
+      size: 1,
       hot: 0,
     });
   }
 
-  /* -- dropped frames ----------------------------------------------------- */
-  const dropList = [];
-  for (let i = 0; i < config.drops; i++) {
-    const particle = new PIXI.Particle({ texture: dropTexture, x: 0, y: 0, tint: dropTint(), alpha: 0, anchorX: 0.5, anchorY: 0.5 });
-    drops.addParticle(particle);
-    dropList.push({ p: particle, life: 0, x: 0, y: 0, scale: 1 });
-  }
-  let dropCursor = 0;
+  const assign = () => {
+    const n = Math.max(1, net.traces.length);
+    packets.forEach((p, i) => (p.trace = i % n));
+    // Byte streams only run the busier layers, so they read as bulk transfer
+    // rather than as noise everywhere.
+    glyphs.forEach((g, i) => (g.trace = (i * 3 + 1) % n));
+  };
+  assign();
 
   const applyBlend = (dark) => {
     const mode = dark ? "add" : "normal";
     flow.blendMode = mode;
-    drops.blendMode = mode;
+    bytes.blendMode = mode;
   };
   applyBlend(shared.dark);
 
   const resize = () => {
     W = window.innerWidth;
     H = window.innerHeight;
-    halfW = W / 2;
-    halfH = H / 2;
-    wire.aspect = W / Math.max(1, H);
     renderer.resize(W, H);
-    // The reduced-motion path paints one frame and never ticks, so without
-    // this the packets keep the pixel coordinates of the previous aspect.
-    stepLogic();
+    assign();
   };
 
-  const spawnDrop = (x, y, scale) => {
-    const drop = dropList[dropCursor];
-    dropCursor = (dropCursor + 1) % dropList.length;
-    drop.life = 0.42;
-    drop.x = x;
-    drop.y = y;
-    drop.scale = scale;
-  };
-
+  const path = new Float32Array(8);
+  const world = { x: 0, y: 0, dx: 1, dy: 0 };
+  const screen = { x: 0, y: 0 };
   const STEP = 1 / 60;
   let accumulator = 0;
 
-  const stepLogic = () => {
-    const activeCount = Math.round(packets.length * (0.35 + 0.65 * wire.bitrate));
-    const dropChance = wire.congestion * wire.congestion * 0.3;
+  const advance = (list, scale, glyph) => {
+    for (const item of list) {
+      const trace = net.traces[item.trace];
+      if (!trace) continue;
 
-    for (let i = 0; i < packets.length; i++) {
-      const packet = packets[i];
-      const sprite = packet.p;
+      tracePath(trace, path);
+      const len = pathLength(path);
+      if (len <= 0) continue;
 
-      // Bitrate is literally packet density. Inactive packets collapse to a
-      // degenerate quad, so they cost no fill — though pixi still uploads
-      // their buffer entries, so they are cheap rather than free.
-      if (i >= activeCount) {
-        sprite.scaleX = 0;
-        sprite.scaleY = 0;
-        sprite.alpha = 0;
-        continue;
+      // Constant speed along the run. Linear, because this is data in transit.
+      item.d += (item.speed * STEP * (1 + item.hot * 1.5)) / len;
+      if (item.hot > 0) item.hot = Math.max(0, item.hot - STEP * 1.3);
+      if (item.d >= 1) {
+        item.d -= 1;
+        // Continue onto whatever the pad it arrived at feeds next.
+        const next = net.traces.findIndex((t) => t.from === trace.to);
+        if (next >= 0) item.trace = next;
       }
 
-      packet.z -= packet.speed * STEP * (1 + packet.hot * 0.9);
-      if (packet.hot > 0) packet.hot = Math.max(0, packet.hot - STEP * 1.1);
+      pathPoint(path, item.d * len, world);
+      toScreen(world.x, world.y, W, H, screen);
 
-      if (packet.z <= wire.Z_NEAR || packet.z >= wire.Z_FAR) {
-        // A congested link loses packets: this one never arrives.
-        if (!packet.outbound && sprite.alpha > 0.01 && Math.random() < dropChance) {
-          spawnDrop(sprite.x, sprite.y, wire.FOCAL / packet.z);
-        }
-        packet.z = packet.outbound ? wire.Z_NEAR : wire.Z_FAR;
-      }
-
-      if (!project(packet.lane, packet.radius, packet.z, proj)) {
-        sprite.scaleX = 0;
-        sprite.scaleY = 0;
-        sprite.alpha = 0;
-        continue;
-      }
-
-      sprite.x = halfW + proj.ndcX * halfW;
-      sprite.y = halfH - proj.ndcY * halfH;
-      const scale = proj.scale * packet.size * 2.4;
-      sprite.scaleX = scale;
-      sprite.scaleY = scale;
-      // Packets fade as they reach the eye rather than becoming huge bright
-      // squares over the headline — they are consumed on arrival.
-      sprite.alpha =
-        alphaMax *
-        smoothstep(2, 6.5, packet.z) *
-        (1 - smoothstep(13, 26, packet.z)) *
-        (packet.outbound ? 0.55 : 1) *
-        (1 + packet.hot * 1.6);
-      sprite.tint = packet.hot > 0.02 ? 0xffffff : tint;
+      const sprite = item.p;
+      sprite.x = screen.x;
+      sprite.y = screen.y;
+      const s = scale * item.size;
+      sprite.scaleX = s;
+      sprite.scaleY = s;
+      // Packets lie along the trace they are on; glyphs stay upright so they
+      // stay readable as characters.
+      sprite.rotation = glyph ? 0 : Math.atan2(world.dy, world.dx);
+      const dim = net.layers[trace.layer].dim;
+      sprite.alpha = alphaMax * dim * (glyph ? 0.75 : 1) * (1 + item.hot * 1.4);
+      sprite.tint = item.hot > 0.02 ? 0xffffff : tint;
     }
-
-    for (const drop of dropList) {
-      if (drop.life <= 0) {
-        drop.p.alpha = 0;
-        drop.p.scaleX = 0;
-        drop.p.scaleY = 0;
-        continue;
-      }
-      drop.life -= STEP;
-      const t = 1 - Math.max(0, drop.life) / 0.42;
-      drop.p.x = drop.x;
-      drop.p.y = drop.y;
-      const s = drop.scale * (1 + t * 0.9) * 2.4;
-      drop.p.scaleX = s;
-      drop.p.scaleY = s;
-      // A dropped frame does not bounce. Linear fade, no spring.
-      drop.p.alpha = Math.max(0, 0.9 * (1 - t));
-    }
-
   };
 
-  // Seed one pass so the reduced-motion path composes properly instead of
-  // drawing every packet stacked at the origin.
+  const stepLogic = () => {
+    if (!net.traces.length) return;
+    const base = Math.min(W, H) * 0.0011;
+    advance(packets, base, false);
+    advance(glyphs, base * 0.85, true);
+  };
+
   stepLogic();
 
-  // A take flashes the packets nearest the eye white and speeds them up.
-  window.addEventListener("wire:flash", () => {
-    let flashed = 0;
+  window.addEventListener("net:burst", () => {
+    let n = 0;
     for (const packet of packets) {
-      if (packet.z < 14 && !packet.outbound && flashed < 220) {
-        packet.hot = 1;
-        flashed++;
-      }
+      if (n++ % 4 === 0) packet.hot = 1;
+      if (n > 400) break;
     }
   });
 
@@ -682,8 +635,7 @@ async function buildPackets(config, shared) {
     resize,
     theme(dark) {
       tint = packetTint();
-      alphaMax = parseFloat(readVar("--packet-alpha")) || 0.55;
-      for (const drop of dropList) drop.p.tint = dropTint();
+      alphaMax = parseFloat(readVar("--packet-alpha")) || 0.28;
       applyBlend(dark);
     },
     accent() {
@@ -701,41 +653,36 @@ async function buildPackets(config, shared) {
   };
 }
 
-/* ---- Procedural textures ------------------------------------------------- */
-/* Packets are squares because they are data blocks, and because Material 3
-   Expressive's shape direction is bolder, not rounder — so they keep a crisp
-   corner with only the extra-small radius softening it. */
-
+/** A short dash. Packets lie along their trace, so they read as data moving in
+ *  a direction rather than as dots sitting on a line. */
 function packetCanvas() {
   const canvas = document.createElement("canvas");
-  canvas.width = 8;
-  canvas.height = 8;
+  canvas.width = 16;
+  canvas.height = 6;
   const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#ffffff";
-  if (ctx.roundRect) {
-    ctx.beginPath();
-    ctx.roundRect(1, 1, 6, 6, 1.5);
-    ctx.fill();
-  } else {
-    ctx.fillRect(1, 1, 6, 6);
-  }
+  const g = ctx.createLinearGradient(0, 0, 16, 0);
+  g.addColorStop(0, "rgba(255,255,255,0)");
+  g.addColorStop(0.45, "rgba(255,255,255,1)");
+  g.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 1, 16, 4);
   return canvas;
 }
 
-/** A broken square: a packet that failed. Reads at 3-9px. */
-function dropCanvas() {
+/** A strip of the sixteen hex digits, drawn once. Each byte glyph picks a
+ *  frame from it, and because they all share one source pixi still batches the
+ *  whole stream into a single draw. */
+function glyphCanvas() {
   const canvas = document.createElement("canvas");
-  canvas.width = 8;
-  canvas.height = 8;
+  canvas.width = 160;
+  canvas.height = 14;
   const ctx = canvas.getContext("2d");
-  ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  ctx.moveTo(1.5, 1.5);
-  ctx.lineTo(6.5, 6.5);
-  ctx.moveTo(6.5, 1.5);
-  ctx.lineTo(1.5, 6.5);
-  ctx.stroke();
+  ctx.font = "700 11px ui-monospace, monospace";
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  "0123456789ABCDEF".split("").forEach((ch, i) => {
+    ctx.fillText(ch, i * 10 + 5, 7);
+  });
   return canvas;
 }
-

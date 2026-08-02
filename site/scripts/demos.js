@@ -583,6 +583,17 @@ const SCREENS = {
       ).join("")}
     </div>`,
 
+  mixer: () => `
+    <p class="screen-label">Mixer · Active — follows the program scene</p>
+    <div class="deck-mixer">
+      ${CHANNELS.map(
+        (c) => `<div class="deck-strip">
+          <div class="meter deck-strip__meter" data-deck-meter>${'<span class="meter__seg"></span>'.repeat(8)}</div>
+          <span class="deck-strip__name">${c.name}</span></div>`
+      ).join("")}
+    </div>
+    <p class="screen-label">Modes: Active · Selected · Pinned</p>`,
+
   stats: () => `
     <p class="screen-label">Live telemetry</p>
     <div class="deck-scenes" style="grid-template-columns:repeat(2,minmax(0,1fr))">
@@ -685,7 +696,7 @@ export function initDeck() {
       page.setAttribute("aria-pressed", String(active));
     }
     deckGeneration += 1;
-    if (name === "live") animateDeckMeters(screen, deckGeneration);
+    if (name === "live" || name === "mixer") animateDeckMeters(screen, deckGeneration);
   };
 
   pages.forEach((page) => page.addEventListener("click", () => show(page.dataset.page)));

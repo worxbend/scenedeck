@@ -71,10 +71,10 @@ body {
 }
 
 /* ---- Background stack ---------------------------------------------------- */
-/* Bottom to top: the three.js channel, the pixi packets, grain, vignette,
-   content.
-   Grain and vignette are CSS rather than post-processing passes — that saves
-   a full-screen render target per frame for something the eye reads as film. */
+/* Bottom to top: the static fallback, the three.js board, the pixi traffic,
+   grain, vignette, content. Grain and vignette are CSS rather than
+   post-processing passes — that saves a full-screen render target per frame
+   for something the eye reads as film. */
 
 #bg-three,
 #bg-pixi,
@@ -91,7 +91,8 @@ body {
 }
 
 /* Canvases are replaced elements: without an explicit size they take their
-   intrinsic (drawing-buffer) size rather than stretching to the insets. */
+   intrinsic (drawing-buffer) size rather than stretching to the insets, which
+   leaves a hard seam where the buffer ends. */
 #bg-three,
 #bg-pixi {
   width: 100%;
@@ -111,10 +112,9 @@ body {
   transition: opacity var(--d-xlong1) var(--ease-standard);
 }
 
-/* The canvas is fully opaque: it composites the page surface itself, so the
-   shader's luminance ceiling governs the final pixel rather than being undone
-   by a bright CSS layer showing through. --three-opacity is passed into the
-   shader as uStrength instead. */
+/* The canvas composites the page surface itself, so the shader's luminance
+   ceiling governs the final pixel rather than being undone by a bright layer
+   showing through. --three-opacity is passed into the shader instead. */
 #bg-three[data-live] {
   opacity: 1;
 }
@@ -137,34 +137,40 @@ body {
 .bg-vignette {
   z-index: var(--z-vignette);
   /* Two jobs. The radial darkens the edges into the page. The flat floor
-     underneath it is the one that matters for legibility: the channel is
-     brightest around the vanishing point, which is exactly where a classic
-     vignette is most transparent, so a uniform veil bounds the whole
-     composite rather than only its corners. */
+     underneath it is the one that matters for legibility: it bounds the whole
+     composite uniformly, including the places a radial vignette leaves most
+     transparent. */
   background:
     radial-gradient(
-      130% 108% at 62% 34%,
-      transparent 40%,
-      color-mix(in oklab, var(--md-surface) 55%, transparent) 74%,
+      130% 108% at 50% 38%,
+      transparent 44%,
+      color-mix(in oklab, var(--md-surface) 55%, transparent) 78%,
       var(--md-surface) 100%
     ),
     color-mix(in oklab, var(--md-surface) var(--scrim-floor), transparent);
 }
 
 /* The static composition. It is what the page looks like before WebGL boots,
-   if WebGL is missing, and under prefers-reduced-motion — so it has to be
-   presentable on its own rather than a placeholder. */
+   if WebGL is missing, and on the smallest tier where the board is never
+   built — so it has to stand on its own rather than be a placeholder. */
 .bg-fallback {
   z-index: var(--z-three);
-  /* The channel, flattened: the OBS hero gradient concentrated at the same
-     vanishing point the shader uses, so the static and live versions read as
-     the same picture. */
   background:
+    repeating-linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--feed-line) var(--fallback-grid), transparent) 0 1px,
+      transparent 1px 168px
+    ),
+    repeating-linear-gradient(
+      0deg,
+      color-mix(in oklab, var(--feed-line) var(--fallback-grid), transparent) 0 1px,
+      transparent 1px 132px
+    ),
     radial-gradient(
-      60ch 44ch at 62% 34%,
-      color-mix(in oklab, var(--wire-near) var(--fallback-near), transparent),
-      color-mix(in oklab, var(--wire-far) var(--fallback-far), transparent) 46%,
-      transparent 78%
+      70ch 52ch at 34% 26%,
+      color-mix(in oklab, var(--feed-near) var(--fallback-near), transparent),
+      color-mix(in oklab, var(--feed-far) var(--fallback-far), transparent) 52%,
+      transparent 82%
     ),
     linear-gradient(180deg, var(--md-surface-container) 0%, var(--md-surface) 58%);
 }
