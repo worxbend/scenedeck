@@ -47,6 +47,7 @@ impl BuiltInTheme {
             "adwaita-default" => fl!(LANGUAGE_LOADER, "theme-adwaita-default-name"),
             "scenedeck-dark" => fl!(LANGUAGE_LOADER, "theme-scenedeck-dark-name"),
             "scenedeck-light" => fl!(LANGUAGE_LOADER, "theme-scenedeck-light-name"),
+            "obs" => fl!(LANGUAGE_LOADER, "theme-obs-name"),
             "obsidian" => fl!(LANGUAGE_LOADER, "theme-obsidian-name"),
             "nord" => fl!(LANGUAGE_LOADER, "theme-nord-name"),
             "dracula-inspired" => fl!(LANGUAGE_LOADER, "theme-dracula-inspired-name"),
@@ -65,6 +66,7 @@ impl BuiltInTheme {
             "adwaita-default" => fl!(LANGUAGE_LOADER, "theme-adwaita-default-desc"),
             "scenedeck-dark" => fl!(LANGUAGE_LOADER, "theme-scenedeck-dark-desc"),
             "scenedeck-light" => fl!(LANGUAGE_LOADER, "theme-scenedeck-light-desc"),
+            "obs" => fl!(LANGUAGE_LOADER, "theme-obs-desc"),
             "obsidian" => fl!(LANGUAGE_LOADER, "theme-obsidian-desc"),
             "nord" => fl!(LANGUAGE_LOADER, "theme-nord-desc"),
             "dracula-inspired" => fl!(LANGUAGE_LOADER, "theme-dracula-inspired-desc"),
@@ -269,7 +271,7 @@ fn install_css_provider(css: &str, label: &str, warnings: &mut Vec<String>) {
     ACTIVE_PROVIDERS.with(|providers| providers.borrow_mut().push(provider));
 }
 
-const BUILT_IN_THEMES: [BuiltInTheme; 11] = [
+const BUILT_IN_THEMES: [BuiltInTheme; 12] = [
     BuiltInTheme {
         id: "adwaita-default",
         name: "Adwaita Default",
@@ -293,6 +295,14 @@ const BUILT_IN_THEMES: [BuiltInTheme; 11] = [
         swatches: &["#1f6feb", "#f8fafc", "#17202a"],
         light_css: include_str!("../../resources/themes/scenedeck-light-light.css"),
         dark_css: include_str!("../../resources/themes/scenedeck-light-dark.css"),
+    },
+    BuiltInTheme {
+        id: "obs",
+        name: "OBS",
+        description: "OBS Studio's default look, read through libadwaita.",
+        swatches: &["#3a7ebf", "#232629", "#eff0f1"],
+        light_css: include_str!("../../resources/themes/obs-light.css"),
+        dark_css: include_str!("../../resources/themes/obs-dark.css"),
     },
     BuiltInTheme {
         id: "obsidian",
@@ -419,26 +429,94 @@ mod tests {
         assert!(BASE_CSS.contains(".audio-card {\n    min-width: 136px;"));
         assert!(BASE_CSS.contains("    min-height: 218px;"));
         assert!(BASE_CSS.contains("    padding: 6px;\n    border-radius: 8px;"));
-        assert!(BASE_CSS.contains(".audio-card-controls button {\n    min-width: 18px;"));
         assert!(BASE_CSS.contains(".audio-fine-controls button {\n    min-width: 18px;"));
         assert!(BASE_CSS.contains(".audio-meter {"));
         assert!(BASE_CSS.contains(".audio-meter-labels {"));
     }
 
     #[test]
-    fn the_volume_fader_is_a_rounded_track_with_a_round_knob() {
+    fn the_volume_fader_is_a_thin_track_with_a_tall_handle() {
         assert!(BASE_CSS.contains(".audio-volume-fader trough {"));
         assert!(BASE_CSS.contains(".audio-volume-fader highlight {"));
         assert!(BASE_CSS.contains(".audio-volume-fader slider {"));
-        // The knob and both track halves stay fully rounded at every size.
+        // Both halves of the track stay fully rounded at every size.
         assert_eq!(
             BASE_CSS
                 .lines()
                 .filter(|line| line.trim() == "border-radius: 999px;")
                 .count(),
-            3
+            2
         );
+        // The handle is a tall pill, not a circle, as in OBS's mixer.
+        assert!(BASE_CSS.contains("min-width: 15px;\n    min-height: 26px;"));
         assert!(BASE_CSS.contains(".audio-volume-fader:disabled slider {"));
+    }
+
+    #[test]
+    fn the_audio_card_header_is_a_full_width_scope_bar() {
+        assert!(BASE_CSS.contains(".audio-card-scope-bar {"));
+        assert!(BASE_CSS.contains(".audio-card-scope-label {"));
+        assert!(BASE_CSS.contains(".audio-card-scope-icon {"));
+        // Nested and group scopes must not reuse the accent background, or the
+        // scope tag would stop distinguishing anything.
+        assert!(BASE_CSS.contains(".audio-card-scope-bar.audio-scope-nested,"));
+    }
+
+    /// GTK CSS has no logical-direction margin or padding properties; using one
+    /// makes the whole stylesheet fail to parse from that point.
+    #[test]
+    fn stylesheets_avoid_properties_gtk_does_not_implement() {
+        const UNSUPPORTED: &[&str] = &[
+            "margin-end",
+            "margin-start",
+            "padding-end",
+            "padding-start",
+            "inset-inline",
+            "gap:",
+            "flex",
+        ];
+        let mut sheets = vec![("base app CSS", BASE_CSS)];
+        for theme in ThemeManager::built_in_themes() {
+            sheets.push((theme.id, theme.css_for(ThemeVariant::Light)));
+            sheets.push((theme.id, theme.css_for(ThemeVariant::Dark)));
+        }
+        for (name, css) in sheets {
+            for property in UNSUPPORTED {
+                assert!(
+                    !css.contains(property),
+                    "{name} uses {property}, which GTK cannot parse"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_sidebar_carries_the_app_logo_and_name() {
+        assert!(BASE_CSS.contains(".scenedeck-brand-logo {"));
+        assert!(BASE_CSS.contains(".scenedeck-brand-name {"));
+    }
+
+    #[test]
+    fn status_bar_segments_have_icons_that_follow_their_state() {
+        assert!(BASE_CSS.contains(".scenedeck-status-bar-icon {"));
+        // Metric and output icons stay muted; connection state classes colour
+        // the icon as well as the text.
+        assert!(BASE_CSS.contains(".scenedeck-status-bar-icon.scenedeck-status-bar-metric,"));
+    }
+
+    #[test]
+    fn header_selectors_sit_flat_on_the_header_until_touched() {
+        assert!(BASE_CSS
+            .contains(".scenedeck-dropdown button {\n    background-color: @scenedeck_header;"));
+        assert!(BASE_CSS.contains(".scenedeck-dropdown button:hover {"));
+        assert!(BASE_CSS.contains(".scenedeck-dropdown button:focus-visible,"));
+    }
+
+    #[test]
+    fn the_icon_picker_marks_the_current_choice() {
+        assert!(BASE_CSS.contains(".icon-picker-choice {"));
+        assert!(BASE_CSS.contains(".icon-picker-choice-selected {"));
+        assert!(BASE_CSS.contains(".icon-picker-button {"));
     }
 
     #[test]

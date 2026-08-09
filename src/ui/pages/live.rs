@@ -21,6 +21,13 @@ use crate::ui::navigation::NavigationContext;
 use crate::ui::widgets::scene_card::{SceneCardModel, SceneShortcut};
 use crate::ui::widgets::{audio_card, scene_card};
 
+/// Icon beside the program-scene heading.
+const PROGRAM_ICON: &str = "nf-md-television-play-symbolic";
+/// Icon beside the Scenes section heading.
+const SCENES_ICON: &str = "nf-md-view-grid-symbolic";
+/// Icon beside the Audio section heading.
+const AUDIO_ICON: &str = "nf-md-tune-vertical-symbolic";
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum OutputKind {
     Stream,
@@ -89,7 +96,7 @@ pub(crate) fn build(_nav: NavigationContext) -> LivePageHandle {
         .xalign(0.0)
         .build();
     current_label.add_css_class("heading");
-    page.append(&current_label);
+    page.append(&heading_with_icon(PROGRAM_ICON, &current_label));
 
     // ── Resizeable live panes ─────────────────────────────────────────────────
     let live_split = Paned::builder()
@@ -123,6 +130,7 @@ pub(crate) fn build(_nav: NavigationContext) -> LivePageHandle {
         .hexpand(true)
         .build();
     scenes_section_label.add_css_class("caption-heading");
+    scenes_section_header.append(&section_icon(SCENES_ICON));
     scenes_section_header.append(&scenes_section_label);
 
     // Names the shortcut binding once, so each card only needs its digit.
@@ -184,7 +192,7 @@ pub(crate) fn build(_nav: NavigationContext) -> LivePageHandle {
         .xalign(0.0)
         .build();
     audio_section_label.add_css_class("caption-heading");
-    audio_pane.append(&audio_section_label);
+    audio_pane.append(&heading_with_icon(AUDIO_ICON, &audio_section_label));
 
     let audio_box = FlowBox::builder()
         .selection_mode(gtk4::SelectionMode::None)
@@ -277,6 +285,27 @@ pub(crate) fn handle_record_output_toggle(button: &Button, nav: &NavigationConte
 
 pub(crate) fn show_live_view(handle: &LivePageHandle) {
     handle.root.set_visible_child_name("live");
+}
+
+/// Small dimmed icon for a section heading.
+fn section_icon(icon_name: &str) -> gtk4::Image {
+    let icon = gtk4::Image::from_icon_name(icon_name);
+    icon.add_css_class("scenedeck-section-icon");
+    icon.set_valign(Align::Center);
+    icon
+}
+
+/// Pair a heading label with an icon without disturbing the caller's handle on
+/// the label, which `ui::window` keeps updating.
+fn heading_with_icon(icon_name: &str, label: &Label) -> GtkBox {
+    let row = GtkBox::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(8)
+        .hexpand(true)
+        .build();
+    row.append(&section_icon(icon_name));
+    row.append(label);
+    row
 }
 
 fn build_disconnected_view() -> GtkBox {
@@ -533,6 +562,7 @@ pub(crate) fn rebuild_scene_cards(
                 is_previous: inventory.previous_id.as_deref() == Some(&scene.id),
                 accent_color: registry_entry.and_then(|entry| entry.accent_color.as_deref()),
                 shortcut: shortcut_for_slot(&hotkeys, slot),
+                icon: registry_entry.and_then(|entry| entry.icon.as_deref()),
             },
             nav.clone(),
         );
@@ -618,6 +648,7 @@ mod tests {
             tags: Vec::new(),
             protected: false,
             accent_color: None,
+            icon: None,
         }
     }
 

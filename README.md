@@ -4,6 +4,7 @@
 
 **[worxbend.github.io/scenedeck](https://worxbend.github.io/scenedeck/)** — product
 site, feature tour, and every install option.
+Also available at **[obs.worxbend.com](https://obs.worxbend.com/)**.
 
 [![Get it from the Snap Store](https://snapcraft.io/en/dark/install.svg)](https://snapcraft.io/scenedeck)
 
@@ -28,7 +29,9 @@ keep local metadata about how scenes are used.
 - Mute or unmute audio inputs.
 - Control input volume with compact inverted vertical sliders.
 - Read live per-channel volume meters with OBS's zones, peak fall-off, and a
-  twenty-second peak hold.
+  twenty-second peak hold, on audio cards laid out like OBS mixer strips.
+- Pin an icon to any scene from Inventory and to any audio source from its
+  card, chosen from a curated Nerd Fonts set.
 - Lock an audio card slider locally to prevent accidental UI changes.
 - Display and control streaming and recording state.
 - Show live telemetry on a Stats page — FPS, average frame render time,
@@ -45,8 +48,9 @@ keep local metadata about how scenes are used.
 - Store OBS host and port in the config file and the OBS password in the system
   Secret Service keyring.
 - Follow the system color scheme or force light/dark mode.
-- Choose a built-in light/dark-aware theme family and optionally load separate
-  custom CSS files for light and dark mode.
+- Choose a built-in light/dark-aware theme family — including an `OBS` family
+  that mirrors OBS Studio's own look — and optionally load separate custom CSS
+  files for light and dark mode.
 
 ## Requirements
 

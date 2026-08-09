@@ -53,6 +53,8 @@ Application data types that do not depend on GTK or OBS crate types.
 - `graph.rs`: scene dependency graph.
 - `hotkey.rs`: Live scene-shortcut preferences, slot numbering, and the key
   symbols and modifier sets shortcuts are matched against.
+- `icon.rs`: the curated catalogue of scene and audio-source icons, mapping
+  persisted keys to Nerd Fonts icon names.
 - `meter.rs`: audio level readings in decibels, the volume meter's zone
   thresholds, channel naming, and the per-input level snapshot.
 - `mixer.rs`: Mixer modes and persisted selection/grouping preferences.
@@ -111,7 +113,8 @@ GTK and libadwaita UI.
 - `background_io.rs`: runs blocking local persistence on worker threads and
   returns completion callbacks to GTK.
 - `pages/`: Live, Stats, Mixer, Graph, Inventory, Doctor, and Settings pages.
-- `widgets/`: reusable scene and audio cards, the bottom status bar, and the
+- `widgets/`: reusable scene and audio cards, the volume meter, the icon
+  chooser, the bottom status bar, and the
   cairo chart/gauge renderers used by Stats.
 
 ## Assets and Resources

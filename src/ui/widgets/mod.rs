@@ -6,6 +6,7 @@
 
 pub(crate) mod audio_card;
 pub(crate) mod chart;
+pub(crate) mod icon_picker;
 pub(crate) mod scene_card;
 pub(crate) mod status_bar;
 pub(crate) mod volume_meter;

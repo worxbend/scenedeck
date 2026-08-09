@@ -155,7 +155,7 @@ Fallback path:
 $HOME/.config/scenedeck/registry.json
 ```
 
-The registry stores local metadata for OBS scenes.
+The registry stores local metadata for OBS scenes and audio sources.
 
 Example:
 
@@ -165,6 +165,7 @@ Example:
     "Main": {
       "role": "primary",
       "accent_color": "#336699",
+      "icon": "camera",
       "tags": [],
       "protected": false
     },
@@ -175,6 +176,9 @@ Example:
     }
   },
   "scene_order": ["Main", "Camera Frame"],
+  "inputs": {
+    "Mic/Aux": { "icon": "microphone" }
+  },
   "rules": {
     "primary_can_depend_on": [],
     "module_can_depend_on": [],
@@ -192,10 +196,19 @@ Roles:
 - `debug`: temporary test scene.
 - `archive`: preserved but excluded from workflows.
 
-The UI edits scene roles, optional scene accent colors, scene ordering, and stale entries.
-Accent colors use `#RRGGBB`; Live always renders them at 50% alpha. Tags,
-protected flags, and custom rule fields remain available in the file for deeper
-workflows and Doctor logic.
+The UI edits scene roles, optional scene accent colors, scene and source icons,
+scene ordering, and stale entries. Accent colors use `#RRGGBB`; Live always
+renders them at 50% alpha. Tags, protected flags, and custom rule fields remain
+available in the file for deeper workflows and Doctor logic.
+
+`icon` holds a key from SceneDeck's curated icon catalogue — `camera`,
+`microphone`, `game`, and so on — not a raw Nerd Fonts glyph name, so the
+underlying glyph can change without invalidating a registry. An unknown key is
+ignored and the scene or source simply shows no icon. Scene icons are chosen in
+Inventory; audio source icons come from the overflow button on an audio card.
+
+`inputs` holds per-audio-source metadata keyed by OBS input name. It currently
+carries only icons, and is omitted entirely when no source has one.
 
 `scene_order` stores the order chosen by dragging scenes in Inventory. Inventory
 and Live use this order; newly discovered scenes not yet listed are appended.

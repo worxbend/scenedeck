@@ -13,6 +13,7 @@ use crate::domain::scene::SceneId;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::registry::parse_scene_accent;
 use crate::ui::navigation::NavigationContext;
+use crate::ui::widgets::icon_picker;
 
 /// Keyboard shortcut assigned to a scene card by its position on Live.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -39,6 +40,8 @@ pub(crate) struct SceneCardModel<'a> {
     pub(crate) accent_color: Option<&'a str>,
     /// Keyboard shortcut for this card's position, if it has one.
     pub(crate) shortcut: Option<SceneShortcut>,
+    /// Icon key chosen in Inventory, if any.
+    pub(crate) icon: Option<&'a str>,
 }
 
 /// Build a scene-switch card.
@@ -54,6 +57,7 @@ pub(crate) fn build(model: SceneCardModel<'_>, nav: NavigationContext) -> Button
         is_previous,
         accent_color,
         shortcut,
+        icon,
     } = model;
     let presentation = SceneCardPresentation::for_state(is_active, is_previous);
 
@@ -117,6 +121,18 @@ pub(crate) fn build(model: SceneCardModel<'_>, nav: NavigationContext) -> Button
     header.append(&spacer);
     header.append(&marker);
 
+    // The icon sits with the title rather than in the status row, so a named
+    // scene still reads as its name first.
+    let title_row = GtkBox::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(6)
+        .halign(Align::Fill)
+        .hexpand(true)
+        .build();
+    if let Some(image) = icon_picker::header_icon(icon) {
+        title_row.append(&image);
+    }
+
     let title = Label::builder()
         .label(scene_name)
         .xalign(0.0)
@@ -129,8 +145,9 @@ pub(crate) fn build(model: SceneCardModel<'_>, nav: NavigationContext) -> Button
     title.add_css_class("heading");
     title.add_css_class("scene-card-title");
 
+    title_row.append(&title);
     content.append(&header);
-    content.append(&title);
+    content.append(&title_row);
     card.set_child(Some(&content));
 
     if let Some(class) = presentation.card_css_class {

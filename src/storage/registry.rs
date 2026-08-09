@@ -22,6 +22,12 @@ pub struct SceneRegistry {
     /// User-defined display order for Inventory and Live scene cards.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scene_order: Vec<String>,
+    /// Per-audio-input metadata keyed by OBS input name.
+    ///
+    /// Audio inputs have no roles or ordering, only presentation, so they get
+    /// their own map rather than being squeezed into `scenes`.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub inputs: HashMap<String, InputEntry>,
     /// Graph validation rules stored as role keys for human-editable files.
     #[serde(default)]
     pub rules: RuleConfig,
@@ -43,6 +49,18 @@ pub struct SceneEntry {
     /// intentionally not persisted; Live always renders it at 50%.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accent_color: Option<String>,
+    /// Optional icon key from `domain::icon`. Unknown keys are ignored when
+    /// rendering, so a registry from a newer build stays readable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+}
+
+/// Serialized metadata for one OBS audio input.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct InputEntry {
+    /// Optional icon key from `domain::icon`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 /// Graph dependency rules evaluated by the Doctor.
@@ -177,6 +195,7 @@ impl SceneRegistry {
                             tags: Vec::new(),
                             protected: false,
                             accent_color: None,
+                            icon: None,
                         },
                     );
                     true
@@ -197,6 +216,117 @@ impl SceneRegistry {
             }
         }
     }
+}
+
+impl SceneRegistry {
+    /// Set or clear one scene's icon, preserving the rest of its metadata.
+    ///
+    /// Returns `true` when the registry changed. Clearing the last piece of
+    /// metadata removes the entry, so an untouched scene leaves no trace.
+    pub fn set_scene_icon(&mut self, scene_id: &str, icon: Option<&str>) -> bool {
+        let icon = icon.map(str::to_string);
+        match self.scenes.get_mut(scene_id) {
+            Some(entry) if entry.icon == icon => false,
+            Some(entry) => {
+                entry.icon = icon;
+                if entry.is_empty() {
+                    self.scenes.remove(scene_id);
+                }
+                true
+            }
+            None => {
+                let Some(icon) = icon else {
+                    return false;
+                };
+                self.scenes.insert(
+                    scene_id.to_string(),
+                    SceneEntry {
+                        role: None,
+                        tags: Vec::new(),
+                        protected: false,
+                        accent_color: None,
+                        icon: Some(icon),
+                    },
+                );
+                true
+            }
+        }
+    }
+
+    /// Set or clear one audio input's icon.
+    pub fn set_input_icon(&mut self, input_id: &str, icon: Option<&str>) -> bool {
+        let icon = icon.map(str::to_string);
+        match self.inputs.get_mut(input_id) {
+            Some(entry) if entry.icon == icon => false,
+            Some(entry) => {
+                entry.icon = icon;
+                if entry.icon.is_none() {
+                    self.inputs.remove(input_id);
+                }
+                true
+            }
+            None => {
+                let Some(icon) = icon else {
+                    return false;
+                };
+                self.inputs
+                    .insert(input_id.to_string(), InputEntry { icon: Some(icon) });
+                true
+            }
+        }
+    }
+
+    /// Icon key assigned to a scene, if it has one.
+    pub fn scene_icon(&self, scene_id: &str) -> Option<&str> {
+        self.scenes.get(scene_id)?.icon.as_deref()
+    }
+
+    /// Icon key assigned to an audio input, if it has one.
+    pub fn input_icon(&self, input_id: &str) -> Option<&str> {
+        self.inputs.get(input_id)?.icon.as_deref()
+    }
+}
+
+impl SceneEntry {
+    /// Whether the entry carries no metadata worth keeping.
+    fn is_empty(&self) -> bool {
+        self.role.is_none()
+            && self.tags.is_empty()
+            && !self.protected
+            && self.accent_color.is_none()
+            && self.icon.is_none()
+    }
+}
+
+/// Persist one scene icon to the registry in the XDG config directory.
+pub fn set_scene_icon(scene_id: &str, icon: Option<&str>) -> Result<bool, RegistryMutationError> {
+    mutate_registry(&xdg::config_dir().join("registry.json"), |registry| {
+        registry.set_scene_icon(scene_id, icon)
+    })
+}
+
+/// Persist one audio-input icon to the registry in the XDG config directory.
+pub fn set_input_icon(input_id: &str, icon: Option<&str>) -> Result<bool, RegistryMutationError> {
+    mutate_registry(&xdg::config_dir().join("registry.json"), |input_registry| {
+        input_registry.set_input_icon(input_id, icon)
+    })
+}
+
+/// Load, mutate, and re-persist the registry only when `change` reports a change.
+///
+/// Load failures are returned rather than coerced to an empty registry, so a
+/// hand-edited but temporarily invalid file is never overwritten.
+fn mutate_registry(
+    path: &Path,
+    change: impl FnOnce(&mut SceneRegistry) -> bool,
+) -> Result<bool, RegistryMutationError> {
+    let mut registry = read_registry_from_path(path)?;
+    let changed = change(&mut registry);
+    if changed {
+        write_registry_to_path(path, &registry)
+            .map_err(|source| RegistryMutationError::Write { source })?;
+    }
+    Ok(changed)
 }
 
 /// Normalize a GTK color selection to the persisted `#RRGGBB` form.
@@ -420,6 +550,7 @@ mod tests {
                 tags: vec!["live".into()],
                 protected: true,
                 accent_color: Some("#336699".into()),
+                icon: None,
             },
         );
         registry.scene_order = vec!["Main".into(), "Holding".into()];
@@ -530,6 +661,7 @@ mod tests {
                 tags: vec!["camera".to_string()],
                 protected: true,
                 accent_color: None,
+                icon: None,
             },
         );
 
@@ -551,6 +683,7 @@ mod tests {
                 tags: Vec::new(),
                 protected: false,
                 accent_color: None,
+                icon: None,
             },
         );
 
@@ -569,6 +702,7 @@ mod tests {
                 tags: Vec::new(),
                 protected: false,
                 accent_color: Some("#336699".to_string()),
+                icon: None,
             },
         );
 
@@ -590,6 +724,7 @@ mod tests {
                 tags: vec!["camera".into()],
                 protected: true,
                 accent_color: None,
+                icon: None,
             },
         );
         write_registry_to_path(&path, &registry).unwrap();
@@ -632,6 +767,7 @@ mod tests {
                 tags: vec!["live".into()],
                 protected: false,
                 accent_color: None,
+                icon: None,
             },
         );
         registry.scenes.insert(
@@ -641,6 +777,7 @@ mod tests {
                 tags: vec!["source".into()],
                 protected: true,
                 accent_color: None,
+                icon: None,
             },
         );
         write_registry_to_path(&path, &registry).unwrap();
@@ -669,6 +806,87 @@ mod tests {
             RegistryMutationError::Load(RegistryStorageError::Parse { .. })
         ));
         assert_eq!(raw, "{");
+    }
+
+    #[test]
+    fn scene_icons_are_set_cleared_and_ignored_when_unchanged() {
+        let mut registry = SceneRegistry::default();
+
+        assert!(registry.set_scene_icon("Main", Some("camera")));
+        assert_eq!(registry.scene_icon("Main"), Some("camera"));
+        assert!(!registry.set_scene_icon("Main", Some("camera")));
+
+        assert!(registry.set_scene_icon("Main", Some("game")));
+        assert_eq!(registry.scene_icon("Main"), Some("game"));
+
+        assert!(registry.set_scene_icon("Main", None));
+        assert_eq!(registry.scene_icon("Main"), None);
+        assert!(
+            !registry.scenes.contains_key("Main"),
+            "an entry holding nothing but a cleared icon should not linger"
+        );
+        assert!(!registry.set_scene_icon("Main", None));
+    }
+
+    #[test]
+    fn clearing_a_scene_icon_keeps_the_rest_of_the_entry() {
+        let mut registry = SceneRegistry::default();
+        registry.set_scene_role("Main", Some(SceneRole::Primary));
+        registry.set_scene_icon("Main", Some("camera"));
+
+        registry.set_scene_icon("Main", None);
+
+        let entry = registry
+            .scenes
+            .get("Main")
+            .expect("entry kept for its role");
+        assert_eq!(entry.role, Some(SceneRole::Primary));
+        assert_eq!(entry.icon, None);
+    }
+
+    #[test]
+    fn input_icons_are_set_and_cleared_independently_of_scenes() {
+        let mut registry = SceneRegistry::default();
+
+        assert!(registry.set_input_icon("Mic/Aux", Some("microphone")));
+        assert_eq!(registry.input_icon("Mic/Aux"), Some("microphone"));
+        assert!(!registry.set_input_icon("Mic/Aux", Some("microphone")));
+        assert!(registry.scenes.is_empty());
+
+        assert!(registry.set_input_icon("Mic/Aux", None));
+        assert!(registry.inputs.is_empty());
+        assert!(!registry.set_input_icon("Mic/Aux", None));
+    }
+
+    #[test]
+    fn icons_round_trip_through_json_and_stay_out_of_it_when_unset() {
+        let path = unique_temp_path("registry-icons", "json");
+        let mut registry = SceneRegistry::default();
+        registry.set_scene_icon("Main", Some("camera"));
+        registry.set_input_icon("Mic/Aux", Some("microphone"));
+        write_registry_to_path(&path, &registry).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let parsed = read_registry_from_path(&path).unwrap();
+
+        registry.set_scene_icon("Main", None);
+        registry.set_input_icon("Mic/Aux", None);
+        write_registry_to_path(&path, &registry).unwrap();
+        let empty_raw = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(path);
+
+        assert_eq!(parsed.scene_icon("Main"), Some("camera"));
+        assert_eq!(parsed.input_icon("Mic/Aux"), Some("microphone"));
+        assert!(raw.contains(r#""inputs""#));
+        assert!(!empty_raw.contains(r#""inputs""#));
+        assert!(!empty_raw.contains(r#""icon""#));
+    }
+
+    #[test]
+    fn a_registry_without_an_inputs_section_still_loads() {
+        let registry: SceneRegistry = serde_json::from_str(r#"{"scenes":{}}"#).unwrap();
+
+        assert!(registry.inputs.is_empty());
+        assert_eq!(registry.input_icon("Mic/Aux"), None);
     }
 
     #[test]
