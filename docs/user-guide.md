@@ -145,13 +145,15 @@ The audio section shows global OBS audio sources first, followed by
 audio-capable inputs from the active scene. SceneDeck also follows enabled
 nested scenes and groups when discovering active scene audio.
 
-Each audio card contains:
+Each audio card is laid out like a mixer strip in OBS:
 
-- Mute/unmute button.
-- Local lock button for the slider.
-- Inverted vertical volume slider.
-- A live volume meter, one column per channel.
-- Current dB readout.
+- A coloured scope bar naming where the source comes from, carrying the source's
+  icon if one has been chosen.
+- The source name and its current dB readout.
+- An inverted vertical fader.
+- A live volume meter, one bar per channel, with a decibel ruler beside it.
+- Mute and local lock buttons.
+- An overflow button that opens the icon chooser.
 
 The lock button only disables the local slider control. It does not lock the
 source in OBS.
@@ -186,17 +188,19 @@ whose faders match can be very different in loudness.
   to stereo unless told otherwise, and only meters as many channels as the
   channel count set in OBS's own Audio settings.
 
-**Indicators.** Every column carries four readings:
+**Indicators.** Every bar carries four readings:
 
-- **The lit column** is the peak program level. It jumps up instantly and falls
-  off gradually, so a short transient stays visible long enough to see.
-- **The bar above it** is the loudest peak of the last twenty seconds. It keeps
+- **The bright fill** is the peak program level. It jumps up instantly and falls
+  off gradually, so a short transient stays visible long enough to see. The dim
+  band behind it is the part of the range the level has not reached.
+- **The line above it** is the loudest peak of the last twenty seconds. It keeps
   its colour, which is the quickest way to catch clipping you missed.
-- **The pale dot** is loudness — sound pressure, closer to how loud a viewer
-  will judge the source than the peak is.
-- **The dot at the base** is the level arriving from the device, before the
-  fader. It shows whether the source itself is too hot, which no amount of
-  fader movement will fix.
+- **The notch across the fill** is loudness — sound pressure, measured over
+  roughly 300 ms, and closer to how loud a viewer will judge the source than the
+  peak is.
+- **The square at the base** is the level arriving from the device, before the
+  fader. It shows whether the source itself is too hot, which no amount of fader
+  movement will fix.
 
 A muted input still shows its base dot, because the device keeps sending audio
 whether or not OBS is passing it on.
@@ -206,6 +210,22 @@ or driver settings first, then your desktop mixer, and only then the SceneDeck
 fader. Record a short test and listen back before going live. If a source needs
 more than unity gain, OBS's Advanced Audio Properties accepts percentages above
 100%.
+
+### Scene and Source Icons
+
+Scenes and audio sources can each carry an icon, which makes a wall of similar
+cards scannable at a glance.
+
+Scene icons are chosen in Inventory, from the picker at the left of each scene
+row. The icon then appears beside the scene name on its Live card.
+
+Audio source icons are chosen from the overflow button at the bottom of any
+audio card, on Live or on the Mixer page. The icon appears in the card's scope
+bar, next to the scope name.
+
+Both pickers offer the same thirty icons and a "no icon" entry that clears the
+choice. Icons are stored in `registry.json` alongside scene roles and accents,
+so they survive restarts and travel with an exported registry.
 
 ### Stream and Record
 
@@ -285,7 +305,8 @@ Settings controls appearance and OBS connection settings.
 
 Color Scheme can follow the system preference or force light/dark mode. Themes
 are light/dark-aware families, so the selected theme applies its light or dark
-variant based on the effective color scheme.
+variant based on the effective color scheme. The `OBS` family mirrors OBS
+Studio's own default look, for a control surface that matches the app it drives.
 
 Custom CSS supports separate light and dark file paths. In System mode,
 SceneDeck loads the custom file matching the current libadwaita/system side.

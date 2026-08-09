@@ -155,6 +155,24 @@ base dot; the column count follows the source's channel count; returning to Live
 does not make the bars jump; and disconnecting empties every meter rather than
 freezing it.
 
+### Scene and Source Icons
+
+1. Open Inventory and choose an icon for two scenes from the picker at the left
+   of each row.
+2. Go to Live and check both scene cards.
+3. Return to Inventory and clear one of the icons.
+4. Open an audio card's overflow button on Live, choose an icon, and check the
+   card's scope bar.
+5. Open the Mixer page and confirm the same source shows the same icon.
+6. Restart SceneDeck.
+7. Open `registry.json` and confirm the `icon` keys and the `inputs` section.
+8. Hand-edit one icon key to something invented, and restart again.
+
+Expected result: icons appear beside the scene name on Live cards and in the
+scope bar of audio cards; clearing one removes it everywhere; both surfaces
+agree; the choices survive a restart; and an unknown key silently falls back to
+no icon rather than breaking the row.
+
 ### Active Mixer Follows OBS Scene
 
 1. Open Mixer and select Active mode.

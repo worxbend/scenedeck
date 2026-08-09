@@ -38,6 +38,21 @@ pub enum MeterZone {
 }
 
 impl MeterZone {
+    /// Zones from quietest to loudest, the order they stack up the meter.
+    pub const ALL: [Self; 3] = [Self::Nominal, Self::Warning, Self::Error];
+
+    /// Decibel span this zone covers, as `(low, high)`.
+    ///
+    /// The spans tile the whole meter with no gaps, so a bar drawn zone by zone
+    /// leaves no seams.
+    pub const fn span(self) -> (f64, f64) {
+        match self {
+            Self::Nominal => (METER_FLOOR_DB, METER_WARNING_DB),
+            Self::Warning => (METER_WARNING_DB, METER_ERROR_DB),
+            Self::Error => (METER_ERROR_DB, METER_CEILING_DB),
+        }
+    }
+
     /// Zone a decibel level falls into.
     pub fn for_db(db: f64) -> Self {
         if db >= METER_ERROR_DB {
@@ -253,6 +268,20 @@ mod tests {
         assert_eq!(MeterZone::for_db(-9.0), MeterZone::Error);
         assert_eq!(MeterZone::for_db(0.0), MeterZone::Error);
         assert_eq!(MeterZone::for_db(f64::NEG_INFINITY), MeterZone::Nominal);
+    }
+
+    #[test]
+    fn zone_spans_tile_the_whole_meter_without_gaps() {
+        let spans: Vec<(f64, f64)> = MeterZone::ALL.iter().map(|zone| zone.span()).collect();
+
+        assert_eq!(spans.first().unwrap().0, METER_FLOOR_DB);
+        assert_eq!(spans.last().unwrap().1, METER_CEILING_DB);
+        assert!(spans.windows(2).all(|pair| pair[0].1 == pair[1].0));
+        assert!(spans.iter().all(|(low, high)| low < high));
+        // Each zone's own span must classify back to that zone.
+        assert!(MeterZone::ALL
+            .iter()
+            .all(|zone| MeterZone::for_db(zone.span().0) == *zone));
     }
 
     #[test]

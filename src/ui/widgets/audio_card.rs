@@ -11,8 +11,12 @@ use crate::controller::command::AppCommand;
 use crate::domain::audio::AudioInput;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::audio_service::{AudioService, VolumeChangeDebouncer, VOLUME_SLIDER_DEBOUNCE};
+use crate::storage::registry as registry_storage;
 use crate::ui::navigation::NavigationContext;
-use crate::ui::widgets::volume_meter;
+use crate::ui::widgets::{icon_picker, volume_meter};
+
+/// Icon on the card's overflow button, which opens the icon chooser.
+const OVERFLOW_ICON: &str = "view-more-symbolic";
 
 const OBS_FADER_MARKS_DB: &[(f64, &str)] = &[
     (0.0, "0"),
@@ -130,12 +134,37 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         name_label.set_tooltip_text(Some(&input.source_scope.label()));
     }
 
-    let scope_badge = Label::builder()
-        .label(input.source_scope.label())
-        .halign(Align::Start)
+    // OBS heads each mixer strip with a coloured scope tag; the user's chosen
+    // icon rides in the same bar so the card is identifiable at a glance.
+    let scope_bar = GtkBox::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(5)
+        .halign(Align::Fill)
+        .hexpand(true)
         .build();
-    scope_badge.add_css_class("audio-source-badge");
-    scope_badge.add_css_class(input.source_scope.css_class());
+    scope_bar.add_css_class("audio-card-scope-bar");
+    scope_bar.add_css_class(input.source_scope.css_class());
+
+    let scope_icon_slot = GtkBox::builder()
+        .orientation(Orientation::Horizontal)
+        .halign(Align::Center)
+        .build();
+    let selected_icon = nav
+        .state
+        .borrow()
+        .registry
+        .input_icon(&input_id)
+        .map(str::to_string);
+    set_scope_icon(&scope_icon_slot, selected_icon.as_deref());
+
+    let scope_label = Label::builder()
+        .label(input.source_scope.label())
+        .halign(Align::Center)
+        .hexpand(true)
+        .build();
+    scope_label.add_css_class("audio-card-scope-label");
+    scope_bar.append(&scope_icon_slot);
+    scope_bar.append(&scope_label);
 
     // ── Volume scale ──────────────────────────────────────────────────────────
     let vol_scale = Scale::with_range(
@@ -158,12 +187,11 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         .label(AudioService::format_db(AudioService::sanitize_volume_db(
             input.volume_db,
         )))
-        .width_chars(7)
-        .xalign(0.5)
-        .halign(Align::Center)
+        .xalign(0.0)
+        .halign(Align::Start)
         .build();
     db_label.add_css_class("numeric");
-    db_label.add_css_class("dim-label");
+    db_label.add_css_class("audio-card-db");
 
     let volume_debouncer = Rc::new(RefCell::new(VolumeChangeDebouncer::new(input.volume_mul)));
     let volume_debounce_source = Rc::new(RefCell::new(None));
@@ -212,23 +240,8 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
     });
     apply_lock_style(&lock_btn, input.locked_locally);
 
-    let controls = GtkBox::builder()
-        .orientation(Orientation::Vertical)
-        .spacing(1)
-        .halign(Align::Center)
-        .valign(Align::Center)
-        .build();
-    controls.add_css_class("audio-card-controls");
-    controls.append(&mute_btn);
-    controls.append(&lock_btn);
+    let meter = volume_meter::build(&input_id, nav.clone());
 
-    let slider_col = GtkBox::builder()
-        .orientation(Orientation::Vertical)
-        .spacing(1)
-        .halign(Align::Center)
-        .valign(Align::Center)
-        .build();
-    slider_col.add_css_class("audio-card-slider");
     let fader_row = GtkBox::builder()
         .orientation(Orientation::Horizontal)
         .spacing(4)
@@ -236,14 +249,37 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         .valign(Align::Center)
         .build();
     fader_row.add_css_class("audio-fader-row");
-    let meter = volume_meter::build(&input_id, nav.clone());
     fader_row.append(&vol_scale);
     fader_row.append(&meter.root);
     fader_row.append(&build_meter_ruler());
-    slider_col.append(&fader_row);
-    slider_col.append(&db_label);
 
     let vol_signal_id = Rc::new(vol_signal_id);
+
+    // Mute and lock sit side by side under the fader, where OBS puts mute and
+    // monitoring.
+    let buttons = GtkBox::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(4)
+        .halign(Align::Center)
+        .build();
+    buttons.add_css_class("audio-card-controls");
+    buttons.append(&mute_btn);
+    buttons.append(&lock_btn);
+
+    let icon_button = icon_picker::build(
+        selected_icon.as_deref(),
+        &fl!(LANGUAGE_LOADER, "mixer-input-icon-tooltip"),
+        icon_picker::PickerDisplay::Fixed(OVERFLOW_ICON),
+        {
+            let nav = nav.clone();
+            let input_id = input_id.clone();
+            let scope_icon_slot = scope_icon_slot.clone();
+            move |icon| {
+                set_scope_icon(&scope_icon_slot, icon.as_deref());
+                set_input_icon(&nav, &input_id, icon.as_deref());
+            }
+        },
+    );
 
     let fine_controls = build_fine_controls(
         input,
@@ -255,14 +291,14 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         volume_debounce_source.clone(),
     );
 
-    let body = GtkBox::builder()
+    let overflow = GtkBox::builder()
         .orientation(Orientation::Horizontal)
-        .spacing(2)
+        .spacing(4)
         .halign(Align::Center)
-        .valign(Align::Center)
         .build();
-    body.append(&controls);
-    body.append(&slider_col);
+    overflow.add_css_class("audio-card-overflow");
+    overflow.append(&icon_button);
+    overflow.append(&fine_controls);
 
     // ── Card ─────────────────────────────────────────────────────────────────
     let root = GtkBox::builder()
@@ -277,10 +313,12 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
     root.add_css_class("card");
     root.add_css_class("audio-card");
 
-    root.append(&scope_badge);
+    root.append(&scope_bar);
     root.append(&name_label);
-    root.append(&body);
-    root.append(&fine_controls);
+    root.append(&db_label);
+    root.append(&fader_row);
+    root.append(&buttons);
+    root.append(&overflow);
 
     AudioCardHandle {
         root,
@@ -296,6 +334,42 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Replace the icon shown in the card's scope bar.
+///
+/// The slot stays in the tree whether or not an icon is set, so choosing one
+/// does not reflow the header.
+fn set_scope_icon(slot: &GtkBox, icon: Option<&str>) {
+    while let Some(child) = slot.first_child() {
+        slot.remove(&child);
+    }
+    if let Some(image) = icon_picker::header_icon(icon) {
+        image.add_css_class("audio-card-scope-icon");
+        slot.append(&image);
+    }
+}
+
+/// Persist one audio input's icon and mirror it into the cached registry.
+fn set_input_icon(nav: &NavigationContext, input_id: &str, icon: Option<&str>) {
+    if !nav
+        .state
+        .borrow_mut()
+        .registry
+        .set_input_icon(input_id, icon)
+    {
+        return;
+    }
+    let input_id = input_id.to_string();
+    let icon = icon.map(str::to_string);
+    crate::ui::background_io::run(
+        move || registry_storage::set_input_icon(&input_id, icon.as_deref()),
+        |result| {
+            if let Err(error) = result {
+                tracing::warn!(%error, "failed to save the audio source icon");
+            }
+        },
+    );
+}
 
 fn apply_mute_style(btn: &ToggleButton, muted: bool) {
     if muted {

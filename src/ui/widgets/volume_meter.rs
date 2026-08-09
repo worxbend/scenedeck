@@ -22,27 +22,31 @@ use gtk4::prelude::*;
 use gtk4::DrawingArea;
 use i18n_embed_fl::fl;
 
-use crate::domain::meter::{channel_label, MeterZone};
+use crate::domain::meter::{channel_label, MeterZone, METER_CEILING_DB, METER_FLOOR_DB};
 use crate::infra::i18n::LANGUAGE_LOADER;
-use crate::services::meter_service::{
-    meter_db_at, segment_is_lit, InputMeterState, MeterChannelDisplay,
-};
+use crate::services::meter_service::{meter_fraction, InputMeterState, MeterChannelDisplay};
 use crate::ui::navigation::NavigationContext;
 
 /// Height of the meter, matching the fader it stands next to.
 pub(crate) const METER_HEIGHT: i32 = 128;
-/// LED segments per channel column.
-const SEGMENTS: usize = 22;
-/// Horizontal space one channel column occupies, gap included.
-const CHANNEL_WIDTH: f64 = 7.0;
-/// Radius of one LED dot.
-const DOT_RADIUS: f64 = 2.4;
-/// Radius of the loudness dot, drawn over the column.
-const LOUDNESS_RADIUS: f64 = 1.7;
-/// Height of the peak-hold bar.
+/// Width of one channel bar.
+const BAR_WIDTH: f64 = 6.0;
+/// Gap between the bars of a multi-channel source.
+const BAR_GAP: f64 = 1.0;
+/// Width reserved on the right for the decibel tick marks.
+const TICK_AREA: f64 = 7.0;
+/// Length of a tick at a labelled (6 dB) step.
+const MAJOR_TICK: f64 = 5.0;
+/// Length of a tick at an unlabelled (3 dB) step.
+const MINOR_TICK: f64 = 3.0;
+/// Height of the peak-hold line.
 const HOLD_HEIGHT: f64 = 2.0;
-/// Space reserved at the bottom for the input-level dot.
-const INPUT_DOT_AREA: f64 = 10.0;
+/// Height of the loudness line drawn across the bar.
+const LOUDNESS_HEIGHT: f64 = 1.0;
+/// Space reserved at the bottom for the input-level square.
+const INPUT_DOT_AREA: f64 = 9.0;
+/// Side of the input-level square.
+const INPUT_DOT_SIZE: f64 = 5.0;
 /// Column count assumed before the first reading, so the card does not resize
 /// the moment audio starts.
 const ASSUMED_CHANNELS: usize = 2;
@@ -53,12 +57,17 @@ const ASSUMED_CHANNELS: usize = 2;
 /// jump; this caps the catch-up to something a single frame can justify.
 const MAX_FRAME_STEP: Duration = Duration::from_millis(250);
 
-// The three zone colours are deliberately fixed rather than themed: green,
-// yellow, and red mean the same thing here as they do in OBS, and a theme that
-// recoloured them would be lying about the level.
-const NOMINAL_RGBA: (f64, f64, f64) = (0.184, 0.658, 0.310);
-const WARNING_RGBA: (f64, f64, f64) = (0.831, 0.725, 0.227);
-const ERROR_RGBA: (f64, f64, f64) = (0.816, 0.267, 0.267);
+// Zone colours are deliberately fixed rather than themed: green, yellow and red
+// mean the same thing here as they do in OBS, and a theme that recoloured them
+// would be lying about the level. Each zone has a dim shade for the unlit track
+// and a bright one for the level itself, which is what makes the meter readable
+// at a glance from across a room.
+const NOMINAL_BRIGHT: (f64, f64, f64) = (0.28, 0.92, 0.31);
+const NOMINAL_DIM: (f64, f64, f64) = (0.07, 0.40, 0.15);
+const WARNING_BRIGHT: (f64, f64, f64) = (0.93, 0.82, 0.20);
+const WARNING_DIM: (f64, f64, f64) = (0.42, 0.36, 0.07);
+const ERROR_BRIGHT: (f64, f64, f64) = (0.92, 0.25, 0.25);
+const ERROR_DIM: (f64, f64, f64) = (0.42, 0.09, 0.09);
 
 /// Widget plus the state its frame callback advances.
 pub(crate) struct VolumeMeterHandle {
@@ -90,7 +99,7 @@ impl MeterWidgetState {
 /// Build a volume meter bound to `input_id`.
 pub(crate) fn build(input_id: &str, nav: NavigationContext) -> VolumeMeterHandle {
     let area = DrawingArea::builder()
-        .content_width((ASSUMED_CHANNELS as f64 * CHANNEL_WIDTH) as i32)
+        .content_width(meter_width(ASSUMED_CHANNELS))
         .content_height(METER_HEIGHT)
         .valign(gtk4::Align::Center)
         .build();
@@ -101,11 +110,10 @@ pub(crate) fn build(input_id: &str, nav: NavigationContext) -> VolumeMeterHandle
 
     area.set_draw_func({
         let state = Rc::clone(&state);
-        move |_, cr, width, height| {
+        move |_, cr, _width, height| {
             draw_meter(
                 cr,
                 &state.borrow().drawn,
-                f64::from(width),
                 f64::from(height),
                 adw::StyleManager::default().is_dark(),
             );
@@ -163,7 +171,7 @@ fn advance_frame(
         // The widget keeps room for two columns even for a mono source, so a
         // row of cards does not jog sideways the moment audio starts.
         let channels = display.len().max(ASSUMED_CHANNELS);
-        area.set_content_width((channels as f64 * CHANNEL_WIDTH) as i32);
+        area.set_content_width(meter_width(channels));
         set_meter_tooltip(area, display.len());
     }
     state.drawn = display;
@@ -183,62 +191,123 @@ fn frame_elapsed(last_frame_us: Option<i64>, frame_us: i64) -> Duration {
     Duration::from_micros(delta_us as u64).min(MAX_FRAME_STEP)
 }
 
-/// Paint the columns. Pure Cairo: the theme arrives as `dark` rather than being
+/// Paint the bars. Pure Cairo: the theme arrives as `dark` rather than being
 /// looked up, so the drawing can be rendered and inspected without a display.
-fn draw_meter(cr: &Context, channels: &[MeterChannelDisplay], width: f64, height: f64, dark: bool) {
-    let unlit = neutral(dark, if dark { 0.13 } else { 0.20 });
+fn draw_meter(cr: &Context, channels: &[MeterChannelDisplay], height: f64, dark: bool) {
     let column_height = (height - INPUT_DOT_AREA).max(1.0);
-
     let column_count = drawn_column_count(channels);
-    let columns = (0..column_count).map(|index| (index, channels.get(index).copied()));
 
-    for (index, channel) in columns {
-        let centre_x = column_centre(index, column_count, width);
-        let channel = channel.unwrap_or(MeterChannelDisplay::EMPTY);
+    for index in 0..column_count {
+        let x = column_x(index);
+        let channel = channels
+            .get(index)
+            .copied()
+            .unwrap_or(MeterChannelDisplay::EMPTY);
 
-        for segment in 0..SEGMENTS {
-            let segment_db = segment_db(segment);
-            let y = segment_y(segment, column_height);
-            let colour = if segment_is_lit(segment_db, channel.peak_db) {
-                zone_rgba(MeterZone::for_db(segment_db), 1.0)
-            } else {
-                unlit
-            };
-            fill_dot(cr, centre_x, y, DOT_RADIUS, colour);
+        // Unlit track first: the three zones, full height, in their dim shades.
+        for zone in MeterZone::ALL {
+            let (low_db, high_db) = zone.span();
+            fill_span(
+                cr,
+                x,
+                low_db,
+                high_db,
+                column_height,
+                zone_rgba(zone, false),
+            );
+        }
+
+        // Then the level on top, clipped zone by zone so a bar reaching the red
+        // still shows bright green and yellow underneath it.
+        if let Some(peak_db) = channel.peak_db {
+            for zone in MeterZone::ALL {
+                let (low_db, high_db) = zone.span();
+                let high_db = high_db.min(peak_db);
+                if high_db > low_db {
+                    fill_span(cr, x, low_db, high_db, column_height, zone_rgba(zone, true));
+                }
+            }
+        }
+
+        if let Some(magnitude_db) = channel.magnitude_db {
+            // Loudness reads as a notch cut across the lit bar, the way OBS's
+            // VU indicator does.
+            let y = level_y(magnitude_db, column_height);
+            fill_rect(
+                cr,
+                x,
+                y - LOUDNESS_HEIGHT,
+                BAR_WIDTH,
+                LOUDNESS_HEIGHT,
+                neutral(dark, 0.55),
+            );
         }
 
         if let Some(hold_db) = channel.hold_db {
             let y = level_y(hold_db, column_height);
-            fill_bar(
-                cr,
-                centre_x,
-                y,
-                CHANNEL_WIDTH - 2.0,
-                HOLD_HEIGHT,
-                zone_rgba(MeterZone::for_db(hold_db), 1.0),
-            );
-        }
-
-        if let Some(magnitude_db) = channel.magnitude_db {
-            let y = level_y(magnitude_db, column_height);
-            fill_dot(cr, centre_x, y, LOUDNESS_RADIUS, neutral(dark, 0.85));
+            let colour = zone_rgba(MeterZone::for_db(hold_db), true);
+            fill_rect(cr, x, y, BAR_WIDTH, HOLD_HEIGHT, colour);
         }
 
         let input_colour = match channel.input_peak_db {
-            Some(db) => zone_rgba(MeterZone::for_db(db), 1.0),
-            None => unlit,
+            Some(db) => zone_rgba(MeterZone::for_db(db), true),
+            None => neutral(dark, 0.16),
         };
-        let input_dot_y = height - INPUT_DOT_AREA / 2.0;
-        fill_dot(cr, centre_x, input_dot_y, DOT_RADIUS, input_colour);
+        fill_rect(
+            cr,
+            x + (BAR_WIDTH - INPUT_DOT_SIZE) / 2.0,
+            height - INPUT_DOT_AREA + (INPUT_DOT_AREA - INPUT_DOT_SIZE) / 2.0,
+            INPUT_DOT_SIZE,
+            INPUT_DOT_SIZE,
+            input_colour,
+        );
     }
+
+    draw_ticks(cr, columns_width(column_count), column_height, dark);
+}
+
+/// Tick marks down the right-hand edge, long every 6 dB and short every 3 dB.
+///
+/// They line up with the printed ruler beside the meter, and give the eye
+/// something to measure against where the ruler's numbers are too sparse.
+fn draw_ticks(cr: &Context, x: f64, column_height: f64, dark: bool) {
+    let colour = neutral(dark, 0.35);
+    let mut db = METER_CEILING_DB;
+    while db >= METER_FLOOR_DB {
+        let labelled = (db / 6.0).abs().fract() < 1e-9;
+        let length = if labelled { MAJOR_TICK } else { MINOR_TICK };
+        let y = level_y(db, column_height);
+        // Clamp the topmost tick inside the widget so it is not half drawn.
+        let y = y.min(column_height - 1.0).max(0.0);
+        fill_rect(cr, x + 1.0, y, length, 1.0, colour);
+        db -= 3.0;
+    }
+}
+
+/// Total width the channel bars occupy, ticks excluded.
+fn columns_width(column_count: usize) -> f64 {
+    if column_count == 0 {
+        return 0.0;
+    }
+    column_count as f64 * BAR_WIDTH + (column_count - 1) as f64 * BAR_GAP
+}
+
+/// Width a meter with `column_count` channels asks for, ticks included.
+fn meter_width(column_count: usize) -> i32 {
+    (columns_width(column_count) + TICK_AREA).ceil() as i32
+}
+
+/// Left edge of a channel bar.
+fn column_x(index: usize) -> f64 {
+    index as f64 * (BAR_WIDTH + BAR_GAP)
 }
 
 /// How many columns to draw.
 ///
-/// Before the first reading there is no channel count to go on, so unlit
-/// placeholder columns stand in rather than an empty box. Once OBS reports, the
-/// drawing shows exactly as many columns as the source has — a mono source must
-/// not appear to have a dead second channel.
+/// Before the first reading there is no channel count to go on, so an unlit
+/// track stands in rather than an empty box. Once OBS reports, the drawing
+/// shows exactly as many bars as the source has — a mono source must not appear
+/// to have a dead second channel.
 fn drawn_column_count(channels: &[MeterChannelDisplay]) -> usize {
     if channels.is_empty() {
         ASSUMED_CHANNELS
@@ -247,36 +316,28 @@ fn drawn_column_count(channels: &[MeterChannelDisplay]) -> usize {
     }
 }
 
-/// Horizontal centre of a channel column.
-fn column_centre(index: usize, column_count: usize, width: f64) -> f64 {
-    let used = column_count as f64 * CHANNEL_WIDTH;
-    let offset = ((width - used) / 2.0).max(0.0);
-    offset + index as f64 * CHANNEL_WIDTH + CHANNEL_WIDTH / 2.0
-}
-
-/// Decibel level at the centre of an LED segment, counting up from the floor.
-fn segment_db(segment: usize) -> f64 {
-    meter_db_at((segment as f64 + 0.5) / SEGMENTS as f64)
-}
-
-/// Vertical centre of an LED segment.
-fn segment_y(segment: usize, column_height: f64) -> f64 {
-    let fraction = (segment as f64 + 0.5) / SEGMENTS as f64;
-    column_height * (1.0 - fraction)
-}
-
-/// Vertical position of a decibel level on the column.
+/// Vertical position of a decibel level on the bar.
 fn level_y(db: f64, column_height: f64) -> f64 {
-    column_height * (1.0 - crate::services::meter_service::meter_fraction(db))
+    column_height * (1.0 - meter_fraction(db))
 }
 
-fn zone_rgba(zone: MeterZone, alpha: f64) -> RGBA {
-    let (red, green, blue) = match zone {
-        MeterZone::Nominal => NOMINAL_RGBA,
-        MeterZone::Warning => WARNING_RGBA,
-        MeterZone::Error => ERROR_RGBA,
+/// Fill the part of a bar between two decibel levels.
+fn fill_span(cr: &Context, x: f64, low_db: f64, high_db: f64, column_height: f64, colour: RGBA) {
+    let top = level_y(high_db, column_height);
+    let bottom = level_y(low_db, column_height);
+    fill_rect(cr, x, top, BAR_WIDTH, (bottom - top).max(0.0), colour);
+}
+
+fn zone_rgba(zone: MeterZone, bright: bool) -> RGBA {
+    let (red, green, blue) = match (zone, bright) {
+        (MeterZone::Nominal, true) => NOMINAL_BRIGHT,
+        (MeterZone::Nominal, false) => NOMINAL_DIM,
+        (MeterZone::Warning, true) => WARNING_BRIGHT,
+        (MeterZone::Warning, false) => WARNING_DIM,
+        (MeterZone::Error, true) => ERROR_BRIGHT,
+        (MeterZone::Error, false) => ERROR_DIM,
     };
-    RGBA::new(red as f32, green as f32, blue as f32, alpha as f32)
+    RGBA::new(red as f32, green as f32, blue as f32, 1.0)
 }
 
 /// Neutral ink that stays visible on both light and dark themes.
@@ -285,30 +346,15 @@ fn neutral(dark: bool, alpha: f64) -> RGBA {
     RGBA::new(level, level, level, alpha as f32)
 }
 
-fn fill_dot(cr: &Context, centre_x: f64, centre_y: f64, radius: f64, colour: RGBA) {
-    set_source(cr, colour);
-    cr.arc(centre_x, centre_y, radius, 0.0, std::f64::consts::TAU);
-    let _ = cr.fill();
-}
-
-fn fill_bar(cr: &Context, centre_x: f64, centre_y: f64, width: f64, height: f64, colour: RGBA) {
-    set_source(cr, colour);
-    cr.rectangle(
-        centre_x - width / 2.0,
-        centre_y - height / 2.0,
-        width,
-        height,
-    );
-    let _ = cr.fill();
-}
-
-fn set_source(cr: &Context, colour: RGBA) {
+fn fill_rect(cr: &Context, x: f64, y: f64, width: f64, height: f64, colour: RGBA) {
     cr.set_source_rgba(
         f64::from(colour.red()),
         f64::from(colour.green()),
         f64::from(colour.blue()),
         f64::from(colour.alpha()),
     );
+    cr.rectangle(x, y, width, height);
+    let _ = cr.fill();
 }
 
 /// Describe the meter, naming the channels it is currently showing.
@@ -343,30 +389,7 @@ mod tests {
     use crate::domain::meter::{METER_CEILING_DB, METER_FLOOR_DB};
 
     #[test]
-    fn segments_run_from_the_floor_up_to_the_ceiling() {
-        let lowest = segment_db(0);
-        let highest = segment_db(SEGMENTS - 1);
-
-        assert!(lowest > METER_FLOOR_DB && lowest < METER_FLOOR_DB + 3.0);
-        assert!(highest < METER_CEILING_DB && highest > METER_CEILING_DB - 3.0);
-        assert!((0..SEGMENTS)
-            .map(segment_db)
-            .collect::<Vec<_>>()
-            .windows(2)
-            .all(|pair| pair[0] < pair[1]));
-    }
-
-    #[test]
-    fn the_top_segments_are_red_and_the_bottom_ones_green() {
-        assert_eq!(MeterZone::for_db(segment_db(0)), MeterZone::Nominal);
-        assert_eq!(
-            MeterZone::for_db(segment_db(SEGMENTS - 1)),
-            MeterZone::Error
-        );
-    }
-
-    #[test]
-    fn quiet_levels_draw_near_the_bottom_of_the_column() {
+    fn the_bar_runs_from_the_floor_at_the_bottom_to_unity_at_the_top() {
         let height = 100.0;
 
         assert!((level_y(METER_CEILING_DB, height) - 0.0).abs() < 1e-9);
@@ -375,12 +398,59 @@ mod tests {
     }
 
     #[test]
-    fn segment_positions_stay_inside_the_column() {
-        let height = 100.0;
-        for segment in 0..SEGMENTS {
-            let y = segment_y(segment, height);
-            assert!((0.0..=height).contains(&y), "segment {segment} at {y}");
+    fn zone_spans_stack_up_the_bar_without_overlapping() {
+        let height = 120.0;
+        let mut previous_top = height;
+        for zone in MeterZone::ALL {
+            let (low_db, high_db) = zone.span();
+            let top = level_y(high_db, height);
+            let bottom = level_y(low_db, height);
+            assert!(top < bottom, "{zone:?} has no height");
+            assert!(
+                (bottom - previous_top).abs() < 1e-9,
+                "{zone:?} does not meet the zone below it"
+            );
+            previous_top = top;
         }
+        assert!(previous_top.abs() < 1e-9, "the top zone must reach the top");
+    }
+
+    #[test]
+    fn bright_zone_colours_outshine_their_dim_track() {
+        for zone in MeterZone::ALL {
+            let bright = zone_rgba(zone, true);
+            let dim = zone_rgba(zone, false);
+            let luma = |colour: RGBA| colour.red() + colour.green() + colour.blue();
+            assert!(
+                luma(bright) > luma(dim),
+                "{zone:?} is not brighter when lit"
+            );
+        }
+        assert!(
+            zone_rgba(MeterZone::Nominal, true).green() > zone_rgba(MeterZone::Nominal, true).red()
+        );
+        assert!(
+            zone_rgba(MeterZone::Error, true).red() > zone_rgba(MeterZone::Error, true).green()
+        );
+    }
+
+    #[test]
+    fn the_meter_widens_with_the_channel_count_and_always_leaves_room_for_ticks() {
+        let mono = meter_width(1);
+        let stereo = meter_width(2);
+        let surround = meter_width(6);
+
+        assert!(mono < stereo && stereo < surround);
+        assert!(f64::from(mono) >= BAR_WIDTH + TICK_AREA);
+        assert_eq!(columns_width(0), 0.0);
+        assert!((columns_width(2) - (2.0 * BAR_WIDTH + BAR_GAP)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn channel_bars_sit_side_by_side_without_overlapping() {
+        assert_eq!(column_x(0), 0.0);
+        assert!(column_x(1) >= BAR_WIDTH);
+        assert!((column_x(2) - column_x(1) - (BAR_WIDTH + BAR_GAP)).abs() < 1e-9);
     }
 
     #[test]
@@ -392,18 +462,6 @@ mod tests {
             6,
             "surround sources get a column each"
         );
-    }
-
-    #[test]
-    fn columns_are_centred_in_the_drawing_area() {
-        // A single column in a two-column-wide area sits in the left half.
-        let single = column_centre(0, 1, 2.0 * CHANNEL_WIDTH);
-        assert!((single - CHANNEL_WIDTH).abs() < 1e-9);
-
-        let left = column_centre(0, 2, 2.0 * CHANNEL_WIDTH);
-        let right = column_centre(1, 2, 2.0 * CHANNEL_WIDTH);
-        assert!(left < right);
-        assert!((right - left - CHANNEL_WIDTH).abs() < 1e-9);
     }
 
     #[test]
@@ -431,18 +489,6 @@ mod tests {
     #[test]
     fn a_frame_clock_that_goes_backwards_advances_nothing() {
         assert_eq!(frame_elapsed(Some(2_000), 1_000), Duration::ZERO);
-    }
-
-    #[test]
-    fn zone_colours_are_distinct() {
-        let nominal = zone_rgba(MeterZone::Nominal, 1.0);
-        let warning = zone_rgba(MeterZone::Warning, 1.0);
-        let error = zone_rgba(MeterZone::Error, 1.0);
-
-        assert_ne!(nominal, warning);
-        assert_ne!(warning, error);
-        assert!(nominal.green() > nominal.red());
-        assert!(error.red() > error.green());
     }
 
     #[test]
