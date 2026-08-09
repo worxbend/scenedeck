@@ -51,6 +51,10 @@ Application data types that do not depend on GTK or OBS crate types.
 - `appearance.rs`: language, color mode, density, and theme preferences.
 - `diagnostic.rs`: Doctor diagnostic model.
 - `graph.rs`: scene dependency graph.
+- `hotkey.rs`: Live scene-shortcut preferences, slot numbering, and the key
+  symbols and modifier sets shortcuts are matched against.
+- `meter.rs`: audio level readings in decibels, the volume meter's zone
+  thresholds, channel naming, and the per-input level snapshot.
 - `mixer.rs`: Mixer modes and persisted selection/grouping preferences.
 - `obs.rs`: named OBS lists such as profiles and scene collections.
 - `output.rs`: stream and record status.
@@ -81,6 +85,10 @@ Higher-level logic over domain types.
 
 - `doctor_service.rs`: architecture diagnostics.
 - `graph_service.rs`: graph edge classification.
+- `hotkey_service.rs`: scene-shortcut resolution, including the leader-key
+  state machine.
+- `meter_service.rs`: volume meter ballistics — peak fall-off, peak hold, and
+  the decibel-to-position mapping the meter is drawn against.
 - `scene_service.rs`: scene-related service functions.
 - `audio_service.rs`: dB conversion, volume sanitization, and slider debouncing.
 

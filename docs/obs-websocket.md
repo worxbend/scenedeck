@@ -14,6 +14,11 @@ SceneDeck connects with:
 After connecting, SceneDeck reads OBS version information and starts an OBS
 event stream.
 
+The event subscription is `EventSubscription::ALL | INPUT_VOLUME_METERS`. `ALL`
+covers every non-high-volume category; `INPUT_VOLUME_METERS` has to be requested
+explicitly because obs-websocket classes it as high volume, and it is the only
+source of the mixer volume meters.
+
 ## Reads
 
 SceneDeck currently reads:
@@ -63,6 +68,7 @@ SceneDeck currently handles these OBS event categories:
 - Current program scene changes.
 - Input mute changes.
 - Input volume changes.
+- Input volume meters (high volume, roughly every 50 ms).
 - Input created, removed, or renamed.
 - Scene item created, removed, reindexed, or enabled/disabled.
 - Current profile changed.
@@ -74,6 +80,14 @@ SceneDeck currently handles these OBS event categories:
 Events either update UI state directly or trigger a refresh of derived data such
 as active scene audio, profile lists, collection lists, scene inventory, or the
 dependency graph.
+
+`InputVolumeMeters` is the one exception to "every event is delivered". It
+carries `inputLevelsMul`, three linear multipliers per channel — magnitude, peak,
+and pre-fader input peak — for every active input, about twenty times a second.
+`src/controller/refresh_controller.rs` converts it to `domain::meter::InputLevels`
+and offers it to the UI channel with `try_send`, dropping the reading when the
+channel is full rather than blocking the events behind it. Nothing but the
+meters depends on it, and the next reading is 50 ms away.
 
 ## Statistics Polling
 

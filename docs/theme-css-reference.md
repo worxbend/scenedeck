@@ -16,9 +16,17 @@ stable classes listed here.
 - `.scene-card-active`: current program scene card.
 - `.scene-card-status-active`: active scene status pill.
 - `.scene-card-status-ready`: ready scene status pill.
+- `.scene-card-hotkey`: scene-card shortcut digit badge.
+- `.live-hotkey-hint`: shortcut caption beside the Live Scenes heading.
 - `.audio-card`: Live page audio card.
 - `.audio-card-title`: audio card source name.
 - `.audio-card-controls`: mute/lock control column.
+- `.audio-volume-fader`: audio card volume slider. Style its `trough`,
+  `highlight`, and `slider` nodes to restyle the fader.
+- `.audio-meter`: volume meter surface. The LED columns inside are drawn in
+  code, and their green/yellow/red zone colours are deliberately fixed: they
+  carry the same meaning as OBS's own meter, so a theme must not recolour them.
+- `.audio-meter-labels`, `.audio-meter-label`: the decibel ruler beside it.
 - `.output-control`: stream/record control group.
 - `.role-primary`, `.role-secondary`, `.role-module`, `.role-raw`,
   `.role-debug`, `.role-archive`: role badges.
@@ -26,7 +34,7 @@ stable classes listed here.
 
 Planned stable classes include `.stream-control-card`, `.record-control-card`,
 `.status-pill`, `.status-pill-live`, `.status-pill-recording`,
-`.theme-preview-card`, `.volume-meter`, `.volume-slider`, and `.mixer-page`.
+`.theme-preview-card`, and `.mixer-page`.
 
 ## Recommended Pattern
 

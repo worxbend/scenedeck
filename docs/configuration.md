@@ -53,6 +53,12 @@ Example:
     "selected_scene": null,
     "pinned_scene": null,
     "grouping": "scope"
+  },
+  "hotkeys": {
+    "enabled": true,
+    "style": "ctrl",
+    "leader": "space",
+    "leader_timeout_ms": 1500
   }
 }
 ```
@@ -90,6 +96,24 @@ Fields:
 - `mixer.selected_scene`: optional scene name used by Selected mode.
 - `mixer.pinned_scene`: optional scene name remembered by Pinned mode.
 - `mixer.grouping`: `scope`, `scene_path`, or `none`.
+- `hotkeys.enabled`: whether Live scene cards can be switched from the keyboard.
+  Defaults to `true`.
+- `hotkeys.style`: which key combination activates a scene slot. One of
+  `plain` (bare digits), `ctrl`, `alt`, `shift`, `super`, `ctrl-alt`,
+  `ctrl-shift`, or `leader` (vim-style two-stroke). Defaults to `ctrl`, which
+  cannot fire while typing. Unknown values fall back to `ctrl`.
+- `hotkeys.leader`: leader key used when `style` is `leader`. One of `space`,
+  `comma`, `semicolon`, `backslash`, or `grave`. Defaults to `space`. Unknown
+  values fall back to `space`.
+- `hotkeys.leader_timeout_ms`: how long an armed leader waits for its digit.
+  Defaults to `1500`, and is clamped to `250`–`5000`.
+
+Scene hotkeys act only on the Live page. Slot `1` is the first scene card, `9`
+the ninth, and `0` the tenth; cards past the tenth have no shortcut. The card
+order — and therefore the slot numbers — comes from `registry.json`'s
+`scene_order`, which the Inventory page writes, filtered to scenes whose role is
+live-switchable. Bindings that need no modifier (`plain`, and the leader key
+itself) stand down while a text field has focus.
 
 Themes are light/dark-aware theme families. If `appearance.mode` is `system`,
 SceneDeck follows the effective libadwaita/system color preference and applies

@@ -334,9 +334,58 @@ audio-card-lock-tooltip = Lock volume slider
 audio-card-fine-plus-tooltip = +1 dB
 audio-card-fine-reset-tooltip = Reset to 0.0 dB
 audio-card-fine-minus-tooltip = -1 dB
+audio-card-meter-tooltip-title = Volume meter: { $channels }
+audio-card-meter-tooltip-zones = Green below -20 dB · Yellow to -9 dB · Red above, close to clipping
+audio-card-meter-tooltip-indicators = Bar: peak level, with fall-off · Line: loudest peak in 20 s · Dot: loudness · Base: level arriving from the device
+audio-card-meter-tooltip-waiting = Volume meter: waiting for OBS levels
+
+## meter.rs
+audio-meter-zone-nominal = Green
+audio-meter-zone-warning = Yellow
+audio-meter-zone-error = Red
+audio-meter-channel-mono = Mono
+audio-meter-channel-left = Left
+audio-meter-channel-right = Right
+audio-meter-channel-front-left = Front left
+audio-meter-channel-front-right = Front right
+audio-meter-channel-front-center = Front centre
+audio-meter-channel-lfe = LFE
+audio-meter-channel-rear-left = Rear left
+audio-meter-channel-rear-right = Rear right
+audio-meter-channel-side-left = Side left
+audio-meter-channel-side-right = Side right
+audio-meter-channel-numbered = Channel { $index }
+
+## hotkey.rs
+hotkey-modifier-ctrl = Ctrl+
+hotkey-modifier-alt = Alt+
+hotkey-modifier-shift = Shift+
+hotkey-modifier-super = Super+
+hotkey-modifier-ctrl-alt = Ctrl+Alt+
+hotkey-modifier-ctrl-shift = Ctrl+Shift+
+hotkey-style-plain = Digit only
+hotkey-style-ctrl = Ctrl + digit
+hotkey-style-alt = Alt + digit
+hotkey-style-shift = Shift + digit
+hotkey-style-super = Super + digit
+hotkey-style-ctrl-alt = Ctrl+Alt + digit
+hotkey-style-ctrl-shift = Ctrl+Shift + digit
+hotkey-style-leader = Leader key, then digit
+hotkey-leader-space = Space
+hotkey-leader-comma = Comma
+hotkey-leader-semicolon = Semicolon
+hotkey-leader-backslash = Backslash
+hotkey-leader-grave = Backtick
+hotkey-shortcut-leader = { $leader } then { $digit }
+hotkey-hint-plain = Press 1 … 0
+hotkey-hint-modifier = Press { $modifier }1 … 0
+hotkey-hint-leader = Press { $leader }, then 1 … 0
+hotkey-hint-leader-armed = Leader armed — press 1 … 0
+hotkey-hint-empty-slot = No scene in slot { $slot }
 
 ## scene_card.rs
 scene-card-tooltip = { $status } ({ $role })
+scene-card-tooltip-with-hotkey = { $status } ({ $role }) · { $hotkey }
 scene-card-role-suffix = { $role } scene
 
 ## status_bar.rs
@@ -399,6 +448,19 @@ settings-confirm-start-recording-title = Confirm Start Recording
 settings-confirm-start-recording-subtitle = Ask before starting a recording.
 settings-confirm-stop-recording-title = Confirm Stop Recording
 settings-confirm-stop-recording-subtitle = Ask before stopping a recording.
+settings-hotkeys-title = Scene Hotkeys
+settings-hotkeys-description = Switch Live scenes from the keyboard. Slot numbers follow the scene order set in Inventory.
+settings-hotkeys-enabled-title = Enable Scene Hotkeys
+settings-hotkeys-enabled-subtitle = Number keys switch the scene cards on the Live page, in card order.
+settings-hotkeys-style-title = Key Combination
+settings-hotkeys-style-subtitle = Which keys switch a scene. Bare digits stand down while a text field has focus.
+settings-hotkeys-leader-title = Leader Key
+settings-hotkeys-leader-subtitle = First key of the two-stroke shortcut, vim style.
+settings-hotkeys-timeout-title = Leader Timeout
+settings-hotkeys-timeout-subtitle = How long the leader waits for its digit, in milliseconds.
+settings-hotkeys-preview-title = Current Bindings
+settings-hotkeys-preview-subtitle = { $first } … { $last } switch the first { $count } scenes on Live.
+settings-hotkeys-preview-disabled = Scene hotkeys are turned off.
 settings-obs-not-connected = Not connected to OBS.
 settings-obs-connecting = Connecting to OBS…
 settings-obs-connected = Connected — OBS { $version }

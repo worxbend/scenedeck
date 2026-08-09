@@ -340,9 +340,58 @@ audio-card-lock-tooltip = Заблокувати повзунок гучност
 audio-card-fine-plus-tooltip = +1 dB
 audio-card-fine-reset-tooltip = Скинути до 0.0 dB
 audio-card-fine-minus-tooltip = -1 dB
+audio-card-meter-tooltip-title = Індикатор гучності: { $channels }
+audio-card-meter-tooltip-zones = Зелений нижче -20 dB · Жовтий до -9 dB · Червоний вище, близько до кліпінгу
+audio-card-meter-tooltip-indicators = Смуга: піковий рівень зі спадом · Лінія: найгучніший пік за 20 с · Крапка: гучність · Основа: рівень, що надходить із пристрою
+audio-card-meter-tooltip-waiting = Індикатор гучності: очікування рівнів від OBS
+
+## meter.rs
+audio-meter-zone-nominal = Зелений
+audio-meter-zone-warning = Жовтий
+audio-meter-zone-error = Червоний
+audio-meter-channel-mono = Моно
+audio-meter-channel-left = Лівий
+audio-meter-channel-right = Правий
+audio-meter-channel-front-left = Передній лівий
+audio-meter-channel-front-right = Передній правий
+audio-meter-channel-front-center = Передній центральний
+audio-meter-channel-lfe = LFE
+audio-meter-channel-rear-left = Задній лівий
+audio-meter-channel-rear-right = Задній правий
+audio-meter-channel-side-left = Бічний лівий
+audio-meter-channel-side-right = Бічний правий
+audio-meter-channel-numbered = Канал { $index }
+
+## hotkey.rs
+hotkey-modifier-ctrl = Ctrl+
+hotkey-modifier-alt = Alt+
+hotkey-modifier-shift = Shift+
+hotkey-modifier-super = Super+
+hotkey-modifier-ctrl-alt = Ctrl+Alt+
+hotkey-modifier-ctrl-shift = Ctrl+Shift+
+hotkey-style-plain = Лише цифра
+hotkey-style-ctrl = Ctrl + цифра
+hotkey-style-alt = Alt + цифра
+hotkey-style-shift = Shift + цифра
+hotkey-style-super = Super + цифра
+hotkey-style-ctrl-alt = Ctrl+Alt + цифра
+hotkey-style-ctrl-shift = Ctrl+Shift + цифра
+hotkey-style-leader = Клавіша-лідер, потім цифра
+hotkey-leader-space = Пробіл
+hotkey-leader-comma = Кома
+hotkey-leader-semicolon = Крапка з комою
+hotkey-leader-backslash = Зворотна скісна риска
+hotkey-leader-grave = Зворотний апостроф
+hotkey-shortcut-leader = { $leader }, потім { $digit }
+hotkey-hint-plain = Натисніть 1 … 0
+hotkey-hint-modifier = Натисніть { $modifier }1 … 0
+hotkey-hint-leader = Натисніть { $leader }, потім 1 … 0
+hotkey-hint-leader-armed = Лідер активний — натисніть 1 … 0
+hotkey-hint-empty-slot = Немає сцени на позиції { $slot }
 
 ## scene_card.rs
 scene-card-tooltip = { $status } ({ $role })
+scene-card-tooltip-with-hotkey = { $status } ({ $role }) · { $hotkey }
 scene-card-role-suffix = { $role } сцена
 
 ## status_bar.rs
@@ -405,6 +454,19 @@ settings-confirm-start-recording-title = Підтверджувати почат
 settings-confirm-start-recording-subtitle = Запитувати перед початком запису.
 settings-confirm-stop-recording-title = Підтверджувати зупинку запису
 settings-confirm-stop-recording-subtitle = Запитувати перед зупинкою запису.
+settings-hotkeys-title = Гарячі клавіші сцен
+settings-hotkeys-description = Перемикайте сцени на сторінці «Наживо» з клавіатури. Номери позицій відповідають порядку сцен, заданому в Інвентарі.
+settings-hotkeys-enabled-title = Увімкнути гарячі клавіші сцен
+settings-hotkeys-enabled-subtitle = Цифрові клавіші перемикають картки сцен на сторінці «Наживо» в порядку карток.
+settings-hotkeys-style-title = Комбінація клавіш
+settings-hotkeys-style-subtitle = Які клавіші перемикають сцену. Самі цифри не спрацьовують, поки фокус у текстовому полі.
+settings-hotkeys-leader-title = Клавіша-лідер
+settings-hotkeys-leader-subtitle = Перша клавіша двокрокового скорочення, у стилі vim.
+settings-hotkeys-timeout-title = Час очікування лідера
+settings-hotkeys-timeout-subtitle = Скільки лідер чекає на цифру, у мілісекундах.
+settings-hotkeys-preview-title = Поточні призначення
+settings-hotkeys-preview-subtitle = { $first } … { $last } перемикають перші { $count } сцен на сторінці «Наживо».
+settings-hotkeys-preview-disabled = Гарячі клавіші сцен вимкнено.
 settings-obs-not-connected = Немає підключення до OBS.
 settings-obs-connecting = Підключення до OBS…
 settings-obs-connected = Підключено — OBS { $version }

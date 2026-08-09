@@ -12,6 +12,10 @@ use i18n_embed_fl::fl;
 
 use crate::controller::state::ObsStatus;
 use crate::domain::appearance::{Language, ThemeId, ThemeMode};
+use crate::domain::hotkey::{
+    LeaderKey, SceneHotkeyConfig, SceneHotkeyStyle, MAX_LEADER_TIMEOUT_MS, MAX_SLOTS,
+    MIN_LEADER_TIMEOUT_MS,
+};
 use crate::infra::i18n;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::config::{write_config, OutputConfig};
@@ -419,6 +423,9 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     output_group.add(&confirm_start_recording);
     output_group.add(&confirm_stop_recording);
 
+    // ── Scene hotkeys ────────────────────────────────────────────────────────
+    let hotkey_group = build_hotkey_group(&nav);
+
     let status_group = PreferencesGroup::new();
     status_group.add(&status_row);
 
@@ -426,6 +433,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     page.add(&language_group);
     page.add(&obs_group);
     page.add(&output_group);
+    page.add(&hotkey_group);
     page.add(&status_group);
 
     // Closure that refreshes the status row when navigating back to this page
@@ -442,6 +450,153 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     });
 
     (page.upcast(), refresh_fn)
+}
+
+/// Build the Live scene-hotkey preferences group.
+///
+/// The rows write straight into `config.hotkeys`; the window's key controller
+/// re-reads that on every key press, so edits here take effect immediately and
+/// the Live page picks up new badges the next time its cards are rebuilt.
+fn build_hotkey_group(nav: &NavigationContext) -> PreferencesGroup {
+    let group = PreferencesGroup::builder()
+        .title(fl!(LANGUAGE_LOADER, "settings-hotkeys-title"))
+        .description(fl!(LANGUAGE_LOADER, "settings-hotkeys-description"))
+        .build();
+
+    let hotkeys = nav.state.borrow().config.hotkeys;
+
+    let enabled_row = SwitchRow::builder()
+        .title(fl!(LANGUAGE_LOADER, "settings-hotkeys-enabled-title"))
+        .subtitle(fl!(LANGUAGE_LOADER, "settings-hotkeys-enabled-subtitle"))
+        .active(hotkeys.enabled)
+        .build();
+
+    let style_strings: Vec<String> = SceneHotkeyStyle::ALL
+        .iter()
+        .map(|style| style.label())
+        .collect();
+    let style_names: Vec<&str> = style_strings.iter().map(String::as_str).collect();
+    let style_row = ComboRow::builder()
+        .title(fl!(LANGUAGE_LOADER, "settings-hotkeys-style-title"))
+        .subtitle(fl!(LANGUAGE_LOADER, "settings-hotkeys-style-subtitle"))
+        .model(&StringList::new(&style_names))
+        .selected(index_of(&SceneHotkeyStyle::ALL, hotkeys.style))
+        .build();
+    style_row.add_css_class("scenedeck-combo-row");
+
+    let leader_strings: Vec<String> = LeaderKey::ALL.iter().map(|key| key.label()).collect();
+    let leader_names: Vec<&str> = leader_strings.iter().map(String::as_str).collect();
+    let leader_row = ComboRow::builder()
+        .title(fl!(LANGUAGE_LOADER, "settings-hotkeys-leader-title"))
+        .subtitle(fl!(LANGUAGE_LOADER, "settings-hotkeys-leader-subtitle"))
+        .model(&StringList::new(&leader_names))
+        .selected(index_of(&LeaderKey::ALL, hotkeys.leader))
+        .build();
+    leader_row.add_css_class("scenedeck-combo-row");
+
+    let timeout_row = adw::SpinRow::with_range(
+        MIN_LEADER_TIMEOUT_MS as f64,
+        MAX_LEADER_TIMEOUT_MS as f64,
+        50.0,
+    );
+    timeout_row.set_title(&fl!(LANGUAGE_LOADER, "settings-hotkeys-timeout-title"));
+    timeout_row.set_subtitle(&fl!(LANGUAGE_LOADER, "settings-hotkeys-timeout-subtitle"));
+    timeout_row.set_value(hotkeys.leader_timeout().as_millis() as f64);
+
+    let preview_row = ActionRow::builder()
+        .title(fl!(LANGUAGE_LOADER, "settings-hotkeys-preview-title"))
+        .build();
+
+    // One place decides what the dependent rows show, so every edit path stays
+    // consistent without each handler re-deriving it.
+    let refresh: Rc<dyn Fn()> = Rc::new({
+        let nav = nav.clone();
+        let style_row = style_row.clone();
+        let leader_row = leader_row.clone();
+        let timeout_row = timeout_row.clone();
+        let preview_row = preview_row.clone();
+        move || {
+            let hotkeys = nav.state.borrow().config.hotkeys;
+            let leader_style = hotkeys.style == SceneHotkeyStyle::Leader;
+            style_row.set_sensitive(hotkeys.enabled);
+            leader_row.set_sensitive(hotkeys.enabled && leader_style);
+            timeout_row.set_sensitive(hotkeys.enabled && leader_style);
+            preview_row.set_subtitle(&hotkey_preview_text(&hotkeys));
+        }
+    });
+    refresh();
+
+    enabled_row.connect_active_notify({
+        let nav = nav.clone();
+        let refresh = refresh.clone();
+        move |row| {
+            let enabled = row.is_active();
+            persist_config(&nav, |config| config.hotkeys.enabled = enabled);
+            refresh();
+        }
+    });
+
+    style_row.connect_selected_notify({
+        let nav = nav.clone();
+        let refresh = refresh.clone();
+        move |row| {
+            let Some(style) = SceneHotkeyStyle::ALL.get(row.selected() as usize).copied() else {
+                return;
+            };
+            persist_config(&nav, |config| config.hotkeys.style = style);
+            refresh();
+        }
+    });
+
+    leader_row.connect_selected_notify({
+        let nav = nav.clone();
+        let refresh = refresh.clone();
+        move |row| {
+            let Some(leader) = LeaderKey::ALL.get(row.selected() as usize).copied() else {
+                return;
+            };
+            persist_config(&nav, |config| config.hotkeys.leader = leader);
+            refresh();
+        }
+    });
+
+    timeout_row.connect_value_notify({
+        let nav = nav.clone();
+        let refresh = refresh.clone();
+        move |row| {
+            let millis = row.value().round().max(0.0) as u64;
+            persist_config(&nav, |config| config.hotkeys.leader_timeout_ms = millis);
+            refresh();
+        }
+    });
+
+    group.add(&enabled_row);
+    group.add(&style_row);
+    group.add(&leader_row);
+    group.add(&timeout_row);
+    group.add(&preview_row);
+    group
+}
+
+/// Summary of the first and last slot bindings, or a note that they are off.
+fn hotkey_preview_text(hotkeys: &SceneHotkeyConfig) -> String {
+    let (Some(first), Some(last)) = (
+        hotkeys.shortcut_label(0),
+        hotkeys.shortcut_label(MAX_SLOTS - 1),
+    ) else {
+        return fl!(LANGUAGE_LOADER, "settings-hotkeys-preview-disabled");
+    };
+    fl!(
+        LANGUAGE_LOADER,
+        "settings-hotkeys-preview-subtitle",
+        first = first,
+        last = last,
+        count = MAX_SLOTS.to_string()
+    )
+}
+
+fn index_of<T: PartialEq>(all: &[T], value: T) -> u32 {
+    all.iter().position(|item| *item == value).unwrap_or(0) as u32
 }
 
 fn obs_status_text(nav: &NavigationContext) -> String {

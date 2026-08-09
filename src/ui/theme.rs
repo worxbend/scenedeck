@@ -421,8 +421,24 @@ mod tests {
         assert!(BASE_CSS.contains("    padding: 6px;\n    border-radius: 8px;"));
         assert!(BASE_CSS.contains(".audio-card-controls button {\n    min-width: 18px;"));
         assert!(BASE_CSS.contains(".audio-fine-controls button {\n    min-width: 18px;"));
-        assert!(BASE_CSS.contains(".audio-meter-bar {"));
-        assert!(BASE_CSS.contains("background-image: linear-gradient(to top, #2fa84f"));
+        assert!(BASE_CSS.contains(".audio-meter {"));
+        assert!(BASE_CSS.contains(".audio-meter-labels {"));
+    }
+
+    #[test]
+    fn the_volume_fader_is_a_rounded_track_with_a_round_knob() {
+        assert!(BASE_CSS.contains(".audio-volume-fader trough {"));
+        assert!(BASE_CSS.contains(".audio-volume-fader highlight {"));
+        assert!(BASE_CSS.contains(".audio-volume-fader slider {"));
+        // The knob and both track halves stay fully rounded at every size.
+        assert_eq!(
+            BASE_CSS
+                .lines()
+                .filter(|line| line.trim() == "border-radius: 999px;")
+                .count(),
+            3
+        );
+        assert!(BASE_CSS.contains(".audio-volume-fader:disabled slider {"));
     }
 
     #[test]

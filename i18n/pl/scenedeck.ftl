@@ -340,9 +340,58 @@ audio-card-lock-tooltip = Zablokuj suwak głośności
 audio-card-fine-plus-tooltip = +1 dB
 audio-card-fine-reset-tooltip = Zresetuj do 0,0 dB
 audio-card-fine-minus-tooltip = -1 dB
+audio-card-meter-tooltip-title = Wskaźnik głośności: { $channels }
+audio-card-meter-tooltip-zones = Zielony poniżej -20 dB · Żółty do -9 dB · Czerwony powyżej, blisko przesterowania
+audio-card-meter-tooltip-indicators = Słupek: poziom szczytowy z opadaniem · Linia: najgłośniejszy szczyt w 20 s · Kropka: głośność · Podstawa: poziom z urządzenia
+audio-card-meter-tooltip-waiting = Wskaźnik głośności: oczekiwanie na poziomy z OBS
+
+## meter.rs
+audio-meter-zone-nominal = Zielony
+audio-meter-zone-warning = Żółty
+audio-meter-zone-error = Czerwony
+audio-meter-channel-mono = Mono
+audio-meter-channel-left = Lewy
+audio-meter-channel-right = Prawy
+audio-meter-channel-front-left = Przedni lewy
+audio-meter-channel-front-right = Przedni prawy
+audio-meter-channel-front-center = Przedni środkowy
+audio-meter-channel-lfe = LFE
+audio-meter-channel-rear-left = Tylny lewy
+audio-meter-channel-rear-right = Tylny prawy
+audio-meter-channel-side-left = Boczny lewy
+audio-meter-channel-side-right = Boczny prawy
+audio-meter-channel-numbered = Kanał { $index }
+
+## hotkey.rs
+hotkey-modifier-ctrl = Ctrl+
+hotkey-modifier-alt = Alt+
+hotkey-modifier-shift = Shift+
+hotkey-modifier-super = Super+
+hotkey-modifier-ctrl-alt = Ctrl+Alt+
+hotkey-modifier-ctrl-shift = Ctrl+Shift+
+hotkey-style-plain = Sama cyfra
+hotkey-style-ctrl = Ctrl + cyfra
+hotkey-style-alt = Alt + cyfra
+hotkey-style-shift = Shift + cyfra
+hotkey-style-super = Super + cyfra
+hotkey-style-ctrl-alt = Ctrl+Alt + cyfra
+hotkey-style-ctrl-shift = Ctrl+Shift + cyfra
+hotkey-style-leader = Klawisz leader, potem cyfra
+hotkey-leader-space = Spacja
+hotkey-leader-comma = Przecinek
+hotkey-leader-semicolon = Średnik
+hotkey-leader-backslash = Backslash
+hotkey-leader-grave = Backtick
+hotkey-shortcut-leader = { $leader }, potem { $digit }
+hotkey-hint-plain = Naciśnij 1 … 0
+hotkey-hint-modifier = Naciśnij { $modifier }1 … 0
+hotkey-hint-leader = Naciśnij { $leader }, potem 1 … 0
+hotkey-hint-leader-armed = Leader aktywny — naciśnij 1 … 0
+hotkey-hint-empty-slot = Brak sceny na pozycji { $slot }
 
 ## scene_card.rs
 scene-card-tooltip = { $status } ({ $role })
+scene-card-tooltip-with-hotkey = { $status } ({ $role }) · { $hotkey }
 scene-card-role-suffix = Scena: { $role }
 
 ## status_bar.rs
@@ -405,6 +454,19 @@ settings-confirm-start-recording-title = Potwierdź rozpoczęcie nagrywania
 settings-confirm-start-recording-subtitle = Pytaj przed rozpoczęciem nagrywania.
 settings-confirm-stop-recording-title = Potwierdź zatrzymanie nagrywania
 settings-confirm-stop-recording-subtitle = Pytaj przed zatrzymaniem nagrywania.
+settings-hotkeys-title = Skróty scen
+settings-hotkeys-description = Przełączaj sceny na stronie Na żywo z klawiatury. Numery pozycji wynikają z kolejności scen ustawionej w Inwentarzu.
+settings-hotkeys-enabled-title = Włącz skróty scen
+settings-hotkeys-enabled-subtitle = Klawisze cyfr przełączają karty scen na stronie Na żywo, w kolejności kart.
+settings-hotkeys-style-title = Kombinacja klawiszy
+settings-hotkeys-style-subtitle = Które klawisze przełączają scenę. Same cyfry nie działają, gdy fokus ma pole tekstowe.
+settings-hotkeys-leader-title = Klawisz leader
+settings-hotkeys-leader-subtitle = Pierwszy klawisz dwuetapowego skrótu, w stylu vima.
+settings-hotkeys-timeout-title = Limit czasu leadera
+settings-hotkeys-timeout-subtitle = Jak długo leader czeka na cyfrę, w milisekundach.
+settings-hotkeys-preview-title = Bieżące przypisania
+settings-hotkeys-preview-subtitle = { $first } … { $last } przełączają pierwsze { $count } scen na stronie Na żywo.
+settings-hotkeys-preview-disabled = Skróty scen są wyłączone.
 settings-obs-not-connected = Brak połączenia z OBS.
 settings-obs-connecting = Łączenie z OBS…
 settings-obs-connected = Połączono — OBS { $version }

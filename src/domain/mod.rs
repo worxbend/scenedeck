@@ -2,6 +2,8 @@ pub mod appearance;
 pub mod audio;
 pub mod diagnostic;
 pub mod graph;
+pub mod hotkey;
+pub mod meter;
 pub mod mixer;
 pub mod obs;
 pub mod output;

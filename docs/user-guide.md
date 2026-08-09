@@ -113,6 +113,32 @@ The current program scene is marked as Active. Other switchable scenes are marke
 If no scene cards appear after connecting, open Inventory and assign the
 `Primary` role to the scenes you want to switch from Live.
 
+### Scene Hotkeys
+
+Each of the first ten scene cards carries a small badge with its digit: the
+first card is `1`, the ninth is `9`, and the tenth is `0`. Pressing that digit
+switches to the card, so the keyboard order is exactly the order you see. The
+caption to the right of the Scenes heading names the binding in full, for
+example `Press Ctrl+1 … 0`.
+
+Slot numbers follow the scene order saved in Inventory, so reordering cards
+there also reorders the shortcuts. Cards past the tenth have no shortcut.
+
+Settings → Scene Hotkeys chooses how the digit is pressed:
+
+- A modifier plus the digit: `Ctrl`, `Alt`, `Shift`, `Super`, `Ctrl+Alt`, or
+  `Ctrl+Shift`. `Ctrl` is the default because it cannot fire by accident while
+  typing.
+- The bare digit, with nothing else held.
+- A leader key, vim style: press the leader, release it, then press the digit.
+  The leader can be Space, Comma, Semicolon, Backslash, or Backtick, and it
+  stays armed for a configurable timeout — 1.5 seconds by default. While it is
+  armed the caption reads `Leader armed`. Escape, or any other key, cancels it.
+
+Shortcuts act only on the Live page, and the ones that need no modifier stand
+down while a text field has focus. Pressing a digit with no scene behind it
+says so in the caption for a couple of seconds instead of switching anything.
+
 ### Audio Cards
 
 The audio section shows global OBS audio sources first, followed by
@@ -124,10 +150,62 @@ Each audio card contains:
 - Mute/unmute button.
 - Local lock button for the slider.
 - Inverted vertical volume slider.
+- A live volume meter, one column per channel.
 - Current dB readout.
 
 The lock button only disables the local slider control. It does not lock the
 source in OBS.
+
+### Reading the Volume Meter
+
+The meter beside each fader shows what OBS is actually hearing, on the same
+-60 dB to 0 dB scale as the fader and the printed ruler between them.
+
+**Zones.** The colour of a lit segment says how close that level is to
+distorting, using the same thresholds as OBS Studio:
+
+- **Red**, above -9 dB: close to clipping. Speech may touch the bottom of this
+  zone; nothing should sit in it.
+- **Yellow**, -20 dB to -9 dB: speech belongs in the upper part of this zone,
+  with game or content audio lower.
+- **Green**, below -20 dB: background music, alerts, and anything else that has
+  to stay under the voice.
+
+Clipping is the distortion you hear when a signal is louder than the equipment
+carrying it can reproduce. Watch the meter rather than the fader: two sources
+whose faders match can be very different in loudness.
+
+**Channels.** Each channel gets its own column, in OBS's order.
+
+- One column: a mono source. Viewers hear it in both ears.
+- Two columns: stereo, left then right. If only the left column moves, viewers
+  only hear that source on the left. OBS's Advanced Audio Properties has a
+  *Downmix to Mono* option for sources that should be centred.
+- Three or more: surround, ordered front left, front right, front centre, LFE,
+  rear left, rear right, side left, side right. OBS downmixes surround sources
+  to stereo unless told otherwise, and only meters as many channels as the
+  channel count set in OBS's own Audio settings.
+
+**Indicators.** Every column carries four readings:
+
+- **The lit column** is the peak program level. It jumps up instantly and falls
+  off gradually, so a short transient stays visible long enough to see.
+- **The bar above it** is the loudest peak of the last twenty seconds. It keeps
+  its colour, which is the quickest way to catch clipping you missed.
+- **The pale dot** is loudness — sound pressure, closer to how loud a viewer
+  will judge the source than the peak is.
+- **The dot at the base** is the level arriving from the device, before the
+  fader. It shows whether the source itself is too hot, which no amount of
+  fader movement will fix.
+
+A muted input still shows its base dot, because the device keeps sending audio
+whether or not OBS is passing it on.
+
+**Setting levels.** Work from the source outwards: the device's own gain knob
+or driver settings first, then your desktop mixer, and only then the SceneDeck
+fader. Record a short test and listen back before going live. If a source needs
+more than unity gain, OBS's Advanced Audio Properties accepts percentages above
+100%.
 
 ### Stream and Record
 
@@ -233,11 +311,19 @@ streaming and recording. The four toggles are Confirm Start Stream, Confirm Stop
 Stream, Confirm Start Recording, and Confirm Stop Recording. Changes apply to
 Live page output buttons immediately and are stored in the local config file.
 
+Scene Hotkeys controls the keyboard shortcuts that switch Live scene cards: an
+on/off switch, the key combination, and — for the leader style — the leader key
+and how long it stays armed. The Current Bindings row previews the result.
+Changes take effect on the next key press; scene-card badges update the next
+time the Live page is shown. See [Scene Hotkeys](#scene-hotkeys) above.
+
 ## Keyboard Shortcuts
 
 - `Ctrl+R`: reconnect to OBS.
 - `Ctrl+,`: open Settings.
 - `Ctrl+Q`: quit SceneDeck.
+- `Ctrl+1` … `Ctrl+0` on the Live page: switch to the first ten scene cards.
+  The combination is configurable — see [Scene Hotkeys](#scene-hotkeys).
 
 ## Troubleshooting
 

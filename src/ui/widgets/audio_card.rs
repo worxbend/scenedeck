@@ -12,6 +12,7 @@ use crate::domain::audio::AudioInput;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::audio_service::{AudioService, VolumeChangeDebouncer, VOLUME_SLIDER_DEBOUNCE};
 use crate::ui::navigation::NavigationContext;
+use crate::ui::widgets::volume_meter;
 
 const OBS_FADER_MARKS_DB: &[(f64, &str)] = &[
     (0.0, "0"),
@@ -147,10 +148,9 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
     vol_scale.set_inverted(OBS_FADER_INVERTED);
     vol_scale.set_draw_value(false);
     vol_scale.set_vexpand(false);
-    vol_scale.set_height_request(128);
-    vol_scale.set_width_request(22);
+    vol_scale.set_height_request(volume_meter::METER_HEIGHT);
+    vol_scale.set_width_request(24);
     vol_scale.add_css_class("audio-volume-fader");
-    add_obs_fader_marks(&vol_scale);
     vol_scale.set_tooltip_text(Some(&fl!(LANGUAGE_LOADER, "audio-card-fader-tooltip")));
 
     // ── dB label ──────────────────────────────────────────────────────────────
@@ -236,9 +236,10 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         .valign(Align::Center)
         .build();
     fader_row.add_css_class("audio-fader-row");
-    let meter = build_obs_meter();
+    let meter = volume_meter::build(&input_id, nav.clone());
     fader_row.append(&vol_scale);
-    fader_row.append(&meter);
+    fader_row.append(&meter.root);
+    fader_row.append(&build_meter_ruler());
     slider_col.append(&fader_row);
     slider_col.append(&db_label);
 
@@ -319,34 +320,17 @@ fn apply_lock_style(btn: &ToggleButton, locked: bool) {
     }
 }
 
-fn add_obs_fader_marks(vol_scale: &Scale) {
-    for (db, _) in OBS_FADER_MARKS_DB {
-        vol_scale.add_mark(*db, gtk4::PositionType::Right, None);
-    }
-}
-
-fn build_obs_meter() -> GtkBox {
-    let meter = GtkBox::builder()
-        .orientation(Orientation::Horizontal)
-        .spacing(3)
-        .halign(Align::Center)
-        .valign(Align::Center)
-        .height_request(128)
-        .build();
-    meter.add_css_class("audio-meter-ruler");
-
-    let bar = GtkBox::builder()
-        .orientation(Orientation::Vertical)
-        .width_request(10)
-        .height_request(128)
-        .build();
-    bar.add_css_class("audio-meter-bar");
-    meter.append(&bar);
-
+/// Decibel scale printed beside the fader and the meter.
+///
+/// Both of those run from −60 dB to unity over the same height, so one ruler
+/// reads for the level you are setting and the level you are getting.
+fn build_meter_ruler() -> GtkBox {
     let labels = GtkBox::builder()
         .orientation(Orientation::Vertical)
         .homogeneous(true)
-        .height_request(128)
+        .halign(Align::Start)
+        .valign(Align::Center)
+        .height_request(volume_meter::METER_HEIGHT)
         .build();
     labels.add_css_class("audio-meter-labels");
 
@@ -360,8 +344,7 @@ fn build_obs_meter() -> GtkBox {
         labels.append(&label);
     }
 
-    meter.append(&labels);
-    meter
+    labels
 }
 
 fn build_fine_controls(

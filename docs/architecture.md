@@ -56,6 +56,29 @@ GTK signal
   -> GTK polling timer applies event
 ```
 
+Live scene shortcuts join this same path rather than bypassing it. A
+window-level `EventControllerKey` runs in the capture phase, so bare digits and
+the leader key are seen before a focused widget consumes them. It translates the
+GDK key event into a `domain::hotkey::KeyStroke`, asks
+`services::hotkey_service::SceneHotkeyResolver` what the stroke means, and
+dispatches the resulting `AppCommand::SwitchPrimaryScene`. The resolver holds
+the leader-armed state and takes the current `Instant` as an argument, which
+keeps every timing rule testable without GTK or a real clock. Configuration is
+read from `AppState` per key press, so a change in Settings applies to the very
+next stroke.
+
+Volume meters run the other way round. OBS reports every active input's levels
+about twenty times a second, which is far more traffic than the widget tree
+should carry, and every frame of it is disposable. The session event loop
+therefore *tries* to send `AppEvent::InputLevelsUpdated` and drops it when the
+channel is full rather than blocking every other OBS event behind it; the window
+stores the reading in `AppState` and rebuilds nothing. Each meter widget then
+pulls its own input's row on the frames it draws, advancing the fall-off from
+`services::meter_service` with the frame clock's own timestamp. A snapshot
+sequence number tells a widget whether it has already consumed what it is
+looking at, which is what lets an input that stopped reporting decay to silence
+instead of freezing.
+
 The GTK side polls the event receiver every 50 ms. This keeps all widget
 mutation on the GTK main thread. The widgets needed by event application are
 grouped in an `EventUiContext`, keeping the event adapter's dependency boundary
@@ -120,7 +143,8 @@ output status, graph, diagnostics, registry snapshots, graph dependency
 policies, appearance preferences, and OBS named lists.
 
 `src/services/` contains pure or mostly pure higher-level logic, such as Doctor
-checks, graph edge classification, and live-switch validation. Services consume
+checks, graph edge classification, live-switch validation, scene-hotkey
+resolution, and volume-meter ballistics. Services consume
 domain-facing snapshots and policies instead of storage adapter structs.
 
 `src/storage/` owns local persistence: config JSON, scene registry JSON, XDG

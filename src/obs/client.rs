@@ -6,6 +6,8 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use obws::client::ConnectConfig;
+use obws::requests::EventSubscription;
 use obws::Client;
 
 use crate::controller::event::ConnectionInfo;
@@ -26,14 +28,29 @@ pub struct ObsClient {
 
 impl ObsClient {
     /// Connect to OBS, returning the client and an owned event stream.
+    ///
+    /// The subscription adds `INPUT_VOLUME_METERS` to the usual set. That is a
+    /// high-volume event — OBS pushes every active input's levels about twenty
+    /// times a second — and it is the only source of the mixer volume meters,
+    /// so it has to be asked for at connect time.
     pub async fn connect(
         host: &str,
         port: u16,
         password: Option<&str>,
     ) -> Result<(Self, obws::events::EventStream), AppError> {
-        let client = Client::connect(host, port, password)
-            .await
-            .map_err(|e| AppError::Connection(e.to_string()))?;
+        let client = Client::connect_with_config(ConnectConfig {
+            host,
+            port,
+            password,
+            event_subscriptions: Some(
+                EventSubscription::ALL | EventSubscription::INPUT_VOLUME_METERS,
+            ),
+            broadcast_capacity: obws::client::DEFAULT_BROADCAST_CAPACITY,
+            connect_timeout: obws::client::DEFAULT_CONNECT_TIMEOUT,
+            dangerous: None,
+        })
+        .await
+        .map_err(|e| AppError::Connection(e.to_string()))?;
 
         let events = client
             .events()

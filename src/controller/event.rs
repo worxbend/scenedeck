@@ -1,6 +1,7 @@
 use crate::domain::audio::{AudioInput, InputId};
 use crate::domain::diagnostic::Diagnostic;
 use crate::domain::graph::SceneGraph;
+use crate::domain::meter::InputLevels;
 use crate::domain::obs::ObsNamedList;
 use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::domain::scene::{SceneId, SceneInventory};
@@ -231,6 +232,12 @@ pub enum AppEvent {
         volume_mul: f64,
         volume_db: f64,
     },
+    /// Volume-meter levels for every input OBS is currently metering.
+    ///
+    /// High volume: OBS sends this about twenty times a second while connected.
+    /// It is dropped rather than queued when the UI falls behind, so it must
+    /// never be the only carrier of a state change.
+    InputLevelsUpdated(Vec<InputLevels>),
 
     // Outputs
     StreamStatusUpdated(OutputStatus),

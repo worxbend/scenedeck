@@ -11,11 +11,14 @@ use gtk4::{
 use i18n_embed_fl::fl;
 
 use crate::controller::command::AppCommand;
+use crate::domain::hotkey::{slot_badge, SceneHotkeyConfig};
 use crate::domain::output::OutputStatus;
-use crate::domain::scene::SceneInventory;
+use crate::domain::scene::{SceneId, SceneInventory};
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::config::OutputConfig;
+use crate::storage::registry::SceneRegistry;
 use crate::ui::navigation::NavigationContext;
+use crate::ui::widgets::scene_card::{SceneCardModel, SceneShortcut};
 use crate::ui::widgets::{audio_card, scene_card};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -48,6 +51,8 @@ pub(crate) struct LivePageHandle {
     pub(crate) root: Stack,
     pub(crate) current_scene_label: Label,
     pub(crate) scenes_box: FlowBox,
+    /// Caption above the scene grid naming the active scene shortcut binding.
+    pub(crate) hotkey_hint: Label,
     pub(crate) audio_box: FlowBox,
     pub(crate) audio_cards: std::cell::RefCell<Vec<audio_card::AudioCardHandle>>,
 }
@@ -107,12 +112,30 @@ pub(crate) fn build(_nav: NavigationContext) -> LivePageHandle {
         .vexpand(false)
         .hexpand(true)
         .build();
+    let scenes_section_header = GtkBox::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(8)
+        .hexpand(true)
+        .build();
     let scenes_section_label = Label::builder()
         .label(fl!(LANGUAGE_LOADER, "live-scenes-section-label"))
         .xalign(0.0)
+        .hexpand(true)
         .build();
     scenes_section_label.add_css_class("caption-heading");
-    scenes_pane.append(&scenes_section_label);
+    scenes_section_header.append(&scenes_section_label);
+
+    // Names the shortcut binding once, so each card only needs its digit.
+    let hotkey_hint = Label::builder()
+        .label("")
+        .xalign(1.0)
+        .halign(Align::End)
+        .visible(false)
+        .build();
+    hotkey_hint.add_css_class("caption");
+    hotkey_hint.add_css_class("live-hotkey-hint");
+    scenes_section_header.append(&hotkey_hint);
+    scenes_pane.append(&scenes_section_header);
 
     let scenes_box = FlowBox::builder()
         .selection_mode(gtk4::SelectionMode::None)
@@ -192,6 +215,7 @@ pub(crate) fn build(_nav: NavigationContext) -> LivePageHandle {
         root,
         current_scene_label: current_label,
         scenes_box,
+        hotkey_hint,
         audio_box,
         audio_cards: std::cell::RefCell::new(Vec::new()),
     }
@@ -426,6 +450,38 @@ fn insert_scene_placeholder(scenes_box: &FlowBox, message: &str) {
     insert_compact_flow_child(scenes_box, &hint);
 }
 
+/// Scene ids shown on Live, in card order.
+///
+/// The registry's saved display order decides the order, and therefore the
+/// shortcut slot each scene gets; scenes OBS reports but the registry has not
+/// seen yet follow in OBS order. Only live-switchable roles are listed, so slot
+/// numbering matches exactly what the page renders.
+pub(crate) fn live_scene_order(
+    inventory: &SceneInventory,
+    registry: &SceneRegistry,
+) -> Vec<SceneId> {
+    registry
+        .ordered_scene_ids(inventory.scenes.iter().map(|scene| scene.id.as_str()))
+        .into_iter()
+        .filter(|scene_id| {
+            registry
+                .scenes
+                .get(scene_id)
+                .and_then(|entry| entry.role)
+                .is_some_and(|role| role.is_live_switchable())
+        })
+        .collect()
+}
+
+/// Scene bound to a shortcut slot, or `None` when that slot is empty.
+pub(crate) fn scene_for_slot(
+    inventory: &SceneInventory,
+    registry: &SceneRegistry,
+    slot: usize,
+) -> Option<SceneId> {
+    live_scene_order(inventory, registry).into_iter().nth(slot)
+}
+
 /// Rebuild the scene cards from the current inventory.
 ///
 /// Called by `ui::window::apply_event` whenever the inventory changes.
@@ -440,24 +496,15 @@ pub(crate) fn rebuild_scene_cards(
         handle.scenes_box.remove(&child);
     }
 
-    let registry = nav.state.borrow().registry.clone();
+    let (registry, hotkeys) = {
+        let state = nav.state.borrow();
+        (state.registry.clone(), state.config.hotkeys)
+    };
+    let scene_order = live_scene_order(inventory, &registry);
 
-    let ordered_scene_ids =
-        registry.ordered_scene_ids(inventory.scenes.iter().map(|scene| scene.id.as_str()));
-    let primary_scenes: Vec<_> = ordered_scene_ids
-        .iter()
-        .filter_map(|scene_id| inventory.scenes.iter().find(|scene| &scene.id == scene_id))
-        .filter(|s| {
-            registry
-                .scenes
-                .get(&s.id)
-                .and_then(|e| e.role)
-                .map(|role| role.is_live_switchable())
-                .unwrap_or(false)
-        })
-        .collect();
-
-    if primary_scenes.is_empty() {
+    if scene_order.is_empty() {
+        // Nothing to bind to, so the shortcut caption would only mislead.
+        set_hotkey_hint(handle, None);
         let hint = Label::builder()
             .label(fl!(LANGUAGE_LOADER, "live-scenes-no-primary-hint"))
             .wrap(true)
@@ -468,23 +515,49 @@ pub(crate) fn rebuild_scene_cards(
         return;
     }
 
-    for scene in primary_scenes {
-        let is_active = inventory.current_id.as_deref() == Some(&scene.id);
-        let is_previous = inventory.previous_id.as_deref() == Some(&scene.id);
+    set_hotkey_hint(handle, hotkeys.hint_label().as_deref());
+
+    for (slot, scene_id) in scene_order.iter().enumerate() {
+        let Some(scene) = inventory.scenes.iter().find(|scene| &scene.id == scene_id) else {
+            continue;
+        };
         let registry_entry = registry.scenes.get(&scene.id);
-        let scene_role = registry_entry
-            .and_then(|entry| entry.role)
-            .unwrap_or_default();
         let card = scene_card::build(
-            &scene.name,
-            scene.id.clone(),
-            scene_role,
-            is_active,
-            is_previous,
-            registry_entry.and_then(|entry| entry.accent_color.as_deref()),
+            SceneCardModel {
+                scene_name: &scene.name,
+                scene_id: scene.id.clone(),
+                scene_role: registry_entry
+                    .and_then(|entry| entry.role)
+                    .unwrap_or_default(),
+                is_active: inventory.current_id.as_deref() == Some(&scene.id),
+                is_previous: inventory.previous_id.as_deref() == Some(&scene.id),
+                accent_color: registry_entry.and_then(|entry| entry.accent_color.as_deref()),
+                shortcut: shortcut_for_slot(&hotkeys, slot),
+            },
             nav.clone(),
         );
         insert_compact_flow_child(&handle.scenes_box, &card);
+    }
+}
+
+fn shortcut_for_slot(hotkeys: &SceneHotkeyConfig, slot: usize) -> Option<SceneShortcut> {
+    Some(SceneShortcut {
+        badge: slot_badge(slot)?,
+        label: hotkeys.shortcut_label(slot)?,
+    })
+}
+
+/// Set the caption above the scene grid, hiding it when there is nothing to say.
+pub(crate) fn set_hotkey_hint(handle: &LivePageHandle, text: Option<&str>) {
+    match text {
+        Some(text) => {
+            handle.hotkey_hint.set_text(text);
+            handle.hotkey_hint.set_visible(true);
+        }
+        None => {
+            handle.hotkey_hint.set_text("");
+            handle.hotkey_hint.set_visible(false);
+        }
     }
 }
 
@@ -533,7 +606,136 @@ fn insert_compact_flow_child<W: IsA<gtk4::Widget>>(flow: &FlowBox, widget: &W) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::hotkey::SceneHotkeyStyle;
     use crate::domain::output::OutputRunState;
+    use crate::domain::role::SceneRole;
+    use crate::domain::scene::Scene;
+    use crate::storage::registry::SceneEntry;
+
+    fn scene_entry(role: SceneRole) -> SceneEntry {
+        SceneEntry {
+            role: Some(role),
+            tags: Vec::new(),
+            protected: false,
+            accent_color: None,
+        }
+    }
+
+    /// Inventory in OBS order, with every scene registered under `roles`.
+    fn live_fixture(
+        roles: &[(&str, SceneRole)],
+        order: &[&str],
+    ) -> (SceneInventory, SceneRegistry) {
+        let inventory = SceneInventory {
+            scenes: roles
+                .iter()
+                .map(|(id, _)| Scene {
+                    id: (*id).to_string(),
+                    name: (*id).to_string(),
+                })
+                .collect(),
+            current_id: None,
+            previous_id: None,
+        };
+        let mut registry = SceneRegistry {
+            scene_order: order.iter().map(|id| (*id).to_string()).collect(),
+            ..SceneRegistry::default()
+        };
+        for (id, role) in roles {
+            registry
+                .scenes
+                .insert((*id).to_string(), scene_entry(*role));
+        }
+        (inventory, registry)
+    }
+
+    #[test]
+    fn live_scene_order_follows_the_registry_order() {
+        let (inventory, registry) = live_fixture(
+            &[
+                ("Camera", SceneRole::Primary),
+                ("Slides", SceneRole::Primary),
+                ("Break", SceneRole::Primary),
+            ],
+            &["Break", "Camera"],
+        );
+
+        assert_eq!(
+            live_scene_order(&inventory, &registry),
+            ["Break", "Camera", "Slides"]
+        );
+    }
+
+    #[test]
+    fn live_scene_order_skips_scenes_that_are_not_switchable() {
+        let (inventory, registry) = live_fixture(
+            &[
+                ("Camera", SceneRole::Primary),
+                ("Overlay", SceneRole::Module),
+                ("Slides", SceneRole::Primary),
+            ],
+            &[],
+        );
+
+        assert_eq!(
+            live_scene_order(&inventory, &registry),
+            ["Camera", "Slides"]
+        );
+    }
+
+    #[test]
+    fn slots_index_the_rendered_card_order() {
+        let (inventory, registry) = live_fixture(
+            &[
+                ("Camera", SceneRole::Primary),
+                ("Overlay", SceneRole::Module),
+                ("Slides", SceneRole::Primary),
+            ],
+            &["Slides"],
+        );
+
+        assert_eq!(
+            scene_for_slot(&inventory, &registry, 0).as_deref(),
+            Some("Slides")
+        );
+        assert_eq!(
+            scene_for_slot(&inventory, &registry, 1).as_deref(),
+            Some("Camera")
+        );
+        assert_eq!(scene_for_slot(&inventory, &registry, 2), None);
+    }
+
+    #[test]
+    fn card_shortcuts_show_the_digit_and_name_the_full_binding() {
+        let hotkeys = SceneHotkeyConfig::default();
+
+        assert_eq!(
+            shortcut_for_slot(&hotkeys, 0),
+            Some(SceneShortcut {
+                badge: "1".to_string(),
+                label: "Ctrl+1".to_string(),
+            })
+        );
+        assert_eq!(
+            shortcut_for_slot(&hotkeys, 9),
+            Some(SceneShortcut {
+                badge: "0".to_string(),
+                label: "Ctrl+0".to_string(),
+            })
+        );
+        assert_eq!(shortcut_for_slot(&hotkeys, 10), None);
+    }
+
+    #[test]
+    fn cards_past_the_last_slot_and_disabled_hotkeys_get_no_badge() {
+        let disabled = SceneHotkeyConfig {
+            enabled: false,
+            style: SceneHotkeyStyle::Plain,
+            ..SceneHotkeyConfig::default()
+        };
+
+        assert_eq!(shortcut_for_slot(&disabled, 0), None);
+    }
 
     fn output_status(active: bool, state: OutputRunState) -> OutputStatus {
         OutputStatus {

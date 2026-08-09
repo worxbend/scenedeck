@@ -282,6 +282,26 @@ window.scenedeck-about-window preferencesgroup row {
     font-size: 0.9em;
 }
 
+.scene-card-hotkey {
+    min-width: 14px;
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 0.72em;
+    font-weight: 700;
+    background-color: alpha(@scenedeck_fg, 0.10);
+    color: @scenedeck_muted_fg;
+}
+
+.scene-card-active .scene-card-hotkey {
+    background-color: alpha(@scenedeck_accent, 0.30);
+    color: @scenedeck_fg;
+}
+
+.live-hotkey-hint {
+    color: @scenedeck_muted_fg;
+    font-size: 0.85em;
+}
+
 /* ── Live page audio cards ──────────────────────────────────────────────────── */
 .audio-card {
     min-width: 136px;
@@ -341,15 +361,65 @@ window.scenedeck-about-window preferencesgroup row {
     min-height: 128px;
 }
 
-.audio-meter-ruler {
-    min-height: 128px;
+/* ── Volume fader ───────────────────────────────────────────────────────────
+   A thick rounded track with the filled part below the knob, so the fader
+   reads as a level at a glance rather than as a hairline with a handle. */
+.audio-volume-fader {
+    min-width: 24px;
 }
 
-.audio-meter-bar {
-    min-width: 10px;
+.audio-volume-fader trough {
+    min-width: 14px;
+    border: none;
+    border-radius: 999px;
+    background-color: alpha(@scenedeck_fg, 0.10);
+    box-shadow: inset 0 1px 2px alpha(black, 0.22);
+}
+
+.audio-volume-fader highlight {
+    border-radius: 999px;
+    background-image: linear-gradient(to top,
+                                      alpha(@scenedeck_accent, 0.55),
+                                      @scenedeck_accent);
+}
+
+.audio-volume-fader slider {
+    min-width: 20px;
+    min-height: 20px;
+    margin: -5px;
+    border-radius: 999px;
+    border: 1px solid alpha(black, 0.18);
+    background-image: linear-gradient(to bottom, #ffffff, #ececec);
+    box-shadow: 0 1px 3px alpha(black, 0.35);
+}
+
+.audio-volume-fader:hover slider {
+    background-image: linear-gradient(to bottom, #ffffff, #f6f6f6);
+}
+
+.audio-volume-fader:disabled trough,
+.audio-volume-fader:disabled highlight {
+    opacity: 0.45;
+}
+
+.audio-volume-fader:disabled slider {
+    background-image: linear-gradient(to bottom, #d8d8d8, #c4c4c4);
+    box-shadow: none;
+}
+
+/* ── Volume meter ───────────────────────────────────────────────────────────
+   The LED columns themselves are drawn in `ui::widgets::volume_meter`; the
+   zone colours are fixed there because green, yellow and red carry the same
+   meaning as they do in OBS. */
+.audio-meter {
     min-height: 128px;
-    border-radius: 2px;
-    background-image: linear-gradient(to top, #2fa84f 0%, #2fa84f 68%, #d4b93a 68%, #d4b93a 86%, #d04444 86%, #d04444 100%);
+    border-radius: 4px;
+    padding: 0;
+    background-color: alpha(black, 0.22);
+}
+
+.audio-meter-labels {
+    min-height: 128px;
 }
 
 .audio-meter-label {

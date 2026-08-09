@@ -6,4 +6,6 @@
 pub(crate) mod audio_service;
 pub(crate) mod doctor_service;
 pub(crate) mod graph_service;
+pub(crate) mod hotkey_service;
+pub(crate) mod meter_service;
 pub(crate) mod scene_service;

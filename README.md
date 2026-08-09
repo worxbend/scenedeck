@@ -21,10 +21,14 @@ keep local metadata about how scenes are used.
 - Display the active OBS program scene.
 - Show live-switchable scene cards for configured roles, `Primary` by default.
 - Switch program scenes from the Live page.
+- Switch Live scenes by keyboard, with configurable digit shortcuts — bare
+  digits, a modifier plus digit, or a vim-style leader key.
 - Display global audio sources first, then audio-capable inputs from the active
   scene, including nested scenes and groups.
 - Mute or unmute audio inputs.
 - Control input volume with compact inverted vertical sliders.
+- Read live per-channel volume meters with OBS's zones, peak fall-off, and a
+  twenty-second peak hold.
 - Lock an audio card slider locally to prevent accidental UI changes.
 - Display and control streaming and recording state.
 - Show live telemetry on a Stats page — FPS, average frame render time,

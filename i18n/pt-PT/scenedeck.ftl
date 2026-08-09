@@ -337,9 +337,58 @@ audio-card-lock-tooltip = Bloquear regulador de volume
 audio-card-fine-plus-tooltip = +1 dB
 audio-card-fine-reset-tooltip = Repor a 0,0 dB
 audio-card-fine-minus-tooltip = -1 dB
+audio-card-meter-tooltip-title = Medidor de volume: { $channels }
+audio-card-meter-tooltip-zones = Verde abaixo de -20 dB · Amarelo até -9 dB · Vermelho acima, perto do corte
+audio-card-meter-tooltip-indicators = Barra: nível de pico com queda · Linha: pico mais alto em 20 s · Ponto: intensidade sonora · Base: nível que chega do dispositivo
+audio-card-meter-tooltip-waiting = Medidor de volume: à espera dos níveis do OBS
+
+## meter.rs
+audio-meter-zone-nominal = Verde
+audio-meter-zone-warning = Amarelo
+audio-meter-zone-error = Vermelho
+audio-meter-channel-mono = Mono
+audio-meter-channel-left = Esquerdo
+audio-meter-channel-right = Direito
+audio-meter-channel-front-left = Frontal esquerdo
+audio-meter-channel-front-right = Frontal direito
+audio-meter-channel-front-center = Frontal central
+audio-meter-channel-lfe = LFE
+audio-meter-channel-rear-left = Traseiro esquerdo
+audio-meter-channel-rear-right = Traseiro direito
+audio-meter-channel-side-left = Lateral esquerdo
+audio-meter-channel-side-right = Lateral direito
+audio-meter-channel-numbered = Canal { $index }
+
+## hotkey.rs
+hotkey-modifier-ctrl = Ctrl+
+hotkey-modifier-alt = Alt+
+hotkey-modifier-shift = Shift+
+hotkey-modifier-super = Super+
+hotkey-modifier-ctrl-alt = Ctrl+Alt+
+hotkey-modifier-ctrl-shift = Ctrl+Shift+
+hotkey-style-plain = Apenas o dígito
+hotkey-style-ctrl = Ctrl + dígito
+hotkey-style-alt = Alt + dígito
+hotkey-style-shift = Shift + dígito
+hotkey-style-super = Super + dígito
+hotkey-style-ctrl-alt = Ctrl+Alt + dígito
+hotkey-style-ctrl-shift = Ctrl+Shift + dígito
+hotkey-style-leader = Tecla líder e depois dígito
+hotkey-leader-space = Espaço
+hotkey-leader-comma = Vírgula
+hotkey-leader-semicolon = Ponto e vírgula
+hotkey-leader-backslash = Barra invertida
+hotkey-leader-grave = Acento grave
+hotkey-shortcut-leader = { $leader } e depois { $digit }
+hotkey-hint-plain = Prima 1 … 0
+hotkey-hint-modifier = Prima { $modifier }1 … 0
+hotkey-hint-leader = Prima { $leader } e depois 1 … 0
+hotkey-hint-leader-armed = Líder ativo — prima 1 … 0
+hotkey-hint-empty-slot = Sem cena na posição { $slot }
 
 ## scene_card.rs
 scene-card-tooltip = { $status } ({ $role })
+scene-card-tooltip-with-hotkey = { $status } ({ $role }) · { $hotkey }
 scene-card-role-suffix = Cena { $role }
 
 ## status_bar.rs
@@ -402,6 +451,19 @@ settings-confirm-start-recording-title = Confirmar Início de Gravação
 settings-confirm-start-recording-subtitle = Perguntar antes de iniciar uma gravação.
 settings-confirm-stop-recording-title = Confirmar Paragem de Gravação
 settings-confirm-stop-recording-subtitle = Perguntar antes de parar uma gravação.
+settings-hotkeys-title = Atalhos de Cena
+settings-hotkeys-description = Mude as cenas do Direto pelo teclado. As posições seguem a ordem de cenas definida no Inventário.
+settings-hotkeys-enabled-title = Ativar Atalhos de Cena
+settings-hotkeys-enabled-subtitle = As teclas numéricas mudam os cartões de cena da página Direto, pela ordem dos cartões.
+settings-hotkeys-style-title = Combinação de Teclas
+settings-hotkeys-style-subtitle = Que teclas mudam de cena. Os dígitos isolados ficam inativos enquanto um campo de texto tem o foco.
+settings-hotkeys-leader-title = Tecla Líder
+settings-hotkeys-leader-subtitle = Primeira tecla do atalho de duas etapas, ao estilo do vim.
+settings-hotkeys-timeout-title = Tempo Limite do Líder
+settings-hotkeys-timeout-subtitle = Quanto tempo o líder espera pelo dígito, em milissegundos.
+settings-hotkeys-preview-title = Atribuições Atuais
+settings-hotkeys-preview-subtitle = { $first } … { $last } mudam as primeiras { $count } cenas do Direto.
+settings-hotkeys-preview-disabled = Os atalhos de cena estão desativados.
 settings-obs-not-connected = Sem ligação ao OBS.
 settings-obs-connecting = A ligar ao OBS…
 settings-obs-connected = Ligado — OBS { $version }
