@@ -77,6 +77,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         }
     });
 
+    with_icon(&theme_row, "nf-md-theme-light-dark-symbolic");
     appearance_group.add(&theme_row);
 
     let themes = ThemeManager::built_in_themes();
@@ -134,6 +135,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         }
     });
 
+    with_icon(&family_row, "nf-md-palette-symbolic");
     appearance_group.add(&family_row);
 
     let custom_css_row = SwitchRow::builder()
@@ -208,10 +210,15 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     });
     reload_css_row.add_suffix(&reload_btn);
 
+    with_icon(&custom_css_row, "nf-md-language-css3-symbolic");
     appearance_group.add(&custom_css_row);
+    with_entry_icon(&light_css_row, "nf-md-white-balance-sunny-symbolic");
     appearance_group.add(&light_css_row);
+    with_entry_icon(&dark_css_row, "nf-md-weather-night-symbolic");
     appearance_group.add(&dark_css_row);
+    with_icon(&reload_css_row, "nf-md-refresh-symbolic");
     appearance_group.add(&reload_css_row);
+    with_icon(&theme_status_row, "nf-md-information-outline-symbolic");
     appearance_group.add(&theme_status_row);
 
     // ── Language ──────────────────────────────────────────────────────────────
@@ -270,6 +277,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         }
     });
 
+    with_icon(&language_row, "nf-md-translate-symbolic");
     language_group.add(&language_row);
     language_group.add(&language_status_row);
 
@@ -374,8 +382,11 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         }
     });
 
+    with_entry_icon(&host_row, "nf-md-server-network-symbolic");
     obs_group.add(&host_row);
+    with_entry_icon(&port_row, "nf-md-ethernet-symbolic");
     obs_group.add(&port_row);
+    with_entry_icon(&password_row, "nf-md-key-variant-symbolic");
     obs_group.add(&password_row);
 
     // ── Output safety ────────────────────────────────────────────────────────
@@ -418,15 +429,20 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         outputs.confirm_stop_recording = active;
     });
 
+    with_icon(&confirm_start_stream, "nf-md-broadcast-symbolic");
     output_group.add(&confirm_start_stream);
+    with_icon(&confirm_stop_stream, "nf-md-broadcast-off-symbolic");
     output_group.add(&confirm_stop_stream);
+    with_icon(&confirm_start_recording, "nf-md-record-circle-symbolic");
     output_group.add(&confirm_start_recording);
+    with_icon(&confirm_stop_recording, "nf-md-stop-circle-symbolic");
     output_group.add(&confirm_stop_recording);
 
     // ── Scene hotkeys ────────────────────────────────────────────────────────
     let hotkey_group = build_hotkey_group(&nav);
 
     let status_group = PreferencesGroup::new();
+    with_icon(&status_row, "nf-md-lan-connect-symbolic");
     status_group.add(&status_row);
 
     page.add(&appearance_group);
@@ -570,10 +586,15 @@ fn build_hotkey_group(nav: &NavigationContext) -> PreferencesGroup {
         }
     });
 
+    with_icon(&enabled_row, "nf-md-keyboard-symbolic");
     group.add(&enabled_row);
+    with_icon(&style_row, "nf-md-keyboard-variant-symbolic");
     group.add(&style_row);
+    with_icon(&leader_row, "nf-md-keyboard-outline-symbolic");
     group.add(&leader_row);
+    with_icon(&timeout_row, "nf-md-timer-outline-symbolic");
     group.add(&timeout_row);
+    with_icon(&preview_row, "nf-md-eye-outline-symbolic");
     group.add(&preview_row);
     group
 }
@@ -597,6 +618,26 @@ fn hotkey_preview_text(hotkeys: &SceneHotkeyConfig) -> String {
 
 fn index_of<T: PartialEq>(all: &[T], value: T) -> u32 {
     all.iter().position(|item| *item == value).unwrap_or(0) as u32
+}
+
+/// Prefix a preferences row with a small icon.
+///
+/// A wall of identical rows is hard to scan; the icon gives each one a shape to
+/// find it by before the text is read. Entry rows carry `add_prefix` on their
+/// own type rather than on `ActionRow`, hence the pair.
+fn with_icon<R: IsA<adw::ActionRow>>(row: &R, icon_name: &str) {
+    row.as_ref().add_prefix(&row_icon(icon_name));
+}
+
+/// Prefix an entry-style preferences row with a small icon.
+fn with_entry_icon<R: IsA<adw::EntryRow>>(row: &R, icon_name: &str) {
+    row.as_ref().add_prefix(&row_icon(icon_name));
+}
+
+fn row_icon(icon_name: &str) -> gtk4::Image {
+    let icon = gtk4::Image::from_icon_name(icon_name);
+    icon.add_css_class("scenedeck-row-icon");
+    icon
 }
 
 fn obs_status_text(nav: &NavigationContext) -> String {

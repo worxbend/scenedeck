@@ -21,7 +21,7 @@ use gtk4::{
 };
 use i18n_embed_fl::fl;
 
-use crate::app_info::APP_NAME;
+use crate::app_info::{APP_ID, APP_NAME};
 use crate::controller::app_controller::AppController;
 use crate::controller::command::AppCommand;
 use crate::controller::event::AppEvent;
@@ -623,9 +623,10 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
                 error = err.to_string()
             ));
             set_status_class(&sidebar_controls.status_label, "obs-error");
-            sidebar_controls
-                .connect_btn
-                .set_label(&fl!(LANGUAGE_LOADER, "window-connect-btn-retry"));
+            set_button_label(
+                &sidebar_controls.connect_btn,
+                &fl!(LANGUAGE_LOADER, "window-connect-btn-retry"),
+            );
             sidebar_controls.connect_btn.set_sensitive(true);
             sidebar_controls
                 .connect_btn
@@ -822,9 +823,10 @@ fn apply_connection_event(nav: &NavigationContext, event: AppEvent, ui: &EventUi
                 .status_label
                 .set_text(&fl!(LANGUAGE_LOADER, "window-status-connecting"));
             set_status_class(&sidebar_controls.status_label, "obs-connecting");
-            sidebar_controls
-                .connect_btn
-                .set_label(&fl!(LANGUAGE_LOADER, "window-connect-btn-connecting"));
+            set_button_label(
+                &sidebar_controls.connect_btn,
+                &fl!(LANGUAGE_LOADER, "window-connect-btn-connecting"),
+            );
             sidebar_controls.connect_btn.set_sensitive(false);
             sync_output_indicators(nav, sidebar_controls, streaming_chrome);
             status_bar::set_connection(status_bar, &ObsStatus::Connecting);
@@ -851,9 +853,10 @@ fn apply_connection_event(nav: &NavigationContext, event: AppEvent, ui: &EventUi
                 version = info.obs_version.clone()
             ));
             set_status_class(&sidebar_controls.status_label, "obs-connected");
-            sidebar_controls
-                .connect_btn
-                .set_label(&fl!(LANGUAGE_LOADER, "window-connect-btn-disconnect"));
+            set_button_label(
+                &sidebar_controls.connect_btn,
+                &fl!(LANGUAGE_LOADER, "window-connect-btn-disconnect"),
+            );
             sidebar_controls.connect_btn.set_sensitive(true);
             sidebar_controls
                 .connect_btn
@@ -884,9 +887,10 @@ fn apply_connection_event(nav: &NavigationContext, event: AppEvent, ui: &EventUi
                 .status_label
                 .set_text(&fl!(LANGUAGE_LOADER, "window-status-disconnected"));
             set_status_class(&sidebar_controls.status_label, "obs-disconnected");
-            sidebar_controls
-                .connect_btn
-                .set_label(&fl!(LANGUAGE_LOADER, "window-connect-btn-connect"));
+            set_button_label(
+                &sidebar_controls.connect_btn,
+                &fl!(LANGUAGE_LOADER, "window-connect-btn-connect"),
+            );
             sidebar_controls.connect_btn.set_sensitive(true);
             sidebar_controls
                 .connect_btn
@@ -1219,7 +1223,7 @@ fn sidebar_output_button_model(
 }
 
 fn apply_sidebar_output_button(button: &Button, model: SidebarOutputButtonModel) {
-    button.set_label(&model.label);
+    set_button_label(button, &model.label);
     button.set_sensitive(model.sensitive);
     if model.suggested {
         button.add_css_class("suggested-action");
@@ -1422,6 +1426,67 @@ fn update_named_selector(selector: &NamedSelector, list: &ObsNamedList) {
     selector.updating.set(false);
 }
 
+/// Icon on the sidebar's stream button.
+const SIDEBAR_STREAM_ICON: &str = "nf-md-broadcast-symbolic";
+/// Icon on the sidebar's record button.
+const SIDEBAR_RECORD_ICON: &str = "nf-md-record-circle-symbolic";
+/// Icon on the sidebar's connect button.
+const SIDEBAR_CONNECT_ICON: &str = "nf-md-lan-connect-symbolic";
+
+/// Icon-and-label content for a wide sidebar button.
+///
+/// `Button::set_label` would replace this with plain text, so the buttons whose
+/// text changes with state go through `set_button_label` instead.
+fn button_content(icon_name: &str, label: &str) -> GtkBox {
+    let content = GtkBox::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(8)
+        .halign(gtk4::Align::Center)
+        .build();
+    content.append(&Image::from_icon_name(icon_name));
+    let label = Label::new(Some(label));
+    label.add_css_class("scenedeck-button-label");
+    content.append(&label);
+    content
+}
+
+/// Update the text of a button built by [`button_content`].
+fn set_button_label(button: &Button, text: &str) {
+    let Some(label) = button
+        .child()
+        .and_then(|content| content.last_child())
+        .and_then(|child| child.downcast::<Label>().ok())
+    else {
+        button.set_label(text);
+        return;
+    };
+    label.set_text(text);
+}
+
+/// App logo and name for the top of the sidebar.
+///
+/// The sidebar header was empty, which left the window with nothing naming it
+/// once the title bar is merged into the content header.
+fn build_brand() -> GtkBox {
+    let brand = GtkBox::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(8)
+        .valign(gtk4::Align::Center)
+        .build();
+    brand.add_css_class("scenedeck-brand");
+
+    let logo = Image::from_icon_name(APP_ID);
+    logo.set_pixel_size(22);
+    logo.add_css_class("scenedeck-brand-logo");
+
+    let name = Label::builder().label(APP_NAME).xalign(0.0).build();
+    name.add_css_class("scenedeck-brand-name");
+
+    brand.append(&logo);
+    brand.append(&name);
+    brand
+}
+
 fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, SidebarControls) {
     let list = ListBox::builder()
         .selection_mode(SelectionMode::Single)
@@ -1457,10 +1522,13 @@ fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, Side
     status_label.add_css_class("obs-disconnected");
 
     let connect_btn = Button::builder()
-        .label(fl!(LANGUAGE_LOADER, "window-connect-btn-connect"))
         .halign(gtk4::Align::Fill)
         .hexpand(true)
         .build();
+    connect_btn.set_child(Some(&button_content(
+        SIDEBAR_CONNECT_ICON,
+        &fl!(LANGUAGE_LOADER, "window-connect-btn-connect"),
+    )));
     connect_btn.add_css_class("suggested-action");
     connect_btn.connect_clicked({
         let nav = nav.clone();
@@ -1478,11 +1546,14 @@ fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, Side
     });
 
     let stream_btn = Button::builder()
-        .label(fl!(LANGUAGE_LOADER, "window-sidebar-start-stream"))
         .halign(gtk4::Align::Fill)
         .hexpand(true)
         .sensitive(false)
         .build();
+    stream_btn.set_child(Some(&button_content(
+        SIDEBAR_STREAM_ICON,
+        &fl!(LANGUAGE_LOADER, "window-sidebar-start-stream"),
+    )));
     stream_btn.add_css_class("sidebar-output-button");
     stream_btn.connect_clicked({
         let nav = nav.clone();
@@ -1490,11 +1561,14 @@ fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, Side
     });
 
     let record_btn = Button::builder()
-        .label(fl!(LANGUAGE_LOADER, "window-sidebar-start-recording"))
         .halign(gtk4::Align::Fill)
         .hexpand(true)
         .sensitive(false)
         .build();
+    record_btn.set_child(Some(&button_content(
+        SIDEBAR_RECORD_ICON,
+        &fl!(LANGUAGE_LOADER, "window-sidebar-start-recording"),
+    )));
     record_btn.add_css_class("sidebar-output-button");
     record_btn.connect_clicked({
         let nav = nav.clone();
@@ -1526,6 +1600,7 @@ fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, Side
 
     let sidebar_header = adw::HeaderBar::builder().show_title(false).build();
     sidebar_header.add_css_class("scenedeck-sidebar-header");
+    sidebar_header.pack_start(&build_brand());
     let sidebar_toolbar = adw::ToolbarView::new();
     sidebar_toolbar.add_css_class("scenedeck-sidebar-toolbar");
     sidebar_toolbar.add_top_bar(&sidebar_header);
