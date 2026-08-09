@@ -19,6 +19,7 @@ has a light and dark CSS file. The current built-in theme families are:
 - `adwaita-default`
 - `scenedeck-dark`
 - `scenedeck-light`
+- `obs`
 - `obsidian`
 - `nord`
 - `dracula-inspired`
@@ -27,6 +28,11 @@ has a light and dark CSS file. The current built-in theme families are:
 - `stream-red`
 - `studio-purple`
 - `ubuntu-violet`
+
+`obs` is a libadwaita reading of OBS Studio's own default look, so SceneDeck and
+OBS sit side by side without clashing. Its accent is OBS's selection blue,
+darkened slightly: OBS's `#3a7ebf` reaches only 4.27:1 against white, and the
+accent carries button and scope-tag text here.
 
 The built-in CSS is intentionally an overlay on top of libadwaita and the base
 SceneDeck CSS. It should not replace GTK fundamentals such as accessible focus

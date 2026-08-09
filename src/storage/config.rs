@@ -12,6 +12,7 @@ use i18n_embed_fl::fl;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::appearance::{Language, ThemeMode, ThemePreference};
+use crate::domain::hotkey::SceneHotkeyConfig;
 use crate::domain::mixer::MixerSelection;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::xdg;
@@ -34,6 +35,9 @@ pub struct AppConfig {
     pub language: Language,
     #[serde(default)]
     pub mixer: MixerSelection,
+    /// Live-page scene-switch shortcuts.
+    #[serde(default)]
+    pub hotkeys: SceneHotkeyConfig,
     #[serde(default, rename = "theme_mode", skip_serializing)]
     pub(crate) legacy_theme_mode: Option<ThemeMode>,
 }
@@ -48,6 +52,7 @@ impl Default for AppConfig {
             appearance: ThemePreference::default(),
             language: Language::default(),
             mixer: MixerSelection::default(),
+            hotkeys: SceneHotkeyConfig::default(),
             legacy_theme_mode: None,
         }
     }
@@ -261,6 +266,29 @@ mod tests {
         assert_eq!(c.appearance.mode, ThemeMode::System);
         assert_eq!(c.appearance.selected_theme_id(), "adwaita-default");
         assert_eq!(c.mixer, MixerSelection::default());
+        assert_eq!(c.hotkeys, SceneHotkeyConfig::default());
+    }
+
+    #[test]
+    fn hotkey_section_round_trips_and_tolerates_partial_objects() {
+        use crate::domain::hotkey::{LeaderKey, SceneHotkeyStyle};
+
+        let parsed: AppConfig =
+            serde_json::from_str(r#"{"hotkeys":{"style":"leader","leader":"comma"}}"#).unwrap();
+
+        assert!(parsed.hotkeys.enabled);
+        assert_eq!(parsed.hotkeys.style, SceneHotkeyStyle::Leader);
+        assert_eq!(parsed.hotkeys.leader, LeaderKey::Comma);
+        assert_eq!(
+            parsed.hotkeys.leader_timeout_ms,
+            crate::domain::hotkey::DEFAULT_LEADER_TIMEOUT_MS
+        );
+
+        let json = serde_json::to_string(&parsed).unwrap();
+        assert_eq!(
+            serde_json::from_str::<AppConfig>(&json).unwrap().hotkeys,
+            parsed.hotkeys
+        );
     }
 
     #[test]

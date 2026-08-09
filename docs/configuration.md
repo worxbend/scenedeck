@@ -53,6 +53,12 @@ Example:
     "selected_scene": null,
     "pinned_scene": null,
     "grouping": "scope"
+  },
+  "hotkeys": {
+    "enabled": true,
+    "style": "ctrl",
+    "leader": "space",
+    "leader_timeout_ms": 1500
   }
 }
 ```
@@ -90,6 +96,24 @@ Fields:
 - `mixer.selected_scene`: optional scene name used by Selected mode.
 - `mixer.pinned_scene`: optional scene name remembered by Pinned mode.
 - `mixer.grouping`: `scope`, `scene_path`, or `none`.
+- `hotkeys.enabled`: whether Live scene cards can be switched from the keyboard.
+  Defaults to `true`.
+- `hotkeys.style`: which key combination activates a scene slot. One of
+  `plain` (bare digits), `ctrl`, `alt`, `shift`, `super`, `ctrl-alt`,
+  `ctrl-shift`, or `leader` (vim-style two-stroke). Defaults to `ctrl`, which
+  cannot fire while typing. Unknown values fall back to `ctrl`.
+- `hotkeys.leader`: leader key used when `style` is `leader`. One of `space`,
+  `comma`, `semicolon`, `backslash`, or `grave`. Defaults to `space`. Unknown
+  values fall back to `space`.
+- `hotkeys.leader_timeout_ms`: how long an armed leader waits for its digit.
+  Defaults to `1500`, and is clamped to `250`–`5000`.
+
+Scene hotkeys act only on the Live page. Slot `1` is the first scene card, `9`
+the ninth, and `0` the tenth; cards past the tenth have no shortcut. The card
+order — and therefore the slot numbers — comes from `registry.json`'s
+`scene_order`, which the Inventory page writes, filtered to scenes whose role is
+live-switchable. Bindings that need no modifier (`plain`, and the leader key
+itself) stand down while a text field has focus.
 
 Themes are light/dark-aware theme families. If `appearance.mode` is `system`,
 SceneDeck follows the effective libadwaita/system color preference and applies
@@ -131,7 +155,7 @@ Fallback path:
 $HOME/.config/scenedeck/registry.json
 ```
 
-The registry stores local metadata for OBS scenes.
+The registry stores local metadata for OBS scenes and audio sources.
 
 Example:
 
@@ -141,6 +165,7 @@ Example:
     "Main": {
       "role": "primary",
       "accent_color": "#336699",
+      "icon": "camera",
       "tags": [],
       "protected": false
     },
@@ -151,6 +176,9 @@ Example:
     }
   },
   "scene_order": ["Main", "Camera Frame"],
+  "inputs": {
+    "Mic/Aux": { "icon": "microphone" }
+  },
   "rules": {
     "primary_can_depend_on": [],
     "module_can_depend_on": [],
@@ -168,10 +196,19 @@ Roles:
 - `debug`: temporary test scene.
 - `archive`: preserved but excluded from workflows.
 
-The UI edits scene roles, optional scene accent colors, scene ordering, and stale entries.
-Accent colors use `#RRGGBB`; Live always renders them at 50% alpha. Tags,
-protected flags, and custom rule fields remain available in the file for deeper
-workflows and Doctor logic.
+The UI edits scene roles, optional scene accent colors, scene and source icons,
+scene ordering, and stale entries. Accent colors use `#RRGGBB`; Live always
+renders them at 50% alpha. Tags, protected flags, and custom rule fields remain
+available in the file for deeper workflows and Doctor logic.
+
+`icon` holds a key from SceneDeck's curated icon catalogue — `camera`,
+`microphone`, `game`, and so on — not a raw Nerd Fonts glyph name, so the
+underlying glyph can change without invalidating a registry. An unknown key is
+ignored and the scene or source simply shows no icon. Scene icons are chosen in
+Inventory; audio source icons come from the overflow button on an audio card.
+
+`inputs` holds per-audio-source metadata keyed by OBS input name. It currently
+carries only icons, and is omitted entirely when no source has one.
 
 `scene_order` stores the order chosen by dragging scenes in Inventory. Inventory
 and Live use this order; newly discovered scenes not yet listed are appended.

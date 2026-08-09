@@ -20,7 +20,16 @@ pub fn register_resources() {
     gio::resources_register_include!("scenedeck.gresource")
         .expect("SceneDeck resources should be compiled into the binary");
 
+    // Scene and audio-source icons come from the Nerd Fonts symbol set, which
+    // ships as its own embedded GResource. A failure here costs the icons, not
+    // the app, so it is logged rather than fatal.
+    if let Err(error) = nerd_gtk_icons::register_icons() {
+        tracing::warn!(%error, "failed to register the Nerd Fonts icon resources");
+    }
+
     if let Some(display) = gtk4::gdk::Display::default() {
-        gtk4::IconTheme::for_display(&display).add_resource_path(ICON_RESOURCE_PATH);
+        let theme = gtk4::IconTheme::for_display(&display);
+        theme.add_resource_path(ICON_RESOURCE_PATH);
+        theme.add_resource_path(nerd_gtk_icons::ICONS_RESOURCE_PATH);
     }
 }

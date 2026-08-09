@@ -13,20 +13,52 @@ use crate::domain::scene::SceneId;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::registry::parse_scene_accent;
 use crate::ui::navigation::NavigationContext;
+use crate::ui::widgets::icon_picker;
+
+/// Keyboard shortcut assigned to a scene card by its position on Live.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(crate) struct SceneShortcut {
+    /// Digit shown on the card badge.
+    pub(crate) badge: String,
+    /// Full binding named in the tooltip, e.g. `Ctrl+1`.
+    pub(crate) label: String,
+}
+
+/// Everything one scene card renders from.
+pub(crate) struct SceneCardModel<'a> {
+    /// User-visible scene name.
+    pub(crate) scene_name: &'a str,
+    /// OBS scene id dispatched when the card is activated.
+    pub(crate) scene_id: SceneId,
+    /// Role assigned in the registry.
+    pub(crate) scene_role: SceneRole,
+    /// Whether this is the current program scene.
+    pub(crate) is_active: bool,
+    /// Whether this was the program scene before the current one.
+    pub(crate) is_previous: bool,
+    /// Registry accent, as an `#RRGGBB` hex string.
+    pub(crate) accent_color: Option<&'a str>,
+    /// Keyboard shortcut for this card's position, if it has one.
+    pub(crate) shortcut: Option<SceneShortcut>,
+    /// Icon key chosen in Inventory, if any.
+    pub(crate) icon: Option<&'a str>,
+}
 
 /// Build a scene-switch card.
 ///
 /// The returned widget is still a `Button` for keyboard navigation and click
 /// handling, but it is visually composed as a card.
-pub(crate) fn build(
-    scene_name: &str,
-    scene_id: SceneId,
-    scene_role: SceneRole,
-    is_active: bool,
-    is_previous: bool,
-    accent_color: Option<&str>,
-    nav: NavigationContext,
-) -> Button {
+pub(crate) fn build(model: SceneCardModel<'_>, nav: NavigationContext) -> Button {
+    let SceneCardModel {
+        scene_name,
+        scene_id,
+        scene_role,
+        is_active,
+        is_previous,
+        accent_color,
+        shortcut,
+        icon,
+    } = model;
     let presentation = SceneCardPresentation::for_state(is_active, is_previous);
 
     let card = Button::builder()
@@ -39,11 +71,10 @@ pub(crate) fn build(
     if let Some(class) = accent_color.and_then(install_accent_class) {
         card.add_css_class(&class);
     }
-    card.set_tooltip_text(Some(&fl!(
-        LANGUAGE_LOADER,
-        "scene-card-tooltip",
-        status = presentation.tooltip,
-        role = scene_role_subtitle(scene_role)
+    card.set_tooltip_text(Some(&scene_card_tooltip(
+        presentation.tooltip,
+        scene_role,
+        shortcut.as_ref(),
     )));
 
     let content = GtkBox::builder()
@@ -59,6 +90,17 @@ pub(crate) fn build(
         .halign(Align::Fill)
         .hexpand(true)
         .build();
+
+    // The badge carries only the digit; the modifier is named once above the
+    // scene grid, so a 132 px card stays readable.
+    if let Some(shortcut) = shortcut.as_ref() {
+        let badge = Label::builder()
+            .label(&shortcut.badge)
+            .halign(Align::Start)
+            .build();
+        badge.add_css_class("scene-card-hotkey");
+        header.append(&badge);
+    }
 
     let status = Label::builder()
         .label(presentation.status_label)
@@ -79,6 +121,18 @@ pub(crate) fn build(
     header.append(&spacer);
     header.append(&marker);
 
+    // The icon sits with the title rather than in the status row, so a named
+    // scene still reads as its name first.
+    let title_row = GtkBox::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(6)
+        .halign(Align::Fill)
+        .hexpand(true)
+        .build();
+    if let Some(image) = icon_picker::header_icon(icon) {
+        title_row.append(&image);
+    }
+
     let title = Label::builder()
         .label(scene_name)
         .xalign(0.0)
@@ -91,8 +145,9 @@ pub(crate) fn build(
     title.add_css_class("heading");
     title.add_css_class("scene-card-title");
 
+    title_row.append(&title);
     content.append(&header);
-    content.append(&title);
+    content.append(&title_row);
     card.set_child(Some(&content));
 
     if let Some(class) = presentation.card_css_class {
@@ -133,6 +188,24 @@ fn accent_css(class: &str, red: u8, green: u8, blue: u8) -> String {
     format!(
         "button.scene-card.{class} {{ background-image: none; background-color: rgba({red}, {green}, {blue}, 0.5); }}"
     )
+}
+
+fn scene_card_tooltip(status: &str, role: SceneRole, shortcut: Option<&SceneShortcut>) -> String {
+    match shortcut {
+        Some(shortcut) => fl!(
+            LANGUAGE_LOADER,
+            "scene-card-tooltip-with-hotkey",
+            status = status,
+            role = scene_role_subtitle(role),
+            hotkey = shortcut.label.as_str()
+        ),
+        None => fl!(
+            LANGUAGE_LOADER,
+            "scene-card-tooltip",
+            status = status,
+            role = scene_role_subtitle(role)
+        ),
+    }
 }
 
 fn scene_role_subtitle(role: SceneRole) -> String {
@@ -232,6 +305,23 @@ mod tests {
     fn scene_role_subtitle_uses_assigned_role_label() {
         assert_eq!(scene_role_subtitle(SceneRole::Primary), "Primary scene");
         assert_eq!(scene_role_subtitle(SceneRole::Secondary), "Secondary scene");
+    }
+
+    #[test]
+    fn tooltip_names_the_shortcut_when_one_is_assigned() {
+        let shortcut = SceneShortcut {
+            badge: "1".to_string(),
+            label: "Ctrl+1".to_string(),
+        };
+
+        assert_eq!(
+            scene_card_tooltip("Switch to this scene", SceneRole::Primary, Some(&shortcut)),
+            "Switch to this scene (Primary scene) · Ctrl+1"
+        );
+        assert_eq!(
+            scene_card_tooltip("Switch to this scene", SceneRole::Primary, None),
+            "Switch to this scene (Primary scene)"
+        );
     }
 
     #[test]

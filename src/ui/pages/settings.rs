@@ -12,6 +12,10 @@ use i18n_embed_fl::fl;
 
 use crate::controller::state::ObsStatus;
 use crate::domain::appearance::{Language, ThemeId, ThemeMode};
+use crate::domain::hotkey::{
+    LeaderKey, SceneHotkeyConfig, SceneHotkeyStyle, MAX_LEADER_TIMEOUT_MS, MAX_SLOTS,
+    MIN_LEADER_TIMEOUT_MS,
+};
 use crate::infra::i18n;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::config::{write_config, OutputConfig};
@@ -73,6 +77,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         }
     });
 
+    with_icon(&theme_row, "nf-md-theme-light-dark-symbolic");
     appearance_group.add(&theme_row);
 
     let themes = ThemeManager::built_in_themes();
@@ -130,6 +135,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         }
     });
 
+    with_icon(&family_row, "nf-md-palette-symbolic");
     appearance_group.add(&family_row);
 
     let custom_css_row = SwitchRow::builder()
@@ -204,10 +210,15 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     });
     reload_css_row.add_suffix(&reload_btn);
 
+    with_icon(&custom_css_row, "nf-md-language-css3-symbolic");
     appearance_group.add(&custom_css_row);
+    with_entry_icon(&light_css_row, "nf-md-white-balance-sunny-symbolic");
     appearance_group.add(&light_css_row);
+    with_entry_icon(&dark_css_row, "nf-md-weather-night-symbolic");
     appearance_group.add(&dark_css_row);
+    with_icon(&reload_css_row, "nf-md-refresh-symbolic");
     appearance_group.add(&reload_css_row);
+    with_icon(&theme_status_row, "nf-md-information-outline-symbolic");
     appearance_group.add(&theme_status_row);
 
     // ── Language ──────────────────────────────────────────────────────────────
@@ -266,6 +277,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         }
     });
 
+    with_icon(&language_row, "nf-md-translate-symbolic");
     language_group.add(&language_row);
     language_group.add(&language_status_row);
 
@@ -370,8 +382,11 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         }
     });
 
+    with_entry_icon(&host_row, "nf-md-server-network-symbolic");
     obs_group.add(&host_row);
+    with_entry_icon(&port_row, "nf-md-ethernet-symbolic");
     obs_group.add(&port_row);
+    with_entry_icon(&password_row, "nf-md-key-variant-symbolic");
     obs_group.add(&password_row);
 
     // ── Output safety ────────────────────────────────────────────────────────
@@ -414,18 +429,27 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         outputs.confirm_stop_recording = active;
     });
 
+    with_icon(&confirm_start_stream, "nf-md-broadcast-symbolic");
     output_group.add(&confirm_start_stream);
+    with_icon(&confirm_stop_stream, "nf-md-broadcast-off-symbolic");
     output_group.add(&confirm_stop_stream);
+    with_icon(&confirm_start_recording, "nf-md-record-circle-symbolic");
     output_group.add(&confirm_start_recording);
+    with_icon(&confirm_stop_recording, "nf-md-stop-circle-symbolic");
     output_group.add(&confirm_stop_recording);
 
+    // ── Scene hotkeys ────────────────────────────────────────────────────────
+    let hotkey_group = build_hotkey_group(&nav);
+
     let status_group = PreferencesGroup::new();
+    with_icon(&status_row, "nf-md-lan-connect-symbolic");
     status_group.add(&status_row);
 
     page.add(&appearance_group);
     page.add(&language_group);
     page.add(&obs_group);
     page.add(&output_group);
+    page.add(&hotkey_group);
     page.add(&status_group);
 
     // Closure that refreshes the status row when navigating back to this page
@@ -442,6 +466,178 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     });
 
     (page.upcast(), refresh_fn)
+}
+
+/// Build the Live scene-hotkey preferences group.
+///
+/// The rows write straight into `config.hotkeys`; the window's key controller
+/// re-reads that on every key press, so edits here take effect immediately and
+/// the Live page picks up new badges the next time its cards are rebuilt.
+fn build_hotkey_group(nav: &NavigationContext) -> PreferencesGroup {
+    let group = PreferencesGroup::builder()
+        .title(fl!(LANGUAGE_LOADER, "settings-hotkeys-title"))
+        .description(fl!(LANGUAGE_LOADER, "settings-hotkeys-description"))
+        .build();
+
+    let hotkeys = nav.state.borrow().config.hotkeys;
+
+    let enabled_row = SwitchRow::builder()
+        .title(fl!(LANGUAGE_LOADER, "settings-hotkeys-enabled-title"))
+        .subtitle(fl!(LANGUAGE_LOADER, "settings-hotkeys-enabled-subtitle"))
+        .active(hotkeys.enabled)
+        .build();
+
+    let style_strings: Vec<String> = SceneHotkeyStyle::ALL
+        .iter()
+        .map(|style| style.label())
+        .collect();
+    let style_names: Vec<&str> = style_strings.iter().map(String::as_str).collect();
+    let style_row = ComboRow::builder()
+        .title(fl!(LANGUAGE_LOADER, "settings-hotkeys-style-title"))
+        .subtitle(fl!(LANGUAGE_LOADER, "settings-hotkeys-style-subtitle"))
+        .model(&StringList::new(&style_names))
+        .selected(index_of(&SceneHotkeyStyle::ALL, hotkeys.style))
+        .build();
+    style_row.add_css_class("scenedeck-combo-row");
+
+    let leader_strings: Vec<String> = LeaderKey::ALL.iter().map(|key| key.label()).collect();
+    let leader_names: Vec<&str> = leader_strings.iter().map(String::as_str).collect();
+    let leader_row = ComboRow::builder()
+        .title(fl!(LANGUAGE_LOADER, "settings-hotkeys-leader-title"))
+        .subtitle(fl!(LANGUAGE_LOADER, "settings-hotkeys-leader-subtitle"))
+        .model(&StringList::new(&leader_names))
+        .selected(index_of(&LeaderKey::ALL, hotkeys.leader))
+        .build();
+    leader_row.add_css_class("scenedeck-combo-row");
+
+    let timeout_row = adw::SpinRow::with_range(
+        MIN_LEADER_TIMEOUT_MS as f64,
+        MAX_LEADER_TIMEOUT_MS as f64,
+        50.0,
+    );
+    timeout_row.set_title(&fl!(LANGUAGE_LOADER, "settings-hotkeys-timeout-title"));
+    timeout_row.set_subtitle(&fl!(LANGUAGE_LOADER, "settings-hotkeys-timeout-subtitle"));
+    timeout_row.set_value(hotkeys.leader_timeout().as_millis() as f64);
+
+    let preview_row = ActionRow::builder()
+        .title(fl!(LANGUAGE_LOADER, "settings-hotkeys-preview-title"))
+        .build();
+
+    // One place decides what the dependent rows show, so every edit path stays
+    // consistent without each handler re-deriving it.
+    let refresh: Rc<dyn Fn()> = Rc::new({
+        let nav = nav.clone();
+        let style_row = style_row.clone();
+        let leader_row = leader_row.clone();
+        let timeout_row = timeout_row.clone();
+        let preview_row = preview_row.clone();
+        move || {
+            let hotkeys = nav.state.borrow().config.hotkeys;
+            let leader_style = hotkeys.style == SceneHotkeyStyle::Leader;
+            style_row.set_sensitive(hotkeys.enabled);
+            leader_row.set_sensitive(hotkeys.enabled && leader_style);
+            timeout_row.set_sensitive(hotkeys.enabled && leader_style);
+            preview_row.set_subtitle(&hotkey_preview_text(&hotkeys));
+        }
+    });
+    refresh();
+
+    enabled_row.connect_active_notify({
+        let nav = nav.clone();
+        let refresh = refresh.clone();
+        move |row| {
+            let enabled = row.is_active();
+            persist_config(&nav, |config| config.hotkeys.enabled = enabled);
+            refresh();
+        }
+    });
+
+    style_row.connect_selected_notify({
+        let nav = nav.clone();
+        let refresh = refresh.clone();
+        move |row| {
+            let Some(style) = SceneHotkeyStyle::ALL.get(row.selected() as usize).copied() else {
+                return;
+            };
+            persist_config(&nav, |config| config.hotkeys.style = style);
+            refresh();
+        }
+    });
+
+    leader_row.connect_selected_notify({
+        let nav = nav.clone();
+        let refresh = refresh.clone();
+        move |row| {
+            let Some(leader) = LeaderKey::ALL.get(row.selected() as usize).copied() else {
+                return;
+            };
+            persist_config(&nav, |config| config.hotkeys.leader = leader);
+            refresh();
+        }
+    });
+
+    timeout_row.connect_value_notify({
+        let nav = nav.clone();
+        let refresh = refresh.clone();
+        move |row| {
+            let millis = row.value().round().max(0.0) as u64;
+            persist_config(&nav, |config| config.hotkeys.leader_timeout_ms = millis);
+            refresh();
+        }
+    });
+
+    with_icon(&enabled_row, "nf-md-keyboard-symbolic");
+    group.add(&enabled_row);
+    with_icon(&style_row, "nf-md-keyboard-variant-symbolic");
+    group.add(&style_row);
+    with_icon(&leader_row, "nf-md-keyboard-outline-symbolic");
+    group.add(&leader_row);
+    with_icon(&timeout_row, "nf-md-timer-outline-symbolic");
+    group.add(&timeout_row);
+    with_icon(&preview_row, "nf-md-eye-outline-symbolic");
+    group.add(&preview_row);
+    group
+}
+
+/// Summary of the first and last slot bindings, or a note that they are off.
+fn hotkey_preview_text(hotkeys: &SceneHotkeyConfig) -> String {
+    let (Some(first), Some(last)) = (
+        hotkeys.shortcut_label(0),
+        hotkeys.shortcut_label(MAX_SLOTS - 1),
+    ) else {
+        return fl!(LANGUAGE_LOADER, "settings-hotkeys-preview-disabled");
+    };
+    fl!(
+        LANGUAGE_LOADER,
+        "settings-hotkeys-preview-subtitle",
+        first = first,
+        last = last,
+        count = MAX_SLOTS.to_string()
+    )
+}
+
+fn index_of<T: PartialEq>(all: &[T], value: T) -> u32 {
+    all.iter().position(|item| *item == value).unwrap_or(0) as u32
+}
+
+/// Prefix a preferences row with a small icon.
+///
+/// A wall of identical rows is hard to scan; the icon gives each one a shape to
+/// find it by before the text is read. Entry rows carry `add_prefix` on their
+/// own type rather than on `ActionRow`, hence the pair.
+fn with_icon<R: IsA<adw::ActionRow>>(row: &R, icon_name: &str) {
+    row.as_ref().add_prefix(&row_icon(icon_name));
+}
+
+/// Prefix an entry-style preferences row with a small icon.
+fn with_entry_icon<R: IsA<adw::EntryRow>>(row: &R, icon_name: &str) {
+    row.as_ref().add_prefix(&row_icon(icon_name));
+}
+
+fn row_icon(icon_name: &str) -> gtk4::Image {
+    let icon = gtk4::Image::from_icon_name(icon_name);
+    icon.add_css_class("scenedeck-row-icon");
+    icon
 }
 
 fn obs_status_text(nav: &NavigationContext) -> String {

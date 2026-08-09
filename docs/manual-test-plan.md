@@ -98,6 +98,81 @@ Expected result: the copied text is the latest OBS recording path, the record
 status tooltip reflects the same path, and no stale path is copied after a newer
 recording completes.
 
+### Scene Hotkeys: Modifier Binding
+
+1. Connect to OBS with at least three `Primary` scenes assigned in Inventory.
+2. Open Live and confirm the first cards show badges `1`, `2`, `3`, and that the
+   caption beside the Scenes heading reads `Press Ctrl+1 … 0`.
+3. Press `Ctrl+1`, then `Ctrl+3`.
+4. Press `Ctrl+9` with fewer than nine cards present.
+5. Press plain `1`, then `Ctrl+Alt+1`.
+6. Reorder the scenes in Inventory, return to Live, and press `Ctrl+1` again.
+7. Open Settings, switch to another page such as Doctor, and press `Ctrl+1`.
+
+Expected result: `Ctrl+1` and `Ctrl+3` switch to the first and third cards; an
+unbound digit replaces the caption with a "no scene" notice for about two
+seconds and switches nothing; neither the bare digit nor the extra modifier
+switches anything; badges and shortcuts follow the new Inventory order; and no
+switch happens from a page other than Live.
+
+### Scene Hotkeys: Bare Digits and Leader Key
+
+1. Open Settings → Scene Hotkeys and select the digit-only combination.
+2. Return to Live and press `1`, then `2`.
+3. Go back to Settings, select the leader style with Space as the leader, and
+   set the leader timeout to its minimum.
+4. Return to Live, press Space, and confirm the caption reads `Leader armed`.
+5. Press `1` while armed.
+6. Press Space, wait past the timeout, then press `1`.
+7. Press Space, then Escape.
+8. Press Space alone with the Settings page open and a text field focused.
+9. Turn Scene Hotkeys off and press the previously working keys.
+
+Expected result: bare digits switch scenes; Space arms the leader and the next
+digit switches; an expired or Escape-cancelled leader switches nothing and
+restores the normal caption; the leader never arms while a text field has focus
+and typing a space there is unaffected; and with hotkeys off no digit switches a
+scene, the badges disappear, and the caption is hidden.
+
+### Volume Meters Track OBS
+
+1. Connect to OBS with at least one microphone and one desktop-audio source.
+2. Open Live and compare each card's meter with the matching meter in OBS.
+3. Speak into the microphone, then stop, and watch the bar fall.
+4. Push a source until it reaches the red zone, then let it go quiet, and check
+   the peak-hold bar within the following twenty seconds.
+5. Mute a source in OBS.
+6. Pull a source's fader down while it is still producing audio.
+7. Switch to a stereo source, and to a mono one if you have one.
+8. Leave Live for Settings for a minute, then return.
+9. Disconnect from OBS.
+
+Expected result: the columns match OBS's own meter; the bar jumps up instantly
+and falls off gradually; the peak-hold bar keeps the loudest recent peak and its
+colour, then drops; a muted source empties its column while the dot at the base
+keeps showing device level; lowering the fader lowers the column but not the
+base dot; the column count follows the source's channel count; returning to Live
+does not make the bars jump; and disconnecting empties every meter rather than
+freezing it.
+
+### Scene and Source Icons
+
+1. Open Inventory and choose an icon for two scenes from the picker at the left
+   of each row.
+2. Go to Live and check both scene cards.
+3. Return to Inventory and clear one of the icons.
+4. Open an audio card's overflow button on Live, choose an icon, and check the
+   card's scope bar.
+5. Open the Mixer page and confirm the same source shows the same icon.
+6. Restart SceneDeck.
+7. Open `registry.json` and confirm the `icon` keys and the `inputs` section.
+8. Hand-edit one icon key to something invented, and restart again.
+
+Expected result: icons appear beside the scene name on Live cards and in the
+scope bar of audio cards; clearing one removes it everywhere; both surfaces
+agree; the choices survive a restart; and an unknown key silently falls back to
+no icon rather than breaking the row.
+
 ### Active Mixer Follows OBS Scene
 
 1. Open Mixer and select Active mode.

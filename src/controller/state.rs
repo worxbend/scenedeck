@@ -6,6 +6,7 @@ use crate::domain::appearance::ThemeMode;
 use crate::domain::audio::AudioInput;
 use crate::domain::diagnostic::Diagnostic;
 use crate::domain::graph::SceneGraph;
+use crate::domain::meter::{InputLevelSnapshot, InputLevels};
 use crate::domain::mixer::{MixerMode, MixerSelection};
 use crate::domain::obs::ObsNamedList;
 use crate::domain::output::OutputStatus;
@@ -272,6 +273,10 @@ pub struct AppState {
     pub last_recording_path: Option<String>,
     pub output_confirmations: OutputConfig,
     pub audio_inputs: Vec<AudioInput>,
+    /// Latest volume-meter levels, keyed by input. Meter widgets poll this on
+    /// the frames they draw rather than being pushed to, because OBS reports
+    /// every active input together about twenty times a second.
+    pub audio_levels: InputLevelSnapshot,
     pub mixer_audio_refresh: MixerAudioRefreshState,
     pub mixer: MixerSelection,
     pub diagnostics: Vec<Diagnostic>,
@@ -320,6 +325,7 @@ impl AppState {
             last_recording_path: None,
             output_confirmations,
             audio_inputs: Vec::new(),
+            audio_levels: InputLevelSnapshot::default(),
             mixer_audio_refresh: MixerAudioRefreshState::default(),
             mixer,
             diagnostics: Vec::new(),
@@ -339,6 +345,16 @@ impl AppState {
     }
     pub fn set_obs_status(&mut self, status: ObsStatus) {
         self.obs_status = status;
+    }
+
+    /// Store the newest volume-meter readings, replacing the previous set.
+    pub fn set_audio_levels(&mut self, levels: Vec<InputLevels>) {
+        self.audio_levels.update(levels);
+    }
+
+    /// Forget every metered level, so meters fall silent instead of freezing.
+    pub fn clear_audio_levels(&mut self) {
+        self.audio_levels.clear();
     }
 
     pub fn set_mixer_audio_loading(&mut self, scene: SceneId) -> MixerAudioRefreshTransition {

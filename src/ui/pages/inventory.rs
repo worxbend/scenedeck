@@ -13,10 +13,11 @@ use gtk4::{
 use crate::domain::role::SceneRole;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::registry::{
-    parse_scene_accent, read_registry_yaml_from_path, scene_accent_hex, write_registry,
-    write_registry_yaml_to_path, SceneEntry,
+    self as registry_storage, parse_scene_accent, read_registry_yaml_from_path, scene_accent_hex,
+    write_registry, write_registry_yaml_to_path, SceneEntry,
 };
 use crate::ui::navigation::NavigationContext;
+use crate::ui::widgets::icon_picker;
 use i18n_embed_fl::fl;
 
 // ── Role index helpers ────────────────────────────────────────────────────────
@@ -253,6 +254,18 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
             }
         });
 
+        let icon_picker = icon_picker::build(
+            registry.scene_icon(&scene.id),
+            &fl!(LANGUAGE_LOADER, "inventory-scene-icon-tooltip"),
+            icon_picker::PickerDisplay::CurrentIcon,
+            {
+                let scene_id = scene.id.clone();
+                let nav = nav.clone();
+                move |icon| set_scene_icon(&nav, &scene_id, icon.as_deref())
+            },
+        );
+        combo_row.add_prefix(&icon_picker);
+
         combo_row.add_suffix(&drag_handle);
         combo_row.add_suffix(&accent_box);
         combo_row.add_suffix(&clear_accent_button);
@@ -460,6 +473,7 @@ fn handle_scene_role_change(row: &ComboRow, scene_id: &str, nav: &NavigationCont
                         tags: Vec::new(),
                         protected: false,
                         accent_color: None,
+                        icon: None,
                     });
             }
             None => {
@@ -500,6 +514,31 @@ fn handle_stale_entry_remove(entry_name: &str, stale_row: &ActionRow, nav: &Navi
     stale_row.set_visible(false);
 }
 
+/// Persist one scene's icon and mirror it into the cached registry.
+///
+/// Failures are logged rather than surfaced: the picker has already moved, and
+/// the next Inventory rebuild reads back from the registry either way.
+fn set_scene_icon(nav: &NavigationContext, scene_id: &str, icon: Option<&str>) {
+    if !nav
+        .state
+        .borrow_mut()
+        .registry
+        .set_scene_icon(scene_id, icon)
+    {
+        return;
+    }
+    let scene_id = scene_id.to_string();
+    let icon = icon.map(str::to_string);
+    crate::ui::background_io::run(
+        move || registry_storage::set_scene_icon(&scene_id, icon.as_deref()),
+        |result| {
+            if let Err(error) = result {
+                tracing::warn!(%error, "failed to save the scene icon");
+            }
+        },
+    );
+}
+
 fn set_scene_accent(nav: &NavigationContext, scene_id: &str, accent_color: Option<String>) -> bool {
     let registry = {
         let mut state = nav.state.borrow_mut();
@@ -511,6 +550,7 @@ fn set_scene_accent(nav: &NavigationContext, scene_id: &str, accent_color: Optio
                     tags: Vec::new(),
                     protected: false,
                     accent_color: None,
+                    icon: None,
                 },
             );
         }

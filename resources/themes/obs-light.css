@@ -1,0 +1,31 @@
+/* The light side of OBS's default look: the same blue over OBS's light
+   surfaces, for operators who run their desktop light. */
+@define-color scenedeck_accent #2b6ca3;
+@define-color scenedeck_accent_fg #ffffff;
+@define-color scenedeck_fg #1f2428;
+@define-color scenedeck_muted_fg #5c6771;
+@define-color scenedeck_success #1b5e20;
+@define-color scenedeck_warning #7a5200;
+@define-color scenedeck_error #b3261e;
+@define-color scenedeck_window #f2f3f5;
+@define-color scenedeck_sidebar #e8eaed;
+@define-color scenedeck_header #e2e5e9;
+@define-color scenedeck_surface #f2f3f5;
+@define-color scenedeck_card #ffffff;
+
+.scene-card,
+.audio-card {
+  background-color: @scenedeck_card;
+}
+
+.scene-card-active {
+  outline-color: @scenedeck_accent;
+}
+
+.audio-card-scope-bar {
+  background-color: @scenedeck_accent;
+}
+
+.audio-meter {
+  background-color: #d5d9dd;
+}

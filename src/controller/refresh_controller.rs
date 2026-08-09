@@ -1,12 +1,13 @@
 //! OBS refresh helpers and event-stream orchestration.
 
-use std::sync::mpsc::SyncSender;
+use std::sync::mpsc::{SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 
 use crate::controller::event::AppEvent;
+use crate::domain::meter::InputLevels;
 use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::infra::error::AppError;
 use crate::obs::client::ObsClient;
@@ -262,6 +263,22 @@ pub(crate) async fn run_event_loop(
                 volume_mul: mul,
                 volume_db: db,
             }),
+            // High-volume: about twenty of these a second, every one of them
+            // disposable. Dropping a frame when the UI is busy costs a 50 ms
+            // gap in the meters; blocking here would stall every other OBS
+            // event behind it.
+            Event::InputVolumeMeters { inputs } => {
+                let levels = inputs
+                    .iter()
+                    .map(|input| InputLevels::from_mul(input.name.clone(), &input.levels))
+                    .collect();
+                if let Err(TrySendError::Disconnected(_)) =
+                    tx.try_send(AppEvent::InputLevelsUpdated(levels))
+                {
+                    break;
+                }
+                None
+            }
             Event::InputCreated { .. }
             | Event::InputRemoved { .. }
             | Event::InputNameChanged { .. } => {

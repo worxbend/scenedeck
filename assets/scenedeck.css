@@ -137,7 +137,43 @@
     color: @scenedeck_accent_fg;
 }
 
+/* ── Sidebar brand ──────────────────────────────────────────────────────────── */
+.scenedeck-brand {
+    margin-left: 4px;
+}
+
+.scenedeck-brand-logo {
+    -gtk-icon-size: 22px;
+}
+
+.scenedeck-brand-name {
+    font-weight: 800;
+    font-size: 1.05em;
+    color: @scenedeck_fg;
+}
+
+/* ── Preferences rows ───────────────────────────────────────────────────────── */
+.scenedeck-row-icon {
+    -gtk-icon-size: 16px;
+    color: @scenedeck_muted_fg;
+}
+
+/* ── Section headings ───────────────────────────────────────────────────────── */
+.scenedeck-section-icon {
+    -gtk-icon-size: 14px;
+    color: @scenedeck_muted_fg;
+}
+
 /* ── OBS connection status ──────────────────────────────────────────────────── */
+.scenedeck-status-bar-icon {
+    -gtk-icon-size: 13px;
+}
+
+.scenedeck-status-bar-icon.scenedeck-status-bar-metric,
+.scenedeck-status-bar-icon.scenedeck-status-bar-output {
+    color: @scenedeck_muted_fg;
+}
+
 .obs-connected    { color: @scenedeck_success; }
 .obs-connecting   { color: @scenedeck_warning; }
 .obs-disconnected { color: @scenedeck_muted_fg; }
@@ -163,18 +199,31 @@
     min-width: 150px;
 }
 
-.scenedeck-dropdown,
-.scenedeck-dropdown button {
-    background-color: @scenedeck_card;
+/* At rest the selectors sit flat on the header, so the toolbar reads as one
+   surface; they only lift out of it on hover or focus. */
+.scenedeck-dropdown {
+    background-color: transparent;
     color: @scenedeck_fg;
 }
 
 .scenedeck-dropdown button {
-    border-color: alpha(@scenedeck_accent, 0.35);
+    background-color: @scenedeck_header;
+    background-image: none;
+    color: @scenedeck_fg;
+    border-color: alpha(@scenedeck_fg, 0.14);
+    box-shadow: none;
 }
 
 .scenedeck-dropdown button:hover {
-    background-color: alpha(@scenedeck_accent, 0.10);
+    background-color: alpha(@scenedeck_accent, 0.14);
+    border-color: alpha(@scenedeck_accent, 0.35);
+}
+
+.scenedeck-dropdown button:focus-visible,
+.scenedeck-dropdown button:active,
+.scenedeck-dropdown button:checked {
+    background-color: alpha(@scenedeck_accent, 0.20);
+    border-color: alpha(@scenedeck_accent, 0.45);
 }
 
 .scenedeck-dropdown popover {
@@ -282,6 +331,26 @@ window.scenedeck-about-window preferencesgroup row {
     font-size: 0.9em;
 }
 
+.scene-card-hotkey {
+    min-width: 14px;
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 0.72em;
+    font-weight: 700;
+    background-color: alpha(@scenedeck_fg, 0.10);
+    color: @scenedeck_muted_fg;
+}
+
+.scene-card-active .scene-card-hotkey {
+    background-color: alpha(@scenedeck_accent, 0.30);
+    color: @scenedeck_fg;
+}
+
+.live-hotkey-hint {
+    color: @scenedeck_muted_fg;
+    font-size: 0.85em;
+}
+
 /* ── Live page audio cards ──────────────────────────────────────────────────── */
 .audio-card {
     min-width: 136px;
@@ -295,34 +364,53 @@ window.scenedeck-about-window preferencesgroup row {
     font-size: 0.82em;
 }
 
-.audio-source-badge {
-    border-radius: 4px;
-    padding: 1px 5px;
-    font-size: 0.74em;
+/* ── Audio card scope header ────────────────────────────────────────────────
+   OBS heads each mixer strip with a full-width coloured tag naming the scope.
+   The user's chosen icon rides in the same bar. */
+.audio-card-scope-bar {
+    border-radius: 5px;
+    padding: 2px 6px;
+    background-color: @scenedeck_accent;
+    color: @scenedeck_accent_fg;
+}
+
+.audio-card-scope-label {
+    font-size: 0.78em;
     font-weight: 700;
-    background-color: alpha(@scenedeck_fg, 0.10);
+    color: @scenedeck_accent_fg;
+}
+
+.audio-card-scope-icon {
+    -gtk-icon-size: 12px;
+    color: @scenedeck_accent_fg;
+}
+
+.audio-card-scope-bar.audio-scope-active {
+    background-color: alpha(@scenedeck_accent, 0.72);
+}
+
+.audio-card-scope-bar.audio-scope-nested,
+.audio-card-scope-bar.audio-scope-group {
+    background-color: alpha(@scenedeck_fg, 0.24);
+    color: @scenedeck_fg;
+}
+
+.audio-card-scope-bar.audio-scope-nested .audio-card-scope-label,
+.audio-card-scope-bar.audio-scope-group .audio-card-scope-label,
+.audio-card-scope-bar.audio-scope-nested .audio-card-scope-icon,
+.audio-card-scope-bar.audio-scope-group .audio-card-scope-icon {
+    color: @scenedeck_fg;
+}
+
+.audio-card-db {
+    font-size: 0.82em;
     color: @scenedeck_muted_fg;
 }
 
-.audio-scope-global {
-    background-color: alpha(@scenedeck_success, 0.18);
-    color: @scenedeck_success;
-}
-
-.audio-scope-active {
-    background-color: alpha(@scenedeck_accent, 0.16);
-    color: @scenedeck_accent;
-}
-
-.audio-scope-nested,
-.audio-scope-group {
-    background-color: alpha(@scenedeck_warning, 0.18);
-    color: @scenedeck_warning;
-}
-
-.audio-card-controls button {
-    min-width: 18px;
-    min-height: 18px;
+.audio-card-controls button,
+.audio-card-overflow button {
+    min-width: 22px;
+    min-height: 22px;
     padding: 0;
 }
 
@@ -341,20 +429,95 @@ window.scenedeck-about-window preferencesgroup row {
     min-height: 128px;
 }
 
-.audio-meter-ruler {
-    min-height: 128px;
+/* ── Volume fader ───────────────────────────────────────────────────────────
+   A thin track with the filled part below the knob and a tall rounded handle,
+   matching the fader in OBS's own mixer. */
+.audio-volume-fader {
+    min-width: 22px;
 }
 
-.audio-meter-bar {
-    min-width: 10px;
+.audio-volume-fader trough {
+    min-width: 5px;
+    border: none;
+    border-radius: 999px;
+    background-color: alpha(@scenedeck_fg, 0.16);
+}
+
+.audio-volume-fader highlight {
+    border-radius: 999px;
+    background-image: none;
+    background-color: @scenedeck_accent;
+}
+
+.audio-volume-fader slider {
+    min-width: 15px;
+    min-height: 26px;
+    margin: -6px;
+    border-radius: 8px;
+    border: 1px solid alpha(black, 0.22);
+    background-image: linear-gradient(to bottom, #ffffff, #ededed);
+    box-shadow: 0 1px 3px alpha(black, 0.40);
+}
+
+.audio-volume-fader:hover slider {
+    background-image: linear-gradient(to bottom, #ffffff, #f7f7f7);
+}
+
+.audio-volume-fader:disabled trough,
+.audio-volume-fader:disabled highlight {
+    opacity: 0.45;
+}
+
+.audio-volume-fader:disabled slider {
+    background-image: linear-gradient(to bottom, #d8d8d8, #c4c4c4);
+    box-shadow: none;
+}
+
+/* ── Volume meter ───────────────────────────────────────────────────────────
+   The bars are drawn in `ui::widgets::volume_meter`; the zone colours are fixed
+   there because green, yellow and red carry the same meaning as they do in OBS. */
+.audio-meter {
     min-height: 128px;
-    border-radius: 2px;
-    background-image: linear-gradient(to top, #2fa84f 0%, #2fa84f 68%, #d4b93a 68%, #d4b93a 86%, #d04444 86%, #d04444 100%);
+    padding: 0;
+}
+
+.audio-meter-labels {
+    min-height: 128px;
 }
 
 .audio-meter-label {
     font-size: 0.58em;
     color: @scenedeck_muted_fg;
+}
+
+/* ── Icon picker ────────────────────────────────────────────────────────────── */
+.icon-picker-button {
+    min-width: 24px;
+    min-height: 24px;
+    padding: 0;
+}
+
+.icon-picker-popover contents {
+    padding: 6px;
+}
+
+.icon-picker-choice {
+    min-width: 30px;
+    min-height: 30px;
+    padding: 2px;
+    border-radius: 6px;
+}
+
+.icon-picker-choice:hover {
+    background-color: alpha(@scenedeck_accent, 0.16);
+}
+
+.icon-picker-choice-selected {
+    background-color: alpha(@scenedeck_accent, 0.28);
+}
+
+.scenedeck-icon {
+    -gtk-icon-size: 14px;
 }
 
 /* ── Mixer page ─────────────────────────────────────────────────────────────── */
