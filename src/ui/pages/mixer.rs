@@ -10,10 +10,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use adw::{prelude::*, ComboRow, EntryRow, PreferencesGroup, PreferencesPage, StatusPage};
-use gtk4::{
-    Align, Box as GtkBox, Button, FlowBox, FlowBoxChild, Label, Orientation, PolicyType,
-    ScrolledWindow, StringList,
-};
+use gtk4::{Align, Box as GtkBox, Button, FlowBox, FlowBoxChild, Orientation, StringList};
 
 use crate::controller::command::AppCommand;
 use crate::controller::state::{
@@ -228,7 +225,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
     };
     let inputs = filter_inputs(&source_inputs, &mixer.search);
     let inspection_status = append_mixer_inputs(
-        root,
+        MixerSurfaces { root, page: &page },
         nav,
         &inputs,
         source_inputs.len(),
@@ -382,8 +379,15 @@ fn build_search_row(nav: &NavigationContext, search: &str) -> EntryRow {
     row
 }
 
+/// Where the mixer renders: cards go inside the scrolling preferences page,
+/// full-page status views take the whole root.
+struct MixerSurfaces<'a> {
+    root: &'a GtkBox,
+    page: &'a PreferencesPage,
+}
+
 fn append_mixer_inputs(
-    root: &GtkBox,
+    surfaces: MixerSurfaces<'_>,
     nav: &NavigationContext,
     inputs: &[AudioInput],
     source_count: usize,
@@ -391,6 +395,7 @@ fn append_mixer_inputs(
     search: &str,
     target_scene: Option<&str>,
 ) -> MixerInspectionStatus<'static> {
+    let MixerSurfaces { root, page } = surfaces;
     if inputs.is_empty() {
         if source_count == 0 && search.trim().is_empty() {
             let scene_label = target_scene
@@ -419,7 +424,7 @@ fn append_mixer_inputs(
     } else {
         match grouping {
             MixerGrouping::None => append_group(
-                root,
+                page,
                 nav,
                 &fl!(LANGUAGE_LOADER, "mixer-group-all-sources"),
                 inputs,
@@ -433,7 +438,7 @@ fn append_mixer_inputs(
                         .push(input.clone());
                 }
                 for (title, inputs) in groups {
-                    append_group(root, nav, &title, &inputs);
+                    append_group(page, nav, &title, &inputs);
                 }
             }
             MixerGrouping::ScenePath => {
@@ -449,7 +454,7 @@ fn append_mixer_inputs(
                         .push(input.clone());
                 }
                 for (title, inputs) in groups {
-                    append_group(root, nav, &title, &inputs);
+                    append_group(page, nav, &title, &inputs);
                 }
             }
         }
@@ -506,20 +511,20 @@ fn append_mixer_error_status(
     root.append(&status);
 }
 
-fn append_group(root: &GtkBox, nav: &NavigationContext, title: &str, inputs: &[AudioInput]) {
-    let section = GtkBox::builder()
-        .orientation(Orientation::Vertical)
-        .spacing(8)
-        .margin_top(12)
-        .margin_bottom(12)
-        .margin_start(18)
-        .margin_end(18)
-        .build();
-    section.add_css_class("mixer-section");
-
-    let label = Label::builder().label(title).xalign(0.0).build();
-    label.add_css_class("caption-heading");
-    section.append(&label);
+/// Add one titled group of audio cards to the preferences page.
+///
+/// The cards go inside the page rather than beside it: `AdwPreferencesPage`
+/// already scrolls, so a tall card cannot push the group past the bottom of the
+/// window. A group that owned its own scroller would fight that one and, when
+/// the window is short, overflow it.
+fn append_group(
+    page: &PreferencesPage,
+    nav: &NavigationContext,
+    title: &str,
+    inputs: &[AudioInput],
+) {
+    let group = PreferencesGroup::builder().title(title).build();
+    group.add_css_class("mixer-section");
 
     let flow = FlowBox::builder()
         .selection_mode(gtk4::SelectionMode::None)
@@ -527,7 +532,7 @@ fn append_group(root: &GtkBox, nav: &NavigationContext, title: &str, inputs: &[A
         .row_spacing(6)
         .halign(Align::Start)
         .valign(Align::Start)
-        .hexpand(false)
+        .hexpand(true)
         .vexpand(false)
         .min_children_per_line(1)
         .max_children_per_line(12)
@@ -538,17 +543,8 @@ fn append_group(root: &GtkBox, nav: &NavigationContext, title: &str, inputs: &[A
         insert_compact_flow_child(&flow, &card.root);
     }
 
-    let scroll = ScrolledWindow::builder()
-        .vexpand(false)
-        .hexpand(true)
-        .min_content_height(232)
-        .hscrollbar_policy(PolicyType::Never)
-        .vscrollbar_policy(PolicyType::Automatic)
-        .child(&flow)
-        .build();
-    scroll.add_css_class("live-pane-scroll");
-    section.append(&scroll);
-    root.append(&section);
+    group.add(&flow);
+    page.add(&group);
 }
 
 fn insert_compact_flow_child<W: IsA<gtk4::Widget>>(flow: &FlowBox, widget: &W) {
@@ -1431,5 +1427,64 @@ mod tests {
 
         assert_eq!(command_scene(command), None);
         assert_eq!(tracked_scene.as_deref(), Some("scene-a"));
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+    use crate::controller::app_controller::AppController;
+    use crate::controller::state::AppState;
+    use crate::domain::audio::AudioInput;
+    use crate::domain::scene::{Scene, SceneInventory};
+
+    fn audio_input(name: &str) -> AudioInput {
+        AudioInput::new(name.to_string(), false, 1.0, 0.0)
+    }
+
+    /// Build the Mixer page against a state holding `count` audio sources.
+    fn measure_mixer_page_min_height(count: usize) -> i32 {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime");
+        let (event_tx, _event_rx) = std::sync::mpsc::sync_channel(16);
+        let controller = Rc::new(RefCell::new(AppController::new(
+            runtime.handle().clone(),
+            event_tx,
+        )));
+
+        let mut state = AppState::new(Default::default(), Default::default(), None, None);
+        state.scene_inventory = SceneInventory {
+            scenes: vec![Scene {
+                id: "Main".to_string(),
+                name: "Main".to_string(),
+            }],
+            current_id: Some("Main".to_string()),
+            previous_id: None,
+        };
+        state.audio_inputs = (0..count)
+            .map(|index| audio_input(&format!("Source {index}")))
+            .collect();
+
+        let nav =
+            NavigationContext::new(Rc::new(RefCell::new(state)), gtk4::Stack::new(), controller);
+        let (widget, _refresh) = build(nav);
+        widget.measure(Orientation::Vertical, -1).0
+    }
+
+    #[test]
+    #[ignore = "temporary: needs a display"]
+    fn mixer_page_minimum_height_does_not_grow_with_the_card_count() {
+        gtk4::init().expect("gtk init");
+        crate::ui::register_resources();
+
+        let one = measure_mixer_page_min_height(1);
+        let many = measure_mixer_page_min_height(24);
+
+        println!("min height: 1 source = {one}px, 24 sources = {many}px");
+        assert_eq!(
+            one, many,
+            "the page must scroll its cards instead of demanding room for them"
+        );
     }
 }
