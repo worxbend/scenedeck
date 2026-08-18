@@ -70,6 +70,34 @@ Use `@define-color` for theme-local colors:
 }
 ```
 
+## Motion
+
+SceneDeck animates a small number of live-state indicators. The animations are
+defined in the app's base stylesheet, not in themes, and the user controls them
+with the **Motion** setting (`appearance.motion`, see
+[configuration.md](configuration.md)).
+
+These classes carry looping animations:
+
+| Class | Meaning |
+| --- | --- |
+| `.scenedeck-status-bar-live.scenedeck-status-bar-record` | Recording, blinking like a tally light |
+| `.scenedeck-status-bar-live.scenedeck-status-bar-stream` | Streaming, swelling slowly |
+| `.scenedeck-sidebar-live-icon-streaming` | Sidebar live icon while streaming |
+| `.scenedeck-top-streaming-icon-active` | Header live icon while streaming |
+| `.scenedeck-content-header-streaming` | Header band while streaming |
+| `.obs-connecting` | Connecting to OBS |
+| `.scenedeck-status-bar-dropped-active` | Frames are being dropped (flashes a few times, then holds) |
+
+Restyle them freely — colour, weight, background. Two cautions:
+
+- If you set `animation` on these classes yourself, your value wins over the
+  Motion setting, because user CSS is applied last. Only do that if you intend
+  to opt out of the user's own preference.
+- GTK 4 CSS has no `transform` property, so animations here can only use
+  `opacity`, colours, backgrounds and borders. Keyframes that try to scale,
+  rotate or slide will silently do nothing.
+
 ## Safe Rules
 
 - Do not remove visible focus styling.

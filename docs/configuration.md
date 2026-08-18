@@ -42,6 +42,7 @@ Example:
     "mode": "system",
     "theme": "adwaita-default",
     "ui_density": "comfortable",
+    "motion": "full",
     "custom_css": {
       "enabled": false,
       "light_path": null,
@@ -87,6 +88,22 @@ Fields:
   custom theme work.
 - `appearance.ui_density`: `comfortable` or `compact`. Density-specific UI
   styling is planned for the custom theme work.
+- `appearance.motion`: `full`, `reduced`, or `off`. Controls how much the
+  interface animates:
+  - `full` — looping animations play. The recording indicator blinks like a
+    tally light, the streaming indicator swells slowly, and the header band
+    breathes while you are live.
+  - `reduced` — nothing loops, but state *changes* still animate briefly, so
+    you can see that a scene switched rather than having to spot it.
+  - `off` — no animation at all.
+
+  Animation never carries meaning on its own: every state that animates is also
+  shown by colour, an icon and a text label, so nothing becomes unreadable at
+  `reduced` or `off`.
+
+  If your desktop's own "reduce animation" accessibility setting is on, `full`
+  behaves as `reduced` without you having to change anything here. An explicit
+  `off` is always honoured and is never promoted back up.
 - `appearance.custom_css.enabled`: whether a user CSS file should be loaded.
 - `appearance.custom_css.light_path`: optional path to a user CSS file used
   when the effective color scheme is light.

@@ -8,7 +8,7 @@ use std::rc::Rc;
 use gtk4::{gdk, CssProvider};
 use i18n_embed_fl::fl;
 
-use crate::domain::appearance::{ThemeMode, ThemePreference};
+use crate::domain::appearance::{MotionLevel, ThemeMode, ThemePreference};
 use crate::infra::i18n::LANGUAGE_LOADER;
 
 const BASE_CSS: &str = include_str!("../../assets/scenedeck.css");
@@ -178,6 +178,14 @@ impl ThemeManager {
         install_css_provider(BASE_CSS, "base app CSS", &mut warnings);
         install_css_provider(theme.css_for(variant), theme.id, &mut warnings);
 
+        // Installed after the theme so that no built-in theme can reintroduce
+        // motion the user has switched off, but before any user stylesheet, so
+        // that someone writing their own CSS still has the last word.
+        let motion = preference.motion.resolve(desktop_allows_animation());
+        if let Some(css) = motion_css(motion) {
+            install_css_provider(&css, "motion overrides", &mut warnings);
+        }
+
         let custom_css_path = match custom_css {
             CustomCssLoad::Disabled => None,
             CustomCssLoad::MissingPath => {
@@ -206,6 +214,70 @@ impl ThemeManager {
             warnings,
         }
     }
+}
+
+/// Every selector in `assets/scenedeck.css` that carries a looping animation.
+///
+/// This list is the switch behind the Motion setting: the Reduced and Off
+/// levels emit a stylesheet that sets `animation: none` on exactly these
+/// selectors. An animation added to the stylesheet but not added here would be
+/// one the user has no way to stop, so the two are meant to be edited together.
+const MOTION_ANIMATED_SELECTORS: &[&str] = &[
+    ".scenedeck-sidebar-live-icon-streaming",
+    ".scenedeck-top-streaming-icon-active",
+    ".scenedeck-status-bar-live.scenedeck-status-bar-record",
+    ".scenedeck-status-bar-live.scenedeck-status-bar-stream",
+    ".obs-connecting",
+    ".scenedeck-status-bar-dropped-active",
+    ".scenedeck-content-header-streaming",
+];
+
+/// Selectors carrying one-shot transitions, which survive Reduced motion and
+/// are dropped only at Off.
+const MOTION_TRANSITION_SELECTORS: &[&str] = &[
+    ".scene-card",
+    ".scene-card-status-active",
+    ".scene-card-status-previous",
+    ".scene-card-status-ready",
+    ".scene-card-hotkey",
+    ".scenedeck-sidebar-list row",
+    ".scenedeck-status-bar-item",
+    ".scenedeck-status-bar-icon",
+];
+
+/// The stylesheet that steps the interface down to a motion level, or `None`
+/// at `Full`, where the base stylesheet already describes what should happen.
+///
+/// `Reduced` stops the loops but keeps the short transitions, so a scene still
+/// visibly *changes* to active without anything pulsing forever. `Off` removes
+/// both.
+fn motion_css(level: MotionLevel) -> Option<String> {
+    if level.allows_looping() && level.allows_transitions() {
+        return None;
+    }
+
+    let mut css = String::new();
+    if !level.allows_looping() {
+        css.push_str(&MOTION_ANIMATED_SELECTORS.join(",\n"));
+        // `animation-name: none` alone leaves the element wherever the last
+        // frame left it; resetting opacity guarantees it lands fully visible.
+        css.push_str(" {\n    animation: none;\n    opacity: 1;\n}\n");
+    }
+    if !level.allows_transitions() {
+        css.push_str(&MOTION_TRANSITION_SELECTORS.join(",\n"));
+        css.push_str(" {\n    transition: none;\n}\n");
+    }
+    Some(css)
+}
+
+/// Whether the desktop itself still wants animation.
+///
+/// GNOME's "Reduce Animation" accessibility switch and the equivalent on other
+/// desktops surface here as `gtk-enable-animations`. Treating it as authority
+/// means a user who has already asked their whole desktop to calm down does not
+/// also have to find SceneDeck's own setting.
+fn desktop_allows_animation() -> bool {
+    gtk4::Settings::default().is_none_or(|settings| settings.is_gtk_enable_animations())
 }
 
 fn effective_variant(mode: ThemeMode) -> ThemeVariant {
@@ -372,7 +444,10 @@ const BUILT_IN_THEMES: [BuiltInTheme; 12] = [
 
 #[cfg(test)]
 mod tests {
-    use super::{ThemeManager, ThemeVariant, BASE_CSS};
+    use super::{
+        motion_css, MotionLevel, ThemeManager, ThemeVariant, BASE_CSS, MOTION_ANIMATED_SELECTORS,
+        MOTION_TRANSITION_SELECTORS,
+    };
 
     const REQUIRED_THEME_COLORS: &[&str] = &[
         "scenedeck_fg",
@@ -513,6 +588,65 @@ mod tests {
     }
 
     #[test]
+    fn full_motion_needs_no_override_stylesheet() {
+        assert!(motion_css(MotionLevel::Full).is_none());
+    }
+
+    #[test]
+    fn reduced_motion_stops_loops_but_keeps_transitions() {
+        let css = motion_css(MotionLevel::Reduced).expect("reduced motion needs overrides");
+
+        assert!(css.contains("animation: none;"));
+        assert!(!css.contains("transition: none;"));
+    }
+
+    #[test]
+    fn motion_off_stops_loops_and_transitions() {
+        let css = motion_css(MotionLevel::Off).expect("motion off needs overrides");
+
+        assert!(css.contains("animation: none;"));
+        assert!(css.contains("transition: none;"));
+    }
+
+    /// Guards the contract documented in the Motion section of the stylesheet:
+    /// an animation the override list does not know about is an animation the
+    /// user cannot switch off.
+    #[test]
+    fn every_switchable_selector_actually_exists_in_the_stylesheet() {
+        for selector in MOTION_ANIMATED_SELECTORS
+            .iter()
+            .chain(MOTION_TRANSITION_SELECTORS)
+        {
+            assert!(
+                BASE_CSS.contains(selector),
+                "{selector} is listed as switchable but is not styled in the base CSS"
+            );
+        }
+    }
+
+    /// The mirror of the check above: every looping animation in the stylesheet
+    /// must be reachable by the Off level.
+    #[test]
+    fn no_looping_animation_escapes_the_motion_setting() {
+        let off = motion_css(MotionLevel::Off).expect("motion off needs overrides");
+
+        // `animation-iteration-count: infinite` is what makes an animation loop
+        // forever, so counting those is a reliable census of what must be
+        // switchable. Finite flashes stop on their own and are covered too, via
+        // the selectors they share.
+        let looping_rules = BASE_CSS
+            .matches("animation-iteration-count: infinite;")
+            .count();
+        assert!(looping_rules > 0, "expected the UI to animate at all");
+
+        let switchable = MOTION_ANIMATED_SELECTORS
+            .iter()
+            .filter(|selector| off.contains(*selector))
+            .count();
+        assert_eq!(switchable, MOTION_ANIMATED_SELECTORS.len());
+    }
+
+    #[test]
     fn the_icon_picker_marks_the_current_choice() {
         assert!(BASE_CSS.contains(".icon-picker-choice {"));
         assert!(BASE_CSS.contains(".icon-picker-choice-selected {"));
@@ -521,10 +655,11 @@ mod tests {
 
     #[test]
     fn scene_cards_and_live_sidebar_icon_use_compact_live_styling() {
-        assert!(BASE_CSS
-            .contains(".scenedeck-sidebar-live-icon-streaming {\n    color: @scenedeck_error;"));
-        assert!(BASE_CSS
-            .contains(".scenedeck-top-streaming-icon-active {\n    color: @scenedeck_error;"));
+        // Both live icons share one rule; the point of the assertion is that
+        // they are red, not which selector they happen to be grouped under.
+        assert!(BASE_CSS.contains(
+            ".scenedeck-sidebar-live-icon-streaming,\n.scenedeck-top-streaming-icon-active {\n    color: @scenedeck_error;"
+        ));
         assert!(BASE_CSS.contains(".scenedeck-content-header-streaming {"));
         assert!(BASE_CSS.contains("border-top: 3px solid alpha(@scenedeck_error, 0.78);"));
         assert!(BASE_CSS.contains("animation-name: scenedeck-live-breathe;"));

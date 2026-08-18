@@ -27,6 +27,12 @@ const BITRATE_ICON: &str = "nf-md-transfer-up-symbolic";
 const CPU_ICON: &str = "nf-oct-cpu-symbolic";
 const DROPPED_ICON: &str = "nf-md-alert-symbolic";
 
+/// Marker classes that let the stylesheet tell the two live indicators apart.
+/// They carry no styling of their own until `scenedeck-status-bar-live` joins
+/// them; see the Motion section of `assets/scenedeck.css`.
+const STREAM_MARKER_CLASS: &str = "scenedeck-status-bar-stream";
+const RECORD_MARKER_CLASS: &str = "scenedeck-status-bar-record";
+
 /// Icon matching a connection state, so the shape changes with the colour.
 ///
 /// Colour alone is not enough: it is the first thing lost to a projector, a
@@ -69,12 +75,21 @@ pub(crate) fn build() -> StatusBarHandle {
     );
     connection_label.set_text(&ObsStatus::Disconnected.label());
 
+    // Streaming and recording each get their own marker class on top of the
+    // shared one. They look identical while idle; the classes exist so that
+    // once live, the two can animate to different rhythms — a blinking tally
+    // for recording, a slow swell for streaming — which is readable from
+    // further away than two red icons of different shapes.
     let (stream_segment, stream_icon, stream_label) =
         segment(STREAM_ICON, "scenedeck-status-bar-output");
+    stream_icon.add_css_class(STREAM_MARKER_CLASS);
+    stream_label.add_css_class(STREAM_MARKER_CLASS);
     stream_label.set_text(&fl!(LANGUAGE_LOADER, "status-bar-stream-inactive"));
 
     let (record_segment, record_icon, record_label) =
         segment(RECORD_ICON, "scenedeck-status-bar-output");
+    record_icon.add_css_class(RECORD_MARKER_CLASS);
+    record_label.add_css_class(RECORD_MARKER_CLASS);
     record_label.set_text(&fl!(LANGUAGE_LOADER, "status-bar-record-inactive"));
 
     let spacer = GtkBox::builder().hexpand(true).build();

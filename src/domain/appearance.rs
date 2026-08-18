@@ -260,6 +260,103 @@ impl<'de> Deserialize<'de> for UiDensity {
     }
 }
 
+/// How much movement the interface is allowed to use.
+///
+/// Animation is not decoration here: a recording indicator that pulses is
+/// readable from across a room in a way that a static red dot is not. But
+/// constant movement is actively harmful for some people — it can trigger
+/// motion sickness, and it pulls attention away from the thing you are
+/// actually doing. So the choice belongs to the user, in three steps rather
+/// than an on/off switch:
+///
+/// * `Full` — looping animations play (the recording dot pulses continuously).
+/// * `Reduced` — state *changes* still animate briefly so you can see that
+///   something happened, but nothing loops forever. This is also what `Full`
+///   degrades to when the desktop itself asks for reduced motion.
+/// * `Off` — no animation at all; state is carried by colour, icon and text.
+///
+/// Every state remains readable at `Off`: animation only ever reinforces
+/// information that is already shown some other way.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum MotionLevel {
+    #[default]
+    Full,
+    Reduced,
+    Off,
+}
+
+impl MotionLevel {
+    /// All levels in the order they should appear in the Settings picker.
+    pub const ALL: [Self; 3] = [Self::Full, Self::Reduced, Self::Off];
+
+    /// Persisted config value.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Reduced => "reduced",
+            Self::Off => "off",
+        }
+    }
+
+    /// Whether looping animations are allowed to run at this level.
+    pub const fn allows_looping(self) -> bool {
+        matches!(self, Self::Full)
+    }
+
+    /// Whether one-shot transitions between states are allowed to run.
+    pub const fn allows_transitions(self) -> bool {
+        matches!(self, Self::Full | Self::Reduced)
+    }
+
+    /// The level to actually use once the desktop's own "reduce motion"
+    /// accessibility preference is taken into account.
+    ///
+    /// A user who has asked their whole desktop to calm down should not have
+    /// to find SceneDeck's setting as well, so `Full` is demoted to `Reduced`.
+    /// `Off` is never promoted: an explicit "no motion" always wins.
+    pub const fn resolve(self, desktop_allows_animation: bool) -> Self {
+        match self {
+            Self::Full if !desktop_allows_animation => Self::Reduced,
+            other => other,
+        }
+    }
+}
+
+impl std::str::FromStr for MotionLevel {
+    /// Parsing never fails: unknown persisted values fall back to `Full`.
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "reduced" => Self::Reduced,
+            "off" => Self::Off,
+            _ => Self::Full,
+        })
+    }
+}
+
+impl Serialize for MotionLevel {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for MotionLevel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        match value.parse() {
+            Ok(level) => Ok(level),
+            Err(never) => match never {},
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CustomCssPreference {
     #[serde(default)]
@@ -280,6 +377,9 @@ pub struct ThemePreference {
     pub selected_theme: Option<ThemeId>,
     #[serde(default)]
     pub ui_density: UiDensity,
+    /// How much animation the interface may use. See [`MotionLevel`].
+    #[serde(default)]
+    pub motion: MotionLevel,
     #[serde(default)]
     pub custom_css: CustomCssPreference,
 }
@@ -290,6 +390,7 @@ impl Default for ThemePreference {
             mode: ThemeMode::System,
             selected_theme: default_selected_theme(),
             ui_density: UiDensity::Comfortable,
+            motion: MotionLevel::default(),
             custom_css: CustomCssPreference::default(),
         }
     }
@@ -405,12 +506,51 @@ mod tests {
     }
 
     #[test]
+    fn unknown_motion_level_falls_back_to_full() {
+        let motion: MotionLevel = serde_json::from_str("\"future-motion\"").unwrap();
+
+        assert_eq!(motion, MotionLevel::Full);
+    }
+
+    #[test]
+    fn motion_level_round_trips_through_persisted_string() {
+        for level in MotionLevel::ALL {
+            assert_eq!(level.as_str().parse::<MotionLevel>(), Ok(level));
+            assert_eq!(
+                serde_json::to_string(&level).unwrap(),
+                format!("\"{}\"", level.as_str())
+            );
+        }
+    }
+
+    #[test]
+    fn only_full_motion_loops_but_reduced_still_shows_state_changes() {
+        assert!(MotionLevel::Full.allows_looping());
+        assert!(!MotionLevel::Reduced.allows_looping());
+        assert!(!MotionLevel::Off.allows_looping());
+
+        assert!(MotionLevel::Full.allows_transitions());
+        assert!(MotionLevel::Reduced.allows_transitions());
+        assert!(!MotionLevel::Off.allows_transitions());
+    }
+
+    #[test]
+    fn desktop_reduce_motion_demotes_full_but_never_promotes_off() {
+        assert_eq!(MotionLevel::Full.resolve(false), MotionLevel::Reduced);
+        assert_eq!(MotionLevel::Full.resolve(true), MotionLevel::Full);
+        assert_eq!(MotionLevel::Reduced.resolve(false), MotionLevel::Reduced);
+        assert_eq!(MotionLevel::Off.resolve(false), MotionLevel::Off);
+        assert_eq!(MotionLevel::Off.resolve(true), MotionLevel::Off);
+    }
+
+    #[test]
     fn theme_preference_uses_default_theme() {
         let preference: ThemePreference = serde_json::from_str("{}").unwrap();
 
         assert_eq!(preference.mode, ThemeMode::System);
         assert_eq!(preference.selected_theme_id(), "adwaita-default");
         assert_eq!(preference.ui_density, UiDensity::Comfortable);
+        assert_eq!(preference.motion, MotionLevel::Full);
         assert!(!preference.custom_css_enabled());
     }
 

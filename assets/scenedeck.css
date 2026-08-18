@@ -49,20 +49,9 @@
     background-color: alpha(@scenedeck_accent, 0.12);
 }
 
-@keyframes scenedeck-live-breathe {
-    0% { opacity: 0.55; }
-    50% { opacity: 1.0; }
-    100% { opacity: 0.55; }
-}
-
-.scenedeck-sidebar-live-icon-streaming {
-    color: @scenedeck_error;
-    animation-name: scenedeck-live-breathe;
-    animation-duration: 1.4s;
-    animation-timing-function: ease-in-out;
-    animation-iteration-count: infinite;
-}
-
+/* Animation keyframes live in the "Motion" section near the end of this file,
+   so that every moving part of the UI is defined in one place. */
+.scenedeck-sidebar-live-icon-streaming,
 .scenedeck-top-streaming-icon-active {
     color: @scenedeck_error;
     animation-name: scenedeck-live-breathe;
@@ -627,4 +616,130 @@ window.scenedeck-about-window preferencesgroup row {
 .stats-card-value {
     font-family: monospace;
     font-weight: 700;
+}
+
+/* ── Motion ─────────────────────────────────────────────────────────────────────
+   Everything in SceneDeck that moves is defined here.
+
+   Two rules govern this section:
+
+   1. Animation never carries information on its own. A pulsing dot always sits
+      next to a colour change, an icon change and a text label, so the interface
+      stays completely readable with motion turned off. Colour is the first thing
+      lost to a projector or to a colour-blind viewer; movement is the first
+      thing lost to the "Motion" setting. Neither may be the only signal.
+
+   2. Every looping selector below must also be listed in `MOTION_ANIMATED_SELECTORS`
+      in `src/ui/theme.rs`. That list is what the Reduced and Off motion levels
+      switch back off. Adding an animation here without adding it there produces
+      an animation the user cannot turn off — which is the bug this section exists
+      to prevent.
+
+   GTK 4 CSS supports @keyframes, `animation-*` and `transition`, but it has no
+   `transform` property, so these animations work on opacity, colour, background
+   and border only — no scaling, rotating or sliding.
+   ────────────────────────────────────────────────────────────────────────────── */
+
+/* A slow swell, for a state that is simply ongoing: "this is still streaming". */
+@keyframes scenedeck-live-breathe {
+    0%   { opacity: 0.55; }
+    50%  { opacity: 1.0; }
+    100% { opacity: 0.55; }
+}
+
+/* A harder on/off blink, for the recording tally light. Deliberately unlike the
+   breathe above: at a glance across a room the rhythm alone tells you whether
+   you are recording or streaming, before you have read either label. */
+@keyframes scenedeck-record-tally {
+    0%   { opacity: 1.0; }
+    45%  { opacity: 1.0; }
+    55%  { opacity: 0.25; }
+    100% { opacity: 0.25; }
+}
+
+/* A soft two-step for work in progress — connecting, starting, stopping. Never
+   reaches full transparency, so the element does not read as disabled. */
+@keyframes scenedeck-pending-pulse {
+    0%   { opacity: 0.45; }
+    50%  { opacity: 1.0; }
+    100% { opacity: 0.45; }
+}
+
+/* A short attention flash for something that just went wrong. Runs a fixed
+   number of times rather than forever: a permanent blink stops being a warning
+   and becomes wallpaper. */
+@keyframes scenedeck-alert-flash {
+    0%   { opacity: 1.0; }
+    50%  { opacity: 0.35; }
+    100% { opacity: 1.0; }
+}
+
+/* The recording tally in the status bar. */
+.scenedeck-status-bar-live.scenedeck-status-bar-record {
+    animation-name: scenedeck-record-tally;
+    animation-duration: 1.6s;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+}
+
+/* The streaming indicator in the status bar, breathing rather than blinking. */
+.scenedeck-status-bar-live.scenedeck-status-bar-stream {
+    animation-name: scenedeck-live-breathe;
+    animation-duration: 1.4s;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+}
+
+/* "Connecting to OBS" — motion here says the app is still trying, which a
+   static amber icon cannot distinguish from a stalled one. */
+.obs-connecting {
+    animation-name: scenedeck-pending-pulse;
+    animation-duration: 1.1s;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+}
+
+/* Frames are being dropped right now. Flashes a few times to catch the eye on
+   the transition from "fine" to "not fine", then holds its warning colour. */
+.scenedeck-status-bar-dropped-active {
+    animation-name: scenedeck-alert-flash;
+    animation-duration: 0.5s;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: 3;
+}
+
+/* The red band across the header while streaming. Breathing the border keeps
+   "you are live" in peripheral vision on every page, not just the Live page. */
+.scenedeck-content-header-streaming {
+    animation-name: scenedeck-live-breathe;
+    animation-duration: 2.6s;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+}
+
+/* ── Transitions ───────────────────────────────────────────────────────────────
+   One-shot state changes, not loops. These make the UI feel responsive rather
+   than decorated: a scene card that eases into its active colour reads as
+   "this changed just now", where an instant swap can be missed entirely if you
+   happened to be looking at the other half of the screen.
+
+   These stay on at Reduced motion and are switched off only at Off. */
+.scene-card,
+.scene-card-status-active,
+.scene-card-status-previous,
+.scene-card-status-ready,
+.scene-card-hotkey {
+    transition: background-color 180ms ease-out,
+                background-image 180ms ease-out,
+                outline-color 180ms ease-out,
+                color 180ms ease-out;
+}
+
+.scenedeck-sidebar-list row {
+    transition: background-color 140ms ease-out;
+}
+
+.scenedeck-status-bar-item,
+.scenedeck-status-bar-icon {
+    transition: color 200ms ease-out;
 }

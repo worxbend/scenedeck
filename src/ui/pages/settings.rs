@@ -11,7 +11,7 @@ use gtk4::StringList;
 use i18n_embed_fl::fl;
 
 use crate::controller::state::ObsStatus;
-use crate::domain::appearance::{Language, ThemeId, ThemeMode};
+use crate::domain::appearance::{Language, MotionLevel, ThemeId, ThemeMode};
 use crate::domain::hotkey::{
     LeaderKey, SceneHotkeyConfig, SceneHotkeyStyle, MAX_LEADER_TIMEOUT_MS, MAX_SLOTS,
     MIN_LEADER_TIMEOUT_MS,
@@ -79,6 +79,45 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
 
     with_icon(&theme_row, "nf-md-theme-light-dark-symbolic");
     appearance_group.add(&theme_row);
+
+    // Motion sits directly under the colour scheme because it is the same kind
+    // of choice: how the app should look, not what it should do.
+    let motion_strings: Vec<String> = vec![
+        fl!(LANGUAGE_LOADER, "settings-motion-full"),
+        fl!(LANGUAGE_LOADER, "settings-motion-reduced"),
+        fl!(LANGUAGE_LOADER, "settings-motion-off"),
+    ];
+    let motion_names: Vec<&str> = motion_strings.iter().map(|s| s.as_str()).collect();
+    let motion_options = StringList::new(&motion_names);
+    let motion_index = MotionLevel::ALL
+        .iter()
+        .position(|level| *level == cfg.appearance.motion)
+        .unwrap_or(0) as u32;
+    let motion_row = ComboRow::builder()
+        .title(fl!(LANGUAGE_LOADER, "settings-motion-title"))
+        .subtitle(fl!(LANGUAGE_LOADER, "settings-motion-subtitle"))
+        .model(&motion_options)
+        .selected(motion_index)
+        .build();
+    motion_row.add_css_class("scenedeck-combo-row");
+
+    motion_row.connect_selected_notify({
+        let nav = nav.clone();
+        move |row| {
+            let motion = MotionLevel::ALL
+                .get(row.selected() as usize)
+                .copied()
+                .unwrap_or_default();
+            persist_config(&nav, |config| config.appearance.motion = motion);
+            // Motion is enforced by a stylesheet layer, so re-applying the
+            // theme is what actually starts or stops the animations. The change
+            // is visible immediately, with no restart.
+            apply_theme_logging(nav.state.borrow().config.appearance.clone());
+        }
+    });
+
+    with_icon(&motion_row, "nf-md-motion-play-outline-symbolic");
+    appearance_group.add(&motion_row);
 
     let themes = ThemeManager::built_in_themes();
     let theme_name_strings: Vec<String> =
