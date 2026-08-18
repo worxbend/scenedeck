@@ -32,6 +32,23 @@
   </provides>
 
   <releases>
+    <release version="0.3.0" date="2026-08-18">
+      <description>
+        <p>The live indicators now move, so you can tell at a glance — or from across the room — whether you are recording or streaming.</p>
+        <ul>
+          <li>Recording blinks like a tally light and streaming swells slowly. The two rhythms are deliberately different, so the movement tells you which output is running before you have read either label.</li>
+          <li>Connecting to OBS pulses, which separates "still trying" from "stalled".</li>
+          <li>The dropped-frame counter flashes when frames start being lost, then holds its warning colour rather than blinking forever.</li>
+          <li>The header band breathes while streaming, keeping "you are live" in view on every page, not only the Live page.</li>
+          <li>Scene cards and sidebar rows ease between states instead of snapping, so a scene switch is visible even if you were looking elsewhere.</li>
+        </ul>
+        <p>A new Motion setting under Appearance controls all of it, with three levels: Full plays the looping animations, Reduced keeps the brief state-change transitions but stops anything that loops, and Off removes all movement.</p>
+        <ul>
+          <li>Animation never carries meaning on its own. Every state that animates is also shown by a colour, an icon and a text label, so nothing becomes unreadable at Reduced or Off.</li>
+          <li>If your desktop's own "reduce animation" accessibility preference is on, Full behaves as Reduced automatically. Choosing Off is always honoured.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-08-09">
       <description>
         <p>Keyboard scene switching, live audio metering, per-scene and per-source icons, and a mixer rebuilt to match OBS.</p>
