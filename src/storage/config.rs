@@ -4,7 +4,7 @@
 //! Scene role assignments live in `registry.json` (see `storage::registry`).
 //! OBS passwords live in the Secret Service (see `storage::secret`).
 
-use std::fs::{create_dir_all, read_to_string, write};
+use std::fs::read_to_string;
 use std::io;
 use std::path::Path;
 
@@ -267,11 +267,10 @@ pub fn write_config(config: &AppConfig) -> io::Result<()> {
 }
 
 pub fn write_config_to_path(path: &Path, config: &AppConfig) -> io::Result<()> {
-    if let Some(dir) = path.parent() {
-        create_dir_all(dir)?;
-    }
     let raw = serde_json::to_string_pretty(config).map_err(io::Error::other)?;
-    write(path, raw)
+    // Whole-file replacement: a half-written file would be unparsable, and the
+    // loaders treat unparsable as absent.
+    crate::storage::atomic::write(path, raw.as_bytes())
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

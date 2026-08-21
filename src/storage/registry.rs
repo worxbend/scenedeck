@@ -2,7 +2,7 @@
 //! scene list with roles, tags, and protection flags.
 
 use std::collections::HashMap;
-use std::fs::{create_dir_all, read_to_string, write};
+use std::fs::read_to_string;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -500,11 +500,10 @@ fn remove_scene_entry_from_path(
 
 /// Pretty-print registry JSON to an explicit path, creating parents as needed.
 pub fn write_registry_to_path(path: &Path, registry: &SceneRegistry) -> io::Result<()> {
-    if let Some(dir) = path.parent() {
-        create_dir_all(dir)?;
-    }
     let raw = serde_json::to_string_pretty(registry).map_err(io::Error::other)?;
-    write(path, raw)
+    // Whole-file replacement: a half-written file would be unparsable, and the
+    // loaders treat unparsable as absent.
+    crate::storage::atomic::write(path, raw.as_bytes())
 }
 
 /// Read a YAML registry export from an explicit path.
@@ -515,12 +514,11 @@ pub fn read_registry_yaml_from_path(path: &Path) -> io::Result<SceneRegistry> {
 
 /// Write a YAML registry export to an explicit path, creating parents as needed.
 pub fn write_registry_yaml_to_path(path: &Path, registry: &SceneRegistry) -> io::Result<()> {
-    if let Some(dir) = path.parent() {
-        create_dir_all(dir)?;
-    }
     let raw = serde_yaml::to_string(registry)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-    write(path, raw)
+    // An export is usually someone's backup; a half-written one is worse than
+    // no backup, because it looks like a backup.
+    crate::storage::atomic::write(path, raw.as_bytes())
 }
 
 #[cfg(test)]
