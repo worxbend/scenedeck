@@ -14,7 +14,7 @@ use crate::controller::event::ConnectionInfo;
 use crate::domain::audio::{AudioInput, AudioSourceScope};
 use crate::domain::graph::SceneGraph;
 use crate::domain::obs::ObsNamedList;
-use crate::domain::output::{OutputRunState, OutputStatus};
+use crate::domain::output::OutputStatus;
 use crate::domain::scene::SceneInventory;
 use crate::domain::stats::{ObsStats, StreamHealth};
 use crate::infra::error::AppError;
@@ -51,11 +51,9 @@ impl ObsClient {
             dangerous: None,
         })
         .await
-        .map_err(|e| AppError::Connection(e.to_string()))?;
+        .map_err(AppError::connection)?;
 
-        let events = client
-            .events()
-            .map_err(|e| AppError::Connection(e.to_string()))?;
+        let events = client.events().map_err(AppError::connection)?;
 
         Ok((
             Self {
@@ -72,7 +70,7 @@ impl ObsClient {
             .version()
             .await
             .map(|v| mapper::map_version(&v))
-            .map_err(|e| AppError::Request(e.to_string()))
+            .map_err(AppError::request)
     }
 
     pub async fn get_scene_inventory(&self) -> Result<SceneInventory, AppError> {
@@ -81,7 +79,7 @@ impl ObsClient {
             .list()
             .await
             .map(mapper::map_scenes)
-            .map_err(|e| AppError::Request(e.to_string()))
+            .map_err(AppError::request)
     }
 
     /// Build the scene dependency graph by listing each scene's items and
@@ -97,7 +95,7 @@ impl ObsClient {
                 .scene_items()
                 .list(obws::requests::scenes::SceneId::Name(name))
                 .await
-                .map_err(|e| AppError::Request(e.to_string()))?;
+                .map_err(AppError::request)?;
 
             let children: Vec<String> = items
                 .into_iter()
@@ -119,7 +117,7 @@ impl ObsClient {
             .scenes()
             .set_current_program_scene(obws::requests::scenes::SceneId::Name(name))
             .await
-            .map_err(|e| AppError::Request(e.to_string()))
+            .map_err(AppError::request)
     }
 
     pub async fn get_profiles(&self) -> Result<ObsNamedList, AppError> {
@@ -131,7 +129,7 @@ impl ObsClient {
                 items: profiles.profiles,
                 current: Some(profiles.current),
             })
-            .map_err(|e| AppError::Request(e.to_string()))
+            .map_err(AppError::request)
     }
 
     pub async fn set_current_profile(&self, name: &str) -> Result<(), AppError> {
@@ -139,7 +137,7 @@ impl ObsClient {
             .profiles()
             .set_current(name)
             .await
-            .map_err(|e| AppError::Request(e.to_string()))
+            .map_err(AppError::request)
     }
 
     pub async fn create_profile(&self, name: &str) -> Result<(), AppError> {
@@ -147,7 +145,7 @@ impl ObsClient {
             .profiles()
             .create(name)
             .await
-            .map_err(|e| AppError::Request(e.to_string()))
+            .map_err(AppError::request)
     }
 
     pub async fn remove_profile(&self, name: &str) -> Result<(), AppError> {
@@ -155,7 +153,7 @@ impl ObsClient {
             .profiles()
             .remove(name)
             .await
-            .map_err(|e| AppError::Request(e.to_string()))
+            .map_err(AppError::request)
     }
 
     pub async fn get_scene_collections(&self) -> Result<ObsNamedList, AppError> {
@@ -167,7 +165,7 @@ impl ObsClient {
                 items: collections.collections,
                 current: Some(collections.current),
             })
-            .map_err(|e| AppError::Request(e.to_string()))
+            .map_err(AppError::request)
     }
 
     pub async fn set_current_scene_collection(&self, name: &str) -> Result<(), AppError> {
@@ -175,7 +173,7 @@ impl ObsClient {
             .scene_collections()
             .set_current(name)
             .await
-            .map_err(|e| AppError::Request(e.to_string()))
+            .map_err(AppError::request)
     }
 
     pub async fn create_scene_collection(&self, name: &str) -> Result<(), AppError> {
@@ -183,7 +181,7 @@ impl ObsClient {
             .scene_collections()
             .create(name)
             .await
-            .map_err(|e| AppError::Request(e.to_string()))
+            .map_err(AppError::request)
     }
 
     pub async fn get_stream_status(&self) -> Result<OutputStatus, AppError> {
@@ -191,18 +189,8 @@ impl ObsClient {
             .streaming()
             .status()
             .await
-            .map(|status| OutputStatus {
-                active: status.active,
-                state: if status.reconnecting {
-                    OutputRunState::Reconnecting
-                } else if status.active {
-                    OutputRunState::Active
-                } else {
-                    OutputRunState::Inactive
-                },
-                detail: None,
-            })
-            .map_err(|e| AppError::Request(e.to_string()))
+            .map(mapper::map_stream_status)
+            .map_err(AppError::request)
     }
 
     /// OBS process performance counters (`GetStats`) — CPU, memory, FPS,
@@ -213,7 +201,7 @@ impl ObsClient {
             .stats()
             .await
             .map(mapper::map_stats)
-            .map_err(|e| AppError::Request(e.to_string()))
+            .map_err(AppError::request)
     }
 
     /// Stream output health (`GetStreamStatus`) — congestion, dropped frames,
@@ -225,7 +213,7 @@ impl ObsClient {
             .status()
             .await
             .map(mapper::map_stream_health)
-            .map_err(|e| AppError::Request(e.to_string()))
+            .map_err(AppError::request)
     }
 
     pub async fn set_streaming(&self, active: bool) -> Result<(), AppError> {
@@ -235,7 +223,7 @@ impl ObsClient {
         } else {
             streaming.stop().await
         }
-        .map_err(|e| AppError::Request(e.to_string()))
+        .map_err(AppError::request)
     }
 
     pub async fn get_record_status(&self) -> Result<OutputStatus, AppError> {
@@ -243,18 +231,8 @@ impl ObsClient {
             .recording()
             .status()
             .await
-            .map(|status| OutputStatus {
-                active: status.active,
-                state: if status.paused {
-                    OutputRunState::Paused
-                } else if status.active {
-                    OutputRunState::Active
-                } else {
-                    OutputRunState::Inactive
-                },
-                detail: None,
-            })
-            .map_err(|e| AppError::Request(e.to_string()))
+            .map(mapper::map_record_status)
+            .map_err(AppError::request)
     }
 
     pub async fn set_recording(&self, active: bool) -> Result<Option<String>, AppError> {
@@ -264,13 +242,9 @@ impl ObsClient {
                 .start()
                 .await
                 .map(|()| None)
-                .map_err(|e| AppError::Request(e.to_string()))
+                .map_err(AppError::request)
         } else {
-            recording
-                .stop()
-                .await
-                .map(Some)
-                .map_err(|e| AppError::Request(e.to_string()))
+            recording.stop().await.map(Some).map_err(AppError::request)
         }
     }
 
@@ -281,7 +255,7 @@ impl ObsClient {
             .inputs()
             .toggle_mute(obws::requests::inputs::InputId::Name(name))
             .await
-            .map_err(|e| AppError::Request(e.to_string()))
+            .map_err(AppError::request)
     }
 
     pub async fn set_input_mute(&self, name: &str, muted: bool) -> Result<(), AppError> {
@@ -289,7 +263,7 @@ impl ObsClient {
             .inputs()
             .set_muted(obws::requests::inputs::InputId::Name(name), muted)
             .await
-            .map_err(|e| AppError::Request(e.to_string()))
+            .map_err(AppError::request)
     }
 
     pub async fn set_input_volume(&self, name: &str, volume_mul: f64) -> Result<(), AppError> {
@@ -300,7 +274,7 @@ impl ObsClient {
                 obws::requests::inputs::Volume::Mul(volume_mul as f32),
             )
             .await
-            .map_err(|e| AppError::Request(e.to_string()))
+            .map_err(AppError::request)
     }
 
     /// Return audio-capable OBS inputs with mute + volume state.
@@ -314,7 +288,7 @@ impl ObsClient {
                 .inputs()
                 .list(None)
                 .await
-                .map_err(|e| AppError::Request(e.to_string()))?
+                .map_err(AppError::request)?
                 .into_iter()
                 .map(|input| AudioInputSource::active_scene(input.id.name, Vec::new()))
                 .collect()
@@ -386,7 +360,7 @@ impl ObsClient {
 
             let items = match items {
                 Ok(items) => items,
-                Err(e) if container.required => return Err(AppError::Request(e.to_string())),
+                Err(e) if container.required => return Err(AppError::request(e)),
                 Err(e) => {
                     tracing::debug!(
                         %e,
@@ -455,7 +429,7 @@ impl ObsClient {
             .inputs()
             .specials()
             .await
-            .map_err(|e| AppError::Request(e.to_string()))?;
+            .map_err(AppError::request)?;
 
         Ok([
             specials.desktop1,
