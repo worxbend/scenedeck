@@ -650,48 +650,47 @@ impl AppState {
             .find(|input| input.id == input_id)
     }
 
-    pub fn update_mixer_input_mute(&mut self, input_id: &str, muted: bool) -> bool {
-        let updated = self
-            .mixer_audio_refresh
+    /// One input inside the currently loaded mixer snapshot, if it is there.
+    ///
+    /// The lookup has two steps that are easy to get subtly different — the
+    /// snapshot may not be loaded, and the input may not be in it — so it is
+    /// written once here rather than at each mutator, mirroring
+    /// `audio_input_mut` above.
+    fn mixer_input_mut(&mut self, input_id: &str) -> Option<&mut AudioInput> {
+        self.mixer_audio_refresh
             .loaded
-            .as_mut()
-            .and_then(|snapshot| {
-                snapshot
-                    .inputs
-                    .iter_mut()
-                    .find(|input| input.id == input_id)
-            })
-            .map(|input| {
-                input.muted = muted;
-            })
-            .is_some();
-
-        updated
+            .as_mut()?
+            .inputs
+            .iter_mut()
+            .find(|input| input.id == input_id)
     }
 
-    pub fn update_mixer_input_volume(
+    /// Returns whether the input was present to update.
+    fn update_mixer_input_mute(&mut self, input_id: &str, muted: bool) -> bool {
+        match self.mixer_input_mut(input_id) {
+            Some(input) => {
+                input.muted = muted;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Returns whether the input was present to update.
+    fn update_mixer_input_volume(
         &mut self,
         input_id: &str,
         volume_mul: f64,
         volume_db: f64,
     ) -> bool {
-        let updated = self
-            .mixer_audio_refresh
-            .loaded
-            .as_mut()
-            .and_then(|snapshot| {
-                snapshot
-                    .inputs
-                    .iter_mut()
-                    .find(|input| input.id == input_id)
-            })
-            .map(|input| {
+        match self.mixer_input_mut(input_id) {
+            Some(input) => {
                 input.volume_mul = volume_mul;
                 input.volume_db = volume_db;
-            })
-            .is_some();
-
-        updated
+                true
+            }
+            None => false,
+        }
     }
 }
 

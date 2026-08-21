@@ -145,6 +145,21 @@ impl DoctorService {
     }
 }
 
+/// Severity a non-`Ok` edge contributes, stated once for every edge rule.
+///
+/// Every edge rule below used to repeat this alongside its message, which made
+/// the two look independent when they are not: how bad an edge is depends only
+/// on whether the policy forbids it, never on which roles are involved. The
+/// variants are spelled out rather than caught by a `_` arm, so adding a
+/// fourth `EdgeStatus` fails to compile here instead of silently landing on a
+/// default.
+const fn edge_severity(status: EdgeStatus) -> DiagnosticSeverity {
+    match status {
+        EdgeStatus::Forbidden => DiagnosticSeverity::Error,
+        EdgeStatus::Ok | EdgeStatus::Warning => DiagnosticSeverity::Warning,
+    }
+}
+
 /// Classify a single parent→child role relationship into an optional diagnostic.
 fn edge_diagnostic(
     parent: &str,
@@ -154,43 +169,45 @@ fn edge_diagnostic(
     status: EdgeStatus,
 ) -> Option<Diagnostic> {
     let (pr, cr) = (parent_role?, child_role?);
+    // An allowed edge has nothing to report. This was previously the first arm
+    // of the match below, where a `return` hidden among the classification
+    // rules read as if it were one of them.
+    if status == EdgeStatus::Ok {
+        return None;
+    }
 
-    let (severity, message, suggestion) = match (pr, cr) {
-        _ if status == EdgeStatus::Ok => return None,
-        (SceneRole::Primary, SceneRole::Debug) if status == EdgeStatus::Forbidden => (
-            DiagnosticSeverity::Error,
+    // Matching on the status alongside the roles replaces five repeated
+    // `if status == ...` guards, so each rule reads as the single triple it
+    // applies to. Arm order is unchanged, so the same rule still wins.
+    let (message, suggestion) = match (pr, cr, status) {
+        (SceneRole::Primary, SceneRole::Debug, EdgeStatus::Forbidden) => (
             fl!(LANGUAGE_LOADER, "doctor-edge-primary-debug", child = child),
             fl!(LANGUAGE_LOADER, "doctor-edge-primary-debug-suggestion"),
         ),
-        (SceneRole::Primary, SceneRole::Raw) if status == EdgeStatus::Warning => (
-            DiagnosticSeverity::Warning,
+        (SceneRole::Primary, SceneRole::Raw, EdgeStatus::Warning) => (
             fl!(LANGUAGE_LOADER, "doctor-edge-primary-raw", child = child),
             fl!(LANGUAGE_LOADER, "doctor-edge-primary-raw-suggestion"),
         ),
-        (SceneRole::Module, SceneRole::Primary) if status == EdgeStatus::Forbidden => (
-            DiagnosticSeverity::Error,
+        (SceneRole::Module, SceneRole::Primary, EdgeStatus::Forbidden) => (
             fl!(LANGUAGE_LOADER, "doctor-edge-module-primary", child = child),
             fl!(LANGUAGE_LOADER, "doctor-edge-module-primary-suggestion"),
         ),
-        (SceneRole::Raw, _) if status == EdgeStatus::Forbidden => (
-            DiagnosticSeverity::Error,
+        (SceneRole::Raw, _, EdgeStatus::Forbidden) => (
             fl!(LANGUAGE_LOADER, "doctor-edge-raw-nests", child = child),
             fl!(LANGUAGE_LOADER, "doctor-edge-raw-nests-suggestion"),
         ),
-        _ if status == EdgeStatus::Forbidden => (
-            DiagnosticSeverity::Error,
+        (_, _, EdgeStatus::Forbidden) => (
             fl!(LANGUAGE_LOADER, "doctor-edge-forbidden", child = child),
             fl!(LANGUAGE_LOADER, "doctor-edge-adjust-suggestion"),
         ),
         _ => (
-            DiagnosticSeverity::Warning,
             fl!(LANGUAGE_LOADER, "doctor-edge-outside-policy", child = child),
             fl!(LANGUAGE_LOADER, "doctor-edge-adjust-suggestion"),
         ),
     };
 
     Some(Diagnostic {
-        severity,
+        severity: edge_severity(status),
         scene: Some(parent.to_string()),
         message,
         suggestion: Some(suggestion),
