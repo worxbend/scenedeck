@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use adw::{prelude::*, ComboRow, EntryRow, PreferencesGroup, PreferencesPage, StatusPage};
-use gtk4::{Align, Box as GtkBox, Button, FlowBox, Orientation, StringList};
+use gtk4::{Align, Box as GtkBox, Button, FlowBox, StringList};
 
 use crate::controller::command::AppCommand;
 use crate::controller::state::{
@@ -55,38 +55,14 @@ impl MixerRetryInspection {
 }
 
 pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
-    let root = GtkBox::builder()
-        .orientation(Orientation::Vertical)
-        .vexpand(true)
-        .hexpand(true)
-        .build();
-    root.add_css_class("mixer-page");
-    root.add_css_class("app-page");
+    // Tracks which scene an audio refresh has already been requested for, so
+    // repeated rebuilds do not re-dispatch the same request. It outlives each
+    // rebuild, so it is created here rather than inside `populate`.
+    let refresh_tracker: MixerRefreshTracker = Rc::new(RefCell::new(None));
 
-    let refresh_tracker = Rc::new(RefCell::new(None));
-
-    populate(&root, &nav, &refresh_tracker);
-
-    let refresh_fn: Rc<dyn Fn()> = Rc::new({
-        let root = root.clone();
-        let nav = nav.clone();
-        let refresh_tracker = refresh_tracker.clone();
-        move || rebuild(&root, &nav, &refresh_tracker)
-    });
-
-    root.connect_map({
-        let refresh = refresh_fn.clone();
-        move |_| refresh()
-    });
-
-    (root.upcast(), refresh_fn)
-}
-
-fn rebuild(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefreshTracker) {
-    while let Some(child) = root.first_child() {
-        root.remove(&child);
-    }
-    populate(root, nav, refresh_tracker);
+    crate::ui::rebuildable_page("mixer-page", true, move |root| {
+        populate(root, &nav, &refresh_tracker);
+    })
 }
 
 fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefreshTracker) {
@@ -1432,7 +1408,7 @@ mod layout_tests {
         let nav =
             NavigationContext::new(Rc::new(RefCell::new(state)), gtk4::Stack::new(), controller);
         let (widget, _refresh) = build(nav);
-        widget.measure(Orientation::Vertical, -1).0
+        widget.measure(gtk4::Orientation::Vertical, -1).0
     }
 
     #[test]

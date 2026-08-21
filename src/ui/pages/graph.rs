@@ -34,35 +34,9 @@ const CANVAS_PADDING: f64 = 88.0;
 const GRID_STEP: f64 = 48.0;
 
 pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
-    let container = GtkBox::builder()
-        .orientation(Orientation::Vertical)
-        .vexpand(true)
-        .hexpand(true)
-        .build();
-    container.add_css_class("app-page");
-    container.add_css_class("graph-page");
-
-    populate(&container, &nav);
-
-    let refresh_fn: Rc<dyn Fn()> = Rc::new({
-        let nav = nav.clone();
-        let container = container.clone();
-        move || rebuild(&container, &nav)
-    });
-
-    container.connect_map({
-        let refresh = refresh_fn.clone();
-        move |_| refresh()
-    });
-
-    (container.upcast(), refresh_fn)
-}
-
-fn rebuild(container: &GtkBox, nav: &NavigationContext) {
-    while let Some(child) = container.first_child() {
-        container.remove(&child);
-    }
-    populate(container, nav);
+    crate::ui::rebuildable_page("graph-page", true, move |container| {
+        populate(container, &nav);
+    })
 }
 
 fn populate(container: &GtkBox, nav: &NavigationContext) {

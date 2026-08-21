@@ -7,7 +7,7 @@
 use std::rc::Rc;
 
 use adw::{prelude::*, ActionRow, PreferencesGroup, PreferencesPage, StatusPage};
-use gtk4::{Box as GtkBox, Image, Orientation};
+use gtk4::{Box as GtkBox, Image};
 use i18n_embed_fl::fl;
 
 use crate::domain::diagnostic::{Diagnostic, DiagnosticSeverity};
@@ -24,33 +24,19 @@ fn no_diagnostics_detail() -> String {
 }
 
 pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
-    let container = GtkBox::builder()
-        .orientation(Orientation::Vertical)
-        .vexpand(true)
-        .build();
-    container.add_css_class("app-page");
-    container.add_css_class("doctor-page");
-
-    populate(&container, &nav);
-
-    let refresh_fn: Rc<dyn Fn()> = Rc::new({
-        let nav = nav.clone();
-        let container = container.clone();
-        move || rebuild(&container, &nav)
-    });
-
-    container.connect_map({
-        let refresh = refresh_fn.clone();
-        move |_| refresh()
-    });
-
-    (container.upcast(), refresh_fn)
+    crate::ui::rebuildable_page("doctor-page", false, move |container| {
+        populate(container, &nav);
+    })
 }
 
+/// Refill the page in place.
+///
+/// Kept as its own function, unlike the Graph page, because `populate` wires
+/// it to the "run checks again" button and so needs to call it from inside
+/// itself — where the refresh callback that `rebuildable_page` returns is not
+/// reachable.
 fn rebuild(container: &GtkBox, nav: &NavigationContext) {
-    while let Some(child) = container.first_child() {
-        container.remove(&child);
-    }
+    crate::ui::clear_children(container);
     populate(container, nav);
 }
 
