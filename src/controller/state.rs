@@ -13,7 +13,7 @@ use crate::domain::output::OutputStatus;
 use crate::domain::scene::{SceneId, SceneInventory};
 use crate::domain::stats::{ObsStats, StatsHistory, StreamHealth};
 use crate::infra::i18n::LANGUAGE_LOADER;
-use crate::storage::config::{AppConfig, OutputConfig};
+use crate::storage::config::AppConfig;
 use crate::storage::registry::SceneRegistry;
 use i18n_embed_fl::fl;
 use std::time::Instant;
@@ -288,7 +288,6 @@ pub struct AppState {
     pub stream_active_since: Option<Instant>,
     pub record_active_since: Option<Instant>,
     pub last_recording_path: Option<String>,
-    pub output_confirmations: OutputConfig,
     pub audio_inputs: Vec<AudioInput>,
     /// Latest volume-meter levels, keyed by input. Meter widgets poll this on
     /// the frames they draw rather than being pushed to, because OBS reports
@@ -321,7 +320,6 @@ impl AppState {
     ) -> Self {
         let theme_mode = config.appearance.mode;
         let mixer = config.mixer.clone();
-        let output_confirmations = config.outputs.clone();
         Self {
             config,
             registry,
@@ -340,7 +338,6 @@ impl AppState {
             stream_active_since: None,
             record_active_since: None,
             last_recording_path: None,
-            output_confirmations,
             audio_inputs: Vec::new(),
             audio_levels: InputLevelSnapshot::default(),
             mixer_audio_refresh: MixerAudioRefreshState::default(),

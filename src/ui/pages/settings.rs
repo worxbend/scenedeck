@@ -791,7 +791,6 @@ where
             {
                 let mut state = nav.state.borrow_mut();
                 update(&mut state.config.outputs, active);
-                state.output_confirmations = state.config.outputs.clone();
             }
             persist_config(&nav, |_| {});
         }

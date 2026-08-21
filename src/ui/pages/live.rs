@@ -270,7 +270,7 @@ pub(crate) fn handle_stream_output_toggle(button: &Button, nav: &NavigationConte
     let should_confirm = requires_output_confirmation(
         OutputKind::Stream,
         active,
-        &nav.state.borrow().output_confirmations,
+        &nav.state.borrow().config.outputs,
     );
     if should_confirm {
         let action = output_action_for_active_state(active);
@@ -291,7 +291,7 @@ pub(crate) fn handle_record_output_toggle(button: &Button, nav: &NavigationConte
     let should_confirm = requires_output_confirmation(
         OutputKind::Recording,
         active,
-        &nav.state.borrow().output_confirmations,
+        &nav.state.borrow().config.outputs,
     );
     if should_confirm {
         let action = output_action_for_active_state(active);
