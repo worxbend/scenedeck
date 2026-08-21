@@ -3,11 +3,11 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use crate::ui::string_list;
 use adw::{
     prelude::*, ActionRow, ComboRow, EntryRow, PasswordEntryRow, PreferencesGroup, PreferencesPage,
     SwitchRow,
 };
-use gtk4::StringList;
 use i18n_embed_fl::fl;
 
 use crate::controller::state::ObsStatus;
@@ -70,19 +70,14 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
 }
 
 /// Colour scheme, motion, theme family, and custom CSS.
-fn build_appearance_group(nav: &NavigationContext, cfg: &AppConfig) -> PreferencesGroup {
-    let appearance_group = PreferencesGroup::builder()
-        .title(fl!(LANGUAGE_LOADER, "settings-appearance-title"))
-        .description(fl!(LANGUAGE_LOADER, "settings-appearance-description"))
-        .build();
-
+/// The Colour Scheme row: follow the system, or force light or dark.
+fn build_color_scheme_row(nav: &NavigationContext) -> ComboRow {
     let theme_mode_strings: Vec<String> = vec![
         fl!(LANGUAGE_LOADER, "settings-theme-mode-system"),
         fl!(LANGUAGE_LOADER, "settings-theme-mode-light"),
         fl!(LANGUAGE_LOADER, "settings-theme-mode-dark"),
     ];
-    let theme_mode_names: Vec<&str> = theme_mode_strings.iter().map(|s| s.as_str()).collect();
-    let theme_options = StringList::new(&theme_mode_names);
+    let theme_options = string_list(&theme_mode_strings);
     let current_index = match nav.state.borrow().theme_mode {
         ThemeMode::System => 0u32,
         ThemeMode::Light => 1,
@@ -111,18 +106,20 @@ fn build_appearance_group(nav: &NavigationContext, cfg: &AppConfig) -> Preferenc
         }
     });
 
-    with_icon(&theme_row, "nf-md-theme-light-dark-symbolic");
-    appearance_group.add(&theme_row);
+    theme_row
+}
 
-    // Motion sits directly under the colour scheme because it is the same kind
-    // of choice: how the app should look, not what it should do.
+/// The Motion row: how much the interface is allowed to animate.
+///
+/// Motion sits directly under the colour scheme because it is the same kind of
+/// choice: how the app should look, not what it should do.
+fn build_motion_row(nav: &NavigationContext, cfg: &AppConfig) -> ComboRow {
     let motion_strings: Vec<String> = vec![
         fl!(LANGUAGE_LOADER, "settings-motion-full"),
         fl!(LANGUAGE_LOADER, "settings-motion-reduced"),
         fl!(LANGUAGE_LOADER, "settings-motion-off"),
     ];
-    let motion_names: Vec<&str> = motion_strings.iter().map(|s| s.as_str()).collect();
-    let motion_options = StringList::new(&motion_names);
+    let motion_options = string_list(&motion_strings);
     let motion_index = MotionLevel::ALL
         .iter()
         .position(|level| *level == cfg.appearance.motion)
@@ -150,67 +147,27 @@ fn build_appearance_group(nav: &NavigationContext, cfg: &AppConfig) -> Preferenc
         }
     });
 
-    with_icon(&motion_row, "nf-md-motion-play-outline-symbolic");
-    appearance_group.add(&motion_row);
+    motion_row
+}
 
-    let themes = ThemeManager::built_in_themes();
-    let theme_name_strings: Vec<String> =
-        themes.iter().map(|theme| theme.localized_name()).collect();
-    let theme_names: Vec<&str> = theme_name_strings.iter().map(|s| s.as_str()).collect();
-    let selected_theme_index = themes
-        .iter()
-        .position(|theme| theme.id == cfg.appearance.selected_theme_id())
-        .unwrap_or(0) as u32;
-    let theme_model = StringList::new(&theme_names);
-    let selected_theme = themes
-        .get(selected_theme_index as usize)
-        .copied()
-        .unwrap_or(themes[0]);
-    let family_row = ComboRow::builder()
-        .title(fl!(LANGUAGE_LOADER, "settings-theme-title"))
-        .subtitle(theme_subtitle(selected_theme))
-        .model(&theme_model)
-        .selected(selected_theme_index)
-        .build();
-    family_row.add_css_class("scenedeck-combo-row");
+/// The four rows that make up the custom-CSS block.
+struct CustomCssRows {
+    enabled: SwitchRow,
+    light: EntryRow,
+    dark: EntryRow,
+    reload: ActionRow,
+}
 
-    let theme_status_row = ActionRow::builder()
-        .title(fl!(LANGUAGE_LOADER, "settings-theme-status-title"))
-        .subtitle(fl!(LANGUAGE_LOADER, "settings-theme-status-initial"))
-        .build();
-
-    family_row.connect_selected_notify({
-        let theme_status_row = theme_status_row.clone();
-        let nav = nav.clone();
-        move |row| {
-            let selected = row.selected() as usize;
-            let Some(theme) = ThemeManager::built_in_themes().get(selected).copied() else {
-                return;
-            };
-
-            let row = row.clone();
-            let theme_status_row = theme_status_row.clone();
-            persist_config_with(
-                &nav,
-                move |config| config.appearance.selected_theme = Some(ThemeId::new(theme.id)),
-                move |result, config| match result {
-                    Ok(()) => {
-                        row.set_subtitle(&theme_subtitle(theme));
-                        apply_theme_with_status(config.appearance, theme_status_row);
-                    }
-                    Err(err) => theme_status_row.set_subtitle(&fl!(
-                        LANGUAGE_LOADER,
-                        "settings-failed-to-save",
-                        err = err.to_string()
-                    )),
-                },
-            );
-        }
-    });
-
-    with_icon(&family_row, "nf-md-palette-symbolic");
-    appearance_group.add(&family_row);
-
+/// Build the custom-CSS rows.
+///
+/// All four report what happened into the shared theme status row, which is
+/// why it is passed in rather than made here: it is also written to by the
+/// theme family row above them.
+fn build_custom_css_rows(
+    nav: &NavigationContext,
+    cfg: &AppConfig,
+    theme_status_row: &ActionRow,
+) -> CustomCssRows {
     let custom_css_row = SwitchRow::builder()
         .title(fl!(LANGUAGE_LOADER, "settings-custom-css-title"))
         .subtitle(fl!(LANGUAGE_LOADER, "settings-custom-css-subtitle"))
@@ -285,6 +242,92 @@ fn build_appearance_group(nav: &NavigationContext, cfg: &AppConfig) -> Preferenc
     });
     reload_css_row.add_suffix(&reload_btn);
 
+    CustomCssRows {
+        enabled: custom_css_row,
+        light: light_css_row,
+        dark: dark_css_row,
+        reload: reload_css_row,
+    }
+}
+
+fn build_appearance_group(nav: &NavigationContext, cfg: &AppConfig) -> PreferencesGroup {
+    let appearance_group = PreferencesGroup::builder()
+        .title(fl!(LANGUAGE_LOADER, "settings-appearance-title"))
+        .description(fl!(LANGUAGE_LOADER, "settings-appearance-description"))
+        .build();
+
+    let theme_row = build_color_scheme_row(nav);
+    with_icon(&theme_row, "nf-md-theme-light-dark-symbolic");
+    appearance_group.add(&theme_row);
+
+    let motion_row = build_motion_row(nav, cfg);
+    with_icon(&motion_row, "nf-md-motion-play-outline-symbolic");
+    appearance_group.add(&motion_row);
+
+    let themes = ThemeManager::built_in_themes();
+    let theme_name_strings: Vec<String> =
+        themes.iter().map(|theme| theme.localized_name()).collect();
+    let selected_theme_index = themes
+        .iter()
+        .position(|theme| theme.id == cfg.appearance.selected_theme_id())
+        .unwrap_or(0) as u32;
+    let theme_model = string_list(&theme_name_strings);
+    let selected_theme = themes
+        .get(selected_theme_index as usize)
+        .copied()
+        .unwrap_or(themes[0]);
+    let family_row = ComboRow::builder()
+        .title(fl!(LANGUAGE_LOADER, "settings-theme-title"))
+        .subtitle(theme_subtitle(selected_theme))
+        .model(&theme_model)
+        .selected(selected_theme_index)
+        .build();
+    family_row.add_css_class("scenedeck-combo-row");
+
+    let theme_status_row = ActionRow::builder()
+        .title(fl!(LANGUAGE_LOADER, "settings-theme-status-title"))
+        .subtitle(fl!(LANGUAGE_LOADER, "settings-theme-status-initial"))
+        .build();
+
+    family_row.connect_selected_notify({
+        let theme_status_row = theme_status_row.clone();
+        let nav = nav.clone();
+        move |row| {
+            let selected = row.selected() as usize;
+            let Some(theme) = ThemeManager::built_in_themes().get(selected).copied() else {
+                return;
+            };
+
+            let row = row.clone();
+            let theme_status_row = theme_status_row.clone();
+            persist_config_with(
+                &nav,
+                move |config| config.appearance.selected_theme = Some(ThemeId::new(theme.id)),
+                move |result, config| match result {
+                    Ok(()) => {
+                        row.set_subtitle(&theme_subtitle(theme));
+                        apply_theme_with_status(config.appearance, theme_status_row);
+                    }
+                    Err(err) => theme_status_row.set_subtitle(&fl!(
+                        LANGUAGE_LOADER,
+                        "settings-failed-to-save",
+                        err = err.to_string()
+                    )),
+                },
+            );
+        }
+    });
+
+    with_icon(&family_row, "nf-md-palette-symbolic");
+    appearance_group.add(&family_row);
+
+    let CustomCssRows {
+        enabled: custom_css_row,
+        light: light_css_row,
+        dark: dark_css_row,
+        reload: reload_css_row,
+    } = build_custom_css_rows(nav, cfg, &theme_status_row);
+
     with_icon(&custom_css_row, "nf-md-language-css3-symbolic");
     appearance_group.add(&custom_css_row);
     with_entry_icon(&light_css_row, "nf-md-white-balance-sunny-symbolic");
@@ -307,7 +350,7 @@ fn build_language_group(nav: &NavigationContext, cfg: &AppConfig) -> Preferences
         .build();
 
     let language_names: Vec<&str> = Language::ALL.iter().map(|l| l.display_name()).collect();
-    let language_model = StringList::new(&language_names);
+    let language_model = gtk4::StringList::new(&language_names);
     let selected_language_index = Language::ALL
         .iter()
         .position(|l| *l == cfg.language)
@@ -554,21 +597,19 @@ fn build_hotkey_group(nav: &NavigationContext) -> PreferencesGroup {
         .iter()
         .map(|style| style.label())
         .collect();
-    let style_names: Vec<&str> = style_strings.iter().map(String::as_str).collect();
     let style_row = ComboRow::builder()
         .title(fl!(LANGUAGE_LOADER, "settings-hotkeys-style-title"))
         .subtitle(fl!(LANGUAGE_LOADER, "settings-hotkeys-style-subtitle"))
-        .model(&StringList::new(&style_names))
+        .model(&string_list(&style_strings))
         .selected(index_of(&SceneHotkeyStyle::ALL, hotkeys.style))
         .build();
     style_row.add_css_class("scenedeck-combo-row");
 
     let leader_strings: Vec<String> = LeaderKey::ALL.iter().map(|key| key.label()).collect();
-    let leader_names: Vec<&str> = leader_strings.iter().map(String::as_str).collect();
     let leader_row = ComboRow::builder()
         .title(fl!(LANGUAGE_LOADER, "settings-hotkeys-leader-title"))
         .subtitle(fl!(LANGUAGE_LOADER, "settings-hotkeys-leader-subtitle"))
-        .model(&StringList::new(&leader_names))
+        .model(&string_list(&leader_strings))
         .selected(index_of(&LeaderKey::ALL, hotkeys.leader))
         .build();
     leader_row.add_css_class("scenedeck-combo-row");

@@ -90,20 +90,24 @@ impl AudioCardHandle {
     }
 }
 
-// ── Builder ───────────────────────────────────────────────────────────────────
+// ── Card parts ────────────────────────────────────────────────────────────────
 
-/// Build a single mixer card for `input` and return a handle.
-pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHandle {
-    let input_id = input.id.clone();
-
-    // ── Mute toggle ───────────────────────────────────────────────────────────
-    let mute_btn = ToggleButton::builder().active(input.muted).build();
+/// The mute toggle, plus the id of the handler that reports presses to OBS.
+///
+/// The caller keeps the handler id so it can silence the toggle while applying
+/// a mute that came *from* OBS, instead of echoing it straight back.
+fn build_mute_button(
+    input_id: &str,
+    muted: bool,
+    nav: &NavigationContext,
+) -> (ToggleButton, glib::SignalHandlerId) {
+    let mute_btn = ToggleButton::builder().active(muted).build();
     mute_btn.set_tooltip_text(Some(&fl!(LANGUAGE_LOADER, "audio-card-mute-tooltip")));
-    apply_mute_style(&mute_btn, input.muted);
+    apply_mute_style(&mute_btn, muted);
 
-    let mute_signal_id = {
+    let signal_id = {
         let nav = nav.clone();
-        let input_id = input_id.clone();
+        let input_id = input_id.to_string();
         mute_btn.connect_toggled(move |btn| {
             nav.dispatch(AppCommand::SetInputMute {
                 input: input_id.clone(),
@@ -112,7 +116,11 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         })
     };
 
-    // ── Name label ────────────────────────────────────────────────────────────
+    (mute_btn, signal_id)
+}
+
+/// The source name, ellipsized to one line with the full path in a tooltip.
+fn build_name_label(input: &AudioInput) -> Label {
     let name_label = Label::builder()
         .label(&input.display_name)
         .xalign(0.0)
@@ -123,29 +131,47 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         .ellipsize(gtk4::pango::EllipsizeMode::End)
         .build();
     name_label.add_css_class("audio-card-title");
-    if let Some(path) = input.source_path_label() {
-        name_label.set_tooltip_text(Some(&fl!(
+
+    // Nested and group sources are worth spelling out: the display name alone
+    // does not say which scene a source is reached through.
+    let tooltip = match input.source_path_label() {
+        Some(path) => fl!(
             LANGUAGE_LOADER,
             "audio-card-source-path-tooltip",
             scope = input.source_scope.label(),
             path = path
-        )));
-    } else {
-        name_label.set_tooltip_text(Some(&input.source_scope.label()));
-    }
+        ),
+        None => input.source_scope.label(),
+    };
+    name_label.set_tooltip_text(Some(&tooltip));
 
-    // OBS heads each mixer strip with a coloured scope tag; the user's chosen
-    // icon rides in the same bar so the card is identifiable at a glance.
-    let scope_bar = GtkBox::builder()
+    name_label
+}
+
+/// The coloured header naming where a source comes from.
+struct ScopeBar {
+    root: GtkBox,
+    /// Holds the chosen icon; the icon picker swaps its contents.
+    icon_slot: GtkBox,
+    /// The icon the registry currently has for this input, if any.
+    selected_icon: Option<String>,
+}
+
+/// Build the scope bar.
+///
+/// OBS heads each mixer strip with a coloured scope tag; the user's chosen
+/// icon rides in the same bar so the card is identifiable at a glance.
+fn build_scope_bar(input: &AudioInput, input_id: &str, nav: &NavigationContext) -> ScopeBar {
+    let root = GtkBox::builder()
         .orientation(Orientation::Horizontal)
         .spacing(5)
         .halign(Align::Fill)
         .hexpand(true)
         .build();
-    scope_bar.add_css_class("audio-card-scope-bar");
-    scope_bar.add_css_class(input.source_scope.css_class());
+    root.add_css_class("audio-card-scope-bar");
+    root.add_css_class(input.source_scope.css_class());
 
-    let scope_icon_slot = GtkBox::builder()
+    let icon_slot = GtkBox::builder()
         .orientation(Orientation::Horizontal)
         .halign(Align::Center)
         .build();
@@ -153,9 +179,9 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         .state
         .borrow()
         .registry
-        .input_icon(&input_id)
+        .input_icon(input_id)
         .map(str::to_string);
-    set_scope_icon(&scope_icon_slot, selected_icon.as_deref());
+    set_scope_icon(&icon_slot, selected_icon.as_deref());
 
     let scope_label = Label::builder()
         .label(input.source_scope.label())
@@ -163,8 +189,70 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         .hexpand(true)
         .build();
     scope_label.add_css_class("audio-card-scope-label");
-    scope_bar.append(&scope_icon_slot);
-    scope_bar.append(&scope_label);
+
+    root.append(&icon_slot);
+    root.append(&scope_label);
+
+    ScopeBar {
+        root,
+        icon_slot,
+        selected_icon,
+    }
+}
+
+/// The local lock, which freezes this card's fader.
+///
+/// It disables SceneDeck's own slider only; the source stays unlocked in OBS.
+fn build_lock_button(locked: bool, vol_scale: &Scale) -> ToggleButton {
+    let lock_btn = ToggleButton::builder()
+        .icon_name("changes-prevent-symbolic")
+        .active(locked)
+        .build();
+    lock_btn.set_tooltip_text(Some(&fl!(LANGUAGE_LOADER, "audio-card-lock-tooltip")));
+    lock_btn.add_css_class("flat");
+    lock_btn.add_css_class("circular");
+    lock_btn.connect_toggled({
+        let vol_scale = vol_scale.clone();
+        move |btn| {
+            let locked = btn.is_active();
+            vol_scale.set_sensitive(!locked);
+            apply_lock_style(btn, locked);
+        }
+    });
+    apply_lock_style(&lock_btn, locked);
+
+    lock_btn
+}
+
+/// A centred row of small controls under the fader.
+fn control_row(css_class: &str, children: &[gtk4::Widget]) -> GtkBox {
+    let row = GtkBox::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(4)
+        .halign(Align::Center)
+        .build();
+    row.add_css_class(css_class);
+    for child in children {
+        row.append(child);
+    }
+    row
+}
+
+// ── Builder ───────────────────────────────────────────────────────────────────
+
+/// Build a single mixer card for `input` and return a handle.
+pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHandle {
+    let input_id = input.id.clone();
+
+    let (mute_btn, mute_signal_id) = build_mute_button(&input_id, input.muted, &nav);
+
+    let name_label = build_name_label(input);
+
+    let ScopeBar {
+        root: scope_bar,
+        icon_slot: scope_icon_slot,
+        selected_icon,
+    } = build_scope_bar(input, &input_id, &nav);
 
     // ── Volume scale ──────────────────────────────────────────────────────────
     let vol_scale = Scale::with_range(
@@ -222,23 +310,7 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         })
     };
 
-    // ── Lock control ─────────────────────────────────────────────────────────
-    let lock_btn = ToggleButton::builder()
-        .icon_name("changes-prevent-symbolic")
-        .active(input.locked_locally)
-        .build();
-    lock_btn.set_tooltip_text(Some(&fl!(LANGUAGE_LOADER, "audio-card-lock-tooltip")));
-    lock_btn.add_css_class("flat");
-    lock_btn.add_css_class("circular");
-    lock_btn.connect_toggled({
-        let vol_scale = vol_scale.clone();
-        move |btn| {
-            let locked = btn.is_active();
-            vol_scale.set_sensitive(!locked);
-            apply_lock_style(btn, locked);
-        }
-    });
-    apply_lock_style(&lock_btn, input.locked_locally);
+    let lock_btn = build_lock_button(input.locked_locally, &vol_scale);
 
     let meter = volume_meter::build(&input_id, nav.clone());
 
@@ -257,14 +329,10 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
 
     // Mute and lock sit side by side under the fader, where OBS puts mute and
     // monitoring.
-    let buttons = GtkBox::builder()
-        .orientation(Orientation::Horizontal)
-        .spacing(4)
-        .halign(Align::Center)
-        .build();
-    buttons.add_css_class("audio-card-controls");
-    buttons.append(&mute_btn);
-    buttons.append(&lock_btn);
+    let buttons = control_row(
+        "audio-card-controls",
+        &[mute_btn.clone().upcast(), lock_btn.upcast()],
+    );
 
     let icon_button = icon_picker::build(
         selected_icon.as_deref(),
@@ -291,14 +359,10 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         volume_debounce_source.clone(),
     );
 
-    let overflow = GtkBox::builder()
-        .orientation(Orientation::Horizontal)
-        .spacing(4)
-        .halign(Align::Center)
-        .build();
-    overflow.add_css_class("audio-card-overflow");
-    overflow.append(&icon_button);
-    overflow.append(&fine_controls);
+    let overflow = control_row(
+        "audio-card-overflow",
+        &[icon_button.upcast(), fine_controls.upcast()],
+    );
 
     // ── Card ─────────────────────────────────────────────────────────────────
     let root = GtkBox::builder()

@@ -18,6 +18,7 @@ use crate::storage::registry::{
     write_registry, write_registry_yaml_to_path, SceneEntry, SceneRegistry,
 };
 use crate::ui::navigation::NavigationContext;
+use crate::ui::string_list;
 use crate::ui::widgets::icon_picker;
 use i18n_embed_fl::fl;
 
@@ -135,8 +136,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
 
         let mut role_labels: Vec<String> = vec![SceneRole::unassigned_label()];
         role_labels.extend(SceneRole::ALL.iter().map(|r| r.label()));
-        let role_label_refs: Vec<&str> = role_labels.iter().map(String::as_str).collect();
-        let role_model = gtk4::StringList::new(&role_label_refs);
+        let role_model = string_list(&role_labels);
 
         let combo_row = ComboRow::builder()
             .title(scene.name.as_str())

@@ -14,6 +14,16 @@ pub(crate) mod window;
 
 pub use window::build_main_window;
 
+/// Build a `gtk4::StringList` model from owned label strings.
+///
+/// Dropdown labels come out of the translation loader as `String`s, but
+/// `StringList` wants `&[&str]`, so every combo row was borrowing the whole
+/// vector into a second one just to hand it over. This does that step once.
+pub(crate) fn string_list(labels: &[String]) -> gtk4::StringList {
+    let borrowed: Vec<&str> = labels.iter().map(String::as_str).collect();
+    gtk4::StringList::new(&borrowed)
+}
+
 const ICON_RESOURCE_PATH: &str = "/io/scenedeck/app/icons";
 
 pub fn register_resources() {

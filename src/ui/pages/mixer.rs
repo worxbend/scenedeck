@@ -24,6 +24,7 @@ use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::audio_service::AudioService;
 use crate::storage::config::write_config;
 use crate::ui::navigation::NavigationContext;
+use crate::ui::string_list;
 use crate::ui::widgets::audio_card;
 use i18n_embed_fl::fl;
 
@@ -252,8 +253,7 @@ fn build_mode_row(
         MixerMode::PinnedScene,
     ];
     let labels: Vec<String> = mode_order.iter().map(|mode| mode.label()).collect();
-    let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
-    let model = StringList::new(&label_refs);
+    let model = string_list(&labels);
     let row = ComboRow::builder()
         .title(fl!(LANGUAGE_LOADER, "mixer-mode-row-title"))
         .subtitle(fl!(LANGUAGE_LOADER, "mixer-mode-row-subtitle"))
@@ -339,8 +339,7 @@ fn build_grouping_row(nav: &NavigationContext, selected: MixerGrouping) -> Combo
         .iter()
         .map(|grouping| grouping.label())
         .collect();
-    let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
-    let model = StringList::new(&label_refs);
+    let model = string_list(&labels);
     let row = ComboRow::builder()
         .title(fl!(LANGUAGE_LOADER, "mixer-grouping-row-title"))
         .subtitle(fl!(LANGUAGE_LOADER, "mixer-grouping-row-subtitle"))
