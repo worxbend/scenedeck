@@ -299,6 +299,24 @@ It reports errors, warnings, and informational items. Examples include
 unassigned scene roles, stale registry entries, circular references, and role
 relationships that invert the intended hierarchy.
 
+## Help Page
+
+Help is the built-in onboarding guide. Open it from the sidebar, from the
+question-mark button in the header, or with `F1`.
+
+The page is a list of topics that expand when tapped, grouped as Getting
+started, Connecting to OBS, Curating your scenes, Running a show, Checking your
+setup, and Making it yours. Topics cover the five steps to a first scene switch,
+connecting to OBS on another computer, hiding scenes you never cut to, scene
+hotkeys, reading the volume meters, output safety, and where SceneDeck keeps its
+files. Most topics end with a button that jumps straight to the page being
+described.
+
+On a first run — when `onboarding.welcome_shown` in the config file is still
+`false` — SceneDeck shows a welcome dialog recommending the guide, with a button
+that opens it. The flag is written as soon as the dialog appears, so it
+interrupts at most one launch.
+
 ## Settings Page
 
 Settings controls appearance and OBS connection settings.
@@ -340,6 +358,7 @@ time the Live page is shown. See [Scene Hotkeys](#scene-hotkeys) above.
 
 ## Keyboard Shortcuts
 
+- `F1`: open the Help page.
 - `Ctrl+R`: reconnect to OBS.
 - `Ctrl+,`: open Settings.
 - `Ctrl+Q`: quit SceneDeck.

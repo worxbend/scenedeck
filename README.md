@@ -45,6 +45,8 @@ keep local metadata about how scenes are used.
 - Export and import the local scene registry as YAML from Inventory.
 - Show nested scene dependencies in Graph.
 - Run Doctor diagnostics over scene roles and scene dependency structure.
+- Read a built-in onboarding guide on the Help page, opened from the sidebar,
+  the header button, or F1.
 - Store OBS host and port in the config file and the OBS password in the system
   Secret Service keyring.
 - Follow the system color scheme or force light/dark mode.
@@ -88,6 +90,8 @@ Use the sidebar to move between the app views:
 - Inventory: assign local roles to OBS scenes.
 - Doctor: run structural checks over scenes, roles, and dependencies.
 - Settings: configure appearance and OBS connection settings.
+- Help: a built-in onboarding guide covering connection (including OBS on
+  another machine), scene curation, hotkeys, audio, and where files live.
 
 SceneDeck does not require you to rename or restructure OBS scenes. The app
 keeps its own local registry for role metadata, then uses that registry to

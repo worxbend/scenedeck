@@ -38,6 +38,9 @@ pub struct AppConfig {
     /// Live-page scene-switch shortcuts.
     #[serde(default)]
     pub hotkeys: SceneHotkeyConfig,
+    /// What the first-run onboarding has already shown this user.
+    #[serde(default)]
+    pub onboarding: OnboardingConfig,
     #[serde(default, rename = "theme_mode", skip_serializing)]
     pub(crate) legacy_theme_mode: Option<ThemeMode>,
 }
@@ -53,9 +56,22 @@ impl Default for AppConfig {
             language: Language::default(),
             mixer: MixerSelection::default(),
             hotkeys: SceneHotkeyConfig::default(),
+            onboarding: OnboardingConfig::default(),
             legacy_theme_mode: None,
         }
     }
+}
+
+/// First-run onboarding state.
+///
+/// SceneDeck greets a brand-new user with a welcome dialog that points at the
+/// Help page. `welcome_shown` records that the greeting has happened, so it
+/// only ever interrupts once. It defaults to `false`, which means a config file
+/// written before this field existed also gets the greeting exactly once.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OnboardingConfig {
+    #[serde(default)]
+    pub welcome_shown: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -267,6 +283,22 @@ mod tests {
         assert_eq!(c.appearance.selected_theme_id(), "adwaita-default");
         assert_eq!(c.mixer, MixerSelection::default());
         assert_eq!(c.hotkeys, SceneHotkeyConfig::default());
+        assert!(!c.onboarding.welcome_shown);
+    }
+
+    #[test]
+    fn onboarding_flag_round_trips() {
+        let parsed: AppConfig =
+            serde_json::from_str(r#"{"onboarding":{"welcome_shown":true}}"#).unwrap();
+        assert!(parsed.onboarding.welcome_shown);
+
+        let json = serde_json::to_string(&parsed).unwrap();
+        assert!(
+            serde_json::from_str::<AppConfig>(&json)
+                .unwrap()
+                .onboarding
+                .welcome_shown
+        );
     }
 
     #[test]

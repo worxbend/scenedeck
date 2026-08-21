@@ -35,6 +35,7 @@ use crate::domain::obs::ObsNamedList;
 use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::hotkey_service::{HotkeyOutcome, SceneHotkeyResolver};
+use crate::storage::config::write_config;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::pages::live::{output_label, LivePageHandle};
 use crate::ui::register_resources;
@@ -44,13 +45,14 @@ use crate::ui::widgets::status_bar::{self, StatusBarHandle};
 const DEFAULT_WIDTH: i32 = 1100;
 const DEFAULT_HEIGHT: i32 = 740;
 
-const NAV_PAGES: [Page; 7] = [
+const NAV_PAGES: [Page; 8] = [
     Page::Live,
     Page::Mixer,
     Page::Graph,
     Page::Inventory,
     Page::Doctor,
     Page::Settings,
+    Page::Help,
     Page::Stats,
 ];
 
@@ -96,6 +98,7 @@ pub fn build_main_window(
     let (inventory_widget, inventory_refresh) = crate::ui::pages::inventory::build(nav.clone());
     let (doctor_widget, doctor_refresh) = crate::ui::pages::doctor::build(nav.clone());
     let (settings_widget, settings_refresh) = crate::ui::pages::settings::build(nav.clone());
+    let (help_widget, help_refresh) = crate::ui::pages::help::build(nav.clone());
 
     content_stack.add_titled(
         &live_handle.root,
@@ -119,6 +122,7 @@ pub fn build_main_window(
         Some(Page::Settings.id()),
         &Page::Settings.title(),
     );
+    content_stack.add_titled(&help_widget, Some(Page::Help.id()), &Page::Help.title());
     content_stack.add_titled(&stats_widget, Some(Page::Stats.id()), &Page::Stats.title());
 
     let refreshers = PageRefreshers {
@@ -128,6 +132,7 @@ pub fn build_main_window(
         inventory: inventory_refresh,
         doctor: doctor_refresh,
         settings: settings_refresh,
+        help: help_refresh,
     };
 
     let current_page = state.borrow().current_page;
@@ -137,6 +142,8 @@ pub fn build_main_window(
 
     // ── Sidebar ───────────────────────────────────────────────────────────────
     let (sidebar_page, sidebar_list, sidebar_controls) = build_sidebar(&nav);
+    // From here on, navigating from anywhere moves the sidebar highlight too.
+    nav.attach_sidebar(&sidebar_list, &NAV_PAGES);
     let streaming_chrome: StreamingChromeRef = Rc::new(RefCell::new(None));
 
     // ── Status bar ────────────────────────────────────────────────────────────
@@ -243,6 +250,16 @@ pub fn build_main_window(
     });
     content_header.pack_end(&about_btn);
 
+    let help_btn = gtk4::Button::builder()
+        .icon_name("help-browser-symbolic")
+        .tooltip_text(fl!(LANGUAGE_LOADER, "window-help-tooltip"))
+        .build();
+    help_btn.connect_clicked({
+        let nav = nav.clone();
+        move |_| nav.switch_to_page(Page::Help)
+    });
+    content_header.pack_end(&help_btn);
+
     let refresh_btn = gtk4::Button::builder()
         .icon_name("view-refresh-symbolic")
         .tooltip_text(fl!(LANGUAGE_LOADER, "window-refresh-tooltip"))
@@ -294,10 +311,63 @@ pub fn build_main_window(
 
     install_scene_hotkeys(&window, &nav, live_handle.clone());
 
-    super::actions::install(app, &window, nav);
+    super::actions::install(app, &window, nav.clone());
 
     window.present();
+
+    maybe_show_welcome_dialog(&window, &nav);
+
     window
+}
+
+// ── First-run welcome ─────────────────────────────────────────────────────────
+
+/// Greet a first-time user once, and point them at the Help page.
+///
+/// The "have we greeted this user" flag lives in `config.json`
+/// (`onboarding.welcome_shown`), so the dialog survives at most one launch.
+/// It is written as soon as the dialog is shown rather than when a particular
+/// button is pressed: a user who closes the window instead of answering has
+/// still been greeted, and greeting them again would be a bug, not a service.
+fn maybe_show_welcome_dialog(window: &adw::ApplicationWindow, nav: &NavigationContext) {
+    if nav.state.borrow().config.onboarding.welcome_shown {
+        return;
+    }
+
+    let config = {
+        let mut state = nav.state.borrow_mut();
+        state.config.onboarding.welcome_shown = true;
+        state.config.clone()
+    };
+    crate::ui::background_io::run(
+        move || write_config(&config),
+        |result| {
+            if let Err(error) = result {
+                tracing::warn!(%error, "could not record that the welcome dialog was shown");
+            }
+        },
+    );
+
+    let dialog = adw::MessageDialog::new(
+        Some(window),
+        Some(&fl!(LANGUAGE_LOADER, "welcome-dialog-heading")),
+        Some(&fl!(LANGUAGE_LOADER, "welcome-dialog-body")),
+    );
+    dialog.add_response("later", &fl!(LANGUAGE_LOADER, "welcome-dialog-later"));
+    dialog.add_response("open", &fl!(LANGUAGE_LOADER, "welcome-dialog-open"));
+    dialog.set_response_appearance("open", adw::ResponseAppearance::Suggested);
+    dialog.set_default_response(Some("open"));
+    dialog.set_close_response("later");
+    dialog.connect_response(None, {
+        let nav = nav.clone();
+        move |dialog, response| {
+            if response == "open" {
+                nav.switch_to_page(Page::Help);
+            }
+            dialog.close();
+        }
+    });
+    dialog.present();
 }
 
 // ── Scene hotkeys ─────────────────────────────────────────────────────────────
@@ -1677,6 +1747,7 @@ struct PageRefreshers {
     inventory: RefreshFn,
     doctor: RefreshFn,
     settings: RefreshFn,
+    help: RefreshFn,
 }
 
 #[derive(Clone)]
@@ -1701,6 +1772,7 @@ impl PageRefreshers {
             Page::Inventory => (self.inventory)(),
             Page::Doctor => (self.doctor)(),
             Page::Settings => (self.settings)(),
+            Page::Help => (self.help)(),
             Page::Live => {}
         }
     }

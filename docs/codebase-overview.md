@@ -112,7 +112,7 @@ GTK and libadwaita UI.
 - `actions.rs`: app-level actions and keyboard shortcuts.
 - `background_io.rs`: runs blocking local persistence on worker threads and
   returns completion callbacks to GTK.
-- `pages/`: Live, Stats, Mixer, Graph, Inventory, Doctor, and Settings pages.
+- `pages/`: Live, Stats, Mixer, Graph, Inventory, Doctor, Settings, and Help pages.
 - `widgets/`: reusable scene and audio cards, the volume meter, the icon
   chooser, the bottom status bar, and the
   cairo chart/gauge renderers used by Stats.

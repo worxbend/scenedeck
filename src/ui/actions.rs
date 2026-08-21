@@ -38,6 +38,13 @@ pub(super) fn install(
         let nav = nav.clone();
         move || nav.switch_to_page(Page::Settings)
     });
+
+    // F1 is the desktop-wide convention for "show me the help", so the guide
+    // is reachable without hunting for the sidebar row.
+    register_simple_action(&app, "help", Some("F1"), {
+        let nav = nav.clone();
+        move || nav.switch_to_page(Page::Help)
+    });
 }
 
 fn show_about(parent: &adw::ApplicationWindow) {

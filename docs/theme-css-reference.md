@@ -18,7 +18,11 @@ stable classes listed here.
   same state class as its text, so connection colour applies to both.
 - `.scenedeck-about-window`: About window surface.
 - `.app-page`, `.app-preferences-page`, `.live-page`, `.mixer-page`,
-  `.graph-page`, `.inventory-page`, `.doctor-page`, `.settings-page`: page roots.
+  `.graph-page`, `.inventory-page`, `.doctor-page`, `.settings-page`,
+  `.help-page`: page roots.
+- `.help-hero`: the welcome block at the top of the Help page.
+- `.help-topic`: one expandable Help topic row.
+- `.help-topic-body`: the body shown when a Help topic is expanded.
 - `.scene-card`: Live page scene card.
 - `.scene-card-active`: current program scene card.
 - `.scene-card-status-active`: active scene status pill.

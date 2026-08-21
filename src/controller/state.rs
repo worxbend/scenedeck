@@ -28,6 +28,8 @@ pub enum Page {
     Inventory,
     Doctor,
     Settings,
+    /// Onboarding guide and feature reference.
+    Help,
     /// Live streaming telemetry, kept last in the sidebar.
     Stats,
 }
@@ -42,6 +44,7 @@ impl Page {
             Self::Inventory => "inventory",
             Self::Doctor => "doctor",
             Self::Settings => "settings",
+            Self::Help => "help",
             Self::Stats => "stats",
         }
     }
@@ -54,6 +57,7 @@ impl Page {
             Self::Inventory => fl!(LANGUAGE_LOADER, "page-inventory"),
             Self::Doctor => fl!(LANGUAGE_LOADER, "page-doctor"),
             Self::Settings => fl!(LANGUAGE_LOADER, "page-settings"),
+            Self::Help => fl!(LANGUAGE_LOADER, "page-help"),
             Self::Stats => fl!(LANGUAGE_LOADER, "page-stats"),
         }
     }
@@ -67,6 +71,7 @@ impl Page {
             Self::Inventory => "view-list-symbolic",
             Self::Doctor => "emblem-default-symbolic",
             Self::Settings => "preferences-system-symbolic",
+            Self::Help => "help-browser-symbolic",
             Self::Stats => "power-profile-performance-symbolic",
         }
     }

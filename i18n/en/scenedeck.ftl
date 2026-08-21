@@ -118,6 +118,7 @@ page-graph = Graph
 page-inventory = Inventory
 page-doctor = Doctor
 page-settings = Settings
+page-help = Help
 obs-status-disconnected = Disconnected
 obs-status-connecting = Connecting…
 obs-status-connected = Connected
@@ -563,3 +564,194 @@ stats-value-ms = { $value } ms
 stats-value-percent = { $value }%
 stats-value-mb = { $value } MB
 stats-value-kbps = { $value } kbps
+
+## ui/pages/help.rs — onboarding guide. Bodies are multi-line on purpose: each
+## line is rendered as its own line inside an expandable topic.
+help-page-title = Help & Onboarding
+help-hero-title = Welcome to SceneDeck
+help-hero-description = A native Linux control surface for OBS Studio. This guide walks through the first connection, shows how to keep the Live page down to the scenes you actually switch, and explains every page in the sidebar. Expand a topic to read it.
+help-expand-hint = Tap a topic to expand it.
+
+help-open-settings = Open Settings
+help-open-inventory = Open Inventory
+help-open-doctor = Open Doctor
+help-open-live = Open Live
+help-open-mixer = Open Mixer
+help-open-graph = Open Graph
+help-open-stats = Open Stats
+
+help-group-start-title = Getting started
+help-group-start-description = The shortest path from a fresh install to switching scenes.
+
+help-quickstart-title = Five steps to your first scene switch
+help-quickstart-subtitle = Do these in order the first time
+help-quickstart-body =
+    1. In OBS Studio, open Tools → WebSocket Server Settings and tick "Enable WebSocket server". Leave OBS running.
+    2. In that same OBS dialog, press "Show Connect Info" and note the Server Port (4455 by default) and the Server Password.
+    3. In SceneDeck, open Settings and fill in Host, Port and Password. Host stays 127.0.0.1 when OBS runs on this same computer.
+    4. Press Connect at the bottom of the sidebar. The status line above the button turns green and reads "Connected".
+    5. Open Inventory and give the role "Primary" to the scenes you want to switch during a show. Those — and only those — become cards on the Live page.
+
+help-concepts-title = How SceneDeck thinks about your setup
+help-concepts-subtitle = Roles, the registry, and what never touches OBS
+help-concepts-body =
+    SceneDeck never renames, deletes, or reorders anything inside OBS. It reads your scenes over the OBS WebSocket connection and keeps its own notes about them.
+    A "role" is one of those notes: your own label for what a scene is for — the scene you cut to on air, a reusable overlay, a leftover test scene.
+    Those notes live in registry.json next to the config file, so they survive restarts and can be exported and carried to another machine from the Inventory page.
+    Because the notes are local, two people can share one OBS setup and each keep a different Live page.
+
+help-group-connect-title = Connecting to OBS
+help-group-connect-description = On this machine, or across the room.
+
+help-connect-local-title = Connecting to OBS on this computer
+help-connect-local-subtitle = The default case — host 127.0.0.1, port 4455
+help-connect-local-body =
+    127.0.0.1 is the address a computer uses to talk to itself, so it is the right Host whenever OBS and SceneDeck run side by side.
+    The port must match the Server Port in OBS's WebSocket Server Settings. OBS uses 4455 unless you changed it.
+    If OBS has "Enable Authentication" ticked, paste its password into Settings → Password. SceneDeck stores it in your desktop keyring (the same place your browser keeps saved logins), never in the plain-text config file.
+    Press Connect in the sidebar, or press Ctrl+R at any time to reconnect.
+
+help-connect-remote-title = Connecting to OBS on another machine
+help-connect-remote-subtitle = Streaming PC in the corner, control from your laptop
+help-connect-remote-body =
+    This is the two-computer setup: OBS runs on the machine capturing and encoding, SceneDeck runs on the machine in front of you. Both must be on the same network.
+    On the OBS machine, in Tools → WebSocket Server Settings: tick "Enable WebSocket server", tick "Enable Authentication", and set a password you are willing to type. Do not leave authentication off — anyone on the network who can reach the port could otherwise start and stop your stream.
+    Find the OBS machine's address on that machine. On Linux run `ip addr` and look for an address like 192.168.1.42; on Windows run `ipconfig` and read the IPv4 Address; on macOS it is in System Settings → Network. It is the address of the machine, not of OBS.
+    Allow the port through the OBS machine's firewall. On Linux with ufw that is `sudo ufw allow 4455/tcp`; on Windows, allow OBS in Windows Defender Firewall for Private networks.
+    In SceneDeck's Settings, put that address in Host (for example 192.168.1.42), keep Port at 4455, and paste the password. Press Connect.
+    Prefer a wired connection for the OBS machine. Scene switches over Wi-Fi still work, but a dropped packet is a delayed cut.
+    A tip that saves a show: reserve a fixed address for the OBS machine in your router's DHCP settings, so the Host you saved keeps working after a reboot.
+
+help-connect-trouble-title = When Connect does not work
+help-connect-trouble-subtitle = Read the error, then work down this list
+help-connect-trouble-body =
+    "Connection refused" almost always means the WebSocket server is not enabled in OBS, or the port does not match. Re-check both in Tools → WebSocket Server Settings.
+    A connection that hangs and then times out usually means a firewall is dropping the traffic, or the Host address belongs to a different machine than you think.
+    "Authentication failed" means the password is wrong. Re-enter it in Settings; the field is write-only, so it looks empty even when a password is saved.
+    Nothing at all in the sidebar status? Confirm OBS is actually running and not sitting behind a modal dialog of its own.
+    SceneDeck reconnects on its own after a dropped link, and Ctrl+R forces the attempt immediately.
+
+help-group-scenes-title = Curating your scenes
+help-group-scenes-description = The Live page should show what you switch to, and nothing else.
+
+help-scenes-hide-title = Hiding scenes you never cut to
+help-scenes-hide-subtitle = The single most useful thing to set up first
+help-scenes-hide-body =
+    A working OBS setup collects scenes that exist only to be nested inside other scenes, or that were built for one test and never deleted. Putting them on a live control surface is how a wrong cut happens.
+    SceneDeck shows a Live card only for scenes whose role is Primary. Every other role is hidden from Live, so "hiding a scene" simply means giving it any role other than Primary.
+    Open Inventory. Each OBS scene gets a row with a role selector on the right.
+    Set Primary on the handful of scenes you actually cut to on air. Everything else gets one of: Secondary (a real scene you sometimes need but do not want on Live), Module (an overlay or lower-third that only ever gets nested inside another scene), Raw (a bare camera or capture wrapper), Debug (a test scene), or Archive (kept for later, out of the way).
+    Scenes with no role assigned are also kept off Live, so leaving something Unassigned hides it too. Assigning a role on purpose is still better: the Doctor page flags Unassigned scenes so you notice new ones.
+    The change takes effect immediately — go back to Live and the card is gone. Nothing in OBS changed.
+
+help-scenes-order-title = Ordering, colours and icons
+help-scenes-order-subtitle = Make the right card the obvious one
+help-scenes-order-body =
+    Drag a scene by the handle at the left of its Inventory row to set the order. Live cards follow that order, and so do the number shortcuts, so the card you press 1 for is the one at the top.
+    The accent colour picker tints that scene's Live card. Reserve a strong colour for the scenes with consequences — the "we are live" scene, the sponsor read — so your eye lands on them.
+    The icon picker at the left of each row puts a symbol on the scene's Live card. Thirty icons are available, plus a "no icon" entry that clears it.
+    Order, colours and icons are stored in the local registry, not in OBS.
+
+help-scenes-registry-title = Backing up and moving your setup
+help-scenes-registry-subtitle = The Scene Registry YAML row in Inventory
+help-scenes-registry-body =
+    Export writes roles, order, accent colours, icons, tags, and graph rules to a single YAML file — a plain-text format you can read and keep in version control.
+    Import replaces the local registry with the contents of such a file. Use it to move a finished setup to a second machine, or to roll back after an experiment.
+    Scene names are the link between the file and OBS, so a scene renamed in OBS comes back as a stale entry. Inventory lists stale entries and lets you remove them.
+
+help-group-operate-title = Running a show
+help-group-operate-description = The pages you actually use while the stream is up.
+
+help-live-title = The Live page
+help-live-subtitle = Scene cards, audio, and the program scene
+help-live-body =
+    Live is the operating view: the current program scene at the top, scene cards on one side, compact audio cards on the other. Drag the divider to give whichever half you need more room.
+    Clicking a scene card cuts OBS to that scene. The current one is marked Active; the rest are marked Ready.
+    No cards after connecting? No scene has the Primary role yet — see "Hiding scenes you never cut to" above.
+    The status bar along the bottom stays visible on every page and shows connection state, stream and record state with elapsed time, and live FPS, dropped frames, CPU and bitrate.
+
+help-hotkeys-title = Switching scenes from the keyboard
+help-hotkeys-subtitle = Ctrl+1 … Ctrl+0 by default, and configurable
+help-hotkeys-body =
+    Each of the first ten Live cards carries a small badge with its digit: the first card is 1, the ninth is 9, the tenth is 0. The caption beside the Scenes heading always spells out the current binding.
+    Slot numbers follow the Inventory order, so reordering cards there reorders the shortcuts to match.
+    Settings → Scene Hotkeys chooses how the digit is pressed. A modifier plus the digit (Ctrl by default) cannot fire by accident while you type. The bare digit is fastest. The leader style is the vim-like option: press the leader key, release it, then press the digit; the caption reads "Leader armed" while it waits.
+    Shortcuts act only on the Live page, and the modifier-free styles stand down while a text field has focus. A digit with no scene behind it says so in the caption rather than switching anything.
+
+help-audio-title = Audio: the Mixer page and the meters
+help-audio-subtitle = What the coloured bars are telling you
+help-audio-body =
+    Audio cards appear on Live and, with more room and more controls, on the Mixer page. Global OBS audio devices come first, then the audio-capable sources in the current scene — including sources inside nested scenes and groups.
+    Mixer modes decide which scene's audio you are looking at. Active follows the OBS program scene. Selected loads one scene and stays there. Pinned keeps a chosen scene as a permanent target while OBS moves on.
+    The meter beside each fader runs -60 dB at the bottom to 0 dB at the top and uses OBS's own thresholds: green below -20 dB for music and background, yellow from -20 to -9 dB where speech belongs, red above -9 dB where clipping starts. Nothing should sit in the red.
+    One column means a mono source; two mean stereo, left then right. If only the left column moves, half your viewers hear nothing from it.
+    The line above the fill is the loudest peak of the last twenty seconds, which is the quickest way to catch a clip you missed. The square at the very bottom is the level arriving from the device, before the fader — if that is too hot, no fader move will fix it.
+    The lock button on a card only freezes SceneDeck's own slider. It does not lock anything in OBS.
+
+help-outputs-title = Starting and stopping stream and recording
+help-outputs-subtitle = And the confirmations that stop an accident
+help-outputs-body =
+    The Start/Stop Stream and Start/Stop Recording buttons live at the bottom of the sidebar, reachable from every page. The status bar shows the state and how long it has been running.
+    Settings → Output Safety decides which of the four actions asks first. Out of the box, stopping either output asks for confirmation and starting does not — the assumption being that starting early is cheap and stopping early ends the show.
+    State changes made in OBS itself show up here too: SceneDeck follows OBS's own events rather than assuming its own button press worked.
+
+help-group-inspect-title = Checking your setup
+help-group-inspect-description = Find the surprise before it happens on air.
+
+help-doctor-title = Doctor
+help-doctor-subtitle = Structural problems, sorted by severity
+help-doctor-body =
+    Doctor reads your scene list, your role assignments, and the nesting between scenes, then reports what looks wrong as Errors, Warnings, and Info.
+    Typical findings: scenes with no role assigned, remembered scenes that no longer exist in OBS, circular nesting, and a scene nested inside another in a direction your roles say should not happen.
+    It re-runs every time you open the page, and the Re-run button forces it.
+    Worth a look after any change to your OBS setup, and once more before you go live.
+
+help-graph-title = Graph
+help-graph-subtitle = Which scenes are inside which
+help-graph-body =
+    Nesting one scene inside another is how overlays and shared layouts are built in OBS, and it is also how a scene ends up depending on something you forgot about.
+    Graph lists every parent scene and what it contains, and marks each relationship against your role rules: fine, questionable, or forbidden.
+    Use it to answer "what breaks if I change this scene?" before changing it.
+
+help-stats-title = Stats
+help-stats-subtitle = Whether the machine is keeping up
+help-stats-body =
+    Gauges for FPS, frame render time, dropped frames, and network congestion turn amber and then red as each value degrades — dropped frames warn at 1%, congestion at 30%.
+    Trend charts hold roughly the last two minutes, and the bar charts show when frames were lost rather than a running total, which is what tells you whether a stutter was one bad moment or a trend.
+    Samples are collected the whole time you are connected, so opening Stats mid-stream shows the minutes leading up to now instead of starting empty.
+    Frame counters come from OBS and reset when OBS or the stream output restarts.
+
+help-group-personalise-title = Making it yours
+help-group-personalise-description = Appearance, language, and where your files live.
+
+help-appearance-title = Themes and appearance
+help-appearance-subtitle = Including a look that matches OBS itself
+help-appearance-body =
+    Colour Scheme follows your desktop's light/dark preference by default, or you can force one side.
+    Themes are light/dark-aware families: pick one and it applies the variant matching the current colour scheme. The OBS family mirrors OBS Studio's own look, for a control surface that does not clash with the app it drives.
+    Custom CSS takes separate light and dark files, so a custom look follows the colour scheme too. Reload Custom CSS picks up edits without a restart.
+    Motion controls how much the interface animates — set it to Reduced or Off if movement is distracting or the machine is busy.
+
+help-files-title = Where SceneDeck keeps things
+help-files-subtitle = Config, registry, and your OBS password
+help-files-body =
+    Settings, including the OBS host and port, live in $XDG_CONFIG_HOME/scenedeck/config.json — usually ~/.config/scenedeck/config.json.
+    Scene roles, order, accents and icons live in registry.json in the same folder.
+    The OBS password is not in either file. It is stored in your desktop's Secret Service keyring, the same vault your browser uses.
+    Back up both JSON files to carry a full setup to another machine, or use Inventory's YAML export for the scene half alone.
+
+help-shortcuts-title = Keyboard shortcuts
+help-shortcuts-subtitle = The whole list
+help-shortcuts-body =
+    F1 — open this guide.
+    Ctrl+R — reconnect to OBS.
+    Ctrl+, — open Settings.
+    Ctrl+Q — quit SceneDeck.
+    Ctrl+1 … Ctrl+0 on the Live page — switch to the first ten scene cards. The combination is configurable in Settings → Scene Hotkeys.
+
+## ui/window.rs — first-run welcome dialog
+welcome-dialog-heading = Welcome to SceneDeck
+welcome-dialog-body = It looks like this is your first run. The Help page walks through connecting to OBS — including OBS on another computer — and shows how to keep the Live page down to the scenes you actually switch to. It takes a couple of minutes and saves a few mistakes.
+welcome-dialog-later = Not now
+welcome-dialog-open = Read the guide
+window-help-tooltip = Help & onboarding guide

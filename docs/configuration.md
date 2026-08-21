@@ -60,6 +60,9 @@ Example:
     "style": "ctrl",
     "leader": "space",
     "leader_timeout_ms": 1500
+  },
+  "onboarding": {
+    "welcome_shown": true
   }
 }
 ```
@@ -124,6 +127,12 @@ Fields:
   values fall back to `space`.
 - `hotkeys.leader_timeout_ms`: how long an armed leader waits for its digit.
   Defaults to `1500`, and is clamped to `250`–`5000`.
+
+- `onboarding.welcome_shown`: whether the first-run welcome dialog has already
+  been shown. It is written the moment the dialog appears, so the greeting can
+  interrupt at most one launch. Set it back to `false` (or delete it) to see the
+  welcome dialog again; the Help page itself is always available from the
+  sidebar, the header button, or `F1`.
 
 Scene hotkeys act only on the Live page. Slot `1` is the first scene card, `9`
 the ninth, and `0` the tenth; cards past the tenth have no shortcut. The card
