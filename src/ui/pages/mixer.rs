@@ -22,8 +22,8 @@ use crate::domain::audio::AudioInput;
 use crate::domain::mixer::{MixerGrouping, MixerMode};
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::audio_service::AudioService;
-use crate::storage::config::write_config;
 use crate::ui::navigation::NavigationContext;
+use crate::ui::persist::persist_config;
 use crate::ui::string_list;
 use crate::ui::widgets::audio_card;
 use i18n_embed_fl::fl;
@@ -864,19 +864,10 @@ fn index_to_grouping(index: u32) -> MixerGrouping {
 }
 
 fn persist_mixer_selection(nav: &NavigationContext) {
-    let config = {
-        let mut state = nav.state.borrow_mut();
-        state.config.mixer = state.mixer.clone();
-        state.config.clone()
-    };
-    crate::ui::background_io::run(
-        move || write_config(&config),
-        |result| {
-            if let Err(error) = result {
-                tracing::warn!(%error, "failed to save mixer preference");
-            }
-        },
-    );
+    // The mixer selection lives in `AppState::mixer` while the page is open;
+    // this copies it into the config that gets written.
+    let selection = nav.state.borrow().mixer.clone();
+    persist_config(nav, move |config| config.mixer = selection);
 }
 
 #[cfg(test)]

@@ -8,6 +8,7 @@ pub(crate) mod actions;
 pub(crate) mod background_io;
 pub(crate) mod navigation;
 pub(crate) mod pages;
+pub(crate) mod persist;
 pub(crate) mod theme;
 pub(crate) mod widgets;
 pub(crate) mod window;

@@ -35,7 +35,6 @@ use crate::domain::obs::ObsNamedList;
 use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::hotkey_service::{HotkeyOutcome, SceneHotkeyResolver};
-use crate::storage::config::write_config;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::pages::live::{output_label, LivePageHandle};
 use crate::ui::register_resources;
@@ -388,19 +387,9 @@ fn maybe_show_welcome_dialog(window: &adw::ApplicationWindow, nav: &NavigationCo
         return;
     }
 
-    let config = {
-        let mut state = nav.state.borrow_mut();
-        state.config.onboarding.welcome_shown = true;
-        state.config.clone()
-    };
-    crate::ui::background_io::run(
-        move || write_config(&config),
-        |result| {
-            if let Err(error) = result {
-                tracing::warn!(%error, "could not record that the welcome dialog was shown");
-            }
-        },
-    );
+    crate::ui::persist::persist_config(nav, |config| {
+        config.onboarding.welcome_shown = true;
+    });
 
     let dialog = adw::MessageDialog::new(
         Some(window),

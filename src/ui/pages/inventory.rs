@@ -18,6 +18,7 @@ use crate::storage::registry::{
     write_registry, write_registry_yaml_to_path, SceneEntry, SceneRegistry,
 };
 use crate::ui::navigation::NavigationContext;
+use crate::ui::persist::persist_registry;
 use crate::ui::string_list;
 use crate::ui::widgets::icon_picker;
 use i18n_embed_fl::fl;
@@ -384,31 +385,15 @@ fn reorder_scenes(
         return false;
     }
 
-    let registry = {
-        let mut state = nav.state.borrow_mut();
-        let order = state
-            .registry
-            .ordered_scene_ids(inventory_scene_ids.iter().map(String::as_str));
+    persist_registry(nav, "scene order", |registry| {
+        let order = registry.ordered_scene_ids(inventory_scene_ids.iter().map(String::as_str));
         let Some(order) =
             reordered_scene_ids(order, source_scene_id, target_scene_id, insert_after)
         else {
             return false;
         };
-        if !state.registry.set_scene_order(order) {
-            return false;
-        }
-        state.registry.clone()
-    };
-
-    crate::ui::background_io::run(
-        move || write_registry(&registry),
-        |result| {
-            if let Err(error) = result {
-                tracing::warn!(%error, "failed to persist scene order");
-            }
-        },
-    );
-    true
+        registry.set_scene_order(order)
+    })
 }
 
 fn reordered_scene_ids(
@@ -508,22 +493,12 @@ fn build_yaml_actions_row(container: &GtkBox, nav: &NavigationContext) -> Action
 
 fn handle_scene_role_change(row: &ComboRow, scene_id: &str, nav: &NavigationContext) {
     let new_role = index_to_role(row.selected());
-    let registry = {
-        let mut state = nav.state.borrow_mut();
-        // Both directions go through the registry: it owns when an entry is
-        // created and when clearing the last piece of metadata removes it.
-        state.registry.set_scene_role(scene_id, new_role);
-        state.registry.clone()
-    };
-    let scene_id = scene_id.to_string();
-    crate::ui::background_io::run(
-        move || write_registry(&registry),
-        move |result| {
-            if let Err(error) = result {
-                tracing::warn!(%error, scene = scene_id, "failed to write registry");
-            }
-        },
-    );
+    // Both directions go through the registry: it owns when an entry is
+    // created and when clearing the last piece of metadata removes it.
+    persist_registry(nav, "scene role", |registry| {
+        registry.set_scene_role(scene_id, new_role)
+    });
+
     let subtitle = new_role
         .map(SceneRole::description)
         .unwrap_or_else(|| fl!(LANGUAGE_LOADER, "inventory-no-role-assigned"));
@@ -531,19 +506,10 @@ fn handle_scene_role_change(row: &ComboRow, scene_id: &str, nav: &NavigationCont
 }
 
 fn handle_stale_entry_remove(entry_name: &str, stale_row: &ActionRow, nav: &NavigationContext) {
-    let registry = {
-        let mut state = nav.state.borrow_mut();
-        state.registry.scenes.remove(entry_name);
-        state.registry.clone()
-    };
-    crate::ui::background_io::run(
-        move || write_registry(&registry),
-        |result| {
-            if let Err(error) = result {
-                tracing::warn!(%error, "failed to remove stale registry entry");
-            }
-        },
-    );
+    persist_registry(nav, "stale entry removal", |registry| {
+        registry.scenes.remove(entry_name).is_some()
+    });
+
     stale_row.set_visible(false);
 }
 
@@ -578,24 +544,9 @@ fn set_scene_icon(nav: &NavigationContext, scene_id: &str, icon: Option<&str>) {
 /// it, or remove an entry that is now empty — belongs to `SceneRegistry`. This
 /// only mirrors the result into the cached snapshot and writes it out.
 fn set_scene_accent(nav: &NavigationContext, scene_id: &str, accent_color: Option<String>) -> bool {
-    let registry = {
-        let mut state = nav.state.borrow_mut();
-        if !state.registry.set_scene_accent(scene_id, accent_color) {
-            return false;
-        }
-        state.registry.clone()
-    };
-
-    let scene_id = scene_id.to_string();
-    crate::ui::background_io::run(
-        move || write_registry(&registry),
-        move |result| {
-            if let Err(error) = result {
-                tracing::warn!(%error, scene = scene_id, "failed to save scene accent");
-            }
-        },
-    );
-    true
+    persist_registry(nav, "scene accent", |registry| {
+        registry.set_scene_accent(scene_id, accent_color)
+    })
 }
 
 fn handle_export_click(button: &Button, status_row: &ActionRow, nav: &NavigationContext) {

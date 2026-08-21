@@ -18,9 +18,10 @@ use crate::domain::hotkey::{
 };
 use crate::infra::i18n;
 use crate::infra::i18n::LANGUAGE_LOADER;
-use crate::storage::config::{write_config, AppConfig, OutputConfig};
+use crate::storage::config::{AppConfig, OutputConfig};
 use crate::storage::secret;
 use crate::ui::navigation::NavigationContext;
+use crate::ui::persist::{persist_config, persist_config_with};
 use crate::ui::theme::ThemeManager;
 
 use super::super::window::apply_color_scheme;
@@ -739,37 +740,6 @@ fn obs_status_text(nav: &NavigationContext) -> String {
         }
         ObsStatus::Error(e) => fl!(LANGUAGE_LOADER, "settings-obs-error", err = e),
     }
-}
-
-fn persist_config(
-    nav: &NavigationContext,
-    update: impl FnOnce(&mut crate::storage::config::AppConfig),
-) {
-    persist_config_with(nav, update, |result, _| {
-        if let Err(error) = result {
-            tracing::warn!(%error, "failed to save configuration");
-        }
-    });
-}
-
-fn persist_config_with<Update, Complete>(
-    nav: &NavigationContext,
-    update: Update,
-    complete: Complete,
-) where
-    Update: FnOnce(&mut crate::storage::config::AppConfig),
-    Complete: FnOnce(std::io::Result<()>, crate::storage::config::AppConfig) + 'static,
-{
-    let config = {
-        let mut state = nav.state.borrow_mut();
-        update(&mut state.config);
-        state.config.clone()
-    };
-    let persisted = config.clone();
-    crate::ui::background_io::run(
-        move || write_config(&persisted),
-        move |result| complete(result, config),
-    );
 }
 
 fn output_switch_row(title: &str, subtitle: &str, active: bool) -> SwitchRow {
