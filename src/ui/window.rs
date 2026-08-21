@@ -321,7 +321,7 @@ fn build_content_header(
         fl!(LANGUAGE_LOADER, "window-about-tooltip"),
         {
             let window = window.clone();
-            move || show_about(&window)
+            move || super::actions::show_about(&window)
         },
     );
     content_header.pack_end(&about_btn);
@@ -1324,41 +1324,13 @@ fn build_header_selectors(nav: &NavigationContext) -> HeaderSelectors {
         &fl!(LANGUAGE_LOADER, "window-selector-profile-label"),
         &fl!(LANGUAGE_LOADER, "window-selector-profile-tooltip"),
     );
-    {
-        let nav = nav.clone();
-        let model = profiles.model.clone();
-        let updating = profiles.updating.clone();
-        profiles.dropdown.connect_selected_notify(move |dropdown| {
-            if updating.get() {
-                return;
-            }
-            let selected = dropdown.selected();
-            if let Some(name) = model.string(selected) {
-                nav.dispatch(AppCommand::SetCurrentProfile(name.to_string()));
-            }
-        });
-    }
+    profiles.connect_selection(nav, AppCommand::SetCurrentProfile);
 
     let scene_collections = build_named_selector(
         &fl!(LANGUAGE_LOADER, "window-selector-collection-label"),
         &fl!(LANGUAGE_LOADER, "window-selector-collection-tooltip"),
     );
-    {
-        let nav = nav.clone();
-        let model = scene_collections.model.clone();
-        let updating = scene_collections.updating.clone();
-        scene_collections
-            .dropdown
-            .connect_selected_notify(move |dropdown| {
-                if updating.get() {
-                    return;
-                }
-                let selected = dropdown.selected();
-                if let Some(name) = model.string(selected) {
-                    nav.dispatch(AppCommand::SetCurrentSceneCollection(name.to_string()));
-                }
-            });
-    }
+    scene_collections.connect_selection(nav, AppCommand::SetCurrentSceneCollection);
 
     HeaderSelectors {
         profiles,
@@ -1639,20 +1611,6 @@ fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, Side
     )
 }
 
-fn show_about(parent: &adw::ApplicationWindow) {
-    use crate::app_info::{APP_ID, APP_NAME, APP_VERSION};
-    let about = adw::AboutWindow::builder()
-        .application_name(APP_NAME)
-        .application_icon(APP_ID)
-        .version(APP_VERSION)
-        .developer_name("worxbend")
-        .license_type(gtk4::License::MitX11)
-        .transient_for(parent)
-        .build();
-    about.add_css_class("scenedeck-about-window");
-    about.present();
-}
-
 // ── Per-page refresh callbacks ─────────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -1667,6 +1625,33 @@ struct NamedSelector {
     dropdown: DropDown,
     model: StringList,
     updating: Rc<Cell<bool>>,
+}
+
+impl NamedSelector {
+    /// Dispatch `to_command` whenever the user picks a different entry.
+    ///
+    /// The `updating` flag guards against an echo. `update_named_selector`
+    /// rewrites the model when OBS reports a new profile or scene collection,
+    /// and restoring the selection afterwards makes GTK emit the same signal a
+    /// real click does. Without the guard, an update that came *from* OBS would
+    /// be sent straight back to it as a command.
+    ///
+    /// `to_command` is a plain function pointer rather than a closure type, so
+    /// the bare variant constructors can be passed directly and the body is
+    /// compiled once instead of once per call site.
+    fn connect_selection(&self, nav: &NavigationContext, to_command: fn(String) -> AppCommand) {
+        let nav = nav.clone();
+        let model = self.model.clone();
+        let updating = self.updating.clone();
+        self.dropdown.connect_selected_notify(move |dropdown| {
+            if updating.get() {
+                return;
+            }
+            if let Some(name) = model.string(dropdown.selected()) {
+                nav.dispatch(to_command(name.to_string()));
+            }
+        });
+    }
 }
 
 #[derive(Clone)]

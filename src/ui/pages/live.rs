@@ -261,46 +261,54 @@ pub(crate) fn show_disconnected_view(handle: &LivePageHandle, message: &str) {
     }
 }
 
-pub(crate) fn handle_stream_output_toggle(button: &Button, nav: &NavigationContext) {
-    let active = nav.state.borrow().stream_status.active;
-    let command = if active {
-        AppCommand::StopStreaming
-    } else {
-        AppCommand::StartStreaming
+/// The command that flips `kind` from its current state.
+fn output_toggle_command(kind: OutputKind, active: bool) -> AppCommand {
+    match (kind, active) {
+        (OutputKind::Stream, false) => AppCommand::StartStreaming,
+        (OutputKind::Stream, true) => AppCommand::StopStreaming,
+        (OutputKind::Recording, false) => AppCommand::StartRecording,
+        (OutputKind::Recording, true) => AppCommand::StopRecording,
+    }
+}
+
+/// Start or stop one output, asking first when the user has asked to be asked.
+///
+/// The stream and record buttons behave identically apart from which output
+/// they act on, so the behaviour lives here once and each button supplies its
+/// `OutputKind`.
+fn handle_output_toggle(button: &Button, nav: &NavigationContext, kind: OutputKind) {
+    // Both reads happen under one borrow, which ends with this block. The
+    // borrow must not still be held below: `confirm_output_action` opens a
+    // dialog and `nav.dispatch` reaches the controller, and either could try to
+    // borrow the state again.
+    let (active, should_confirm) = {
+        let state = nav.state.borrow();
+        let active = match kind {
+            OutputKind::Stream => state.stream_status.active,
+            OutputKind::Recording => state.record_status.active,
+        };
+        (
+            active,
+            requires_output_confirmation(kind, active, &state.config.outputs),
+        )
     };
-    let should_confirm = requires_output_confirmation(
-        OutputKind::Stream,
-        active,
-        &nav.state.borrow().config.outputs,
-    );
+
+    let command = output_toggle_command(kind, active);
     if should_confirm {
         let action = output_action_for_active_state(active);
-        let dialog = output_confirmation_dialog(OutputKind::Stream, action);
+        let dialog = output_confirmation_dialog(kind, action);
         confirm_output_action(button, dialog, command, nav.clone());
     } else {
         nav.dispatch(command);
     }
 }
 
+pub(crate) fn handle_stream_output_toggle(button: &Button, nav: &NavigationContext) {
+    handle_output_toggle(button, nav, OutputKind::Stream);
+}
+
 pub(crate) fn handle_record_output_toggle(button: &Button, nav: &NavigationContext) {
-    let active = nav.state.borrow().record_status.active;
-    let command = if active {
-        AppCommand::StopRecording
-    } else {
-        AppCommand::StartRecording
-    };
-    let should_confirm = requires_output_confirmation(
-        OutputKind::Recording,
-        active,
-        &nav.state.borrow().config.outputs,
-    );
-    if should_confirm {
-        let action = output_action_for_active_state(active);
-        let dialog = output_confirmation_dialog(OutputKind::Recording, action);
-        confirm_output_action(button, dialog, command, nav.clone());
-    } else {
-        nav.dispatch(command);
-    }
+    handle_output_toggle(button, nav, OutputKind::Recording);
 }
 
 pub(crate) fn show_live_view(handle: &LivePageHandle) {

@@ -47,7 +47,12 @@ pub(super) fn install(
     });
 }
 
-fn show_about(parent: &adw::ApplicationWindow) {
+/// Present the About window.
+///
+/// Both the `app.about` action registered here and the About button in the
+/// window header open this, so it lives in one place rather than as two
+/// identical builders that could drift apart.
+pub(super) fn show_about(parent: &adw::ApplicationWindow) {
     let about = adw::AboutWindow::builder()
         .application_name(APP_NAME)
         .application_icon(APP_ID)
