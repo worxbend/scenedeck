@@ -615,6 +615,35 @@ impl AppState {
         }
     }
 
+    /// Record a mute change OBS reported for `input_id`.
+    ///
+    /// The same input can be held in two places: the Live page's flat list,
+    /// and the mixer's snapshot of one scene. Both have to move together or
+    /// the two pages start disagreeing about whether a source is muted, so
+    /// both are updated here rather than at the call site.
+    pub fn apply_input_mute(&mut self, input_id: &str, muted: bool) {
+        if let Some(input) = self.audio_input_mut(input_id) {
+            input.muted = muted;
+        }
+        self.update_mixer_input_mute(input_id, muted);
+    }
+
+    /// Record a volume change OBS reported for `input_id`, in both places the
+    /// input may be held. See [`AppState::apply_input_mute`].
+    pub fn apply_input_volume(&mut self, input_id: &str, volume_mul: f64, volume_db: f64) {
+        if let Some(input) = self.audio_input_mut(input_id) {
+            input.volume_mul = volume_mul;
+            input.volume_db = volume_db;
+        }
+        self.update_mixer_input_volume(input_id, volume_mul, volume_db);
+    }
+
+    fn audio_input_mut(&mut self, input_id: &str) -> Option<&mut AudioInput> {
+        self.audio_inputs
+            .iter_mut()
+            .find(|input| input.id == input_id)
+    }
+
     pub fn update_mixer_input_mute(&mut self, input_id: &str, muted: bool) -> bool {
         let updated = self
             .mixer_audio_refresh
@@ -1922,6 +1951,40 @@ mod tests {
             MixerInspectionStatus::LoadedNoAudioSources,
             MixerInspectionStatus::LoadedNoMatchingAudioSourcesAfterFiltering
         );
+    }
+
+    #[test]
+    fn applying_an_input_change_updates_both_places_the_input_is_held() {
+        let mut state = app_state();
+        state.audio_inputs = vec![input("Mic"), input("Music")];
+        state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_success("Scene A".to_string(), vec![input("Mic"), input("Music")]);
+
+        state.apply_input_mute("Mic", true);
+        state.apply_input_volume("Mic", 0.5, -6.0);
+
+        // The Live page's flat list...
+        let live = state
+            .audio_inputs
+            .iter()
+            .find(|candidate| candidate.id == "Mic")
+            .expect("live input");
+        assert!(live.muted);
+        assert_eq!(live.volume_mul, 0.5);
+        assert_eq!(live.volume_db, -6.0);
+
+        // ...and the mixer's snapshot of the scene must agree.
+        let mixed = visible_loaded_input(&state, "Scene A", "Mic");
+        assert!(mixed.muted);
+        assert_eq!(mixed.volume_mul, 0.5);
+        assert_eq!(mixed.volume_db, -6.0);
+
+        // An input the change did not name is untouched in both.
+        assert!(!visible_loaded_input(&state, "Scene A", "Music").muted);
+        assert!(!state
+            .audio_inputs
+            .iter()
+            .any(|candidate| candidate.id == "Music" && candidate.muted));
     }
 
     #[test]

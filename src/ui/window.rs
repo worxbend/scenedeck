@@ -639,11 +639,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
                 scene = scene_text
             ));
             rebuild_scene_cards(live, &inventory, nav);
-            // Refresh pages that display inventory data if they're currently visible.
-            let page = nav.state.borrow().current_page;
-            if matches!(page, Page::Mixer | Page::Inventory | Page::Doctor) {
-                refreshers.call(page);
-            }
+            refreshers.call_visible_among(nav, &[Page::Mixer, Page::Inventory, Page::Doctor]);
         }
 
         AppEvent::ProfilesUpdated(profiles) => {
@@ -668,9 +664,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
                 state.scene_inventory.clone()
             };
             rebuild_scene_cards(live, &inventory, nav);
-            if nav.state.borrow().current_page == Page::Mixer {
-                refreshers.call(Page::Mixer);
-            }
+            refreshers.call_if_visible(nav, Page::Mixer);
         }
 
         AppEvent::Error(err) => {
@@ -701,9 +695,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
         AppEvent::AudioInputsUpdated(inputs) => {
             nav.state.borrow_mut().audio_inputs = inputs.clone();
             rebuild_audio_cards(live, &inputs, nav);
-            if nav.state.borrow().current_page == Page::Mixer {
-                refreshers.call(Page::Mixer);
-            }
+            refreshers.call_if_visible(nav, Page::Mixer);
         }
 
         AppEvent::MixerAudioInputsUpdated { scene, inputs } => {
@@ -715,9 +707,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
                 tracing::debug!("ignored stale mixer audio success");
                 return;
             }
-            if nav.state.borrow().current_page == Page::Mixer {
-                refreshers.call(Page::Mixer);
-            }
+            refreshers.call_if_visible(nav, Page::Mixer);
         }
 
         AppEvent::MixerAudioInputsLoading { scene } => {
@@ -725,9 +715,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
                 let mut state = nav.state.borrow_mut();
                 state.set_mixer_audio_loading(scene);
             }
-            if nav.state.borrow().current_page == Page::Mixer {
-                refreshers.call(Page::Mixer);
-            }
+            refreshers.call_if_visible(nav, Page::Mixer);
         }
 
         AppEvent::MixerAudioInputsFailed { scene, message } => {
@@ -739,27 +727,17 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
                 tracing::debug!("ignored stale mixer audio failure");
                 return;
             }
-            if nav.state.borrow().current_page == Page::Mixer {
-                refreshers.call(Page::Mixer);
-            }
+            refreshers.call_if_visible(nav, Page::Mixer);
         }
 
         AppEvent::InputMuteChanged { input, muted } => {
             let rebuild_mixer = {
                 let mut state = nav.state.borrow_mut();
-                if let Some(a) = state.audio_inputs.iter_mut().find(|a| a.id == input) {
-                    a.muted = muted;
-                }
-                state.update_mixer_input_mute(&input, muted);
+                state.apply_input_mute(&input, muted);
                 should_rebuild_visible_mixer_for_input_event(&state, &input)
             };
 
-            for card in live.audio_cards.borrow().iter() {
-                if card.input_id == input {
-                    card.update_mute(muted);
-                    break;
-                }
-            }
+            update_live_audio_card(live, &input, |card| card.update_mute(muted));
 
             if rebuild_mixer {
                 refreshers.call(Page::Mixer);
@@ -773,20 +751,13 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
         } => {
             let rebuild_mixer = {
                 let mut state = nav.state.borrow_mut();
-                if let Some(a) = state.audio_inputs.iter_mut().find(|a| a.id == input) {
-                    a.volume_mul = volume_mul;
-                    a.volume_db = volume_db;
-                }
-                state.update_mixer_input_volume(&input, volume_mul, volume_db);
+                state.apply_input_volume(&input, volume_mul, volume_db);
                 should_rebuild_visible_mixer_for_input_event(&state, &input)
             };
 
-            for card in live.audio_cards.borrow().iter() {
-                if card.input_id == input {
-                    card.update_volume(volume_mul, volume_db);
-                    break;
-                }
-            }
+            update_live_audio_card(live, &input, |card| {
+                card.update_volume(volume_mul, volume_db)
+            });
 
             if rebuild_mixer {
                 refreshers.call(Page::Mixer);
@@ -801,11 +772,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
 
         AppEvent::GraphUpdated(graph) => {
             nav.state.borrow_mut().scene_graph = graph;
-            // Refresh pages that display graph data if they're currently visible.
-            let page = nav.state.borrow().current_page;
-            if matches!(page, Page::Graph | Page::Doctor) {
-                refreshers.call(page);
-            }
+            refreshers.call_visible_among(nav, &[Page::Graph, Page::Doctor]);
         }
 
         AppEvent::DiagnosticsUpdated(diagnostics) => {
@@ -817,20 +784,15 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
             bitrate_kbps,
             stream,
         } => {
-            let (streaming, on_stats_page) = {
+            let streaming = {
                 let mut state = nav.state.borrow_mut();
                 state.set_obs_stats(stats, bitrate_kbps, stream);
-                (
-                    state.stream_status.active,
-                    state.current_page == Page::Stats,
-                )
+                state.stream_status.active
             };
             status_bar::set_stats(status_bar, &stats, bitrate_kbps, streaming);
             // History is recorded on every sample; only redraw when the charts
             // are actually on screen.
-            if on_stats_page {
-                refreshers.call(Page::Stats);
-            }
+            refreshers.call_if_visible(nav, Page::Stats);
         }
     }
 }
@@ -1031,6 +993,24 @@ fn remember_recording_path(state: &mut AppState, status: &OutputStatus) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Apply `change` to the Live page's card for `input_id`, if it has one.
+///
+/// Input ids are unique, so the search stops at the first match.
+fn update_live_audio_card(
+    live: &LivePageHandle,
+    input_id: &str,
+    change: impl FnOnce(&crate::ui::widgets::audio_card::AudioCardHandle),
+) {
+    if let Some(card) = live
+        .audio_cards
+        .borrow()
+        .iter()
+        .find(|card| card.input_id == input_id)
+    {
+        change(card);
+    }
+}
 
 fn set_status_class(label: &gtk4::Label, new_class: &str) {
     for class in status_bar::CONNECTION_CSS_CLASSES {
@@ -1683,6 +1663,28 @@ struct EventUiContext {
 }
 
 impl PageRefreshers {
+    /// Refresh `page`, but only when it is the page currently on screen.
+    ///
+    /// Most events land while the user is looking at something else, and
+    /// rebuilding a hidden page is wasted work that the page's own `map`
+    /// handler would redo on the way back in anyway.
+    fn call_if_visible(&self, nav: &NavigationContext, page: Page) {
+        if nav.state.borrow().current_page == page {
+            self.call(page);
+        }
+    }
+
+    /// Refresh the visible page when it is one of `pages`.
+    ///
+    /// For data that several pages render — an inventory update reaches
+    /// Mixer, Inventory, and Doctor — only the one on screen needs rebuilding.
+    fn call_visible_among(&self, nav: &NavigationContext, pages: &[Page]) {
+        let page = nav.state.borrow().current_page;
+        if pages.contains(&page) {
+            self.call(page);
+        }
+    }
+
     /// Call the refresh function for `page` if it has one.
     /// Live page is always kept current by `apply_event`, so it is a no-op here.
     fn call(&self, page: Page) {
