@@ -64,18 +64,31 @@ pub fn run() {
     }
     let app = app_builder.build();
 
+    // GTK calls `activate` every time the application is asked to appear, not
+    // only the first time: launching it again while it is running, a desktop
+    // file action, or a D-Bus `Activate` all arrive here. The window is built
+    // once and re-presented afterwards, which is what brings the running
+    // instance to the front instead of building a second one on top of the
+    // first — and instead of panicking on the receiver that only exists once.
+    let window: Rc<RefCell<Option<adw::ApplicationWindow>>> = Rc::new(RefCell::new(None));
+
     app.connect_activate(move |app| {
-        let rx = event_rx
-            .borrow_mut()
-            .take()
-            .expect("app activated more than once");
+        if let Some(existing) = window.borrow().as_ref() {
+            existing.present();
+            return;
+        }
+
+        let Some(rx) = event_rx.borrow_mut().take() else {
+            tracing::error!("activated with no event receiver and no window; ignoring");
+            return;
+        };
 
         let controller = Rc::new(RefCell::new(AppController::new(
             tokio_handle.clone(),
             event_tx.clone(),
         )));
 
-        build_ui(app, controller, rx, &startup);
+        *window.borrow_mut() = Some(build_ui(app, controller, rx, &startup));
     });
 
     app.run();
@@ -86,6 +99,7 @@ pub fn run() {
     drop(runtime);
 }
 
+/// Build the main window and hand it back so re-activation can present it.
 fn build_ui(
     app: &adw::Application,
     controller: Rc<RefCell<AppController>>,
@@ -95,7 +109,7 @@ fn build_ui(
         crate::storage::registry::SceneRegistry,
         Option<String>,
     ),
-) {
+) -> adw::ApplicationWindow {
     let loaded = &startup.0;
     i18n::init(loaded.config.language);
     let notice = loaded.startup_notice.as_ref().map(|n| n.user_message());
@@ -107,5 +121,5 @@ fn build_ui(
         notice,
     )));
 
-    let _window = ui::build_main_window(app, state, controller, event_rx);
+    ui::build_main_window(app, state, controller, event_rx)
 }
