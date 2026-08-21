@@ -29,6 +29,7 @@
 #[cfg(test)]
 use futures_util::future::BoxFuture;
 use i18n_embed_fl::fl;
+use std::future::Future;
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
 #[cfg(test)]
@@ -50,7 +51,6 @@ use crate::controller::refresh_controller::{
 use crate::controller::session_controller::SessionController;
 #[cfg(test)]
 use crate::domain::output::{OutputRunState, OutputStatus};
-#[cfg(test)]
 use crate::infra::error::AppError;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::obs::client::ObsClient;
@@ -106,96 +106,68 @@ impl AppController {
             AppCommand::RefreshAll => self.session.connect(), // reconnect = full refresh
 
             AppCommand::SwitchPrimaryScene(id) => {
-                self.with_client(|c, tx, rt| {
-                    rt.spawn(async move {
-                        if let Err(e) = c.set_current_program_scene(&id).await {
-                            let _ = tx.send(AppEvent::Error(e));
-                        }
-                        // OBS emits CurrentProgramSceneChanged via the event loop;
-                        // no manual refresh needed.
-                    });
+                self.spawn_with_client(|c, tx| async move {
+                    report_err(c.set_current_program_scene(&id).await, &tx);
+                    // OBS emits CurrentProgramSceneChanged via the event loop;
+                    // no manual refresh needed.
                 });
             }
 
             AppCommand::SetCurrentProfile(name) => {
-                self.with_client(|c, tx, rt| {
-                    rt.spawn(async move {
-                        let result = c.set_current_profile(&name).await;
-                        publish_profiles_after(result, &c, &tx).await;
-                    });
+                self.spawn_with_client(|c, tx| async move {
+                    let result = c.set_current_profile(&name).await;
+                    publish_profiles_after(result, &c, &tx).await;
                 });
             }
 
             AppCommand::CreateProfile(name) => {
-                self.with_client(|c, tx, rt| {
-                    rt.spawn(async move {
-                        let result = c.create_profile(&name).await;
-                        publish_profiles_after(result, &c, &tx).await;
-                    });
+                self.spawn_with_client(|c, tx| async move {
+                    let result = c.create_profile(&name).await;
+                    publish_profiles_after(result, &c, &tx).await;
                 });
             }
 
             AppCommand::RemoveProfile(name) => {
-                self.with_client(|c, tx, rt| {
-                    rt.spawn(async move {
-                        let result = c.remove_profile(&name).await;
-                        publish_profiles_after(result, &c, &tx).await;
-                    });
+                self.spawn_with_client(|c, tx| async move {
+                    let result = c.remove_profile(&name).await;
+                    publish_profiles_after(result, &c, &tx).await;
                 });
             }
 
             AppCommand::SetCurrentSceneCollection(name) => {
                 let dependencies = self.dependencies.clone();
-                self.with_client(|c, tx, rt| {
-                    rt.spawn(async move {
-                        let audio_filter =
-                            load_config_blocking(dependencies).await.live.audio_inputs;
-                        let result = c.set_current_scene_collection(&name).await;
-                        refresh_after_collection_change(result, &c, &tx, &audio_filter).await;
-                    });
+                self.spawn_with_client(|c, tx| async move {
+                    let audio_filter = load_config_blocking(dependencies).await.live.audio_inputs;
+                    let result = c.set_current_scene_collection(&name).await;
+                    refresh_after_collection_change(result, &c, &tx, &audio_filter).await;
                 });
             }
 
             AppCommand::CreateSceneCollection(name) => {
                 let dependencies = self.dependencies.clone();
-                self.with_client(|c, tx, rt| {
-                    rt.spawn(async move {
-                        let audio_filter =
-                            load_config_blocking(dependencies).await.live.audio_inputs;
-                        let result = c.create_scene_collection(&name).await;
-                        refresh_after_collection_change(result, &c, &tx, &audio_filter).await;
-                    });
+                self.spawn_with_client(|c, tx| async move {
+                    let audio_filter = load_config_blocking(dependencies).await.live.audio_inputs;
+                    let result = c.create_scene_collection(&name).await;
+                    refresh_after_collection_change(result, &c, &tx, &audio_filter).await;
                 });
             }
 
             AppCommand::SetInputMute { input, muted } => {
-                self.with_client(|c, tx, rt| {
-                    rt.spawn(async move {
-                        if let Err(e) = c.set_input_mute(&input, muted).await {
-                            let _ = tx.send(AppEvent::Error(e));
-                        }
-                    });
+                self.spawn_with_client(|c, tx| async move {
+                    report_err(c.set_input_mute(&input, muted).await, &tx);
                 });
             }
 
             AppCommand::ToggleInputMute { input } => {
-                self.with_client(|c, tx, rt| {
-                    rt.spawn(async move {
-                        // Use the native OBS toggle — avoids a read+write round-trip
-                        if let Err(e) = c.toggle_input_mute(&input).await {
-                            let _ = tx.send(AppEvent::Error(e));
-                        }
-                    });
+                self.spawn_with_client(|c, tx| async move {
+                    // Use the native OBS toggle — avoids a read+write round-trip
+                    report_err(c.toggle_input_mute(&input).await, &tx);
                 });
             }
 
             AppCommand::SetInputVolume { input, volume_mul } => {
-                self.with_client(|c, tx, rt| {
-                    rt.spawn(async move {
-                        if let Err(e) = c.set_input_volume(&input, volume_mul).await {
-                            let _ = tx.send(AppEvent::Error(e));
-                        }
-                    });
+                self.spawn_with_client(|c, tx| async move {
+                    report_err(c.set_input_volume(&input, volume_mul).await, &tx);
                 });
             }
             AppCommand::RefreshMixerSceneAudio(scene) => self.refresh_mixer_scene_audio(scene),
@@ -216,30 +188,24 @@ impl AppController {
 
     fn refresh_data(&self) {
         let dependencies = self.dependencies.clone();
-        self.with_client(|c, tx, rt| {
-            rt.spawn(async move {
-                let config = load_config_blocking(dependencies).await;
-                refresh_profile_and_collection_lists(&c, &tx).await;
-                refresh_output_statuses(&c, &tx).await;
-                refresh_live_data(&c, &tx, &config.live.audio_inputs).await;
-            });
+        self.spawn_with_client(|c, tx| async move {
+            let config = load_config_blocking(dependencies).await;
+            refresh_profile_and_collection_lists(&c, &tx).await;
+            refresh_output_statuses(&c, &tx).await;
+            refresh_live_data(&c, &tx, &config.live.audio_inputs).await;
         });
     }
 
     fn refresh_output_status(&self) {
-        self.with_client(|c, tx, rt| {
-            rt.spawn(async move {
-                refresh_output_statuses(&c, &tx).await;
-            });
+        self.spawn_with_client(|c, tx| async move {
+            refresh_output_statuses(&c, &tx).await;
         });
     }
 
     fn refresh_stats(&self) {
         let bitrate_sample = Arc::clone(&self.bitrate_sample);
-        self.with_client(|c, tx, rt| {
-            rt.spawn(async move {
-                refresh_obs_stats(&c, &tx, &bitrate_sample).await;
-            });
+        self.spawn_with_client(|c, tx| async move {
+            refresh_obs_stats(&c, &tx, &bitrate_sample).await;
         });
     }
 
@@ -250,7 +216,7 @@ impl AppController {
             scene: scene.clone(),
         });
 
-        let Some(client) = self.client_slot.lock().ok().and_then(|s| s.clone()) else {
+        let Some(client) = self.connected_client() else {
             tracing::warn!("mixer scene audio refresh ignored — not connected to OBS");
             let _ = tx.send(AppEvent::MixerAudioInputsFailed {
                 scene,
@@ -279,12 +245,29 @@ impl AppController {
     }
 
     /// Clone the current client if connected, then call `f` with it.
-    fn with_client<F>(&self, f: F)
+    /// The live OBS client, if a session is currently connected.
+    ///
+    /// The lock is taken and released here; the returned client is a cheap
+    /// handle, so nothing holds the mutex across an await.
+    fn connected_client(&self) -> Option<ObsClient> {
+        self.client_slot.lock().ok().and_then(|slot| slot.clone())
+    }
+
+    /// Run `f` against the connected client and spawn the future it builds.
+    ///
+    /// `f` itself runs here on the GTK thread and only builds the future; the
+    /// future is what crosses to the Tokio runtime, which is why `Send` is
+    /// required of `Fut` and not of `f`. Commands arriving while disconnected
+    /// are dropped with a warning.
+    fn spawn_with_client<F, Fut>(&self, f: F)
     where
-        F: FnOnce(ObsClient, SyncSender<AppEvent>, Handle),
+        F: FnOnce(ObsClient, SyncSender<AppEvent>) -> Fut,
+        Fut: Future<Output = ()> + Send + 'static,
     {
-        match self.client_slot.lock().ok().and_then(|s| s.clone()) {
-            Some(client) => f(client, self.event_tx.clone(), self.runtime.clone()),
+        match self.connected_client() {
+            Some(client) => {
+                self.runtime.spawn(f(client, self.event_tx.clone()));
+            }
             None => tracing::warn!("command ignored — not connected to OBS"),
         }
     }
@@ -292,6 +275,17 @@ impl AppController {
     #[cfg(test)]
     fn set_output_client_override(&self, client: OutputCommandClient) {
         self.outputs.set_client_override(client);
+    }
+}
+
+/// Forward a failed OBS call to the UI as an error event.
+///
+/// Generic over the success type on purpose: some of these calls return a
+/// value the caller does not need (`toggle_input_mute` reports the resulting
+/// mute state), and a `Result<(), _>` signature would not accept them.
+fn report_err<T>(result: Result<T, AppError>, tx: &SyncSender<AppEvent>) {
+    if let Err(error) = result {
+        let _ = tx.send(AppEvent::Error(error));
     }
 }
 
