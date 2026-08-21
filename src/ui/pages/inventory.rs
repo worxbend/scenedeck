@@ -518,23 +518,13 @@ fn handle_stale_entry_remove(entry_name: &str, stale_row: &ActionRow, nav: &Navi
 /// Failures are logged rather than surfaced: the picker has already moved, and
 /// the next Inventory rebuild reads back from the registry either way.
 fn set_scene_icon(nav: &NavigationContext, scene_id: &str, icon: Option<&str>) {
-    if !nav
-        .state
-        .borrow_mut()
-        .registry
-        .set_scene_icon(scene_id, icon)
-    {
-        return;
-    }
-    let scene_id = scene_id.to_string();
-    let icon = icon.map(str::to_string);
-    crate::ui::background_io::run(
-        move || registry_storage::set_scene_icon(&scene_id, icon.as_deref()),
-        |result| {
-            if let Err(error) = result {
-                tracing::warn!(%error, "failed to save the scene icon");
-            }
-        },
+    let owned_id = scene_id.to_string();
+    let owned_icon = icon.map(str::to_string);
+    crate::ui::persist::persist_registry_field(
+        nav,
+        "scene icon",
+        |registry| registry.set_scene_icon(scene_id, icon),
+        move || registry_storage::set_scene_icon(&owned_id, owned_icon.as_deref()),
     );
 }
 

@@ -87,3 +87,43 @@ pub(crate) fn persist_registry(
     );
     true
 }
+
+/// Edit one field of the cached scene registry, then apply the same change to
+/// the file on disk without rewriting the parts of it we did not touch.
+///
+/// This is the read-modify-write sibling of [`persist_registry`], and the
+/// difference matters. `persist_registry` sends the whole cached snapshot to
+/// the file, which is correct for changes that own the snapshot (reordering
+/// scenes) but destructive if the file on disk failed to parse at startup:
+/// the cache would be `SceneRegistry::default()` and the write would replace
+/// the user's registry with an empty one. The `disk` closure here goes through
+/// `storage::registry::mutate_registry`, which re-reads the file first and
+/// refuses to overwrite one it cannot parse.
+///
+/// `cached` updates the in-memory snapshot so the UI reads back what the user
+/// just picked; returning `false` means nothing changed and skips the write.
+/// `what` names the change for the log, because "failed to write registry"
+/// alone does not say whether the user lost an icon, a role, or an accent.
+pub(crate) fn persist_registry_field<Cached, Disk>(
+    nav: &NavigationContext,
+    what: &'static str,
+    cached: Cached,
+    disk: Disk,
+) where
+    Cached: FnOnce(&mut SceneRegistry) -> bool,
+    Disk:
+        FnOnce() -> Result<bool, crate::storage::registry::RegistryMutationError> + Send + 'static,
+{
+    let changed = {
+        let mut state = nav.state.borrow_mut();
+        cached(&mut state.registry)
+    };
+    if !changed {
+        return;
+    }
+    crate::ui::background_io::run(disk, move |result| {
+        if let Err(error) = result {
+            tracing::warn!(%error, what, "failed to save the scene registry");
+        }
+    });
+}

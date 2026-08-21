@@ -448,23 +448,13 @@ fn set_scope_icon(slot: &GtkBox, icon: Option<&str>) {
 
 /// Persist one audio input's icon and mirror it into the cached registry.
 fn set_input_icon(nav: &NavigationContext, input_id: &str, icon: Option<&str>) {
-    if !nav
-        .state
-        .borrow_mut()
-        .registry
-        .set_input_icon(input_id, icon)
-    {
-        return;
-    }
-    let input_id = input_id.to_string();
-    let icon = icon.map(str::to_string);
-    crate::ui::background_io::run(
-        move || registry_storage::set_input_icon(&input_id, icon.as_deref()),
-        |result| {
-            if let Err(error) = result {
-                tracing::warn!(%error, "failed to save the audio source icon");
-            }
-        },
+    let owned_id = input_id.to_string();
+    let owned_icon = icon.map(str::to_string);
+    crate::ui::persist::persist_registry_field(
+        nav,
+        "audio source icon",
+        |registry| registry.set_input_icon(input_id, icon),
+        move || registry_storage::set_input_icon(&owned_id, owned_icon.as_deref()),
     );
 }
 
