@@ -238,23 +238,27 @@ fn control_row(css_class: &str, children: &[gtk4::Widget]) -> GtkBox {
     row
 }
 
-// ── Builder ───────────────────────────────────────────────────────────────────
+/// The fader, its decibel readout, and the debouncing that ties them to OBS.
+struct VolumeControls {
+    scale: Scale,
+    db_label: Label,
+    debouncer: Rc<RefCell<VolumeChangeDebouncer>>,
+    debounce_source: Rc<RefCell<Option<glib::SourceId>>>,
+    signal_id: glib::SignalHandlerId,
+}
 
-/// Build a single mixer card for `input` and return a handle.
-pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHandle {
-    let input_id = input.id.clone();
-
-    let (mute_btn, mute_signal_id) = build_mute_button(&input_id, input.muted, &nav);
-
-    let name_label = build_name_label(input);
-
-    let ScopeBar {
-        root: scope_bar,
-        icon_slot: scope_icon_slot,
-        selected_icon,
-    } = build_scope_bar(input, &input_id, &nav);
-
-    // ── Volume scale ──────────────────────────────────────────────────────────
+/// Build the fader and its readout.
+///
+/// Dragging a fader produces a continuous stream of values, so changes are
+/// debounced before they reach OBS rather than sending a request per pixel.
+/// The caller keeps the handler id to silence the fader while applying a
+/// volume that came from OBS, and the debouncer state so a rebuild does not
+/// lose an in-flight drag.
+fn build_volume_controls(
+    input: &AudioInput,
+    input_id: &str,
+    nav: &NavigationContext,
+) -> VolumeControls {
     let vol_scale = Scale::with_range(
         Orientation::Vertical,
         AudioService::min_volume_db(),
@@ -270,7 +274,6 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
     vol_scale.add_css_class("audio-volume-fader");
     vol_scale.set_tooltip_text(Some(&fl!(LANGUAGE_LOADER, "audio-card-fader-tooltip")));
 
-    // ── dB label ──────────────────────────────────────────────────────────────
     let db_label = Label::builder()
         .label(AudioService::format_db(AudioService::sanitize_volume_db(
             input.volume_db,
@@ -286,7 +289,7 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
 
     let vol_signal_id = {
         let nav = nav.clone();
-        let input_id = input_id.clone();
+        let input_id = input_id.to_string();
         let vol_scale_for_update = vol_scale.clone();
         let db_label = db_label.clone();
         let debouncer = volume_debouncer.clone();
@@ -309,6 +312,39 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
             );
         })
     };
+
+    VolumeControls {
+        scale: vol_scale,
+        db_label,
+        debouncer: volume_debouncer,
+        debounce_source: volume_debounce_source,
+        signal_id: vol_signal_id,
+    }
+}
+
+// ── Builder ───────────────────────────────────────────────────────────────────
+
+/// Build a single mixer card for `input` and return a handle.
+pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHandle {
+    let input_id = input.id.clone();
+
+    let (mute_btn, mute_signal_id) = build_mute_button(&input_id, input.muted, &nav);
+
+    let name_label = build_name_label(input);
+
+    let ScopeBar {
+        root: scope_bar,
+        icon_slot: scope_icon_slot,
+        selected_icon,
+    } = build_scope_bar(input, &input_id, &nav);
+
+    let VolumeControls {
+        scale: vol_scale,
+        db_label,
+        debouncer: volume_debouncer,
+        debounce_source: volume_debounce_source,
+        signal_id: vol_signal_id,
+    } = build_volume_controls(input, &input_id, &nav);
 
     let lock_btn = build_lock_button(input.locked_locally, &vol_scale);
 

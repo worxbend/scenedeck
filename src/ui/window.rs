@@ -1502,6 +1502,25 @@ fn build_brand() -> GtkBox {
     brand
 }
 
+/// Build one of the three full-width buttons at the foot of the sidebar.
+fn sidebar_button(
+    icon_name: &str,
+    label: &str,
+    css_class: &str,
+    sensitive: bool,
+    on_click: impl Fn(&Button) + 'static,
+) -> Button {
+    let button = Button::builder()
+        .halign(gtk4::Align::Fill)
+        .hexpand(true)
+        .sensitive(sensitive)
+        .build();
+    button.set_child(Some(&button_content(icon_name, label)));
+    button.add_css_class(css_class);
+    button.connect_clicked(move |button| on_click(button));
+    button
+}
+
 fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, SidebarControls) {
     let list = ListBox::builder()
         .selection_mode(SelectionMode::Single)
@@ -1542,59 +1561,50 @@ fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, Side
         .build();
     status_label.add_css_class("obs-disconnected");
 
-    let connect_btn = Button::builder()
-        .halign(gtk4::Align::Fill)
-        .hexpand(true)
-        .build();
-    connect_btn.set_child(Some(&button_content(
+    // Connect starts enabled; the two output buttons wait until there is a
+    // connection to act on.
+    let connect_btn = sidebar_button(
         SIDEBAR_CONNECT_ICON,
         &fl!(LANGUAGE_LOADER, "window-connect-btn-connect"),
-    )));
-    connect_btn.add_css_class("suggested-action");
-    connect_btn.connect_clicked({
-        let nav = nav.clone();
-        move |_| {
-            let status = nav.state.borrow().obs_status.clone();
-            match status {
-                ObsStatus::Disconnected | ObsStatus::Error(_) => {
-                    nav.dispatch(AppCommand::Connect);
-                }
-                ObsStatus::Connected { .. } | ObsStatus::Connecting => {
-                    nav.dispatch(AppCommand::Disconnect);
+        "suggested-action",
+        true,
+        {
+            let nav = nav.clone();
+            move |_: &Button| {
+                let status = nav.state.borrow().obs_status.clone();
+                match status {
+                    ObsStatus::Disconnected | ObsStatus::Error(_) => {
+                        nav.dispatch(AppCommand::Connect);
+                    }
+                    ObsStatus::Connected { .. } | ObsStatus::Connecting => {
+                        nav.dispatch(AppCommand::Disconnect);
+                    }
                 }
             }
-        }
-    });
+        },
+    );
 
-    let stream_btn = Button::builder()
-        .halign(gtk4::Align::Fill)
-        .hexpand(true)
-        .sensitive(false)
-        .build();
-    stream_btn.set_child(Some(&button_content(
+    let stream_btn = sidebar_button(
         SIDEBAR_STREAM_ICON,
         &fl!(LANGUAGE_LOADER, "window-sidebar-start-stream"),
-    )));
-    stream_btn.add_css_class("sidebar-output-button");
-    stream_btn.connect_clicked({
-        let nav = nav.clone();
-        move |button| crate::ui::pages::live::handle_stream_output_toggle(button, &nav)
-    });
+        "sidebar-output-button",
+        false,
+        {
+            let nav = nav.clone();
+            move |button: &Button| crate::ui::pages::live::handle_stream_output_toggle(button, &nav)
+        },
+    );
 
-    let record_btn = Button::builder()
-        .halign(gtk4::Align::Fill)
-        .hexpand(true)
-        .sensitive(false)
-        .build();
-    record_btn.set_child(Some(&button_content(
+    let record_btn = sidebar_button(
         SIDEBAR_RECORD_ICON,
         &fl!(LANGUAGE_LOADER, "window-sidebar-start-recording"),
-    )));
-    record_btn.add_css_class("sidebar-output-button");
-    record_btn.connect_clicked({
-        let nav = nav.clone();
-        move |button| crate::ui::pages::live::handle_record_output_toggle(button, &nav)
-    });
+        "sidebar-output-button",
+        false,
+        {
+            let nav = nav.clone();
+            move |button: &Button| crate::ui::pages::live::handle_record_output_toggle(button, &nav)
+        },
+    );
 
     let footer = GtkBox::builder()
         .orientation(Orientation::Vertical)
