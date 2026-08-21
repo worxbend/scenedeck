@@ -274,7 +274,6 @@ pub struct AppState {
     pub registry: SceneRegistry,
     pub obs_password: Option<String>,
     pub current_page: Page,
-    pub theme_mode: ThemeMode,
     pub obs_status: ObsStatus,
     pub scene_inventory: SceneInventory,
     pub scene_graph: SceneGraph,
@@ -316,14 +315,12 @@ impl AppState {
         obs_password: Option<String>,
         startup_notice: Option<String>,
     ) -> Self {
-        let theme_mode = config.appearance.mode;
         let mixer = config.mixer.clone();
         Self {
             config,
             registry,
             obs_password,
             current_page: Page::Live,
-            theme_mode,
             obs_status: ObsStatus::Disconnected,
             scene_inventory: SceneInventory::default(),
             scene_graph: SceneGraph::default(),
@@ -351,8 +348,19 @@ impl AppState {
     pub fn set_page(&mut self, page: Page) {
         self.current_page = page;
     }
+    /// The colour scheme the user has chosen.
+    ///
+    /// This reads straight out of the cached config rather than from a
+    /// separate field. There used to be both, seeded from the config at
+    /// startup and then updated alongside it on every change — two copies of
+    /// one setting, correct only for as long as every writer remembered to
+    /// update both.
+    pub const fn theme_mode(&self) -> ThemeMode {
+        self.config.appearance.mode
+    }
+
     pub fn set_theme_mode(&mut self, mode: ThemeMode) {
-        self.theme_mode = mode;
+        self.config.appearance.mode = mode;
     }
     pub fn set_obs_status(&mut self, status: ObsStatus) {
         self.obs_status = status;

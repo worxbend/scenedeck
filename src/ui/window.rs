@@ -62,7 +62,7 @@ pub fn build_main_window(
     event_rx: mpsc::Receiver<AppEvent>,
 ) -> adw::ApplicationWindow {
     let style_manager = adw::StyleManager::default();
-    apply_color_scheme(&style_manager, state.borrow().theme_mode);
+    apply_color_scheme(&style_manager, state.borrow().theme_mode());
 
     register_resources();
     ThemeManager::apply_async(state.borrow().config.appearance.clone(), |report| {

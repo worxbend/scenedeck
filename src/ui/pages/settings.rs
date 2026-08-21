@@ -79,7 +79,7 @@ fn build_color_scheme_row(nav: &NavigationContext) -> ComboRow {
         fl!(LANGUAGE_LOADER, "settings-theme-mode-dark"),
     ];
     let theme_options = string_list(&theme_mode_strings);
-    let current_index = match nav.state.borrow().theme_mode {
+    let current_index = match nav.state.borrow().theme_mode() {
         ThemeMode::System => 0u32,
         ThemeMode::Light => 1,
         ThemeMode::Dark => 2,
@@ -102,7 +102,9 @@ fn build_color_scheme_row(nav: &NavigationContext) -> ComboRow {
             };
             nav.state.borrow_mut().set_theme_mode(mode);
             apply_color_scheme(&adw::StyleManager::default(), mode);
-            persist_config(&nav, |config| config.appearance.mode = mode);
+            // `set_theme_mode` has already updated the cached config, so this
+            // only needs to write it out.
+            persist_config(&nav, |_| {});
             apply_theme_logging(nav.state.borrow().config.appearance.clone());
         }
     });
