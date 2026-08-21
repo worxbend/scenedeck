@@ -18,7 +18,7 @@ use crate::domain::hotkey::{
 };
 use crate::infra::i18n;
 use crate::infra::i18n::LANGUAGE_LOADER;
-use crate::storage::config::{write_config, OutputConfig};
+use crate::storage::config::{write_config, AppConfig, OutputConfig};
 use crate::storage::secret;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::theme::ThemeManager;
@@ -34,13 +34,47 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     page.add_css_class("settings-page");
     page.add_css_class("app-preferences-page");
 
-    // ── Appearance ────────────────────────────────────────────────────────────
+    let cfg = nav.state.borrow().config.clone();
+
+    let appearance_group = build_appearance_group(&nav, &cfg);
+    let language_group = build_language_group(&nav, &cfg);
+    let (obs_group, status_row) = build_obs_group(&nav, &cfg);
+    let output_group = build_output_group(&nav, &cfg);
+    let hotkey_group = build_hotkey_group(&nav);
+
+    let status_group = PreferencesGroup::new();
+    with_icon(&status_row, "nf-md-lan-connect-symbolic");
+    status_group.add(&status_row);
+
+    page.add(&appearance_group);
+    page.add(&language_group);
+    page.add(&obs_group);
+    page.add(&output_group);
+    page.add(&hotkey_group);
+    page.add(&status_group);
+
+    // Closure that refreshes the status row when navigating back to this page
+    // (or when the external refresh button is pressed).
+    let refresh_fn: Rc<dyn Fn()> = Rc::new({
+        let nav = nav.clone();
+        let status_row = status_row.clone();
+        move || status_row.set_subtitle(&obs_status_text(&nav))
+    });
+
+    page.connect_map({
+        let refresh = refresh_fn.clone();
+        move |_| refresh()
+    });
+
+    (page.upcast(), refresh_fn)
+}
+
+/// Colour scheme, motion, theme family, and custom CSS.
+fn build_appearance_group(nav: &NavigationContext, cfg: &AppConfig) -> PreferencesGroup {
     let appearance_group = PreferencesGroup::builder()
         .title(fl!(LANGUAGE_LOADER, "settings-appearance-title"))
         .description(fl!(LANGUAGE_LOADER, "settings-appearance-description"))
         .build();
-
-    let cfg = nav.state.borrow().config.clone();
 
     let theme_mode_strings: Vec<String> = vec![
         fl!(LANGUAGE_LOADER, "settings-theme-mode-system"),
@@ -243,6 +277,8 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         let theme_status_row = theme_status_row.clone();
         let nav = nav.clone();
         move |_| {
+            // Re-read the config: the point of Reload is to pick up edits made
+            // since the page was built.
             let cfg = nav.state.borrow().config.clone();
             apply_theme_with_status(cfg.appearance, theme_status_row.clone());
         }
@@ -260,7 +296,11 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     with_icon(&theme_status_row, "nf-md-information-outline-symbolic");
     appearance_group.add(&theme_status_row);
 
-    // ── Language ──────────────────────────────────────────────────────────────
+    appearance_group
+}
+
+/// Interface language, plus the note about restarting for a full change.
+fn build_language_group(nav: &NavigationContext, cfg: &AppConfig) -> PreferencesGroup {
     let language_group = PreferencesGroup::builder()
         .title(fl!(LANGUAGE_LOADER, "settings-language-title"))
         .description(fl!(LANGUAGE_LOADER, "settings-language-description"))
@@ -320,8 +360,15 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     language_group.add(&language_row);
     language_group.add(&language_status_row);
 
-    // ── OBS Connection ────────────────────────────────────────────────────────
+    language_group
+}
 
+/// OBS host, port, and password.
+///
+/// Returns the status row alongside the group: the row reports what happened
+/// to a save and lives in its own group at the bottom of the page, but it is
+/// these rows' handlers that write into it.
+fn build_obs_group(nav: &NavigationContext, cfg: &AppConfig) -> (PreferencesGroup, ActionRow) {
     let obs_group = PreferencesGroup::builder()
         .title(fl!(LANGUAGE_LOADER, "settings-obs-connection-title"))
         .description(fl!(LANGUAGE_LOADER, "settings-obs-connection-description"))
@@ -350,7 +397,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
 
     let status_row = ActionRow::builder()
         .title(fl!(LANGUAGE_LOADER, "settings-obs-status-title"))
-        .subtitle(obs_status_text(&nav))
+        .subtitle(obs_status_text(nav))
         .build();
 
     let save_handler = {
@@ -428,7 +475,11 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     with_entry_icon(&password_row, "nf-md-key-variant-symbolic");
     obs_group.add(&password_row);
 
-    // ── Output safety ────────────────────────────────────────────────────────
+    (obs_group, status_row)
+}
+
+/// Which output actions ask for confirmation first.
+fn build_output_group(nav: &NavigationContext, cfg: &AppConfig) -> PreferencesGroup {
     let output_group = PreferencesGroup::builder()
         .title(fl!(LANGUAGE_LOADER, "settings-output-safety-title"))
         .description(fl!(LANGUAGE_LOADER, "settings-output-safety-description"))
@@ -455,16 +506,16 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         cfg.outputs.confirm_stop_recording,
     );
 
-    connect_output_switch(&confirm_start_stream, &nav, |outputs, active| {
+    connect_output_switch(&confirm_start_stream, nav, |outputs, active| {
         outputs.confirm_start_stream = active;
     });
-    connect_output_switch(&confirm_stop_stream, &nav, |outputs, active| {
+    connect_output_switch(&confirm_stop_stream, nav, |outputs, active| {
         outputs.confirm_stop_stream = active;
     });
-    connect_output_switch(&confirm_start_recording, &nav, |outputs, active| {
+    connect_output_switch(&confirm_start_recording, nav, |outputs, active| {
         outputs.confirm_start_recording = active;
     });
-    connect_output_switch(&confirm_stop_recording, &nav, |outputs, active| {
+    connect_output_switch(&confirm_stop_recording, nav, |outputs, active| {
         outputs.confirm_stop_recording = active;
     });
 
@@ -477,34 +528,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     with_icon(&confirm_stop_recording, "nf-md-stop-circle-symbolic");
     output_group.add(&confirm_stop_recording);
 
-    // ── Scene hotkeys ────────────────────────────────────────────────────────
-    let hotkey_group = build_hotkey_group(&nav);
-
-    let status_group = PreferencesGroup::new();
-    with_icon(&status_row, "nf-md-lan-connect-symbolic");
-    status_group.add(&status_row);
-
-    page.add(&appearance_group);
-    page.add(&language_group);
-    page.add(&obs_group);
-    page.add(&output_group);
-    page.add(&hotkey_group);
-    page.add(&status_group);
-
-    // Closure that refreshes the status row when navigating back to this page
-    // (or when the external refresh button is pressed).
-    let refresh_fn: Rc<dyn Fn()> = Rc::new({
-        let nav = nav.clone();
-        let status_row = status_row.clone();
-        move || status_row.set_subtitle(&obs_status_text(&nav))
-    });
-
-    page.connect_map({
-        let refresh = refresh_fn.clone();
-        move |_| refresh()
-    });
-
-    (page.upcast(), refresh_fn)
+    output_group
 }
 
 /// Build the Live scene-hotkey preferences group.
