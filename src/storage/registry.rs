@@ -336,14 +336,14 @@ impl SceneRegistry {
 
 /// Persist one scene icon to the registry in the XDG config directory.
 pub fn set_scene_icon(scene_id: &str, icon: Option<&str>) -> Result<bool, RegistryMutationError> {
-    mutate_registry(&xdg::config_dir().join("registry.json"), |registry| {
+    mutate_registry(&xdg::registry_path(), |registry| {
         registry.set_scene_icon(scene_id, icon)
     })
 }
 
 /// Persist one audio-input icon to the registry in the XDG config directory.
 pub fn set_input_icon(input_id: &str, icon: Option<&str>) -> Result<bool, RegistryMutationError> {
-    mutate_registry(&xdg::config_dir().join("registry.json"), |input_registry| {
+    mutate_registry(&xdg::registry_path(), |input_registry| {
         input_registry.set_input_icon(input_id, icon)
     })
 }
@@ -462,7 +462,7 @@ pub fn read_registry() -> SceneRegistry {
 /// Use this for explicit user actions, such as export, where silently replacing
 /// an invalid hand-edited registry with defaults would be misleading.
 pub fn try_read_registry() -> Result<SceneRegistry, RegistryStorageError> {
-    read_registry_from_path(&xdg::config_dir().join("registry.json"))
+    read_registry_from_path(&xdg::registry_path())
 }
 
 /// Read registry JSON from an explicit path.
@@ -482,7 +482,7 @@ pub fn read_registry_from_path(path: &Path) -> Result<SceneRegistry, RegistrySto
 
 /// Write registry JSON to the XDG config directory.
 pub fn write_registry(registry: &SceneRegistry) -> io::Result<()> {
-    write_registry_to_path(&xdg::config_dir().join("registry.json"), registry)
+    write_registry_to_path(&xdg::registry_path(), registry)
 }
 
 /// Set or clear one scene role in the registry stored in the XDG config
@@ -495,7 +495,7 @@ pub fn set_scene_role(
     scene_id: &str,
     role: Option<SceneRole>,
 ) -> Result<bool, RegistryMutationError> {
-    set_scene_role_from_path(&xdg::config_dir().join("registry.json"), scene_id, role)
+    set_scene_role_from_path(&xdg::registry_path(), scene_id, role)
 }
 
 fn set_scene_role_from_path(
@@ -503,13 +503,7 @@ fn set_scene_role_from_path(
     scene_id: &str,
     role: Option<SceneRole>,
 ) -> Result<bool, RegistryMutationError> {
-    let mut registry = read_registry_from_path(path)?;
-    let changed = registry.set_scene_role(scene_id, role);
-    if changed {
-        write_registry_to_path(path, &registry)
-            .map_err(|source| RegistryMutationError::Write { source })?;
-    }
-    Ok(changed)
+    mutate_registry(path, |registry| registry.set_scene_role(scene_id, role))
 }
 
 /// Remove one scene entry from the registry stored in the XDG config directory.
@@ -518,20 +512,14 @@ fn set_scene_role_from_path(
 /// returned instead of being coerced to an empty registry, which avoids
 /// overwriting a hand-edited but temporarily invalid file during UI cleanup.
 pub fn remove_scene_entry(scene_id: &str) -> Result<bool, RegistryMutationError> {
-    remove_scene_entry_from_path(&xdg::config_dir().join("registry.json"), scene_id)
+    remove_scene_entry_from_path(&xdg::registry_path(), scene_id)
 }
 
 fn remove_scene_entry_from_path(
     path: &Path,
     scene_id: &str,
 ) -> Result<bool, RegistryMutationError> {
-    let mut registry = read_registry_from_path(path)?;
-    let removed = registry.scenes.remove(scene_id).is_some();
-    if removed {
-        write_registry_to_path(path, &registry)
-            .map_err(|source| RegistryMutationError::Write { source })?;
-    }
-    Ok(removed)
+    mutate_registry(path, |registry| registry.scenes.remove(scene_id).is_some())
 }
 
 /// Pretty-print registry JSON to an explicit path, creating parents as needed.

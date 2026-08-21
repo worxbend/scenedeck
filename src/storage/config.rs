@@ -199,7 +199,7 @@ impl ConfigStartupNotice {
 }
 
 pub fn read_config() -> LoadedConfig {
-    read_config_from_path(&xdg::config_dir().join("config.json"))
+    read_config_from_path(&xdg::config_path())
 }
 
 pub fn read_config_from_path(path: &Path) -> LoadedConfig {
@@ -333,7 +333,7 @@ fn migrate(config: &mut AppConfig) -> bool {
 }
 
 pub fn write_config(config: &AppConfig) -> io::Result<()> {
-    write_config_to_path(&xdg::config_dir().join("config.json"), config)
+    write_config_to_path(&xdg::config_path(), config)
 }
 
 pub fn write_config_to_path(path: &Path, config: &AppConfig) -> io::Result<()> {
