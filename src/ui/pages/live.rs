@@ -12,7 +12,7 @@ use i18n_embed_fl::fl;
 
 use crate::controller::command::AppCommand;
 use crate::domain::hotkey::{slot_badge, SceneHotkeyConfig};
-use crate::domain::output::OutputStatus;
+use crate::domain::output::{OutputKind, OutputStatus};
 use crate::domain::scene::{SceneId, SceneInventory};
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::config::OutputConfig;
@@ -28,12 +28,6 @@ const PROGRAM_ICON: &str = "nf-md-television-play-symbolic";
 const SCENES_ICON: &str = "nf-md-view-grid-symbolic";
 /// Icon beside the Audio section heading.
 const AUDIO_ICON: &str = "nf-md-tune-vertical-symbolic";
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum OutputKind {
-    Stream,
-    Recording,
-}
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum OutputAction {
@@ -266,8 +260,8 @@ fn output_toggle_command(kind: OutputKind, active: bool) -> AppCommand {
     match (kind, active) {
         (OutputKind::Stream, false) => AppCommand::StartStreaming,
         (OutputKind::Stream, true) => AppCommand::StopStreaming,
-        (OutputKind::Recording, false) => AppCommand::StartRecording,
-        (OutputKind::Recording, true) => AppCommand::StopRecording,
+        (OutputKind::Record, false) => AppCommand::StartRecording,
+        (OutputKind::Record, true) => AppCommand::StopRecording,
     }
 }
 
@@ -285,7 +279,7 @@ fn handle_output_toggle(button: &Button, nav: &NavigationContext, kind: OutputKi
         let state = nav.state.borrow();
         let active = match kind {
             OutputKind::Stream => state.stream_status.active,
-            OutputKind::Recording => state.record_status.active,
+            OutputKind::Record => state.record_status.active,
         };
         (
             active,
@@ -308,7 +302,7 @@ pub(crate) fn handle_stream_output_toggle(button: &Button, nav: &NavigationConte
 }
 
 pub(crate) fn handle_record_output_toggle(button: &Button, nav: &NavigationContext) {
-    handle_output_toggle(button, nav, OutputKind::Recording);
+    handle_output_toggle(button, nav, OutputKind::Record);
 }
 
 pub(crate) fn show_live_view(handle: &LivePageHandle) {
@@ -398,7 +392,13 @@ fn set_output_button(button: &Button, status: &OutputStatus, start_label: &str, 
     }
 }
 
-pub(crate) fn output_label(kind: &str, status: &OutputStatus, elapsed: Option<&str>) -> String {
+pub(crate) fn output_label(
+    kind: OutputKind,
+    status: &OutputStatus,
+    elapsed: Option<&str>,
+) -> String {
+    let kind = kind.label();
+    let kind = kind.as_str();
     match elapsed {
         Some(elapsed) if status.active => fl!(
             LANGUAGE_LOADER,
@@ -420,8 +420,8 @@ fn requires_output_confirmation(kind: OutputKind, active: bool, config: &OutputC
     match (kind, active) {
         (OutputKind::Stream, false) => config.confirm_start_stream,
         (OutputKind::Stream, true) => config.confirm_stop_stream,
-        (OutputKind::Recording, false) => config.confirm_start_recording,
-        (OutputKind::Recording, true) => config.confirm_stop_recording,
+        (OutputKind::Record, false) => config.confirm_start_recording,
+        (OutputKind::Record, true) => config.confirm_stop_recording,
     }
 }
 
@@ -447,13 +447,13 @@ fn output_confirmation_dialog(kind: OutputKind, action: OutputAction) -> OutputC
             confirm_label: fl!(LANGUAGE_LOADER, "live-stop-stream-label"),
             appearance: OutputConfirmationAppearance::Destructive,
         },
-        (OutputKind::Recording, OutputAction::Start) => OutputConfirmationDialog {
+        (OutputKind::Record, OutputAction::Start) => OutputConfirmationDialog {
             heading: fl!(LANGUAGE_LOADER, "live-start-recording-confirm-heading"),
             body: fl!(LANGUAGE_LOADER, "live-start-recording-confirm-body"),
             confirm_label: fl!(LANGUAGE_LOADER, "live-start-recording-confirm-label"),
             appearance: OutputConfirmationAppearance::Suggested,
         },
-        (OutputKind::Recording, OutputAction::Stop) => OutputConfirmationDialog {
+        (OutputKind::Record, OutputAction::Stop) => OutputConfirmationDialog {
             heading: fl!(LANGUAGE_LOADER, "live-stop-recording-confirm-heading"),
             body: fl!(LANGUAGE_LOADER, "live-stop-recording-confirm-body"),
             confirm_label: fl!(LANGUAGE_LOADER, "live-stop-recording-confirm-label"),
@@ -809,12 +809,12 @@ mod tests {
             &config
         ));
         assert!(!requires_output_confirmation(
-            OutputKind::Recording,
+            OutputKind::Record,
             false,
             &config
         ));
         assert!(requires_output_confirmation(
-            OutputKind::Recording,
+            OutputKind::Record,
             true,
             &config
         ));
@@ -834,7 +834,7 @@ mod tests {
             &config
         ));
         assert!(!requires_output_confirmation(
-            OutputKind::Recording,
+            OutputKind::Record,
             true,
             &config
         ));
@@ -854,7 +854,7 @@ mod tests {
             &config
         ));
         assert!(requires_output_confirmation(
-            OutputKind::Recording,
+            OutputKind::Record,
             false,
             &config
         ));
@@ -889,7 +889,7 @@ mod tests {
     #[test]
     fn recording_start_confirmation_metadata_is_suggested() {
         assert_eq!(
-            output_confirmation_dialog(OutputKind::Recording, OutputAction::Start),
+            output_confirmation_dialog(OutputKind::Record, OutputAction::Start),
             OutputConfirmationDialog {
                 heading: "Start Recording?".to_string(),
                 body: "OBS will start a new recording.".to_string(),
@@ -902,7 +902,7 @@ mod tests {
     #[test]
     fn recording_stop_confirmation_metadata_is_destructive() {
         assert_eq!(
-            output_confirmation_dialog(OutputKind::Recording, OutputAction::Stop),
+            output_confirmation_dialog(OutputKind::Record, OutputAction::Stop),
             OutputConfirmationDialog {
                 heading: "Stop Recording?".to_string(),
                 body: "OBS will stop the current recording.".to_string(),
@@ -922,7 +922,7 @@ mod tests {
     fn output_label_shows_elapsed_time_only_while_active() {
         assert_eq!(
             output_label(
-                "Stream",
+                OutputKind::Stream,
                 &output_status(true, OutputRunState::Active),
                 Some("00:01:23")
             ),
@@ -930,14 +930,18 @@ mod tests {
         );
         assert_eq!(
             output_label(
-                "Record",
+                OutputKind::Record,
                 &output_status(false, OutputRunState::Inactive),
                 Some("00:01:23")
             ),
             "Record: Inactive"
         );
         assert_eq!(
-            output_label("Stream", &output_status(true, OutputRunState::Active), None),
+            output_label(
+                OutputKind::Stream,
+                &output_status(true, OutputRunState::Active),
+                None
+            ),
             "Stream: Active"
         );
     }

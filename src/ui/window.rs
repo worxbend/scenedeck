@@ -32,7 +32,7 @@ use crate::controller::state::{
 use crate::domain::appearance::ThemeMode;
 use crate::domain::hotkey::{KeyStroke, KeySymbol, Modifiers, SceneHotkeyConfig};
 use crate::domain::obs::ObsNamedList;
-use crate::domain::output::{OutputRunState, OutputStatus};
+use crate::domain::output::{OutputKind, OutputRunState, OutputStatus};
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::hotkey_service::{HotkeyOutcome, SceneHotkeyResolver};
 use crate::ui::navigation::NavigationContext;
@@ -897,27 +897,6 @@ fn show_no_session_ui(
     );
 }
 
-/// Which of the two OBS outputs an event is about.
-///
-/// Stream and record are handled identically apart from the state fields they
-/// read, the status-bar slot they write, and the word in their label, so the
-/// difference is carried as a value instead of being copied into eight
-/// near-identical match arms.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum OutputKind {
-    Stream,
-    Record,
-}
-
-impl OutputKind {
-    fn label(self) -> String {
-        match self {
-            Self::Stream => fl!(LANGUAGE_LOADER, "window-output-kind-stream"),
-            Self::Record => fl!(LANGUAGE_LOADER, "window-output-kind-record"),
-        }
-    }
-}
-
 /// Redraw one output's status-bar slot and the indicators that follow it.
 ///
 /// Every output event ends this way: whatever the event changed, the status
@@ -939,7 +918,7 @@ fn refresh_output_status_bar(nav: &NavigationContext, ui: &EventUiContext, kind:
         }
     };
 
-    let label = output_label(&kind.label(), &status, elapsed.as_deref());
+    let label = output_label(kind, &status, elapsed.as_deref());
     match kind {
         OutputKind::Stream => status_bar::set_stream(&ui.status_bar, &label, status.active),
         OutputKind::Record => status_bar::set_record(&ui.status_bar, &label, status.active),

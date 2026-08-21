@@ -4,6 +4,39 @@ use i18n_embed_fl::fl;
 
 use crate::infra::i18n::LANGUAGE_LOADER;
 
+/// Which of the two OBS outputs a status, command, or label is about.
+///
+/// Stream and record are handled identically nearly everywhere apart from the
+/// state field they read, the status-bar slot they write, and the word in
+/// their label, so the difference travels as a value rather than being copied
+/// into pairs of near-identical functions.
+///
+/// This lives in the domain because both the Live page and the main window
+/// need it. They previously each declared their own version — one spelling the
+/// second variant `Record`, the other `Recording` — and because neither could
+/// name the other's type, the label had to be passed between them as a bare
+/// string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputKind {
+    /// The stream output.
+    Stream,
+    /// The recording output.
+    Record,
+}
+
+impl OutputKind {
+    /// Both outputs, in the order the interface presents them.
+    pub const ALL: [Self; 2] = [Self::Stream, Self::Record];
+
+    /// User-facing name of this output.
+    pub fn label(self) -> String {
+        match self {
+            Self::Stream => fl!(LANGUAGE_LOADER, "window-output-kind-stream"),
+            Self::Record => fl!(LANGUAGE_LOADER, "window-output-kind-record"),
+        }
+    }
+}
+
 /// OBS output lifecycle state normalized for UI display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputRunState {
