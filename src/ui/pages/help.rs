@@ -24,7 +24,33 @@ struct TopicLink {
     page: Page,
 }
 
-fn link(label: String, page: Page) -> TopicLink {
+/// Whether a topic starts open.
+///
+/// A named value rather than a bare `bool`, because `true` at a call site does
+/// not say what it is true about.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TopicState {
+    /// Reserved for the topics a new user should not have to go looking for.
+    Expanded,
+    Collapsed,
+}
+
+/// A link to `page`, labelled for that page.
+///
+/// The label is derived from the page rather than passed alongside it, so a
+/// button cannot end up saying "Open Settings" while going to Inventory.
+fn open(page: Page) -> TopicLink {
+    let label = match page {
+        Page::Live => fl!(LANGUAGE_LOADER, "help-open-live"),
+        Page::Mixer => fl!(LANGUAGE_LOADER, "help-open-mixer"),
+        Page::Graph => fl!(LANGUAGE_LOADER, "help-open-graph"),
+        Page::Inventory => fl!(LANGUAGE_LOADER, "help-open-inventory"),
+        Page::Doctor => fl!(LANGUAGE_LOADER, "help-open-doctor"),
+        Page::Settings => fl!(LANGUAGE_LOADER, "help-open-settings"),
+        Page::Stats => fl!(LANGUAGE_LOADER, "help-open-stats"),
+        // The guide does not link to itself.
+        Page::Help => fl!(LANGUAGE_LOADER, "page-help"),
+    };
     TopicLink { label, page }
 }
 
@@ -110,11 +136,8 @@ fn getting_started_group(nav: &NavigationContext) -> PreferencesGroup {
         fl!(LANGUAGE_LOADER, "help-quickstart-title"),
         fl!(LANGUAGE_LOADER, "help-quickstart-subtitle"),
         fl!(LANGUAGE_LOADER, "help-quickstart-body"),
-        vec![
-            link(fl!(LANGUAGE_LOADER, "help-open-settings"), Page::Settings),
-            link(fl!(LANGUAGE_LOADER, "help-open-inventory"), Page::Inventory),
-        ],
-        true,
+        vec![open(Page::Settings), open(Page::Inventory)],
+        TopicState::Expanded,
     ));
     group.add(&topic(
         nav,
@@ -123,7 +146,7 @@ fn getting_started_group(nav: &NavigationContext) -> PreferencesGroup {
         fl!(LANGUAGE_LOADER, "help-concepts-subtitle"),
         fl!(LANGUAGE_LOADER, "help-concepts-body"),
         vec![],
-        false,
+        TopicState::Collapsed,
     ));
 
     group
@@ -141,11 +164,8 @@ fn connecting_group(nav: &NavigationContext) -> PreferencesGroup {
         fl!(LANGUAGE_LOADER, "help-connect-local-title"),
         fl!(LANGUAGE_LOADER, "help-connect-local-subtitle"),
         fl!(LANGUAGE_LOADER, "help-connect-local-body"),
-        vec![link(
-            fl!(LANGUAGE_LOADER, "help-open-settings"),
-            Page::Settings,
-        )],
-        false,
+        vec![open(Page::Settings)],
+        TopicState::Collapsed,
     ));
     group.add(&topic(
         nav,
@@ -153,11 +173,8 @@ fn connecting_group(nav: &NavigationContext) -> PreferencesGroup {
         fl!(LANGUAGE_LOADER, "help-connect-remote-title"),
         fl!(LANGUAGE_LOADER, "help-connect-remote-subtitle"),
         fl!(LANGUAGE_LOADER, "help-connect-remote-body"),
-        vec![link(
-            fl!(LANGUAGE_LOADER, "help-open-settings"),
-            Page::Settings,
-        )],
-        false,
+        vec![open(Page::Settings)],
+        TopicState::Collapsed,
     ));
     group.add(&topic(
         nav,
@@ -165,11 +182,8 @@ fn connecting_group(nav: &NavigationContext) -> PreferencesGroup {
         fl!(LANGUAGE_LOADER, "help-connect-trouble-title"),
         fl!(LANGUAGE_LOADER, "help-connect-trouble-subtitle"),
         fl!(LANGUAGE_LOADER, "help-connect-trouble-body"),
-        vec![link(
-            fl!(LANGUAGE_LOADER, "help-open-settings"),
-            Page::Settings,
-        )],
-        false,
+        vec![open(Page::Settings)],
+        TopicState::Collapsed,
     ));
 
     group
@@ -187,11 +201,8 @@ fn scenes_group(nav: &NavigationContext) -> PreferencesGroup {
         fl!(LANGUAGE_LOADER, "help-scenes-hide-title"),
         fl!(LANGUAGE_LOADER, "help-scenes-hide-subtitle"),
         fl!(LANGUAGE_LOADER, "help-scenes-hide-body"),
-        vec![
-            link(fl!(LANGUAGE_LOADER, "help-open-inventory"), Page::Inventory),
-            link(fl!(LANGUAGE_LOADER, "help-open-live"), Page::Live),
-        ],
-        true,
+        vec![open(Page::Inventory), open(Page::Live)],
+        TopicState::Expanded,
     ));
     group.add(&topic(
         nav,
@@ -199,11 +210,8 @@ fn scenes_group(nav: &NavigationContext) -> PreferencesGroup {
         fl!(LANGUAGE_LOADER, "help-scenes-order-title"),
         fl!(LANGUAGE_LOADER, "help-scenes-order-subtitle"),
         fl!(LANGUAGE_LOADER, "help-scenes-order-body"),
-        vec![link(
-            fl!(LANGUAGE_LOADER, "help-open-inventory"),
-            Page::Inventory,
-        )],
-        false,
+        vec![open(Page::Inventory)],
+        TopicState::Collapsed,
     ));
     group.add(&topic(
         nav,
@@ -211,11 +219,8 @@ fn scenes_group(nav: &NavigationContext) -> PreferencesGroup {
         fl!(LANGUAGE_LOADER, "help-scenes-registry-title"),
         fl!(LANGUAGE_LOADER, "help-scenes-registry-subtitle"),
         fl!(LANGUAGE_LOADER, "help-scenes-registry-body"),
-        vec![link(
-            fl!(LANGUAGE_LOADER, "help-open-inventory"),
-            Page::Inventory,
-        )],
-        false,
+        vec![open(Page::Inventory)],
+        TopicState::Collapsed,
     ));
 
     group
@@ -233,8 +238,8 @@ fn operating_group(nav: &NavigationContext) -> PreferencesGroup {
         fl!(LANGUAGE_LOADER, "help-live-title"),
         fl!(LANGUAGE_LOADER, "help-live-subtitle"),
         fl!(LANGUAGE_LOADER, "help-live-body"),
-        vec![link(fl!(LANGUAGE_LOADER, "help-open-live"), Page::Live)],
-        false,
+        vec![open(Page::Live)],
+        TopicState::Collapsed,
     ));
     group.add(&topic(
         nav,
@@ -242,11 +247,8 @@ fn operating_group(nav: &NavigationContext) -> PreferencesGroup {
         fl!(LANGUAGE_LOADER, "help-hotkeys-title"),
         fl!(LANGUAGE_LOADER, "help-hotkeys-subtitle"),
         fl!(LANGUAGE_LOADER, "help-hotkeys-body"),
-        vec![link(
-            fl!(LANGUAGE_LOADER, "help-open-settings"),
-            Page::Settings,
-        )],
-        false,
+        vec![open(Page::Settings)],
+        TopicState::Collapsed,
     ));
     group.add(&topic(
         nav,
@@ -254,8 +256,8 @@ fn operating_group(nav: &NavigationContext) -> PreferencesGroup {
         fl!(LANGUAGE_LOADER, "help-audio-title"),
         fl!(LANGUAGE_LOADER, "help-audio-subtitle"),
         fl!(LANGUAGE_LOADER, "help-audio-body"),
-        vec![link(fl!(LANGUAGE_LOADER, "help-open-mixer"), Page::Mixer)],
-        false,
+        vec![open(Page::Mixer)],
+        TopicState::Collapsed,
     ));
     group.add(&topic(
         nav,
@@ -263,11 +265,8 @@ fn operating_group(nav: &NavigationContext) -> PreferencesGroup {
         fl!(LANGUAGE_LOADER, "help-outputs-title"),
         fl!(LANGUAGE_LOADER, "help-outputs-subtitle"),
         fl!(LANGUAGE_LOADER, "help-outputs-body"),
-        vec![link(
-            fl!(LANGUAGE_LOADER, "help-open-settings"),
-            Page::Settings,
-        )],
-        false,
+        vec![open(Page::Settings)],
+        TopicState::Collapsed,
     ));
 
     group
@@ -285,8 +284,8 @@ fn inspecting_group(nav: &NavigationContext) -> PreferencesGroup {
         fl!(LANGUAGE_LOADER, "help-doctor-title"),
         fl!(LANGUAGE_LOADER, "help-doctor-subtitle"),
         fl!(LANGUAGE_LOADER, "help-doctor-body"),
-        vec![link(fl!(LANGUAGE_LOADER, "help-open-doctor"), Page::Doctor)],
-        false,
+        vec![open(Page::Doctor)],
+        TopicState::Collapsed,
     ));
     group.add(&topic(
         nav,
@@ -294,8 +293,8 @@ fn inspecting_group(nav: &NavigationContext) -> PreferencesGroup {
         fl!(LANGUAGE_LOADER, "help-graph-title"),
         fl!(LANGUAGE_LOADER, "help-graph-subtitle"),
         fl!(LANGUAGE_LOADER, "help-graph-body"),
-        vec![link(fl!(LANGUAGE_LOADER, "help-open-graph"), Page::Graph)],
-        false,
+        vec![open(Page::Graph)],
+        TopicState::Collapsed,
     ));
     group.add(&topic(
         nav,
@@ -303,8 +302,8 @@ fn inspecting_group(nav: &NavigationContext) -> PreferencesGroup {
         fl!(LANGUAGE_LOADER, "help-stats-title"),
         fl!(LANGUAGE_LOADER, "help-stats-subtitle"),
         fl!(LANGUAGE_LOADER, "help-stats-body"),
-        vec![link(fl!(LANGUAGE_LOADER, "help-open-stats"), Page::Stats)],
-        false,
+        vec![open(Page::Stats)],
+        TopicState::Collapsed,
     ));
 
     group
@@ -322,11 +321,8 @@ fn personalising_group(nav: &NavigationContext) -> PreferencesGroup {
         fl!(LANGUAGE_LOADER, "help-appearance-title"),
         fl!(LANGUAGE_LOADER, "help-appearance-subtitle"),
         fl!(LANGUAGE_LOADER, "help-appearance-body"),
-        vec![link(
-            fl!(LANGUAGE_LOADER, "help-open-settings"),
-            Page::Settings,
-        )],
-        false,
+        vec![open(Page::Settings)],
+        TopicState::Collapsed,
     ));
     group.add(&topic(
         nav,
@@ -335,7 +331,7 @@ fn personalising_group(nav: &NavigationContext) -> PreferencesGroup {
         fl!(LANGUAGE_LOADER, "help-files-subtitle"),
         fl!(LANGUAGE_LOADER, "help-files-body"),
         vec![],
-        false,
+        TopicState::Collapsed,
     ));
     group.add(&topic(
         nav,
@@ -344,7 +340,7 @@ fn personalising_group(nav: &NavigationContext) -> PreferencesGroup {
         fl!(LANGUAGE_LOADER, "help-shortcuts-subtitle"),
         fl!(LANGUAGE_LOADER, "help-shortcuts-body"),
         vec![],
-        false,
+        TopicState::Collapsed,
     ));
 
     group
@@ -362,8 +358,6 @@ fn titled_group(title: String, description: String) -> PreferencesGroup {
 /// One expandable topic: an icon, a title, a one-line summary, and a body that
 /// only appears once the row is opened.
 ///
-/// `expanded` opens the row on first show — reserved for the two topics a new
-/// user should not have to go looking for.
 fn topic(
     nav: &NavigationContext,
     icon_name: &str,
@@ -371,12 +365,12 @@ fn topic(
     subtitle: String,
     body: String,
     links: Vec<TopicLink>,
-    expanded: bool,
+    state: TopicState,
 ) -> ExpanderRow {
     let row = ExpanderRow::builder()
         .title(title)
         .subtitle(subtitle)
-        .expanded(expanded)
+        .expanded(state == TopicState::Expanded)
         .build();
     row.add_css_class("help-topic");
 
