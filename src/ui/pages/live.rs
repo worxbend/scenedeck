@@ -64,54 +64,31 @@ pub(crate) struct LivePageHandle {
     pub(crate) audio_cards: std::cell::RefCell<Vec<audio_card::AudioCardHandle>>,
 }
 
-pub(crate) fn build(_nav: NavigationContext) -> LivePageHandle {
-    let root = Stack::builder()
-        .vexpand(true)
+// ── Live panes ────────────────────────────────────────────────────────────────
+
+/// Wrap a pane's contents in the scroller both panes use.
+///
+/// Horizontal scrolling is off on purpose: the flow boxes reflow to the width
+/// they are given, so a horizontal scrollbar would mean the layout had failed
+/// rather than that there was more to see.
+fn pane_scroll(child: &impl IsA<gtk4::Widget>, vexpand: bool, min_height: i32) -> ScrolledWindow {
+    let scroll = ScrolledWindow::builder()
+        .vexpand(vexpand)
         .hexpand(true)
-        .transition_type(StackTransitionType::Crossfade)
+        .min_content_height(min_height)
+        .hscrollbar_policy(PolicyType::Never)
+        .vscrollbar_policy(PolicyType::Automatic)
+        .child(child)
         .build();
-    root.add_css_class("app-page");
-    root.add_css_class("live-page");
+    scroll.add_css_class("live-pane-scroll");
+    scroll
+}
 
-    let disconnected = build_disconnected_view();
-    root.add_named(&disconnected, Some("disconnected"));
-
-    // ── Outer layout ─────────────────────────────────────────────────────────
-    let page = GtkBox::builder()
-        .orientation(Orientation::Vertical)
-        .spacing(20)
-        .margin_top(24)
-        .margin_bottom(24)
-        .margin_start(24)
-        .margin_end(24)
-        .vexpand(true)
-        .hexpand(true)
-        .build();
-    root.add_named(&page, Some("live"));
-    root.set_visible_child_name("disconnected");
-
-    // ── Program scene label ───────────────────────────────────────────────────
-    let current_label = Label::builder()
-        .label(fl!(LANGUAGE_LOADER, "live-current-scene-placeholder"))
-        .xalign(0.0)
-        .build();
-    current_label.add_css_class("heading");
-    page.append(&heading_with_icon(PROGRAM_ICON, &current_label));
-
-    // ── Resizeable live panes ─────────────────────────────────────────────────
-    let live_split = Paned::builder()
-        .orientation(Orientation::Vertical)
-        .vexpand(true)
-        .hexpand(true)
-        .wide_handle(true)
-        .build();
-    live_split.set_resize_start_child(false);
-    live_split.set_resize_end_child(true);
-    live_split.set_shrink_start_child(true);
-    live_split.set_shrink_end_child(false);
-    page.append(&live_split);
-
-    // ── Scene cards ───────────────────────────────────────────────────────────
+/// The scene-card half of the Live page.
+///
+/// Returns the pane, the flow box the cards go into, and the hint label that
+/// names the current shortcut binding.
+fn build_scenes_pane() -> (GtkBox, FlowBox, Label) {
     let scenes_pane = GtkBox::builder()
         .orientation(Orientation::Vertical)
         .spacing(4)
@@ -166,19 +143,15 @@ pub(crate) fn build(_nav: NavigationContext) -> LivePageHandle {
         &fl!(LANGUAGE_LOADER, "live-scenes-connect-hint"),
     );
 
-    let scenes_scroll = ScrolledWindow::builder()
-        .vexpand(false)
-        .hexpand(true)
-        .min_content_height(72)
-        .hscrollbar_policy(PolicyType::Never)
-        .vscrollbar_policy(PolicyType::Automatic)
-        .child(&scenes_box)
-        .build();
-    scenes_scroll.add_css_class("live-pane-scroll");
-    scenes_pane.append(&scenes_scroll);
-    live_split.set_start_child(Some(&scenes_pane));
+    scenes_pane.append(&pane_scroll(&scenes_box, false, 72));
 
-    // ── Audio mixer ───────────────────────────────────────────────────────────
+    (scenes_pane, scenes_box, hotkey_hint)
+}
+
+/// The audio half of the Live page.
+///
+/// Returns the pane and the flow box the audio cards go into.
+fn build_audio_pane() -> (GtkBox, FlowBox) {
     let audio_pane = GtkBox::builder()
         .orientation(Orientation::Vertical)
         .spacing(8)
@@ -207,16 +180,62 @@ pub(crate) fn build(_nav: NavigationContext) -> LivePageHandle {
         .max_children_per_line(12)
         .build();
 
-    let audio_scroll = ScrolledWindow::builder()
+    audio_pane.append(&pane_scroll(&audio_box, true, 232));
+
+    (audio_pane, audio_box)
+}
+
+pub(crate) fn build(_nav: NavigationContext) -> LivePageHandle {
+    let root = Stack::builder()
         .vexpand(true)
         .hexpand(true)
-        .min_content_height(232)
-        .hscrollbar_policy(PolicyType::Never)
-        .vscrollbar_policy(PolicyType::Automatic)
-        .child(&audio_box)
+        .transition_type(StackTransitionType::Crossfade)
         .build();
-    audio_scroll.add_css_class("live-pane-scroll");
-    audio_pane.append(&audio_scroll);
+    root.add_css_class("app-page");
+    root.add_css_class("live-page");
+
+    let disconnected = build_disconnected_view();
+    root.add_named(&disconnected, Some("disconnected"));
+
+    // ── Outer layout ─────────────────────────────────────────────────────────
+    let page = GtkBox::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(20)
+        .margin_top(24)
+        .margin_bottom(24)
+        .margin_start(24)
+        .margin_end(24)
+        .vexpand(true)
+        .hexpand(true)
+        .build();
+    root.add_named(&page, Some("live"));
+    root.set_visible_child_name("disconnected");
+
+    // ── Program scene label ───────────────────────────────────────────────────
+    let current_label = Label::builder()
+        .label(fl!(LANGUAGE_LOADER, "live-current-scene-placeholder"))
+        .xalign(0.0)
+        .build();
+    current_label.add_css_class("heading");
+    page.append(&heading_with_icon(PROGRAM_ICON, &current_label));
+
+    // ── Resizeable live panes ─────────────────────────────────────────────────
+    let live_split = Paned::builder()
+        .orientation(Orientation::Vertical)
+        .vexpand(true)
+        .hexpand(true)
+        .wide_handle(true)
+        .build();
+    live_split.set_resize_start_child(false);
+    live_split.set_resize_end_child(true);
+    live_split.set_shrink_start_child(true);
+    live_split.set_shrink_end_child(false);
+    page.append(&live_split);
+
+    let (scenes_pane, scenes_box, hotkey_hint) = build_scenes_pane();
+    live_split.set_start_child(Some(&scenes_pane));
+
+    let (audio_pane, audio_box) = build_audio_pane();
     live_split.set_end_child(Some(&audio_pane));
 
     LivePageHandle {
