@@ -89,51 +89,7 @@ pub fn build_main_window(
     content_stack.add_css_class("scenedeck-content-stack");
 
     let nav = NavigationContext::new(state.clone(), content_stack.clone(), controller);
-
-    // Build pages — live returns a handle; others return (widget, refresh_fn).
-    let live_handle = Rc::new(crate::ui::pages::live::build(nav.clone()));
-    let (stats_widget, stats_refresh) = crate::ui::pages::stats::build(nav.clone());
-    let (mixer_widget, mixer_refresh) = crate::ui::pages::mixer::build(nav.clone());
-    let (graph_widget, graph_refresh) = crate::ui::pages::graph::build(nav.clone());
-    let (inventory_widget, inventory_refresh) = crate::ui::pages::inventory::build(nav.clone());
-    let (doctor_widget, doctor_refresh) = crate::ui::pages::doctor::build(nav.clone());
-    let (settings_widget, settings_refresh) = crate::ui::pages::settings::build(nav.clone());
-    let (help_widget, help_refresh) = crate::ui::pages::help::build(nav.clone());
-
-    content_stack.add_titled(
-        &live_handle.root,
-        Some(Page::Live.id()),
-        &Page::Live.title(),
-    );
-    content_stack.add_titled(&mixer_widget, Some(Page::Mixer.id()), &Page::Mixer.title());
-    content_stack.add_titled(&graph_widget, Some(Page::Graph.id()), &Page::Graph.title());
-    content_stack.add_titled(
-        &inventory_widget,
-        Some(Page::Inventory.id()),
-        &Page::Inventory.title(),
-    );
-    content_stack.add_titled(
-        &doctor_widget,
-        Some(Page::Doctor.id()),
-        &Page::Doctor.title(),
-    );
-    content_stack.add_titled(
-        &settings_widget,
-        Some(Page::Settings.id()),
-        &Page::Settings.title(),
-    );
-    content_stack.add_titled(&help_widget, Some(Page::Help.id()), &Page::Help.title());
-    content_stack.add_titled(&stats_widget, Some(Page::Stats.id()), &Page::Stats.title());
-
-    let refreshers = PageRefreshers {
-        stats: stats_refresh,
-        mixer: mixer_refresh,
-        graph: graph_refresh,
-        inventory: inventory_refresh,
-        doctor: doctor_refresh,
-        settings: settings_refresh,
-        help: help_refresh,
-    };
+    let (live_handle, refreshers) = add_pages(&content_stack, &nav);
 
     let current_page = state.borrow().current_page;
     content_stack.set_visible_child_name(current_page.id());
@@ -177,112 +133,21 @@ pub fn build_main_window(
         status_bar: status_bar.clone(),
     };
 
-    // ── Event polling ─────────────────────────────────────────────────────────
-    // 50 ms gives responsive-enough UI updates without burning CPU.
-    glib::timeout_add_local(Duration::from_millis(50), {
-        let nav = nav.clone();
-        let event_ui = event_ui.clone();
-        move || {
-            loop {
-                match event_rx.try_recv() {
-                    Ok(event) => apply_event(&nav, event, &event_ui),
-                    Err(mpsc::TryRecvError::Empty) => break,
-                    Err(mpsc::TryRecvError::Disconnected) => {
-                        return glib::ControlFlow::Break;
-                    }
-                }
-            }
-            glib::ControlFlow::Continue
-        }
-    });
-
-    glib::timeout_add_local(Duration::from_secs(1), {
-        let state = state.clone();
-        let status_bar = status_bar.clone();
-        move || {
-            let state = state.borrow();
-            status_bar::set_stream(
-                &status_bar,
-                &fl!(
-                    LANGUAGE_LOADER,
-                    "window-stream-status-line",
-                    state = state.stream_status.state.label(),
-                    elapsed = elapsed_suffix(state.stream_active_since)
-                ),
-                state.stream_status.active,
-            );
-            status_bar::set_record(
-                &status_bar,
-                &fl!(
-                    LANGUAGE_LOADER,
-                    "window-record-status-line",
-                    state = state.record_status.state.label(),
-                    elapsed = elapsed_suffix(state.record_active_since)
-                ),
-                state.record_status.active,
-            );
-            glib::ControlFlow::Continue
-        }
-    });
+    install_event_polling(&nav, event_rx, &event_ui);
+    install_output_clock(&state, &status_bar);
 
     // OBS performance stats are not polled from here: the session task owns a
     // poll loop that runs for as long as the connection is up, so the status
     // bar and the Stats page history stay current regardless of the open page
     // and regardless of whether the GTK timer fires.
 
-    // ── Content header bar ────────────────────────────────────────────────────
-    let content_header = adw::HeaderBar::new();
-    content_header.add_css_class("flat");
-    content_header.add_css_class("scenedeck-content-header");
-
-    let stream_live_icon = Image::from_icon_name("media-record-symbolic");
-    stream_live_icon.add_css_class("scenedeck-top-streaming-icon");
-    stream_live_icon.set_tooltip_text(Some(&fl!(LANGUAGE_LOADER, "window-stream-live-tooltip")));
-    stream_live_icon.set_visible(false);
-
-    let about_btn = gtk4::Button::builder()
-        .icon_name("help-about-symbolic")
-        .tooltip_text(fl!(LANGUAGE_LOADER, "window-about-tooltip"))
-        .build();
-    about_btn.connect_clicked({
-        let window = window.clone();
-        move |_| show_about(&window)
-    });
-    content_header.pack_end(&about_btn);
-
-    let help_btn = gtk4::Button::builder()
-        .icon_name("help-browser-symbolic")
-        .tooltip_text(fl!(LANGUAGE_LOADER, "window-help-tooltip"))
-        .build();
-    help_btn.connect_clicked({
-        let nav = nav.clone();
-        move |_| nav.switch_to_page(Page::Help)
-    });
-    content_header.pack_end(&help_btn);
-
-    let refresh_btn = gtk4::Button::builder()
-        .icon_name("view-refresh-symbolic")
-        .tooltip_text(fl!(LANGUAGE_LOADER, "window-refresh-tooltip"))
-        .build();
-    refresh_btn.connect_clicked({
-        let nav = nav.clone();
-        let refreshers = refreshers.clone();
-        move |_| {
-            // Kick off a data re-fetch from OBS (no-op if disconnected).
-            nav.dispatch(AppCommand::RefreshData);
-            // Also immediately rebuild the current page from AppState.
-            let page = nav.state.borrow().current_page;
-            refreshers.call(page);
-        }
-    });
-    content_header.pack_start(&stream_live_icon);
-    content_header.pack_start(&refresh_btn);
-    content_header.pack_start(&header_selectors.scene_collections.root);
-    content_header.pack_start(&header_selectors.profiles.root);
-    *streaming_chrome.borrow_mut() = Some(StreamingChrome {
-        header: content_header.clone(),
-        top_icon: stream_live_icon,
-    });
+    let content_header = build_content_header(
+        &window,
+        &nav,
+        &refreshers,
+        &header_selectors,
+        &streaming_chrome,
+    );
 
     let content_toolbar = adw::ToolbarView::new();
     content_toolbar.add_css_class("scenedeck-content-toolbar");
@@ -318,6 +183,195 @@ pub fn build_main_window(
     maybe_show_welcome_dialog(&window, &nav);
 
     window
+}
+
+// ── Window assembly phases ────────────────────────────────────────────────────
+
+/// Build every page and add it to the content stack in sidebar order.
+///
+/// Returns the Live page's handle, which the event loop updates directly, and
+/// the refresh callbacks for the pages that rebuild themselves from
+/// `AppState`.
+fn add_pages(
+    content_stack: &Stack,
+    nav: &NavigationContext,
+) -> (Rc<LivePageHandle>, PageRefreshers) {
+    // Live returns a handle; the others return (widget, refresh_fn).
+    let live_handle = Rc::new(crate::ui::pages::live::build(nav.clone()));
+    let (stats_widget, stats_refresh) = crate::ui::pages::stats::build(nav.clone());
+    let (mixer_widget, mixer_refresh) = crate::ui::pages::mixer::build(nav.clone());
+    let (graph_widget, graph_refresh) = crate::ui::pages::graph::build(nav.clone());
+    let (inventory_widget, inventory_refresh) = crate::ui::pages::inventory::build(nav.clone());
+    let (doctor_widget, doctor_refresh) = crate::ui::pages::doctor::build(nav.clone());
+    let (settings_widget, settings_refresh) = crate::ui::pages::settings::build(nav.clone());
+    let (help_widget, help_refresh) = crate::ui::pages::help::build(nav.clone());
+
+    for (page, widget) in [
+        (
+            Page::Live,
+            live_handle.root.clone().upcast::<gtk4::Widget>(),
+        ),
+        (Page::Mixer, mixer_widget),
+        (Page::Graph, graph_widget),
+        (Page::Inventory, inventory_widget),
+        (Page::Doctor, doctor_widget),
+        (Page::Settings, settings_widget),
+        (Page::Help, help_widget),
+        (Page::Stats, stats_widget),
+    ] {
+        content_stack.add_titled(&widget, Some(page.id()), &page.title());
+    }
+
+    let refreshers = PageRefreshers {
+        stats: stats_refresh,
+        mixer: mixer_refresh,
+        graph: graph_refresh,
+        inventory: inventory_refresh,
+        doctor: doctor_refresh,
+        settings: settings_refresh,
+        help: help_refresh,
+    };
+
+    (live_handle, refreshers)
+}
+
+/// Drain the controller's event channel onto the widgets, forever.
+///
+/// 50 ms gives responsive-enough UI updates without burning CPU. The loop
+/// drains everything queued on each tick so a burst of events costs one tick,
+/// not one tick each.
+fn install_event_polling(
+    nav: &NavigationContext,
+    event_rx: mpsc::Receiver<AppEvent>,
+    event_ui: &EventUiContext,
+) {
+    glib::timeout_add_local(Duration::from_millis(50), {
+        let nav = nav.clone();
+        let event_ui = event_ui.clone();
+        move || {
+            loop {
+                match event_rx.try_recv() {
+                    Ok(event) => apply_event(&nav, event, &event_ui),
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    // The controller is gone; stop the timer with it.
+                    Err(mpsc::TryRecvError::Disconnected) => return glib::ControlFlow::Break,
+                }
+            }
+            glib::ControlFlow::Continue
+        }
+    });
+}
+
+/// Re-render the stream and record status lines once a second.
+///
+/// OBS does not push anything when an output is simply still running, but the
+/// elapsed time in those lines has to keep counting, so this ticks on its own.
+fn install_output_clock(state: &Rc<RefCell<AppState>>, status_bar: &StatusBarHandle) {
+    glib::timeout_add_local(Duration::from_secs(1), {
+        let state = state.clone();
+        let status_bar = status_bar.clone();
+        move || {
+            let state = state.borrow();
+            status_bar::set_stream(
+                &status_bar,
+                &fl!(
+                    LANGUAGE_LOADER,
+                    "window-stream-status-line",
+                    state = state.stream_status.state.label(),
+                    elapsed = elapsed_suffix(state.stream_active_since)
+                ),
+                state.stream_status.active,
+            );
+            status_bar::set_record(
+                &status_bar,
+                &fl!(
+                    LANGUAGE_LOADER,
+                    "window-record-status-line",
+                    state = state.record_status.state.label(),
+                    elapsed = elapsed_suffix(state.record_active_since)
+                ),
+                state.record_status.active,
+            );
+            glib::ControlFlow::Continue
+        }
+    });
+}
+
+/// Build the header bar above the content area.
+///
+/// Also publishes the header and its "live" icon into `streaming_chrome`, so
+/// output events can tint the bar while a stream is running.
+fn build_content_header(
+    window: &adw::ApplicationWindow,
+    nav: &NavigationContext,
+    refreshers: &PageRefreshers,
+    header_selectors: &HeaderSelectors,
+    streaming_chrome: &StreamingChromeRef,
+) -> adw::HeaderBar {
+    let content_header = adw::HeaderBar::new();
+    content_header.add_css_class("flat");
+    content_header.add_css_class("scenedeck-content-header");
+
+    let stream_live_icon = Image::from_icon_name("media-record-symbolic");
+    stream_live_icon.add_css_class("scenedeck-top-streaming-icon");
+    stream_live_icon.set_tooltip_text(Some(&fl!(LANGUAGE_LOADER, "window-stream-live-tooltip")));
+    stream_live_icon.set_visible(false);
+
+    let about_btn = header_button(
+        "help-about-symbolic",
+        fl!(LANGUAGE_LOADER, "window-about-tooltip"),
+        {
+            let window = window.clone();
+            move || show_about(&window)
+        },
+    );
+    content_header.pack_end(&about_btn);
+
+    let help_btn = header_button(
+        "help-browser-symbolic",
+        fl!(LANGUAGE_LOADER, "window-help-tooltip"),
+        {
+            let nav = nav.clone();
+            move || nav.switch_to_page(Page::Help)
+        },
+    );
+    content_header.pack_end(&help_btn);
+
+    let refresh_btn = header_button(
+        "view-refresh-symbolic",
+        fl!(LANGUAGE_LOADER, "window-refresh-tooltip"),
+        {
+            let nav = nav.clone();
+            let refreshers = refreshers.clone();
+            move || {
+                // Kick off a data re-fetch from OBS (no-op if disconnected).
+                nav.dispatch(AppCommand::RefreshData);
+                // Also immediately rebuild the current page from AppState.
+                let page = nav.state.borrow().current_page;
+                refreshers.call(page);
+            }
+        },
+    );
+    content_header.pack_start(&stream_live_icon);
+    content_header.pack_start(&refresh_btn);
+    content_header.pack_start(&header_selectors.scene_collections.root);
+    content_header.pack_start(&header_selectors.profiles.root);
+
+    *streaming_chrome.borrow_mut() = Some(StreamingChrome {
+        header: content_header.clone(),
+        top_icon: stream_live_icon,
+    });
+
+    content_header
+}
+
+fn header_button(icon_name: &str, tooltip: String, on_click: impl Fn() + 'static) -> Button {
+    let button = Button::builder()
+        .icon_name(icon_name)
+        .tooltip_text(tooltip)
+        .build();
+    button.connect_clicked(move |_| on_click());
+    button
 }
 
 // ── First-run welcome ─────────────────────────────────────────────────────────
