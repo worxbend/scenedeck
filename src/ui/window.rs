@@ -581,28 +581,14 @@ fn digit_for_keycode(window: &adw::ApplicationWindow, keycode: u32) -> Option<u8
 
 // ── Event handler ─────────────────────────────────────────────────────────────
 
+/// Apply one `AppEvent` to the widgets.
+///
+/// The match is exhaustive on purpose. Connection and output events are
+/// forwarded to their own handlers because those two families are long enough
+/// to read badly inline, but the routing happens *inside* the match rather than
+/// in a pre-filter above it, so adding a variant to `AppEvent` is a compile
+/// error here instead of a panic when that event first arrives at runtime.
 fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
-    if matches!(
-        &event,
-        AppEvent::Connecting | AppEvent::Connected(_) | AppEvent::Disconnected
-    ) {
-        apply_connection_event(nav, event, ui);
-        return;
-    }
-    if matches!(
-        &event,
-        AppEvent::StreamStatusUpdated(_)
-            | AppEvent::RecordStatusUpdated(_)
-            | AppEvent::StreamCommandPending(_)
-            | AppEvent::RecordCommandPending(_)
-            | AppEvent::StreamCommandSucceeded
-            | AppEvent::RecordCommandSucceeded
-            | AppEvent::StreamCommandFailed(_)
-            | AppEvent::RecordCommandFailed(_)
-    ) {
-        apply_output_event(nav, event, ui);
-        return;
-    }
     let EventUiContext {
         live,
         toast,
@@ -617,6 +603,21 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
     };
 
     match event {
+        AppEvent::Connecting | AppEvent::Connected(_) | AppEvent::Disconnected => {
+            apply_connection_event(nav, event, ui);
+        }
+
+        AppEvent::StreamStatusUpdated(_)
+        | AppEvent::RecordStatusUpdated(_)
+        | AppEvent::StreamCommandPending(_)
+        | AppEvent::RecordCommandPending(_)
+        | AppEvent::StreamCommandSucceeded
+        | AppEvent::RecordCommandSucceeded
+        | AppEvent::StreamCommandFailed(_)
+        | AppEvent::RecordCommandFailed(_) => {
+            apply_output_event(nav, event, ui);
+        }
+
         AppEvent::SceneInventoryUpdated(inventory) => {
             show_live_view(live);
             let inventory = {
@@ -674,19 +675,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
 
         AppEvent::Error(err) => {
             let obs_status = ObsStatus::Error(err.to_string());
-            {
-                let mut state = nav.state.borrow_mut();
-                state.set_obs_status(obs_status.clone());
-                state.set_stream_status(OutputStatus::default());
-                state.set_record_status(OutputStatus::default());
-                state.scene_inventory = Default::default();
-                state.stream_active_since = None;
-                state.record_active_since = None;
-                state.clear_pending_mixer_audio_refresh();
-                state.clear_output_command_errors();
-                state.clear_obs_stats();
-                state.clear_audio_levels();
-            }
+            nav.state.borrow_mut().reset_obs_session(obs_status.clone());
             sidebar_controls.status_label.set_text(&fl!(
                 LANGUAGE_LOADER,
                 "window-status-error",
@@ -859,7 +848,6 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
                 refreshers.call(Page::Stats);
             }
         }
-        _ => unreachable!("specialized event was not routed before general event handling"),
     }
 }
 
@@ -876,19 +864,9 @@ fn apply_connection_event(nav: &NavigationContext, event: AppEvent, ui: &EventUi
 
     match event {
         AppEvent::Connecting => {
-            {
-                let mut state = nav.state.borrow_mut();
-                state.set_obs_status(ObsStatus::Connecting);
-                state.set_stream_status(OutputStatus::default());
-                state.set_record_status(OutputStatus::default());
-                state.scene_inventory = Default::default();
-                state.stream_active_since = None;
-                state.record_active_since = None;
-                state.clear_pending_mixer_audio_refresh();
-                state.clear_output_command_errors();
-                state.clear_obs_stats();
-                state.clear_audio_levels();
-            }
+            nav.state
+                .borrow_mut()
+                .reset_obs_session(ObsStatus::Connecting);
             sidebar_controls
                 .status_label
                 .set_text(&fl!(LANGUAGE_LOADER, "window-status-connecting"));
@@ -940,19 +918,9 @@ fn apply_connection_event(nav: &NavigationContext, event: AppEvent, ui: &EventUi
         }
 
         AppEvent::Disconnected => {
-            {
-                let mut state = nav.state.borrow_mut();
-                state.set_obs_status(ObsStatus::Disconnected);
-                state.set_stream_status(OutputStatus::default());
-                state.set_record_status(OutputStatus::default());
-                state.scene_inventory = Default::default();
-                state.stream_active_since = None;
-                state.record_active_since = None;
-                state.clear_pending_mixer_audio_refresh();
-                state.clear_output_command_errors();
-                state.clear_obs_stats();
-                state.clear_audio_levels();
-            }
+            nav.state
+                .borrow_mut()
+                .reset_obs_session(ObsStatus::Disconnected);
             sidebar_controls
                 .status_label
                 .set_text(&fl!(LANGUAGE_LOADER, "window-status-disconnected"));
@@ -982,200 +950,137 @@ fn apply_connection_event(nav: &NavigationContext, event: AppEvent, ui: &EventUi
             );
         }
 
-        _ => unreachable!("non-connection event routed to connection handler"),
+        // Unreachable: `apply_event` matches exhaustively and only forwards the
+        // three connection variants here.
+        _ => debug_assert!(false, "non-connection event routed to connection handler"),
     }
 }
 
-fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
-    let EventUiContext {
-        sidebar_controls,
-        streaming_chrome,
-        status_bar,
-        ..
-    } = ui;
+/// Which of the two OBS outputs an event is about.
+///
+/// Stream and record are handled identically apart from the state fields they
+/// read, the status-bar slot they write, and the word in their label, so the
+/// difference is carried as a value instead of being copied into eight
+/// near-identical match arms.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum OutputKind {
+    Stream,
+    Record,
+}
 
-    match event {
+impl OutputKind {
+    fn label(self) -> String {
+        match self {
+            Self::Stream => fl!(LANGUAGE_LOADER, "window-output-kind-stream"),
+            Self::Record => fl!(LANGUAGE_LOADER, "window-output-kind-record"),
+        }
+    }
+}
+
+/// Redraw one output's status-bar slot and the indicators that follow it.
+///
+/// Every output event ends this way: whatever the event changed, the status
+/// bar is re-rendered from `AppState` rather than from the event, so the two
+/// can never disagree. Each mutation below stores the status it was given, so
+/// reading it back here shows the same value the event carried.
+fn refresh_output_status_bar(nav: &NavigationContext, ui: &EventUiContext, kind: OutputKind) {
+    let (status, elapsed) = {
+        let state = nav.state.borrow();
+        match kind {
+            OutputKind::Stream => (
+                state.stream_status.clone(),
+                state.stream_active_since.map(format_elapsed),
+            ),
+            OutputKind::Record => (
+                state.record_status.clone(),
+                state.record_active_since.map(format_elapsed),
+            ),
+        }
+    };
+
+    let label = output_label(&kind.label(), &status, elapsed.as_deref());
+    match kind {
+        OutputKind::Stream => status_bar::set_stream(&ui.status_bar, &label, status.active),
+        OutputKind::Record => status_bar::set_record(&ui.status_bar, &label, status.active),
+    }
+    sync_output_indicators(nav, &ui.sidebar_controls, &ui.streaming_chrome);
+}
+
+fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
+    // Each arm makes its one state change; rendering is the shared step that
+    // follows it.
+    let kind = match event {
         AppEvent::StreamStatusUpdated(status) => {
-            let (elapsed, _error) = {
-                let mut state = nav.state.borrow_mut();
-                update_active_since(status.active, &mut state.stream_active_since);
-                state.set_stream_status(status.clone());
-                (
-                    state.stream_active_since.map(format_elapsed),
-                    state.last_stream_command_error.clone(),
-                )
-            };
-            status_bar::set_stream(
-                status_bar,
-                &output_label(
-                    &fl!(LANGUAGE_LOADER, "window-output-kind-stream"),
-                    &status,
-                    elapsed.as_deref(),
-                ),
-                status.active,
-            );
-            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
+            let mut state = nav.state.borrow_mut();
+            update_active_since(status.active, &mut state.stream_active_since);
+            state.set_stream_status(status);
+            OutputKind::Stream
         }
 
         AppEvent::RecordStatusUpdated(status) => {
-            let (elapsed, _last_path, _error) = {
-                let mut state = nav.state.borrow_mut();
-                update_active_since(status.active, &mut state.record_active_since);
-                if let Some(path) = status.detail.as_ref().filter(|path| !path.is_empty()) {
-                    state.last_recording_path = Some(path.clone());
-                }
-                state.set_record_status(status.clone());
-                (
-                    state.record_active_since.map(format_elapsed),
-                    state.last_recording_path.clone(),
-                    state.last_record_command_error.clone(),
-                )
-            };
-            status_bar::set_record(
-                status_bar,
-                &output_label(
-                    &fl!(LANGUAGE_LOADER, "window-output-kind-record"),
-                    &status,
-                    elapsed.as_deref(),
-                ),
-                status.active,
-            );
-            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
+            let mut state = nav.state.borrow_mut();
+            update_active_since(status.active, &mut state.record_active_since);
+            remember_recording_path(&mut state, &status);
+            state.set_record_status(status);
+            OutputKind::Record
         }
 
         AppEvent::StreamCommandPending(status) => {
-            let (elapsed, _error) = {
-                let mut state = nav.state.borrow_mut();
-                update_active_since(status.active, &mut state.stream_active_since);
-                state.set_stream_command_pending(status.clone());
-                (
-                    state.stream_active_since.map(format_elapsed),
-                    state.last_stream_command_error.clone(),
-                )
-            };
-            status_bar::set_stream(
-                status_bar,
-                &output_label(
-                    &fl!(LANGUAGE_LOADER, "window-output-kind-stream"),
-                    &status,
-                    elapsed.as_deref(),
-                ),
-                status.active,
-            );
-            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
+            let mut state = nav.state.borrow_mut();
+            update_active_since(status.active, &mut state.stream_active_since);
+            state.set_stream_command_pending(status);
+            OutputKind::Stream
         }
 
         AppEvent::RecordCommandPending(status) => {
-            let (elapsed, _last_path, _error) = {
-                let mut state = nav.state.borrow_mut();
-                update_active_since(status.active, &mut state.record_active_since);
-                state.set_record_command_pending(status.clone());
-                (
-                    state.record_active_since.map(format_elapsed),
-                    state.last_recording_path.clone(),
-                    state.last_record_command_error.clone(),
-                )
-            };
-            status_bar::set_record(
-                status_bar,
-                &output_label(
-                    &fl!(LANGUAGE_LOADER, "window-output-kind-record"),
-                    &status,
-                    elapsed.as_deref(),
-                ),
-                status.active,
-            );
-            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
+            let mut state = nav.state.borrow_mut();
+            update_active_since(status.active, &mut state.record_active_since);
+            state.set_record_command_pending(status);
+            OutputKind::Record
         }
 
         AppEvent::StreamCommandSucceeded => {
-            let (status, elapsed) = {
-                let mut state = nav.state.borrow_mut();
-                state.set_stream_command_success();
-                (
-                    state.stream_status.clone(),
-                    state.stream_active_since.map(format_elapsed),
-                )
-            };
-            status_bar::set_stream(
-                status_bar,
-                &output_label(
-                    &fl!(LANGUAGE_LOADER, "window-output-kind-stream"),
-                    &status,
-                    elapsed.as_deref(),
-                ),
-                status.active,
-            );
-            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
+            nav.state.borrow_mut().set_stream_command_success();
+            OutputKind::Stream
         }
 
         AppEvent::RecordCommandSucceeded => {
-            let (status, elapsed, _last_path) = {
-                let mut state = nav.state.borrow_mut();
-                state.set_record_command_success();
-                (
-                    state.record_status.clone(),
-                    state.record_active_since.map(format_elapsed),
-                    state.last_recording_path.clone(),
-                )
-            };
-            status_bar::set_record(
-                status_bar,
-                &output_label(
-                    &fl!(LANGUAGE_LOADER, "window-output-kind-record"),
-                    &status,
-                    elapsed.as_deref(),
-                ),
-                status.active,
-            );
-            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
+            nav.state.borrow_mut().set_record_command_success();
+            OutputKind::Record
         }
 
         AppEvent::StreamCommandFailed(failure) => {
-            let (status, elapsed, _error) = {
-                let mut state = nav.state.borrow_mut();
-                state.set_stream_command_failure_with_recovery(failure);
-                (
-                    state.stream_status.clone(),
-                    state.stream_active_since.map(format_elapsed),
-                    state.last_stream_command_error.clone(),
-                )
-            };
-            status_bar::set_stream(
-                status_bar,
-                &output_label(
-                    &fl!(LANGUAGE_LOADER, "window-output-kind-stream"),
-                    &status,
-                    elapsed.as_deref(),
-                ),
-                status.active,
-            );
-            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
+            nav.state
+                .borrow_mut()
+                .set_stream_command_failure_with_recovery(failure);
+            OutputKind::Stream
         }
 
         AppEvent::RecordCommandFailed(failure) => {
-            let (status, elapsed, _last_path, _error) = {
-                let mut state = nav.state.borrow_mut();
-                state.set_record_command_failure_with_recovery(failure);
-                (
-                    state.record_status.clone(),
-                    state.record_active_since.map(format_elapsed),
-                    state.last_recording_path.clone(),
-                    state.last_record_command_error.clone(),
-                )
-            };
-            status_bar::set_record(
-                status_bar,
-                &output_label(
-                    &fl!(LANGUAGE_LOADER, "window-output-kind-record"),
-                    &status,
-                    elapsed.as_deref(),
-                ),
-                status.active,
-            );
-            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
+            nav.state
+                .borrow_mut()
+                .set_record_command_failure_with_recovery(failure);
+            OutputKind::Record
         }
-        _ => unreachable!("non-output event routed to output handler"),
+
+        // Unreachable: `apply_event` matches exhaustively and only forwards the
+        // eight output variants here.
+        _ => {
+            debug_assert!(false, "non-output event routed to output handler");
+            return;
+        }
+    };
+
+    refresh_output_status_bar(nav, ui, kind);
+}
+
+/// Keep the last non-empty recording path OBS reported.
+///
+/// OBS sends the path when a recording stops and an empty string at other
+/// times; an empty value means "no new path", not "there was no recording".
+fn remember_recording_path(state: &mut AppState, status: &OutputStatus) {
+    if let Some(path) = status.detail.as_ref().filter(|path| !path.is_empty()) {
+        state.last_recording_path = Some(path.clone());
     }
 }
 

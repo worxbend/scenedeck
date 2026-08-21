@@ -352,6 +352,30 @@ impl AppState {
         self.obs_status = status;
     }
 
+    /// Record a new connection status and forget everything the old OBS
+    /// session told us.
+    ///
+    /// Connecting, disconnecting, and failing all land here: in each case the
+    /// scene list, output states, timers, meter levels, and cached stats
+    /// describe a session that no longer exists, and leaving any of them in
+    /// place shows the user stale data as if it were current. Keeping the
+    /// sequence in one place is what stops the three call sites drifting
+    /// apart — an easy mistake to make, because forgetting one field looks
+    /// like nothing at all until a reconnect shows the previous session's
+    /// numbers.
+    pub fn reset_obs_session(&mut self, status: ObsStatus) {
+        self.set_obs_status(status);
+        self.set_stream_status(OutputStatus::default());
+        self.set_record_status(OutputStatus::default());
+        self.scene_inventory = SceneInventory::default();
+        self.stream_active_since = None;
+        self.record_active_since = None;
+        self.clear_pending_mixer_audio_refresh();
+        self.clear_output_command_errors();
+        self.clear_obs_stats();
+        self.clear_audio_levels();
+    }
+
     /// Store the newest volume-meter readings, replacing the previous set.
     pub fn set_audio_levels(&mut self, levels: Vec<InputLevels>) {
         self.audio_levels.update(levels);
@@ -2137,5 +2161,48 @@ mod tests {
         assert!(state.stats_history.is_empty());
         assert_eq!(state.stream_health, None);
         assert_eq!(state.obs_stats, None);
+    }
+
+    #[test]
+    fn resetting_the_session_forgets_everything_the_old_connection_reported() {
+        let mut state = app_state();
+        // Fill in the kind of state a live connection leaves behind.
+        state.set_obs_status(ObsStatus::Connected {
+            obs_version: "30.0.0".to_string(),
+        });
+        state
+            .scene_inventory
+            .set_current_scene("Scene A".to_string());
+        state.set_stream_status(output_status(true, OutputRunState::Active));
+        state.set_record_status(output_status(true, OutputRunState::Active));
+        state.stream_active_since = Some(Instant::now());
+        state.record_active_since = Some(Instant::now());
+        state.set_stream_command_failure("stream boom".to_string());
+        state.set_record_command_failure("record boom".to_string());
+        state.set_audio_levels(vec![InputLevels::from_mul(
+            "Mic".to_string(),
+            &[[0.5, 0.5, 0.5]],
+        )]);
+        state.set_obs_stats(obs_stats(60.0), Some(6_000.0), Some(stream_health()));
+        state.set_mixer_audio_loading("Scene A".to_string());
+
+        state.reset_obs_session(ObsStatus::Disconnected);
+
+        assert_eq!(state.obs_status, ObsStatus::Disconnected);
+        assert!(state.scene_inventory.scenes.is_empty());
+        assert_eq!(state.scene_inventory.current_id, None);
+        assert!(!state.stream_status.active);
+        assert!(!state.record_status.active);
+        assert_eq!(state.stream_active_since, None);
+        assert_eq!(state.record_active_since, None);
+        assert_eq!(state.last_stream_command_error, None);
+        assert_eq!(state.last_record_command_error, None);
+        assert_eq!(state.obs_stats, None);
+        assert!(state.stats_history.is_empty());
+        assert!(state.audio_levels.is_empty());
+        assert!(matches!(
+            state.visible_mixer_audio_status("Scene A"),
+            MixerVisibleAudioStatus::Missing
+        ));
     }
 }
