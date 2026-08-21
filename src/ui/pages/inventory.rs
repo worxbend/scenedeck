@@ -11,10 +11,11 @@ use gtk4::{
 };
 
 use crate::domain::role::SceneRole;
+use crate::domain::scene::SceneInventory;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::registry::{
     self as registry_storage, parse_scene_accent, read_registry_yaml_from_path, scene_accent_hex,
-    write_registry, write_registry_yaml_to_path, SceneEntry,
+    write_registry, write_registry_yaml_to_path, SceneEntry, SceneRegistry,
 };
 use crate::ui::navigation::NavigationContext;
 use crate::ui::widgets::icon_picker;
@@ -275,8 +276,25 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
 
     page.add(&scenes_group);
 
-    // ── Stale registry entries ────────────────────────────────────────────────
+    if let Some(stale_group) = build_stale_group(&inventory, &registry, nav) {
+        page.add(&stale_group);
+    }
 
+    container.append(&page);
+}
+
+/// Build the group listing registry entries whose scene is gone from OBS.
+///
+/// Returns `None` when nothing is stale, so the caller adds no empty group.
+///
+/// An entry goes stale when a scene is renamed or deleted in OBS: SceneDeck
+/// keys its registry by scene name, so the old name is left holding a role,
+/// an accent, and an icon that no longer point at anything.
+fn build_stale_group(
+    inventory: &SceneInventory,
+    registry: &SceneRegistry,
+    nav: &NavigationContext,
+) -> Option<PreferencesGroup> {
     let obs_ids: HashSet<&str> = inventory.scenes.iter().map(|s| s.id.as_str()).collect();
 
     let mut stale: Vec<(String, SceneEntry)> = registry
@@ -285,43 +303,42 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
         .filter(|(name, _)| !obs_ids.contains(name.as_str()))
         .map(|(n, e)| (n.clone(), e.clone()))
         .collect();
+    if stale.is_empty() {
+        return None;
+    }
     stale.sort_by(|(a, _), (b, _)| a.cmp(b));
 
-    if !stale.is_empty() {
-        let stale_group = PreferencesGroup::builder()
-            .title(fl!(LANGUAGE_LOADER, "inventory-stale-group-title"))
-            .description(fl!(LANGUAGE_LOADER, "inventory-stale-group-description"))
+    let stale_group = PreferencesGroup::builder()
+        .title(fl!(LANGUAGE_LOADER, "inventory-stale-group-title"))
+        .description(fl!(LANGUAGE_LOADER, "inventory-stale-group-description"))
+        .build();
+
+    for (entry_name, entry) in stale {
+        let stale_row = adw::ActionRow::builder()
+            .title(entry_name.as_str())
+            .subtitle(SceneRole::label_or_unassigned(entry.role))
             .build();
 
-        for (entry_name, entry) in stale {
-            let stale_row = adw::ActionRow::builder()
-                .title(entry_name.as_str())
-                .subtitle(SceneRole::label_or_unassigned(entry.role))
-                .build();
+        let remove_btn = Button::builder()
+            .icon_name("list-remove-symbolic")
+            .tooltip_text(fl!(LANGUAGE_LOADER, "inventory-remove-stale-tooltip"))
+            .valign(Align::Center)
+            .build();
+        remove_btn.add_css_class("flat");
+        remove_btn.add_css_class("destructive-action");
 
-            let remove_btn = Button::builder()
-                .icon_name("list-remove-symbolic")
-                .tooltip_text(fl!(LANGUAGE_LOADER, "inventory-remove-stale-tooltip"))
-                .valign(Align::Center)
-                .build();
-            remove_btn.add_css_class("flat");
-            remove_btn.add_css_class("destructive-action");
+        remove_btn.connect_clicked({
+            let entry_name = entry_name.clone();
+            let stale_row = stale_row.clone();
+            let nav = nav.clone();
+            move |_| handle_stale_entry_remove(entry_name.as_str(), &stale_row, &nav)
+        });
 
-            remove_btn.connect_clicked({
-                let entry_name = entry_name.clone();
-                let stale_row = stale_row.clone();
-                let nav = nav.clone();
-                move |_| handle_stale_entry_remove(entry_name.as_str(), &stale_row, &nav)
-            });
-
-            stale_row.add_suffix(&remove_btn);
-            stale_group.add(&stale_row);
-        }
-
-        page.add(&stale_group);
+        stale_row.add_suffix(&remove_btn);
+        stale_group.add(&stale_row);
     }
 
-    container.append(&page);
+    Some(stale_group)
 }
 
 fn reorder_scenes(

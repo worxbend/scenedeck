@@ -1520,13 +1520,19 @@ fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, Side
     list.add_css_class("navigation-sidebar");
     list.add_css_class("scenedeck-sidebar-list");
 
-    let mut live_icon = None;
+    // Built up front rather than captured out of the loop: output events tint
+    // this icon while a stream is running, so the sidebar has to keep a handle
+    // on it either way, and building it here means there is no "what if the
+    // loop never saw the Live row" case to panic over.
+    let live_icon = Image::from_icon_name(Page::Live.icon_name());
+    live_icon.add_css_class("scenedeck-sidebar-live-icon");
+
     for page in NAV_PAGES {
-        let icon = Image::from_icon_name(page.icon_name());
-        if page == Page::Live {
-            icon.add_css_class("scenedeck-sidebar-live-icon");
-            live_icon = Some(icon.clone());
-        }
+        let icon = if page == Page::Live {
+            live_icon.clone()
+        } else {
+            Image::from_icon_name(page.icon_name())
+        };
         let row = adw::ActionRow::builder()
             .title(page.title())
             .activatable(true)
@@ -1641,7 +1647,7 @@ fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, Side
         list,
         SidebarControls {
             status_label,
-            live_icon: live_icon.expect("Live page icon"),
+            live_icon,
             stream_btn,
             record_btn,
             connect_btn,
