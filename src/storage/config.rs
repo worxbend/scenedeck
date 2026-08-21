@@ -206,8 +206,8 @@ pub fn read_config_from_path(path: &Path) -> LoadedConfig {
     match read_to_string(path) {
         Ok(raw) => match serde_json::from_str::<AppConfig>(&raw) {
             Ok(mut config) => {
-                // Apply any schema migrations and persist if the version changed.
-                if migrate(&mut config) || config.appearance.migrate_legacy_custom_css_path() {
+                // Apply any schema migrations and persist if anything changed.
+                if apply_migrations(&mut config) {
                     let _ = write_config_to_path(path, &config);
                 }
                 LoadedConfig {
@@ -270,6 +270,24 @@ fn preserve_unparsable_config(path: &Path) -> Option<PathBuf> {
             None
         }
     }
+}
+
+/// Run every migration step over a freshly parsed config.
+///
+/// Returns `true` if any step changed something, so the caller re-persists.
+///
+/// Each step is bound to its own local and the results are combined
+/// afterwards, rather than being chained with `||`. `||` stops evaluating at
+/// the first `true`, so chaining lets a step that fired suppress every step
+/// after it — which is exactly what happened here: `migrate` returns `true`
+/// for any config older than `CURRENT_VERSION`, and every config still
+/// carrying the legacy `custom_css.path` key is older than that, so the custom
+/// stylesheet migration never ran. The rewrite that followed then dropped the
+/// key for good, because `legacy_path` is `skip_serializing`.
+fn apply_migrations(config: &mut AppConfig) -> bool {
+    let version_changed = migrate(config);
+    let custom_css_changed = config.appearance.migrate_legacy_custom_css_path();
+    version_changed || custom_css_changed
 }
 
 /// Upgrade an older config in place.  Returns `true` if anything changed
@@ -505,6 +523,35 @@ mod tests {
             serde_json::from_str(r#"{"appearance":{"mode":"future"}}"#).unwrap();
 
         assert_eq!(parsed.appearance.mode, ThemeMode::System);
+    }
+
+    #[test]
+    fn a_legacy_custom_css_path_survives_a_version_migration() {
+        // Both migration steps have to run on the same load. The version bump
+        // fires for every config this old, and it used to short-circuit the
+        // custom-stylesheet step, which cost the user the path entirely: the
+        // legacy `path` key is `skip_serializing`, so the rewrite that follows
+        // a migration is what deleted it.
+        let (config, persisted) = load_from_temp_file(
+            r#"{
+              "version": 2,
+              "appearance": { "custom_css": { "enabled": true, "path": "/tmp/scenedeck.css" } }
+            }"#,
+        );
+
+        assert_eq!(config.version, CURRENT_VERSION);
+        // Assert the value, not the key: `light_path` is `#[serde(default)]`
+        // with no `skip_serializing_if`, so it is written as `null` even when
+        // the migration did not run. Checking only for the key name would
+        // pass against the very bug this test exists to catch.
+        assert!(
+            persisted.contains(r#""light_path": "/tmp/scenedeck.css""#),
+            "{persisted}"
+        );
+        assert!(
+            persisted.contains(r#""dark_path": "/tmp/scenedeck.css""#),
+            "{persisted}"
+        );
     }
 
     #[test]
