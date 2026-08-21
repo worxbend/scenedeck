@@ -130,7 +130,7 @@ pub struct LiveConfig {
 // ── Defaults ──────────────────────────────────────────────────────────────────
 
 /// Current on-disk config schema version.  Bump when adding a migration.
-pub const CURRENT_VERSION: u32 = 2;
+pub const CURRENT_VERSION: u32 = 3;
 
 fn default_version() -> u32 {
     CURRENT_VERSION
@@ -241,6 +241,17 @@ fn migrate(config: &mut AppConfig) -> bool {
                     config.version = 2;
                     changed = true;
                 }
+                2 => {
+                    // The first-run welcome dialog is for people meeting
+                    // SceneDeck for the first time, not for people who have
+                    // been using it and just upgraded.  A config file that
+                    // already exists means the user is neither new nor in
+                    // need of being interrupted, so the greeting is marked
+                    // as already given.
+                    config.onboarding.welcome_shown = true;
+                    config.version = 3;
+                    changed = true;
+                }
                 _ => {
                     config.version = CURRENT_VERSION;
                     changed = true;
@@ -284,6 +295,57 @@ mod tests {
         assert_eq!(c.mixer, MixerSelection::default());
         assert_eq!(c.hotkeys, SceneHotkeyConfig::default());
         assert!(!c.onboarding.welcome_shown);
+    }
+
+    /// Writes `contents` to a uniquely named temp file, runs `read_config_from_path`
+    /// over it, and hands back both the loaded config and whatever ended up on
+    /// disk afterwards.  The file is removed before the assertions run so a
+    /// failing test does not leave litter behind.
+    fn load_from_temp_file(contents: &str) -> (AppConfig, String) {
+        let path = std::env::temp_dir().join(format!(
+            "scenedeck-config-test-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, contents).unwrap();
+        let loaded = read_config_from_path(&path);
+        let persisted = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(path);
+        (loaded.config, persisted)
+    }
+
+    #[test]
+    fn existing_configs_are_not_greeted_on_upgrade() {
+        // Anyone whose config predates the Help page has already been using
+        // SceneDeck, so the welcome dialog must not interrupt their upgrade.
+        let (config, persisted) = load_from_temp_file(r#"{ "version": 2 }"#);
+
+        assert_eq!(config.version, CURRENT_VERSION);
+        assert!(config.onboarding.welcome_shown);
+        assert!(persisted.contains(r#""welcome_shown": true"#));
+    }
+
+    #[test]
+    fn a_fresh_install_is_greeted() {
+        // No config file at all is the one case that means "new user".
+        let missing = std::env::temp_dir().join(format!(
+            "scenedeck-config-absent-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let loaded = read_config_from_path(&missing);
+
+        assert_eq!(
+            loaded.startup_notice,
+            Some(ConfigStartupNotice::FirstLaunch)
+        );
+        assert!(!loaded.config.onboarding.welcome_shown);
     }
 
     #[test]
@@ -354,16 +416,7 @@ mod tests {
 
     #[test]
     fn migrates_v1_theme_mode_to_v2_appearance() {
-        let path = std::env::temp_dir().join(format!(
-            "scenedeck-config-migration-{}-{}.json",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::write(
-            &path,
+        let (config, persisted) = load_from_temp_file(
             r#"{
               "version": 1,
               "obs": { "host": "127.0.0.1", "port": 4455 },
@@ -374,17 +427,15 @@ mod tests {
               },
               "theme_mode": "dark"
             }"#,
-        )
-        .unwrap();
+        );
 
-        let loaded = read_config_from_path(&path);
-        let persisted = std::fs::read_to_string(&path).unwrap();
-        let _ = std::fs::remove_file(path);
-
-        assert_eq!(loaded.config.version, CURRENT_VERSION);
-        assert_eq!(loaded.config.appearance.mode, ThemeMode::Dark);
-        assert!(persisted.contains(r#""version": 2"#));
+        // A v1 config runs through every later step in one pass, so it lands on
+        // the current version rather than stopping at 2.
+        assert_eq!(config.version, CURRENT_VERSION);
+        assert_eq!(config.appearance.mode, ThemeMode::Dark);
         assert!(persisted.contains(r#""appearance""#));
         assert!(!persisted.contains(r#""theme_mode""#));
+        // It is an existing config, so it is not a first run.
+        assert!(config.onboarding.welcome_shown);
     }
 }

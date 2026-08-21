@@ -312,10 +312,11 @@ hotkeys, reading the volume meters, output safety, and where SceneDeck keeps its
 files. Most topics end with a button that jumps straight to the page being
 described.
 
-On a first run — when `onboarding.welcome_shown` in the config file is still
-`false` — SceneDeck shows a welcome dialog recommending the guide, with a button
-that opens it. The flag is written as soon as the dialog appears, so it
-interrupts at most one launch.
+On a first run — a machine with no SceneDeck config file yet — SceneDeck shows a
+welcome dialog recommending the guide, with a button that opens it. The flag
+behind it (`onboarding.welcome_shown`) is written as soon as the dialog appears,
+so it interrupts at most one launch. Upgrading an existing installation never
+shows it.
 
 ## Settings Page
 

@@ -22,7 +22,7 @@ Example:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "obs": {
     "host": "127.0.0.1",
     "port": 4455
@@ -130,8 +130,9 @@ Fields:
 
 - `onboarding.welcome_shown`: whether the first-run welcome dialog has already
   been shown. It is written the moment the dialog appears, so the greeting can
-  interrupt at most one launch. Set it back to `false` (or delete it) to see the
-  welcome dialog again; the Help page itself is always available from the
+  interrupt at most one launch, and upgrading an existing config sets it without
+  ever showing the dialog. Set it back to `false` to see the welcome dialog
+  again; the Help page itself is always available from the
   sidebar, the header button, or `F1`.
 
 Scene hotkeys act only on the Live page. Slot `1` is the first scene card, `9`
@@ -166,6 +167,13 @@ On load, SceneDeck automatically migrates version `1` configs to version `2` by
 moving that value to `appearance.mode`, preserving the existing color
 preference. The migrated config is written back to disk. Unknown old or new
 theme values fall back to `system`.
+
+Version `3` added the `onboarding` section. Migrating a version `2` config sets
+`onboarding.welcome_shown` to `true`, because a config file that already exists
+belongs to someone who has been using SceneDeck and does not need the first-run
+welcome dialog. Only a machine with no config file at all is treated as a first
+run. Migrations are applied in one pass, so a version `1` config lands directly
+on the current version.
 
 ## Registry File
 
