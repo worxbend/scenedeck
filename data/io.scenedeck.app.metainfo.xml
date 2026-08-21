@@ -32,6 +32,31 @@
   </provides>
 
   <releases>
+    <release version="0.4.0" date="2026-08-22">
+      <description>
+        <p>SceneDeck now explains itself. A new Help page answers the questions that come up in the first ten minutes, and a first-run welcome points at it.</p>
+        <ul>
+          <li>Six groups of topics, from a five-step quick start through connecting to OBS on another computer, curating scenes, running a show, checking your setup, and making it yours.</li>
+          <li>Most topics end with a button that takes you to the page being described, so the guide leads somewhere rather than only describing.</li>
+          <li>The quick start and "hiding scenes you never cut to" open by default, because those are the two nobody should have to go looking for.</li>
+        </ul>
+        <p>Several fixes to how your settings are stored. Between them these close every path we found where SceneDeck could quietly discard something you had set:</p>
+        <ul>
+          <li>A custom stylesheet path saved before this release was being dropped when the settings file was upgraded. The upgrade now keeps it. If you already lost it, selecting the stylesheet again under Appearance restores it.</li>
+          <li>A settings file that cannot be read is kept and set aside rather than replaced with defaults, so a stray comma in a hand edit no longer costs you every setting.</li>
+          <li>Clearing a scene's role or accent colour no longer takes its icon with it.</li>
+          <li>Local files are replaced atomically, so a crash or a power cut mid-save cannot leave a half-written settings or registry file behind.</li>
+          <li>Existing users are no longer shown the first-run welcome dialog on upgrade.</li>
+        </ul>
+        <p>Other fixes:</p>
+        <ul>
+          <li>OBS errors appear in your own language. The translations existed but were never being shown.</li>
+          <li>Launching SceneDeck while it is already running brings the existing window forward instead of crashing.</li>
+          <li>A failed connection now clears the whole interface, rather than leaving stale scene and audio data on screen.</li>
+          <li>A background save that fails no longer leaves a timer running for the rest of the session.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-08-18">
       <description>
         <p>The live indicators now move, so you can tell at a glance — or from across the room — whether you are recording or streaming.</p>
