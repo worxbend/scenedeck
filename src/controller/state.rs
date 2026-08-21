@@ -130,6 +130,18 @@ pub enum MixerAudioRefreshTransition {
     StaleFailure,
 }
 
+impl MixerAudioRefreshTransition {
+    /// Whether this transition was for a scene the mixer has since moved on
+    /// from, and so should change nothing on screen.
+    ///
+    /// Scene audio is fetched asynchronously, so a reply can arrive after the
+    /// user has already selected a different scene. Applying it would show one
+    /// scene's audio under another scene's name.
+    pub const fn is_stale(self) -> bool {
+        matches!(self, Self::StaleSuccess | Self::StaleFailure)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum MixerVisibleAudioStatus<'a> {
     Loading,

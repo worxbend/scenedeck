@@ -652,13 +652,32 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
         streaming_chrome,
         status_bar,
     } = ui;
-    use crate::ui::pages::live::{
-        rebuild_audio_cards, rebuild_scene_cards, show_disconnected_view, show_live_view,
-    };
+    use crate::ui::pages::live::{rebuild_audio_cards, rebuild_scene_cards, show_live_view};
 
     match event {
-        AppEvent::Connecting | AppEvent::Connected(_) | AppEvent::Disconnected => {
-            apply_connection_event(nav, event, ui);
+        AppEvent::Connecting => show_no_session_ui(
+            nav,
+            ui,
+            &ObsStatus::Connecting,
+            &fl!(LANGUAGE_LOADER, "window-status-connecting"),
+        ),
+
+        AppEvent::Disconnected => show_no_session_ui(
+            nav,
+            ui,
+            &ObsStatus::Disconnected,
+            &fl!(LANGUAGE_LOADER, "window-live-disconnected-hint"),
+        ),
+
+        AppEvent::Connected(info) => {
+            let obs_status = ObsStatus::Connected {
+                obs_version: info.obs_version,
+            };
+            nav.state.borrow_mut().set_obs_status(obs_status.clone());
+            apply_sidebar_connection(sidebar_controls, &obs_status);
+            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
+            status_bar::set_connection(status_bar, &obs_status);
+            show_live_view(live);
         }
 
         AppEvent::StreamStatusUpdated(_)
@@ -722,15 +741,12 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
         }
 
         AppEvent::Error(err) => {
-            let obs_status = ObsStatus::Error(err.to_string());
-            nav.state.borrow_mut().reset_obs_session(obs_status.clone());
-            apply_sidebar_connection(sidebar_controls, &obs_status);
-            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
-            status_bar::set_connection(status_bar, &obs_status);
-            status_bar::clear_stats(status_bar);
-            show_disconnected_view(live, &fl!(LANGUAGE_LOADER, "window-obs-connection-failed"));
-            live.current_scene_label
-                .set_text(&fl!(LANGUAGE_LOADER, "window-current-scene-none"));
+            show_no_session_ui(
+                nav,
+                ui,
+                &ObsStatus::Error(err.to_string()),
+                &fl!(LANGUAGE_LOADER, "window-obs-connection-failed"),
+            );
 
             // Surface the error as a dismissable toast so it's visible even
             // when the user is on a different page.
@@ -752,36 +768,25 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
             refreshers.call_if_visible(nav, Page::Mixer);
         }
 
-        AppEvent::MixerAudioInputsUpdated { scene, inputs } => {
-            let transition = {
-                let mut state = nav.state.borrow_mut();
-                state.set_mixer_audio_success(scene, inputs)
-            };
-            if transition == MixerAudioRefreshTransition::StaleSuccess {
-                tracing::debug!("ignored stale mixer audio success");
-                return;
-            }
-            refreshers.call_if_visible(nav, Page::Mixer);
+        AppEvent::MixerAudioInputsLoading { scene } => {
+            let transition = nav.state.borrow_mut().set_mixer_audio_loading(scene);
+            apply_mixer_audio_transition(nav, refreshers, transition);
         }
 
-        AppEvent::MixerAudioInputsLoading { scene } => {
-            {
-                let mut state = nav.state.borrow_mut();
-                state.set_mixer_audio_loading(scene);
-            }
-            refreshers.call_if_visible(nav, Page::Mixer);
+        AppEvent::MixerAudioInputsUpdated { scene, inputs } => {
+            let transition = nav
+                .state
+                .borrow_mut()
+                .set_mixer_audio_success(scene, inputs);
+            apply_mixer_audio_transition(nav, refreshers, transition);
         }
 
         AppEvent::MixerAudioInputsFailed { scene, message } => {
-            let transition = {
-                let mut state = nav.state.borrow_mut();
-                state.set_mixer_audio_failure(scene, message)
-            };
-            if transition == MixerAudioRefreshTransition::StaleFailure {
-                tracing::debug!("ignored stale mixer audio failure");
-                return;
-            }
-            refreshers.call_if_visible(nav, Page::Mixer);
+            let transition = nav
+                .state
+                .borrow_mut()
+                .set_mixer_audio_failure(scene, message);
+            apply_mixer_audio_transition(nav, refreshers, transition);
         }
 
         AppEvent::InputMuteChanged { input, muted } => {
@@ -851,71 +856,56 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
     }
 }
 
-fn apply_connection_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
-    let EventUiContext {
-        live,
-        header_selectors,
-        sidebar_controls,
-        streaming_chrome,
-        status_bar,
-        ..
-    } = ui;
-    use crate::ui::pages::live::{rebuild_audio_cards, show_disconnected_view, show_live_view};
-
-    match event {
-        AppEvent::Connecting => {
-            nav.state
-                .borrow_mut()
-                .reset_obs_session(ObsStatus::Connecting);
-            apply_sidebar_connection(sidebar_controls, &ObsStatus::Connecting);
-            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
-            status_bar::set_connection(status_bar, &ObsStatus::Connecting);
-            status_bar::clear_stats(status_bar);
-            show_disconnected_view(live, &fl!(LANGUAGE_LOADER, "window-status-connecting"));
-            live.current_scene_label
-                .set_text(&fl!(LANGUAGE_LOADER, "window-current-scene-none"));
-            rebuild_audio_cards(live, &[], nav);
-            update_named_selector(&header_selectors.profiles, &ObsNamedList::default());
-            update_named_selector(
-                &header_selectors.scene_collections,
-                &ObsNamedList::default(),
-            );
-        }
-
-        AppEvent::Connected(info) => {
-            let obs_status = ObsStatus::Connected {
-                obs_version: info.obs_version.clone(),
-            };
-            nav.state.borrow_mut().set_obs_status(obs_status.clone());
-            apply_sidebar_connection(sidebar_controls, &obs_status);
-            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
-            status_bar::set_connection(status_bar, &obs_status);
-            show_live_view(live);
-        }
-
-        AppEvent::Disconnected => {
-            nav.state
-                .borrow_mut()
-                .reset_obs_session(ObsStatus::Disconnected);
-            apply_sidebar_connection(sidebar_controls, &ObsStatus::Disconnected);
-            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
-            status_bar::set_connection(status_bar, &ObsStatus::Disconnected);
-            status_bar::clear_stats(status_bar);
-            show_disconnected_view(live, &fl!(LANGUAGE_LOADER, "window-live-disconnected-hint"));
-            live.current_scene_label
-                .set_text(&fl!(LANGUAGE_LOADER, "window-current-scene-none"));
-            rebuild_audio_cards(live, &[], nav);
-            update_named_selector(&header_selectors.profiles, &ObsNamedList::default());
-            update_named_selector(
-                &header_selectors.scene_collections,
-                &ObsNamedList::default(),
-            );
-        }
-
-        // Unreachable: `apply_event` matches exhaustively and only forwards the
-        // three connection variants here.
-        _ => debug_assert!(false, "non-connection event routed to connection handler"),
+/// Redraw the Mixer after a scene-audio refresh moved its state on.
+///
+/// A reply for a scene the mixer has already left changes nothing on screen,
+/// so it is logged and dropped rather than drawn under the wrong scene name.
+fn apply_mixer_audio_transition(
+    nav: &NavigationContext,
+    refreshers: &PageRefreshers,
+    transition: MixerAudioRefreshTransition,
+) {
+    if transition.is_stale() {
+        tracing::debug!(?transition, "ignored stale mixer audio refresh");
+        return;
     }
+    refreshers.call_if_visible(nav, Page::Mixer);
+}
+
+/// Put every surface back to "there is no OBS session".
+///
+/// Connecting, disconnecting, and failing all show the same thing: no scenes,
+/// no audio, no profile or collection lists, no performance counters — only
+/// the status and the hint differ. They used to say so in three copied
+/// blocks, and the copies had drifted.
+fn show_no_session_ui(
+    nav: &NavigationContext,
+    ui: &EventUiContext,
+    status: &ObsStatus,
+    live_hint: &str,
+) {
+    use crate::ui::pages::live::{rebuild_audio_cards, show_disconnected_view};
+
+    nav.state.borrow_mut().reset_obs_session(status.clone());
+
+    apply_sidebar_connection(&ui.sidebar_controls, status);
+    sync_output_indicators(nav, &ui.sidebar_controls, &ui.streaming_chrome);
+
+    status_bar::set_connection(&ui.status_bar, status);
+    status_bar::clear_stats(&ui.status_bar);
+
+    show_disconnected_view(&ui.live, live_hint);
+    ui.live
+        .current_scene_label
+        .set_text(&fl!(LANGUAGE_LOADER, "window-current-scene-none"));
+    rebuild_audio_cards(&ui.live, &[], nav);
+
+    // The header lists belong to the session that just ended.
+    update_named_selector(&ui.header_selectors.profiles, &ObsNamedList::default());
+    update_named_selector(
+        &ui.header_selectors.scene_collections,
+        &ObsNamedList::default(),
+    );
 }
 
 /// Which of the two OBS outputs an event is about.
