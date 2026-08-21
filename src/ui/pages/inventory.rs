@@ -146,78 +146,10 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
             .build();
         combo_row.add_css_class("scenedeck-combo-row");
 
-        let drag_handle = Image::from_icon_name("list-drag-handle-symbolic");
-        drag_handle.set_tooltip_text(Some("Drag to reorder scene"));
-        drag_handle.set_valign(Align::Center);
-        drag_handle.add_css_class("dim-label");
+        let drag_handle =
+            install_scene_reordering(&combo_row, &scene.id, &inventory_scene_ids, nav, container);
 
-        let drag_source = DragSource::builder().actions(gdk::DragAction::MOVE).build();
-        drag_source.connect_prepare({
-            let scene_id = scene.id.clone();
-            move |_, _, _| Some(gdk::ContentProvider::for_value(&scene_id.to_value()))
-        });
-        drag_handle.add_controller(drag_source);
-
-        let drop_target = DropTarget::new(String::static_type(), gdk::DragAction::MOVE);
-        drop_target.connect_drop({
-            let target_scene_id = scene.id.clone();
-            let inventory_scene_ids = inventory_scene_ids.clone();
-            let nav = nav.clone();
-            let container = container.clone();
-            move |target, value, _, y| {
-                let Ok(source_scene_id) = value.get::<String>() else {
-                    return false;
-                };
-                let insert_after = target
-                    .widget()
-                    .is_some_and(|widget| y >= f64::from(widget.height()) / 2.0);
-                if !reorder_scenes(
-                    &nav,
-                    &inventory_scene_ids,
-                    &source_scene_id,
-                    &target_scene_id,
-                    insert_after,
-                ) {
-                    return false;
-                }
-                glib::idle_add_local_once({
-                    let nav = nav.clone();
-                    let container = container.clone();
-                    move || rebuild(&container, &nav)
-                });
-                true
-            }
-        });
-        combo_row.add_controller(drop_target);
-
-        let current_accent = registry
-            .scenes
-            .get(&scene.id)
-            .and_then(|entry| entry.accent_color.as_deref())
-            .map(str::to_owned);
-
-        let clear_accent_button = Button::builder()
-            .icon_name("edit-clear-symbolic")
-            .tooltip_text("Clear scene accent color")
-            .valign(Align::Center)
-            .sensitive(
-                registry
-                    .scenes
-                    .get(&scene.id)
-                    .and_then(|entry| entry.accent_color.as_ref())
-                    .is_some(),
-            )
-            .build();
-        clear_accent_button.add_css_class("flat");
-
-        let accent_box = GtkBox::new(Orientation::Horizontal, 0);
-        let accent_button = build_accent_button(
-            &scene.id,
-            current_accent.as_deref(),
-            nav,
-            &clear_accent_button,
-        );
-        accent_box.append(&accent_button);
+        let (accent_box, clear_accent_button) = build_accent_controls(&scene.id, &registry, nav);
 
         combo_row.connect_selected_notify({
             let scene_id = scene.id.clone();
@@ -234,24 +166,6 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
                         .and_then(|entry| entry.accent_color.as_ref())
                         .is_some(),
                 );
-            }
-        });
-
-        clear_accent_button.connect_clicked({
-            let scene_id = scene.id.clone();
-            let nav = nav.clone();
-            let clear_accent_button = clear_accent_button.clone();
-            let accent_box = accent_box.clone();
-            move |_| {
-                if set_scene_accent(&nav, &scene_id, None) {
-                    if let Some(previous_picker) = accent_box.first_child() {
-                        accent_box.remove(&previous_picker);
-                    }
-                    let unset_picker =
-                        build_accent_button(&scene_id, None, &nav, &clear_accent_button);
-                    accent_box.append(&unset_picker);
-                    clear_accent_button.set_sensitive(false);
-                }
             }
         });
 
@@ -281,6 +195,124 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
     }
 
     container.append(&page);
+}
+
+/// The accent-colour picker for one scene row, and its clear button.
+///
+/// The two are built together because they drive each other: choosing a colour
+/// enables the clear button, and clearing puts an empty picker back in place.
+fn build_accent_controls(
+    scene_id: &str,
+    registry: &SceneRegistry,
+    nav: &NavigationContext,
+) -> (GtkBox, Button) {
+    let current_accent = registry
+        .scenes
+        .get(scene_id)
+        .and_then(|entry| entry.accent_color.as_deref())
+        .map(str::to_owned);
+
+    let clear_accent_button = Button::builder()
+        .icon_name("edit-clear-symbolic")
+        .tooltip_text("Clear scene accent color")
+        .valign(Align::Center)
+        .sensitive(
+            registry
+                .scenes
+                .get(scene_id)
+                .and_then(|entry| entry.accent_color.as_ref())
+                .is_some(),
+        )
+        .build();
+    clear_accent_button.add_css_class("flat");
+
+    let accent_box = GtkBox::new(Orientation::Horizontal, 0);
+    let accent_button = build_accent_button(
+        scene_id,
+        current_accent.as_deref(),
+        nav,
+        &clear_accent_button,
+    );
+    accent_box.append(&accent_button);
+
+    clear_accent_button.connect_clicked({
+        let scene_id = scene_id.to_string();
+        let nav = nav.clone();
+        let clear_accent_button = clear_accent_button.clone();
+        let accent_box = accent_box.clone();
+        move |_| {
+            if set_scene_accent(&nav, &scene_id, None) {
+                if let Some(previous_picker) = accent_box.first_child() {
+                    accent_box.remove(&previous_picker);
+                }
+                let unset_picker = build_accent_button(&scene_id, None, &nav, &clear_accent_button);
+                accent_box.append(&unset_picker);
+                clear_accent_button.set_sensitive(false);
+            }
+        }
+    });
+
+    (accent_box, clear_accent_button)
+}
+
+/// Make one scene row draggable, and a drop target for the others.
+///
+/// Returns the drag handle for the caller to place; the drop target is
+/// attached to the whole row, so a scene can be dropped anywhere on it.
+/// Whether it lands before or after depends on which half of the row the
+/// pointer is in when it is released.
+fn install_scene_reordering(
+    combo_row: &ComboRow,
+    scene_id: &str,
+    inventory_scene_ids: &[String],
+    nav: &NavigationContext,
+    container: &GtkBox,
+) -> Image {
+    let drag_handle = Image::from_icon_name("list-drag-handle-symbolic");
+    drag_handle.set_tooltip_text(Some("Drag to reorder scene"));
+    drag_handle.set_valign(Align::Center);
+    drag_handle.add_css_class("dim-label");
+
+    let drag_source = DragSource::builder().actions(gdk::DragAction::MOVE).build();
+    drag_source.connect_prepare({
+        let scene_id = scene_id.to_string();
+        move |_, _, _| Some(gdk::ContentProvider::for_value(&scene_id.to_value()))
+    });
+    drag_handle.add_controller(drag_source);
+
+    let drop_target = DropTarget::new(String::static_type(), gdk::DragAction::MOVE);
+    drop_target.connect_drop({
+        let target_scene_id = scene_id.to_string();
+        let inventory_scene_ids = inventory_scene_ids.to_vec();
+        let nav = nav.clone();
+        let container = container.clone();
+        move |target, value, _, y| {
+            let Ok(source_scene_id) = value.get::<String>() else {
+                return false;
+            };
+            let insert_after = target
+                .widget()
+                .is_some_and(|widget| y >= f64::from(widget.height()) / 2.0);
+            if !reorder_scenes(
+                &nav,
+                &inventory_scene_ids,
+                &source_scene_id,
+                &target_scene_id,
+                insert_after,
+            ) {
+                return false;
+            }
+            glib::idle_add_local_once({
+                let nav = nav.clone();
+                let container = container.clone();
+                move || rebuild(&container, &nav)
+            });
+            true
+        }
+    });
+    combo_row.add_controller(drop_target);
+
+    drag_handle
 }
 
 /// Build the group listing registry entries whose scene is gone from OBS.
