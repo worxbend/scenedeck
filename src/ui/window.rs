@@ -730,10 +730,14 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
         }
 
         AppEvent::Error(err) => {
+            // `user_message` rather than `to_string`: the latter is the raw
+            // English text from the error type's derive, which would reach a
+            // Spanish or Polish user untranslated.
+            let message = err.user_message();
             show_no_session_ui(
                 nav,
                 ui,
-                &ObsStatus::Error(err.to_string()),
+                &ObsStatus::Error(message.clone()),
                 &fl!(LANGUAGE_LOADER, "window-obs-connection-failed"),
             );
 
@@ -744,7 +748,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
                     .title(fl!(
                         LANGUAGE_LOADER,
                         "window-toast-obs-error",
-                        error = err.to_string()
+                        error = message
                     ))
                     .timeout(8)
                     .build(),
