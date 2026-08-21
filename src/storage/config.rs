@@ -6,7 +6,7 @@
 
 use std::fs::read_to_string;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use i18n_embed_fl::fl;
 use serde::{Deserialize, Serialize};
@@ -166,7 +166,12 @@ pub struct LoadedConfig {
 pub enum ConfigStartupNotice {
     FirstLaunch,
     ReadFailed(String),
-    ParseFailed(String),
+    /// The file exists but is not valid JSON. `backup` is where the original
+    /// was moved to, when it could be moved at all.
+    ParseFailed {
+        detail: String,
+        backup: Option<PathBuf>,
+    },
 }
 
 impl ConfigStartupNotice {
@@ -176,13 +181,19 @@ impl ConfigStartupNotice {
             Self::ReadFailed(err) => {
                 fl!(LANGUAGE_LOADER, "config-read-failed", detail = err.as_str())
             }
-            Self::ParseFailed(err) => {
-                fl!(
+            Self::ParseFailed { detail, backup } => match backup {
+                Some(backup) => fl!(
+                    LANGUAGE_LOADER,
+                    "config-parse-failed-backed-up",
+                    detail = detail.as_str(),
+                    path = backup.display().to_string()
+                ),
+                None => fl!(
                     LANGUAGE_LOADER,
                     "config-parse-failed",
-                    detail = err.as_str()
-                )
-            }
+                    detail = detail.as_str()
+                ),
+            },
         }
     }
 }
@@ -206,7 +217,10 @@ pub fn read_config_from_path(path: &Path) -> LoadedConfig {
             }
             Err(err) => LoadedConfig {
                 config: AppConfig::default(),
-                startup_notice: Some(ConfigStartupNotice::ParseFailed(err.to_string())),
+                startup_notice: Some(ConfigStartupNotice::ParseFailed {
+                    detail: err.to_string(),
+                    backup: preserve_unparsable_config(path),
+                }),
             },
         },
         Err(err) if err.kind() == io::ErrorKind::NotFound => LoadedConfig {
@@ -217,6 +231,44 @@ pub fn read_config_from_path(path: &Path) -> LoadedConfig {
             config: AppConfig::default(),
             startup_notice: Some(ConfigStartupNotice::ReadFailed(err.to_string())),
         },
+    }
+}
+
+/// Move an unparsable config aside so the next save does not destroy it.
+///
+/// A config that will not parse is replaced in memory by defaults, and the
+/// next write — any switch on the Settings page, a mixer change, or the
+/// first-run dialog recording that it has been shown — persists those defaults
+/// straight over the file. One stray comma in a hand edit would otherwise cost
+/// the user every setting they had.
+///
+/// The registry loader already takes this position for its own file, refusing
+/// to coerce a bad load into an empty registry; this brings the config in
+/// line, by keeping the original rather than by refusing to save.
+///
+/// Returns where the original went, or `None` if it could not be moved — in
+/// which case the app still starts on defaults, because refusing to start
+/// helps nobody.
+///
+/// A second bad launch overwrites the previous backup. That is deliberate:
+/// the interesting file is the one the user last edited, and a directory
+/// slowly filling with timestamped copies of a broken config is its own
+/// problem.
+fn preserve_unparsable_config(path: &Path) -> Option<PathBuf> {
+    let backup = path.with_extension("json.invalid");
+    match std::fs::rename(path, &backup) {
+        Ok(()) => {
+            tracing::warn!(
+                original = %path.display(),
+                backup = %backup.display(),
+                "config could not be parsed; kept the original and started on defaults"
+            );
+            Some(backup)
+        }
+        Err(error) => {
+            tracing::warn!(%error, "could not preserve the unparsable config");
+            None
+        }
     }
 }
 
@@ -314,6 +366,48 @@ mod tests {
         let persisted = std::fs::read_to_string(&path).unwrap();
         let _ = std::fs::remove_file(path);
         (loaded.config, persisted)
+    }
+
+    #[test]
+    fn an_unparsable_config_is_kept_rather_than_overwritten() {
+        // The scenario: a hand edit leaves a stray comma. The app starts on
+        // defaults, and the very next save would land on this path — so the
+        // original has to be somewhere else by then.
+        let dir = std::env::temp_dir().join(format!(
+            "scenedeck-config-invalid-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        let original = br#"{ "obs": { "host": "192.168.1.42",, } }"#;
+        std::fs::write(&path, original).unwrap();
+
+        let loaded = read_config_from_path(&path);
+
+        let backup = dir.join("config.json.invalid");
+        assert!(backup.exists(), "the unparsable file was not preserved");
+        assert_eq!(std::fs::read(&backup).unwrap(), original);
+        assert!(
+            !path.exists(),
+            "the bad file was left where a save would hit it"
+        );
+
+        match loaded.startup_notice {
+            Some(ConfigStartupNotice::ParseFailed {
+                backup: Some(at), ..
+            }) => {
+                assert_eq!(at, backup);
+            }
+            other => panic!("expected a ParseFailed notice naming the backup, got {other:?}"),
+        }
+        // The app still starts, on defaults.
+        assert_eq!(loaded.config.obs.host, "127.0.0.1");
+
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

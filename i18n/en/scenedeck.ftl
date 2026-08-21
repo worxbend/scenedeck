@@ -128,6 +128,7 @@ obs-status-error = Error
 config-first-launch = No saved settings yet. Defaults are loaded.
 config-read-failed = Settings could not be read: { $detail }
 config-parse-failed = Settings could not be parsed: { $detail }
+config-parse-failed-backed-up = Settings could not be parsed: { $detail } — the file was kept at { $path } and defaults were loaded.
 
 ## graph.rs
 
