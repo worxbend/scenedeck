@@ -1,7 +1,8 @@
 use crate::domain::scene::SceneId;
+use crate::domain::string_enum_serde;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use i18n_embed_fl::fl;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::enum_variant_names)]
@@ -50,27 +51,7 @@ impl std::str::FromStr for MixerMode {
     }
 }
 
-impl Serialize for MixerMode {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for MixerMode {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        match value.parse() {
-            Ok(mode) => Ok(mode),
-            Err(never) => match never {},
-        }
-    }
-}
+string_enum_serde!(MixerMode);
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum MixerGrouping {
@@ -110,27 +91,7 @@ impl std::str::FromStr for MixerGrouping {
     }
 }
 
-impl Serialize for MixerGrouping {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for MixerGrouping {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        match value.parse() {
-            Ok(grouping) => Ok(grouping),
-            Err(never) => match never {},
-        }
-    }
-}
+string_enum_serde!(MixerGrouping);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MixerSelection {

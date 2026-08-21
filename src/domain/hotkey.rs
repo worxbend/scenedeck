@@ -8,8 +8,9 @@
 //! Everything here is GTK-free. `services::hotkey_service` owns the leader
 //! state machine, and `ui::window` translates GDK key events into [`KeyStroke`].
 
+use crate::domain::string_enum_serde;
 use i18n_embed_fl::fl;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 use crate::infra::i18n::LANGUAGE_LOADER;
 
@@ -204,27 +205,7 @@ impl std::str::FromStr for SceneHotkeyStyle {
     }
 }
 
-impl Serialize for SceneHotkeyStyle {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for SceneHotkeyStyle {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        match value.parse() {
-            Ok(style) => Ok(style),
-            Err(never) => match never {},
-        }
-    }
-}
+string_enum_serde!(SceneHotkeyStyle);
 
 // ── Leader key ────────────────────────────────────────────────────────────────
 
@@ -303,27 +284,7 @@ impl std::str::FromStr for LeaderKey {
     }
 }
 
-impl Serialize for LeaderKey {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for LeaderKey {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        match value.parse() {
-            Ok(leader) => Ok(leader),
-            Err(never) => match never {},
-        }
-    }
-}
+string_enum_serde!(LeaderKey);
 
 // ── Key strokes ───────────────────────────────────────────────────────────────
 

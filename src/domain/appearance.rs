@@ -1,6 +1,7 @@
 //! Appearance preferences that are independent from GTK widgets.
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use crate::domain::string_enum_serde;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -34,27 +35,7 @@ impl std::str::FromStr for ThemeMode {
     }
 }
 
-impl Serialize for ThemeMode {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for ThemeMode {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        match value.parse() {
-            Ok(mode) => Ok(mode),
-            Err(never) => match never {},
-        }
-    }
-}
+string_enum_serde!(ThemeMode);
 
 /// UI language preference. `System` follows the desktop locale; every other
 /// variant pins the UI to a specific shipped translation regardless of the
@@ -162,27 +143,7 @@ impl std::str::FromStr for Language {
     }
 }
 
-impl Serialize for Language {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for Language {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        match value.parse() {
-            Ok(language) => Ok(language),
-            Err(never) => match never {},
-        }
-    }
-}
+string_enum_serde!(Language);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThemeId(pub String);
@@ -238,27 +199,7 @@ impl std::str::FromStr for UiDensity {
     }
 }
 
-impl Serialize for UiDensity {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for UiDensity {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        match value.parse() {
-            Ok(density) => Ok(density),
-            Err(never) => match never {},
-        }
-    }
-}
+string_enum_serde!(UiDensity);
 
 /// How much movement the interface is allowed to use.
 ///
@@ -335,27 +276,7 @@ impl std::str::FromStr for MotionLevel {
     }
 }
 
-impl Serialize for MotionLevel {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for MotionLevel {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        match value.parse() {
-            Ok(level) => Ok(level),
-            Err(never) => match never {},
-        }
-    }
-}
+string_enum_serde!(MotionLevel);
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CustomCssPreference {
