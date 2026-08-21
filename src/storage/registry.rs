@@ -34,7 +34,7 @@ pub struct SceneRegistry {
 }
 
 /// Serialized metadata for one OBS scene.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SceneEntry {
     /// Local classification used by Live, Graph, and Doctor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -192,10 +192,7 @@ impl SceneRegistry {
                         scene_id.to_string(),
                         SceneEntry {
                             role: Some(role),
-                            tags: Vec::new(),
-                            protected: false,
-                            accent_color: None,
-                            icon: None,
+                            ..SceneEntry::default()
                         },
                     );
                     true
@@ -209,7 +206,7 @@ impl SceneRegistry {
                     return false;
                 }
                 entry.role = None;
-                if entry.accent_color.is_none() && entry.tags.is_empty() && !entry.protected {
+                if entry.is_empty() {
                     self.scenes.remove(scene_id);
                 }
                 true
@@ -241,11 +238,8 @@ impl SceneRegistry {
                 self.scenes.insert(
                     scene_id.to_string(),
                     SceneEntry {
-                        role: None,
-                        tags: Vec::new(),
-                        protected: false,
-                        accent_color: None,
                         icon: Some(icon),
+                        ..SceneEntry::default()
                     },
                 );
                 true
@@ -289,12 +283,54 @@ impl SceneRegistry {
 
 impl SceneEntry {
     /// Whether the entry carries no metadata worth keeping.
-    fn is_empty(&self) -> bool {
+    ///
+    /// This is the only place the rule is written down. Two call sites used to
+    /// re-derive it and both forgot `icon`, which silently dropped a scene's
+    /// icon whenever its role or accent was cleared.
+    pub(crate) fn is_empty(&self) -> bool {
         self.role.is_none()
             && self.tags.is_empty()
             && !self.protected
             && self.accent_color.is_none()
             && self.icon.is_none()
+    }
+}
+
+impl SceneRegistry {
+    /// Set or clear one scene's accent colour, preserving the rest of its
+    /// metadata.
+    ///
+    /// Shaped exactly like [`SceneRegistry::set_scene_icon`], and for the same
+    /// reason: which fields make an entry worth keeping is a registry rule, not
+    /// something a page should decide while handling a colour-picker signal.
+    ///
+    /// Returns `true` when the registry changed.
+    pub fn set_scene_accent(&mut self, scene_id: &str, accent_color: Option<String>) -> bool {
+        match self.scenes.get_mut(scene_id) {
+            Some(entry) if entry.accent_color == accent_color => false,
+            Some(entry) => {
+                entry.accent_color = accent_color;
+                if entry.is_empty() {
+                    self.scenes.remove(scene_id);
+                }
+                true
+            }
+            None => {
+                // Clearing an accent on a scene with no entry changes nothing,
+                // and must not create one.
+                let Some(accent_color) = accent_color else {
+                    return false;
+                };
+                self.scenes.insert(
+                    scene_id.to_string(),
+                    SceneEntry {
+                        accent_color: Some(accent_color),
+                        ..SceneEntry::default()
+                    },
+                );
+                true
+            }
+        }
     }
 }
 
@@ -523,6 +559,80 @@ pub fn write_registry_yaml_to_path(path: &Path, registry: &SceneRegistry) -> io:
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn clearing_an_accent_keeps_an_icon_the_scene_still_has() {
+        let mut registry = SceneRegistry::default();
+        registry.set_scene_icon("Camera", Some("nf-md-camera"));
+        registry.set_scene_accent("Camera", Some("#ff0000".to_string()));
+
+        registry.set_scene_accent("Camera", None);
+
+        assert_eq!(registry.scene_icon("Camera"), Some("nf-md-camera"));
+    }
+
+    #[test]
+    fn clearing_the_last_piece_of_metadata_removes_the_entry() {
+        // An untouched scene should leave no trace in the file, whichever of
+        // the three fields was the last one set.
+        for (set, clear) in [
+            (
+                Box::new(|r: &mut SceneRegistry| r.set_scene_icon("S", Some("nf-md-camera")))
+                    as Box<dyn Fn(&mut SceneRegistry) -> bool>,
+                Box::new(|r: &mut SceneRegistry| r.set_scene_icon("S", None))
+                    as Box<dyn Fn(&mut SceneRegistry) -> bool>,
+            ),
+            (
+                Box::new(|r: &mut SceneRegistry| r.set_scene_accent("S", Some("#abcdef".into()))),
+                Box::new(|r: &mut SceneRegistry| r.set_scene_accent("S", None)),
+            ),
+            (
+                Box::new(|r: &mut SceneRegistry| r.set_scene_role("S", Some(SceneRole::Primary))),
+                Box::new(|r: &mut SceneRegistry| r.set_scene_role("S", None)),
+            ),
+        ] {
+            let mut registry = SceneRegistry::default();
+            assert!(set(&mut registry));
+            assert!(registry.scenes.contains_key("S"));
+            assert!(clear(&mut registry));
+            assert!(
+                !registry.scenes.contains_key("S"),
+                "an entry with nothing left in it should be removed"
+            );
+        }
+    }
+
+    #[test]
+    fn clearing_an_accent_on_an_unknown_scene_changes_nothing() {
+        // Must not report a change, or every colour-picker close would write
+        // the registry; and must not create an empty entry.
+        let mut registry = SceneRegistry::default();
+
+        assert!(!registry.set_scene_accent("Never seen", None));
+        assert!(registry.scenes.is_empty());
+    }
+
+    #[test]
+    fn setting_the_same_accent_twice_reports_no_change() {
+        let mut registry = SceneRegistry::default();
+        assert!(registry.set_scene_accent("Camera", Some("#123456".to_string())));
+        assert!(!registry.set_scene_accent("Camera", Some("#123456".to_string())));
+    }
+
+    #[test]
+    fn clearing_a_role_keeps_an_icon_the_scene_still_has() {
+        let mut registry = SceneRegistry::default();
+        registry.set_scene_icon("Camera", Some("nf-md-camera"));
+        registry.set_scene_role("Camera", Some(SceneRole::Primary));
+
+        registry.set_scene_role("Camera", None);
+
+        assert_eq!(
+            registry.scene_icon("Camera"),
+            Some("nf-md-camera"),
+            "clearing the role threw away the scene's icon"
+        );
+    }
     use super::*;
     use crate::domain::registry::RoleDependency;
 

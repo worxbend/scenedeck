@@ -510,25 +510,9 @@ fn handle_scene_role_change(row: &ComboRow, scene_id: &str, nav: &NavigationCont
     let new_role = index_to_role(row.selected());
     let registry = {
         let mut state = nav.state.borrow_mut();
-        match new_role {
-            Some(role) => {
-                state
-                    .registry
-                    .scenes
-                    .entry(scene_id.to_string())
-                    .and_modify(|e| e.role = Some(role))
-                    .or_insert_with(|| SceneEntry {
-                        role: Some(role),
-                        tags: Vec::new(),
-                        protected: false,
-                        accent_color: None,
-                        icon: None,
-                    });
-            }
-            None => {
-                state.registry.set_scene_role(scene_id, None);
-            }
-        }
+        // Both directions go through the registry: it owns when an entry is
+        // created and when clearing the last piece of metadata removes it.
+        state.registry.set_scene_role(scene_id, new_role);
         state.registry.clone()
     };
     let scene_id = scene_id.to_string();
@@ -588,37 +572,20 @@ fn set_scene_icon(nav: &NavigationContext, scene_id: &str, icon: Option<&str>) {
     );
 }
 
+/// Save a scene's accent colour, and report whether anything changed.
+///
+/// The rule for what an accent change does to the entry — create it, update
+/// it, or remove an entry that is now empty — belongs to `SceneRegistry`. This
+/// only mirrors the result into the cached snapshot and writes it out.
 fn set_scene_accent(nav: &NavigationContext, scene_id: &str, accent_color: Option<String>) -> bool {
     let registry = {
         let mut state = nav.state.borrow_mut();
-        if !state.registry.scenes.contains_key(scene_id) && accent_color.is_some() {
-            state.registry.scenes.insert(
-                scene_id.to_string(),
-                SceneEntry {
-                    role: None,
-                    tags: Vec::new(),
-                    protected: false,
-                    accent_color: None,
-                    icon: None,
-                },
-            );
-        }
-        let Some(entry) = state.registry.scenes.get_mut(scene_id) else {
+        if !state.registry.set_scene_accent(scene_id, accent_color) {
             return false;
-        };
-        if entry.accent_color == accent_color {
-            return false;
-        }
-        entry.accent_color = accent_color;
-        if entry.role.is_none()
-            && entry.accent_color.is_none()
-            && entry.tags.is_empty()
-            && !entry.protected
-        {
-            state.registry.scenes.remove(scene_id);
         }
         state.registry.clone()
     };
+
     let scene_id = scene_id.to_string();
     crate::ui::background_io::run(
         move || write_registry(&registry),
