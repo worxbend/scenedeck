@@ -6,6 +6,7 @@
 use futures_util::StreamExt;
 
 use crate::domain::audio::InputId;
+use crate::domain::meter::InputLevels;
 use crate::domain::output::OutputStatus;
 use crate::domain::scene::SceneId;
 use crate::obs::mapper;
@@ -52,6 +53,11 @@ pub(crate) enum ObsEvent {
         /// Volume in decibels.
         volume_db: f64,
     },
+    /// Volume-meter readings for every input OBS is currently metering.
+    ///
+    /// High volume: OBS sends this about twenty times a second while
+    /// connected, and every one is disposable — the next reading replaces it.
+    InputLevelsUpdated(Vec<InputLevels>),
     /// Input inventory changed and the active scene audio list should refresh.
     InputsChanged,
     /// Scene item membership changed and scene-derived audio should refresh.

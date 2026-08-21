@@ -4,13 +4,10 @@ use std::sync::mpsc::{SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use futures_util::StreamExt;
-
 use crate::controller::event::AppEvent;
-use crate::domain::meter::InputLevels;
-use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::infra::error::AppError;
 use crate::obs::client::ObsClient;
+use crate::obs::event::{ObsEvent, ObsEventStream};
 
 pub(crate) type BitrateSample = Arc<Mutex<Option<(Instant, u64)>>>;
 
@@ -220,58 +217,45 @@ async fn refresh_scene_audio(
 
 // ── Session event loop ────────────────────────────────────────────────────────
 
+/// Translate OBS events into `AppEvent`s for as long as the session lives.
+///
+/// The stream yields `ObsEvent`, not raw `obws` variants: protocol details are
+/// normalized in the OBS adapter layer so this function only has to decide what
+/// the app should *do* about each one.
 pub(crate) async fn run_event_loop(
     client: ObsClient,
-    events: obws::events::EventStream,
+    mut events: ObsEventStream,
     tx: SyncSender<AppEvent>,
     audio_filter: Vec<String>,
 ) {
-    use obws::events::Event;
-
-    let mut events = events;
-
     while let Some(event) = events.next().await {
         let app_event = match event {
-            Event::StreamStateChanged { active, state } => Some(AppEvent::StreamStatusUpdated(
-                output_status_from_event(active, state, None),
-            )),
-            Event::RecordStateChanged {
-                active,
-                state,
-                path,
-            } => Some(AppEvent::RecordStatusUpdated(output_status_from_event(
-                active, state, path,
-            ))),
-            Event::RecordFileChanged { path } => {
-                Some(AppEvent::RecordStatusUpdated(OutputStatus {
-                    active: true,
-                    state: OutputRunState::Active,
-                    detail: Some(path),
-                }))
-            }
-            Event::CurrentProgramSceneChanged { id } => {
-                let _ = tx.send(AppEvent::CurrentSceneChanged(id.name.clone()));
-                refresh_scene_audio(&client, &tx, Some(&id.name), &audio_filter).await;
+            ObsEvent::StreamStatusUpdated(status) => Some(AppEvent::StreamStatusUpdated(status)),
+            ObsEvent::RecordStatusUpdated(status) => Some(AppEvent::RecordStatusUpdated(status)),
+
+            ObsEvent::CurrentProgramSceneChanged(scene) => {
+                let _ = tx.send(AppEvent::CurrentSceneChanged(scene.clone()));
+                refresh_scene_audio(&client, &tx, Some(&scene), &audio_filter).await;
                 None
             }
-            Event::InputMuteStateChanged { id, muted } => Some(AppEvent::InputMuteChanged {
-                input: id.name.clone(),
-                muted,
+
+            ObsEvent::InputMuteChanged { input, muted } => {
+                Some(AppEvent::InputMuteChanged { input, muted })
+            }
+            ObsEvent::InputVolumeChanged {
+                input,
+                volume_mul,
+                volume_db,
+            } => Some(AppEvent::InputVolumeChanged {
+                input,
+                volume_mul,
+                volume_db,
             }),
-            Event::InputVolumeChanged { id, mul, db } => Some(AppEvent::InputVolumeChanged {
-                input: id.name.clone(),
-                volume_mul: mul,
-                volume_db: db,
-            }),
-            // High-volume: about twenty of these a second, every one of them
-            // disposable. Dropping a frame when the UI is busy costs a 50 ms
-            // gap in the meters; blocking here would stall every other OBS
-            // event behind it.
-            Event::InputVolumeMeters { inputs } => {
-                let levels = inputs
-                    .iter()
-                    .map(|input| InputLevels::from_mul(input.name.clone(), &input.levels))
-                    .collect();
+
+            // Dropping a levels frame when the UI is busy costs a 50 ms gap in
+            // the meters; blocking here would stall every other OBS event
+            // behind it. Only a closed channel ends the session.
+            ObsEvent::InputLevelsUpdated(levels) => {
                 if let Err(TrySendError::Disconnected(_)) =
                     tx.try_send(AppEvent::InputLevelsUpdated(levels))
                 {
@@ -279,70 +263,45 @@ pub(crate) async fn run_event_loop(
                 }
                 None
             }
-            Event::InputCreated { .. }
-            | Event::InputRemoved { .. }
-            | Event::InputNameChanged { .. } => {
+
+            ObsEvent::InputsChanged | ObsEvent::SceneItemsChanged => {
                 refresh_current_scene_audio(&client, &tx, &audio_filter).await;
                 None
             }
-            Event::SceneItemCreated { .. }
-            | Event::SceneItemRemoved { .. }
-            | Event::SceneItemListReindexed { .. }
-            | Event::SceneItemEnableStateChanged { .. } => {
-                refresh_current_scene_audio(&client, &tx, &audio_filter).await;
+
+            ObsEvent::CurrentProfileChanged(name) => {
+                refresh_named_list(&client, &tx, NamedList::Profiles, Some(name), Vec::new()).await;
                 None
             }
-            Event::CurrentProfileChanged { name } => {
-                match client.get_profiles().await {
-                    Ok(mut profiles) => {
-                        profiles.current = Some(name);
-                        let _ = tx.send(AppEvent::ProfilesUpdated(profiles));
-                    }
-                    Err(e) => tracing::warn!(%e, "profile list refresh failed"),
-                }
+            ObsEvent::ProfileListChanged(profiles) => {
+                refresh_named_list(&client, &tx, NamedList::Profiles, None, profiles).await;
                 None
             }
-            Event::ProfileListChanged { profiles } => {
-                match client.get_profiles().await {
-                    Ok(mut list) => {
-                        if list.items.is_empty() {
-                            list.items = profiles;
-                        }
-                        let _ = tx.send(AppEvent::ProfilesUpdated(list));
-                    }
-                    Err(e) => tracing::warn!(%e, "profile list refresh failed"),
-                }
-                None
-            }
-            Event::CurrentSceneCollectionChanged { name } => {
-                match client.get_scene_collections().await {
-                    Ok(mut collections) => {
-                        collections.current = Some(name);
-                        let _ = tx.send(AppEvent::SceneCollectionsUpdated(collections));
-                    }
-                    Err(e) => tracing::warn!(%e, "scene collection list refresh failed"),
-                }
+            ObsEvent::CurrentSceneCollectionChanged(name) => {
+                refresh_named_list(
+                    &client,
+                    &tx,
+                    NamedList::SceneCollections,
+                    Some(name),
+                    Vec::new(),
+                )
+                .await;
+                // A different collection is a different set of scenes.
                 refresh_live_data(&client, &tx, &audio_filter).await;
                 None
             }
-            Event::SceneCollectionListChanged { collections } => {
-                match client.get_scene_collections().await {
-                    Ok(mut list) => {
-                        if list.items.is_empty() {
-                            list.items = collections;
-                        }
-                        let _ = tx.send(AppEvent::SceneCollectionsUpdated(list));
-                    }
-                    Err(e) => tracing::warn!(%e, "scene collection list refresh failed"),
-                }
+            ObsEvent::SceneCollectionListChanged(collections) => {
+                refresh_named_list(&client, &tx, NamedList::SceneCollections, None, collections)
+                    .await;
                 None
             }
-            // Re-fetch inventory + graph whenever the scene list changes
-            Event::SceneListChanged { .. } => {
+
+            ObsEvent::SceneListChanged => {
                 refresh_live_data(&client, &tx, &audio_filter).await;
                 None
             }
-            _ => None,
+
+            ObsEvent::Ignored => None,
         };
 
         if let Some(ev) = app_event {
@@ -355,27 +314,56 @@ pub(crate) async fn run_event_loop(
     let _ = tx.send(AppEvent::Disconnected);
 }
 
-fn output_status_from_event(
-    active: bool,
-    state: obws::events::OutputState,
-    detail: Option<String>,
-) -> OutputStatus {
-    let state = match state {
-        obws::events::OutputState::Starting => OutputRunState::Starting,
-        obws::events::OutputState::Started => OutputRunState::Active,
-        obws::events::OutputState::Stopping => OutputRunState::Stopping,
-        obws::events::OutputState::Stopped => OutputRunState::Inactive,
-        obws::events::OutputState::Reconnecting => OutputRunState::Reconnecting,
-        obws::events::OutputState::Reconnected => OutputRunState::Active,
-        obws::events::OutputState::Paused => OutputRunState::Paused,
-        obws::events::OutputState::Resumed => OutputRunState::Active,
-        obws::events::OutputState::Unknown => OutputRunState::Unknown,
-        _ => OutputRunState::Unknown,
+/// Which of the two OBS name lists a refresh concerns.
+#[derive(Clone, Copy)]
+enum NamedList {
+    Profiles,
+    SceneCollections,
+}
+
+impl NamedList {
+    /// Name used when a refresh of this list fails, so the log still says
+    /// which list it was.
+    const fn log_name(self) -> &'static str {
+        match self {
+            Self::Profiles => "profile",
+            Self::SceneCollections => "scene collection",
+        }
+    }
+}
+
+/// Re-fetch a profile or scene-collection list and publish it.
+///
+/// OBS reports the change but not always the whole list, so the list is read
+/// back from OBS. `current` overrides the active entry when the event named
+/// it, and `fallback_items` is used when OBS returns an empty list — which it
+/// does for the list-changed events, whose payload is the list itself.
+async fn refresh_named_list(
+    client: &ObsClient,
+    tx: &SyncSender<AppEvent>,
+    list: NamedList,
+    current: Option<String>,
+    fallback_items: Vec<String>,
+) {
+    let fetched = match list {
+        NamedList::Profiles => client.get_profiles().await,
+        NamedList::SceneCollections => client.get_scene_collections().await,
     };
 
-    OutputStatus {
-        active,
-        state,
-        detail,
+    match fetched {
+        Ok(mut fetched) => {
+            if let Some(current) = current {
+                fetched.current = Some(current);
+            }
+            if fetched.items.is_empty() {
+                fetched.items = fallback_items;
+            }
+            let event = match list {
+                NamedList::Profiles => AppEvent::ProfilesUpdated(fetched),
+                NamedList::SceneCollections => AppEvent::SceneCollectionsUpdated(fetched),
+            };
+            let _ = tx.send(event);
+        }
+        Err(e) => tracing::warn!(%e, list = list.log_name(), "OBS name list refresh failed"),
     }
 }

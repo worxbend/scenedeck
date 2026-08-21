@@ -18,6 +18,7 @@ use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::domain::scene::SceneInventory;
 use crate::domain::stats::{ObsStats, StreamHealth};
 use crate::infra::error::AppError;
+use crate::obs::event::ObsEventStream;
 use crate::obs::mapper;
 
 /// Cheaply cloneable handle to an active OBS WebSocket session.
@@ -37,7 +38,7 @@ impl ObsClient {
         host: &str,
         port: u16,
         password: Option<&str>,
-    ) -> Result<(Self, obws::events::EventStream), AppError> {
+    ) -> Result<(Self, ObsEventStream), AppError> {
         let client = Client::connect_with_config(ConnectConfig {
             host,
             port,
@@ -60,7 +61,8 @@ impl ObsClient {
             Self {
                 inner: Arc::new(client),
             },
-            events,
+            // Wrapped here so the raw `obws` stream never leaves this module.
+            ObsEventStream::new(events),
         ))
     }
 

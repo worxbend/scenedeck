@@ -9,6 +9,7 @@ use obws::responses::scenes::Scenes;
 use obws::responses::streaming::StreamStatus;
 
 use crate::controller::event::ConnectionInfo;
+use crate::domain::meter::InputLevels;
 use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::domain::scene::{Scene, SceneInventory};
 use crate::domain::stats::{ObsStats, StreamHealth};
@@ -148,6 +149,12 @@ pub(super) fn map_event(event: Event) -> ObsEvent {
             volume_mul: mul,
             volume_db: db,
         },
+        Event::InputVolumeMeters { inputs } => ObsEvent::InputLevelsUpdated(
+            inputs
+                .iter()
+                .map(|input| InputLevels::from_mul(input.name.clone(), &input.levels))
+                .collect(),
+        ),
         Event::InputCreated { .. }
         | Event::InputRemoved { .. }
         | Event::InputNameChanged { .. } => ObsEvent::InputsChanged,
@@ -172,6 +179,23 @@ pub(super) fn map_event(event: Event) -> ObsEvent {
 mod tests {
     use super::*;
     use obws::events::OutputState;
+
+    #[test]
+    fn volume_meters_map_to_one_reading_per_input() {
+        let event = Event::InputVolumeMeters {
+            inputs: vec![obws::events::InputVolumeMeter {
+                name: "Mic".to_string(),
+                levels: vec![[0.5, 0.5, 0.5]],
+            }],
+        };
+
+        let ObsEvent::InputLevelsUpdated(levels) = map_event(event) else {
+            panic!("volume meters should map to a levels update");
+        };
+        assert_eq!(levels.len(), 1);
+        assert_eq!(levels[0].input, "Mic");
+        assert_eq!(levels[0].channel_count(), 1);
+    }
 
     #[test]
     fn output_state_mapping_preserves_lifecycle_meaning() {
