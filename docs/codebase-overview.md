@@ -91,7 +91,6 @@ Higher-level logic over domain types.
   state machine.
 - `meter_service.rs`: volume meter ballistics — peak fall-off, peak hold, and
   the decibel-to-position mapping the meter is drawn against.
-- `scene_service.rs`: scene-related service functions.
 - `audio_service.rs`: dB conversion, volume sanitization, and slider debouncing.
 
 `src/storage/`

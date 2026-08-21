@@ -1,5 +1,4 @@
 use crate::domain::audio::{AudioInput, InputId};
-use crate::domain::diagnostic::Diagnostic;
 use crate::domain::graph::SceneGraph;
 use crate::domain::meter::InputLevels;
 use crate::domain::obs::ObsNamedList;
@@ -249,9 +248,8 @@ pub enum AppEvent {
     StreamCommandFailed(OutputCommandFailureRecovery),
     RecordCommandFailed(OutputCommandFailureRecovery),
 
-    // Graph & diagnostics
+    // Graph
     GraphUpdated(SceneGraph),
-    DiagnosticsUpdated(Vec<Diagnostic>),
 
     // Performance
     /// OBS performance snapshot plus a derived stream bitrate, if a prior

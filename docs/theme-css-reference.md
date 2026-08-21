@@ -48,8 +48,6 @@ stable classes listed here.
   `.icon-picker-choice-selected`: the scene and audio-source icon chooser.
 - `.scenedeck-icon`: a chosen icon rendered on a card.
 - `.output-control`: stream/record control group.
-- `.role-primary`, `.role-secondary`, `.role-module`, `.role-raw`,
-  `.role-debug`, `.role-archive`: role badges.
 - `.diag-error`, `.diag-warning`, `.diag-info`, `.diag-ok`: Doctor status icons.
 
 Planned stable classes include `.stream-control-card`, `.record-control-card`,

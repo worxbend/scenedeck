@@ -35,10 +35,8 @@ pub enum AppCommand {
     // Outputs
     StartStreaming,
     StopStreaming,
-    SetStreaming(bool),
     StartRecording,
     StopRecording,
-    SetRecording(bool),
     RefreshOutputStatus,
     /// Poll `GetStats` and stream byte counters for the status bar.
     RefreshStats,

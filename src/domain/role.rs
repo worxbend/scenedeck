@@ -85,30 +85,6 @@ impl SceneRole {
         }
     }
 
-    /// CSS class applied to role badges in the UI.
-    pub const fn css_class(self) -> &'static str {
-        match self {
-            Self::Primary => "role-primary",
-            Self::Secondary => "role-secondary",
-            Self::Module => "role-module",
-            Self::Raw => "role-raw",
-            Self::Debug => "role-debug",
-            Self::Archive => "role-archive",
-        }
-    }
-
-    /// Lowercase key used in `RuleConfig` (matches the serde representation).
-    pub const fn rule_key(self) -> &'static str {
-        match self {
-            Self::Primary => "primary",
-            Self::Secondary => "secondary",
-            Self::Module => "module",
-            Self::Raw => "raw",
-            Self::Debug => "debug",
-            Self::Archive => "archive",
-        }
-    }
-
     /// Whether this role is directly switchable from the Live page.
     pub const fn is_live_switchable(self) -> bool {
         matches!(self, Self::Primary)
@@ -118,6 +94,19 @@ impl SceneRole {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The serde spelling and `from_rule_key` are two hand-written tables over
+    /// the same set of names, and nothing else ties them together. Deleting
+    /// `rule_key` removed a third copy; this keeps the surviving two honest, so
+    /// adding a role without teaching `from_rule_key` about it fails here
+    /// rather than silently dropping the role when `registry.json` is read.
+    #[test]
+    fn every_role_parses_back_from_its_serialized_spelling() {
+        for role in SceneRole::ALL {
+            let json = serde_json::to_string(&role).expect("serialize");
+            assert_eq!(SceneRole::from_rule_key(json.trim_matches('"')), Some(role));
+        }
+    }
 
     #[test]
     fn optional_role_label_uses_unassigned_fallback() {

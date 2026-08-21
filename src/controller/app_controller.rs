@@ -202,11 +202,9 @@ impl AppController {
 
             AppCommand::StartStreaming => self.outputs.set_streaming(true),
             AppCommand::StopStreaming => self.outputs.set_streaming(false),
-            AppCommand::SetStreaming(active) => self.outputs.set_streaming(active),
 
             AppCommand::StartRecording => self.outputs.set_recording(true),
             AppCommand::StopRecording => self.outputs.set_recording(false),
-            AppCommand::SetRecording(active) => self.outputs.set_recording(active),
             AppCommand::RefreshOutputStatus => self.refresh_output_status(),
             AppCommand::RefreshStats => self.refresh_stats(),
 

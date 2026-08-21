@@ -4,7 +4,6 @@
 use crate::controller::event::OutputCommandFailureRecovery;
 use crate::domain::appearance::ThemeMode;
 use crate::domain::audio::AudioInput;
-use crate::domain::diagnostic::Diagnostic;
 use crate::domain::graph::SceneGraph;
 use crate::domain::meter::{InputLevelSnapshot, InputLevels};
 use crate::domain::mixer::{MixerMode, MixerSelection};
@@ -295,7 +294,6 @@ pub struct AppState {
     pub audio_levels: InputLevelSnapshot,
     pub mixer_audio_refresh: MixerAudioRefreshState,
     pub mixer: MixerSelection,
-    pub diagnostics: Vec<Diagnostic>,
     /// Human-readable config-load notice shown once on the Settings page.
     pub startup_notice: Option<String>,
     /// Latest OBS `GetStats` snapshot for the status bar. `None` until the
@@ -342,7 +340,6 @@ impl AppState {
             audio_levels: InputLevelSnapshot::default(),
             mixer_audio_refresh: MixerAudioRefreshState::default(),
             mixer,
-            diagnostics: Vec::new(),
             startup_notice,
             obs_stats: None,
             stream_bitrate_kbps: None,

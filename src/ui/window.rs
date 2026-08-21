@@ -823,10 +823,6 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
             refreshers.call_visible_among(nav, &[Page::Graph, Page::Doctor]);
         }
 
-        AppEvent::DiagnosticsUpdated(diagnostics) => {
-            nav.state.borrow_mut().diagnostics = diagnostics;
-        }
-
         AppEvent::StatsUpdated {
             stats,
             bitrate_kbps,
@@ -1060,7 +1056,6 @@ fn update_active_since(active: bool, active_since: &mut Option<Instant>) {
     }
 }
 
-#[allow(dead_code)]
 pub(crate) fn should_rebuild_visible_mixer_for_input_event(
     state: &AppState,
     input_name: &str,
