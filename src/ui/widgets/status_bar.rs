@@ -10,7 +10,13 @@ use crate::controller::state::ObsStatus;
 use crate::domain::stats::ObsStats;
 use crate::infra::i18n::LANGUAGE_LOADER;
 
-const CONNECTION_CSS_CLASSES: &[&str] = &[
+/// Every CSS class `ObsStatus::css_class` can return.
+///
+/// Widgets that colour themselves by connection state clear all of these
+/// before adding the current one, so the list has to stay in step with
+/// `ObsStatus::css_class`. It is `pub(crate)` because the sidebar needs the
+/// same list and two copies would be one copy too many.
+pub(crate) const CONNECTION_CSS_CLASSES: &[&str] = &[
     "obs-connected",
     "obs-disconnected",
     "obs-connecting",

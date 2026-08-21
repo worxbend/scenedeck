@@ -97,7 +97,7 @@ impl ObsStatus {
         }
     }
 
-    pub fn css_class(&self) -> &str {
+    pub fn css_class(&self) -> &'static str {
         match self {
             Self::Disconnected => "obs-disconnected",
             Self::Connecting => "obs-connecting",

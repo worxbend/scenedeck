@@ -676,23 +676,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
         AppEvent::Error(err) => {
             let obs_status = ObsStatus::Error(err.to_string());
             nav.state.borrow_mut().reset_obs_session(obs_status.clone());
-            sidebar_controls.status_label.set_text(&fl!(
-                LANGUAGE_LOADER,
-                "window-status-error",
-                error = err.to_string()
-            ));
-            set_status_class(&sidebar_controls.status_label, "obs-error");
-            set_button_label(
-                &sidebar_controls.connect_btn,
-                &fl!(LANGUAGE_LOADER, "window-connect-btn-retry"),
-            );
-            sidebar_controls.connect_btn.set_sensitive(true);
-            sidebar_controls
-                .connect_btn
-                .add_css_class("suggested-action");
-            sidebar_controls
-                .connect_btn
-                .remove_css_class("destructive-action");
+            apply_sidebar_connection(sidebar_controls, &obs_status);
             sync_output_indicators(nav, sidebar_controls, streaming_chrome);
             status_bar::set_connection(status_bar, &obs_status);
             status_bar::clear_stats(status_bar);
@@ -867,15 +851,7 @@ fn apply_connection_event(nav: &NavigationContext, event: AppEvent, ui: &EventUi
             nav.state
                 .borrow_mut()
                 .reset_obs_session(ObsStatus::Connecting);
-            sidebar_controls
-                .status_label
-                .set_text(&fl!(LANGUAGE_LOADER, "window-status-connecting"));
-            set_status_class(&sidebar_controls.status_label, "obs-connecting");
-            set_button_label(
-                &sidebar_controls.connect_btn,
-                &fl!(LANGUAGE_LOADER, "window-connect-btn-connecting"),
-            );
-            sidebar_controls.connect_btn.set_sensitive(false);
+            apply_sidebar_connection(sidebar_controls, &ObsStatus::Connecting);
             sync_output_indicators(nav, sidebar_controls, streaming_chrome);
             status_bar::set_connection(status_bar, &ObsStatus::Connecting);
             status_bar::clear_stats(status_bar);
@@ -895,23 +871,7 @@ fn apply_connection_event(nav: &NavigationContext, event: AppEvent, ui: &EventUi
                 obs_version: info.obs_version.clone(),
             };
             nav.state.borrow_mut().set_obs_status(obs_status.clone());
-            sidebar_controls.status_label.set_text(&fl!(
-                LANGUAGE_LOADER,
-                "window-status-connected",
-                version = info.obs_version.clone()
-            ));
-            set_status_class(&sidebar_controls.status_label, "obs-connected");
-            set_button_label(
-                &sidebar_controls.connect_btn,
-                &fl!(LANGUAGE_LOADER, "window-connect-btn-disconnect"),
-            );
-            sidebar_controls.connect_btn.set_sensitive(true);
-            sidebar_controls
-                .connect_btn
-                .remove_css_class("suggested-action");
-            sidebar_controls
-                .connect_btn
-                .add_css_class("destructive-action");
+            apply_sidebar_connection(sidebar_controls, &obs_status);
             sync_output_indicators(nav, sidebar_controls, streaming_chrome);
             status_bar::set_connection(status_bar, &obs_status);
             show_live_view(live);
@@ -921,21 +881,7 @@ fn apply_connection_event(nav: &NavigationContext, event: AppEvent, ui: &EventUi
             nav.state
                 .borrow_mut()
                 .reset_obs_session(ObsStatus::Disconnected);
-            sidebar_controls
-                .status_label
-                .set_text(&fl!(LANGUAGE_LOADER, "window-status-disconnected"));
-            set_status_class(&sidebar_controls.status_label, "obs-disconnected");
-            set_button_label(
-                &sidebar_controls.connect_btn,
-                &fl!(LANGUAGE_LOADER, "window-connect-btn-connect"),
-            );
-            sidebar_controls.connect_btn.set_sensitive(true);
-            sidebar_controls
-                .connect_btn
-                .add_css_class("suggested-action");
-            sidebar_controls
-                .connect_btn
-                .remove_css_class("destructive-action");
+            apply_sidebar_connection(sidebar_controls, &ObsStatus::Disconnected);
             sync_output_indicators(nav, sidebar_controls, streaming_chrome);
             status_bar::set_connection(status_bar, &ObsStatus::Disconnected);
             status_bar::clear_stats(status_bar);
@@ -1087,12 +1033,7 @@ fn remember_recording_path(state: &mut AppState, status: &OutputStatus) {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn set_status_class(label: &gtk4::Label, new_class: &str) {
-    for class in &[
-        "obs-connected",
-        "obs-disconnected",
-        "obs-connecting",
-        "obs-error",
-    ] {
+    for class in status_bar::CONNECTION_CSS_CLASSES {
         label.remove_css_class(class);
     }
     label.add_css_class(new_class);
@@ -1151,7 +1092,7 @@ fn format_elapsed(since: Instant) -> String {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct SidebarOutputButtonModel {
+struct SidebarButtonModel {
     label: String,
     sensitive: bool,
     suggested: bool,
@@ -1163,9 +1104,9 @@ fn sidebar_output_button_model(
     connected: bool,
     start_label: String,
     stop_label: String,
-) -> SidebarOutputButtonModel {
+) -> SidebarButtonModel {
     if status.state.is_transitioning() {
-        return SidebarOutputButtonModel {
+        return SidebarButtonModel {
             label: match status.state {
                 OutputRunState::Starting => fl!(LANGUAGE_LOADER, "window-sidebar-output-starting"),
                 OutputRunState::Stopping => fl!(LANGUAGE_LOADER, "window-sidebar-output-stopping"),
@@ -1181,14 +1122,14 @@ fn sidebar_output_button_model(
     }
 
     if status.active {
-        SidebarOutputButtonModel {
+        SidebarButtonModel {
             label: stop_label,
             sensitive: connected,
             suggested: false,
             destructive: connected,
         }
     } else {
-        SidebarOutputButtonModel {
+        SidebarButtonModel {
             label: start_label,
             sensitive: connected,
             suggested: connected,
@@ -1197,7 +1138,82 @@ fn sidebar_output_button_model(
     }
 }
 
-fn apply_sidebar_output_button(button: &Button, model: SidebarOutputButtonModel) {
+/// How the sidebar's status line and Connect button should look for a
+/// connection state.
+struct SidebarConnectionModel {
+    status_text: String,
+    css_class: &'static str,
+    button: SidebarButtonModel,
+}
+
+/// Derive the sidebar's connection chrome from the connection status.
+///
+/// All four states — connecting, connected, disconnected, failed — used to
+/// spell this out by hand at their own call site, which is how the Error arm
+/// ended up styling its button like the Disconnected arm but writing its own
+/// status text. The CSS class comes from `ObsStatus::css_class` rather than
+/// being written out again here, so the sidebar and the status bar cannot
+/// disagree about what colour a state is.
+fn sidebar_connection_model(status: &ObsStatus) -> SidebarConnectionModel {
+    let (status_text, label, sensitive, suggested, destructive) = match status {
+        ObsStatus::Connecting => (
+            fl!(LANGUAGE_LOADER, "window-status-connecting"),
+            fl!(LANGUAGE_LOADER, "window-connect-btn-connecting"),
+            false,
+            false,
+            false,
+        ),
+        ObsStatus::Connected { obs_version } => (
+            fl!(
+                LANGUAGE_LOADER,
+                "window-status-connected",
+                version = obs_version.clone()
+            ),
+            fl!(LANGUAGE_LOADER, "window-connect-btn-disconnect"),
+            true,
+            false,
+            true,
+        ),
+        ObsStatus::Disconnected => (
+            fl!(LANGUAGE_LOADER, "window-status-disconnected"),
+            fl!(LANGUAGE_LOADER, "window-connect-btn-connect"),
+            true,
+            true,
+            false,
+        ),
+        ObsStatus::Error(error) => (
+            fl!(
+                LANGUAGE_LOADER,
+                "window-status-error",
+                error = error.clone()
+            ),
+            fl!(LANGUAGE_LOADER, "window-connect-btn-retry"),
+            true,
+            true,
+            false,
+        ),
+    };
+
+    SidebarConnectionModel {
+        status_text,
+        css_class: status.css_class(),
+        button: SidebarButtonModel {
+            label,
+            sensitive,
+            suggested,
+            destructive,
+        },
+    }
+}
+
+fn apply_sidebar_connection(sidebar: &SidebarControls, status: &ObsStatus) {
+    let model = sidebar_connection_model(status);
+    sidebar.status_label.set_text(&model.status_text);
+    set_status_class(&sidebar.status_label, model.css_class);
+    apply_sidebar_button(&sidebar.connect_btn, model.button);
+}
+
+fn apply_sidebar_button(button: &Button, model: SidebarButtonModel) {
     set_button_label(button, &model.label);
     button.set_sensitive(model.sensitive);
     if model.suggested {
@@ -1228,7 +1244,7 @@ fn sync_output_indicators(
 
 fn sync_sidebar_output_buttons(sidebar: &SidebarControls, state: &AppState) {
     let connected = matches!(state.obs_status, ObsStatus::Connected { .. });
-    apply_sidebar_output_button(
+    apply_sidebar_button(
         &sidebar.stream_btn,
         sidebar_output_button_model(
             &state.stream_status,
@@ -1237,7 +1253,7 @@ fn sync_sidebar_output_buttons(sidebar: &SidebarControls, state: &AppState) {
             fl!(LANGUAGE_LOADER, "window-sidebar-stop-stream"),
         ),
     );
-    apply_sidebar_output_button(
+    apply_sidebar_button(
         &sidebar.record_btn,
         sidebar_output_button_model(
             &state.record_status,
@@ -1728,6 +1744,61 @@ mod tests {
     }
 
     #[test]
+    fn sidebar_connection_model_covers_every_connection_state() {
+        let connecting = sidebar_connection_model(&ObsStatus::Connecting);
+        assert_eq!(connecting.css_class, "obs-connecting");
+        assert!(!connecting.button.sensitive);
+        // Nothing is in progress that the user could confirm or cancel, so the
+        // button carries neither accent while it waits.
+        assert!(!connecting.button.suggested);
+        assert!(!connecting.button.destructive);
+
+        let connected = sidebar_connection_model(&ObsStatus::Connected {
+            obs_version: "30.1.2".to_string(),
+        });
+        assert_eq!(connected.css_class, "obs-connected");
+        assert!(connected.button.sensitive);
+        // Connected means the button now disconnects, which is destructive.
+        assert!(connected.button.destructive);
+        assert!(!connected.button.suggested);
+        assert!(connected.status_text.contains("30.1.2"));
+
+        let disconnected = sidebar_connection_model(&ObsStatus::Disconnected);
+        assert_eq!(disconnected.css_class, "obs-disconnected");
+        assert!(disconnected.button.sensitive);
+        assert!(disconnected.button.suggested);
+        assert!(!disconnected.button.destructive);
+
+        let failed = sidebar_connection_model(&ObsStatus::Error("refused".to_string()));
+        assert_eq!(failed.css_class, "obs-error");
+        assert!(failed.button.sensitive);
+        // A failure offers a retry, which is the same invitation as connecting.
+        assert!(failed.button.suggested);
+        assert!(!failed.button.destructive);
+        assert!(failed.status_text.contains("refused"));
+    }
+
+    #[test]
+    fn every_connection_css_class_is_one_the_widgets_clear() {
+        // `set_status_class` clears this list before adding the current class;
+        // a class missing from it would never be removed again.
+        for status in [
+            ObsStatus::Connecting,
+            ObsStatus::Connected {
+                obs_version: String::new(),
+            },
+            ObsStatus::Disconnected,
+            ObsStatus::Error(String::new()),
+        ] {
+            assert!(
+                status_bar::CONNECTION_CSS_CLASSES.contains(&status.css_class()),
+                "{:?} uses a class the widgets never clear",
+                status
+            );
+        }
+    }
+
+    #[test]
     fn sidebar_output_button_model_reflects_connection_and_output_state() {
         assert_eq!(
             sidebar_output_button_model(
@@ -1736,7 +1807,7 @@ mod tests {
                 "Start Stream".to_string(),
                 "Stop Stream".to_string(),
             ),
-            SidebarOutputButtonModel {
+            SidebarButtonModel {
                 label: "Start Stream".to_string(),
                 sensitive: false,
                 suggested: false,
@@ -1750,7 +1821,7 @@ mod tests {
                 "Start Stream".to_string(),
                 "Stop Stream".to_string(),
             ),
-            SidebarOutputButtonModel {
+            SidebarButtonModel {
                 label: "Start Stream".to_string(),
                 sensitive: true,
                 suggested: true,
@@ -1764,7 +1835,7 @@ mod tests {
                 "Start Stream".to_string(),
                 "Stop Stream".to_string(),
             ),
-            SidebarOutputButtonModel {
+            SidebarButtonModel {
                 label: "Stop Stream".to_string(),
                 sensitive: true,
                 suggested: false,
@@ -1778,7 +1849,7 @@ mod tests {
                 "Start Stream".to_string(),
                 "Stop Stream".to_string(),
             ),
-            SidebarOutputButtonModel {
+            SidebarButtonModel {
                 label: "Starting…".to_string(),
                 sensitive: false,
                 suggested: false,
