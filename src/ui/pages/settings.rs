@@ -199,11 +199,7 @@ fn build_custom_css_rows(
                     Ok(()) => {
                         apply_theme_with_status(config.appearance, theme_status_row);
                     }
-                    Err(err) => theme_status_row.set_subtitle(&fl!(
-                        LANGUAGE_LOADER,
-                        "settings-failed-to-save",
-                        err = err.to_string()
-                    )),
+                    Err(err) => report_save_failure(&theme_status_row, &err),
                 },
             );
         }
@@ -308,11 +304,7 @@ fn build_appearance_group(nav: &NavigationContext, cfg: &AppConfig) -> Preferenc
                         row.set_subtitle(&theme_subtitle(theme));
                         apply_theme_with_status(config.appearance, theme_status_row);
                     }
-                    Err(err) => theme_status_row.set_subtitle(&fl!(
-                        LANGUAGE_LOADER,
-                        "settings-failed-to-save",
-                        err = err.to_string()
-                    )),
+                    Err(err) => report_save_failure(&theme_status_row, &err),
                 },
             );
         }
@@ -387,13 +379,7 @@ fn build_language_group(nav: &NavigationContext, cfg: &AppConfig) -> Preferences
                         language_status_row
                             .set_subtitle(&fl!(LANGUAGE_LOADER, "settings-language-saved"));
                     }
-                    Err(err) => {
-                        language_status_row.set_subtitle(&fl!(
-                            LANGUAGE_LOADER,
-                            "settings-failed-to-save",
-                            err = err.to_string()
-                        ));
-                    }
+                    Err(err) => report_save_failure(&language_status_row, &err),
                 },
             );
         }
@@ -466,11 +452,7 @@ fn build_obs_group(nav: &NavigationContext, cfg: &AppConfig) -> (PreferencesGrou
                 },
                 move |result, _| match result {
                     Ok(()) => status_row.set_subtitle(&fl!(LANGUAGE_LOADER, "settings-saved")),
-                    Err(err) => status_row.set_subtitle(&fl!(
-                        LANGUAGE_LOADER,
-                        "settings-failed-to-save",
-                        err = err.to_string()
-                    )),
+                    Err(err) => report_save_failure(&status_row, &err),
                 },
             );
         }
@@ -887,13 +869,21 @@ fn save_custom_css_path(
             Ok(()) => {
                 apply_theme_with_status(config.appearance, status_row);
             }
-            Err(err) => status_row.set_subtitle(&fl!(
-                LANGUAGE_LOADER,
-                "settings-failed-to-save",
-                err = err.to_string()
-            )),
+            Err(err) => report_save_failure(&status_row, &err),
         },
     );
+}
+
+/// Report a failed config save in `row`.
+///
+/// Every setting on this page writes to the same config file, so they all fail
+/// the same way and say so in the same words.
+fn report_save_failure(row: &ActionRow, err: &std::io::Error) {
+    row.set_subtitle(&fl!(
+        LANGUAGE_LOADER,
+        "settings-failed-to-save",
+        err = err.to_string()
+    ));
 }
 
 fn path_text(path: Option<&PathBuf>) -> String {

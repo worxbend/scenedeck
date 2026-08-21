@@ -239,12 +239,18 @@ fn control_row(css_class: &str, children: &[gtk4::Widget]) -> GtkBox {
 }
 
 /// The fader, its decibel readout, and the debouncing that ties them to OBS.
+///
+/// Cloning shares the same widgets and debouncer state; the card and its fine
+/// controls both need to reach them.
+#[derive(Clone)]
 struct VolumeControls {
     scale: Scale,
     db_label: Label,
     debouncer: Rc<RefCell<VolumeChangeDebouncer>>,
     debounce_source: Rc<RefCell<Option<glib::SourceId>>>,
-    signal_id: glib::SignalHandlerId,
+    /// Shared because the fader, the fine controls, and incoming OBS updates
+    /// all need to block it while writing a value they produced themselves.
+    signal_id: Rc<glib::SignalHandlerId>,
 }
 
 /// Build the fader and its readout.
@@ -318,7 +324,7 @@ fn build_volume_controls(
         db_label,
         debouncer: volume_debouncer,
         debounce_source: volume_debounce_source,
-        signal_id: vol_signal_id,
+        signal_id: Rc::new(vol_signal_id),
     }
 }
 
@@ -338,13 +344,14 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         selected_icon,
     } = build_scope_bar(input, &input_id, &nav);
 
+    let controls = build_volume_controls(input, &input_id, &nav);
     let VolumeControls {
         scale: vol_scale,
         db_label,
         debouncer: volume_debouncer,
         debounce_source: volume_debounce_source,
         signal_id: vol_signal_id,
-    } = build_volume_controls(input, &input_id, &nav);
+    } = controls.clone();
 
     let lock_btn = build_lock_button(input.locked_locally, &vol_scale);
 
@@ -360,8 +367,6 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
     fader_row.append(&vol_scale);
     fader_row.append(&meter.root);
     fader_row.append(&build_meter_ruler());
-
-    let vol_signal_id = Rc::new(vol_signal_id);
 
     // Mute and lock sit side by side under the fader, where OBS puts mute and
     // monitoring.
@@ -385,15 +390,7 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         },
     );
 
-    let fine_controls = build_fine_controls(
-        input,
-        &vol_scale,
-        &db_label,
-        vol_signal_id.clone(),
-        nav.clone(),
-        volume_debouncer.clone(),
-        volume_debounce_source.clone(),
-    );
+    let fine_controls = build_fine_controls(input, &controls, &nav);
 
     let overflow = control_row(
         "audio-card-overflow",
@@ -523,20 +520,16 @@ fn build_meter_ruler() -> GtkBox {
 
 fn build_fine_controls(
     input: &AudioInput,
-    vol_scale: &Scale,
-    db_label: &Label,
-    vol_signal_id: Rc<glib::SignalHandlerId>,
-    nav: NavigationContext,
-    volume_debouncer: Rc<RefCell<VolumeChangeDebouncer>>,
-    volume_debounce_source: Rc<RefCell<Option<SourceId>>>,
+    controls: &VolumeControls,
+    nav: &NavigationContext,
 ) -> GtkBox {
-    let controls = GtkBox::builder()
+    let controls_box = GtkBox::builder()
         .orientation(Orientation::Horizontal)
         .spacing(1)
         .halign(Align::Center)
         .valign(Align::Center)
         .build();
-    controls.add_css_class("audio-fine-controls");
+    controls_box.add_css_class("audio-fine-controls");
 
     let plus = Button::builder()
         .label("+")
@@ -556,70 +549,51 @@ fn build_fine_controls(
         button.add_css_class("circular");
     }
 
-    plus.connect_clicked({
-        let nav = nav.clone();
-        let input_id = input.id.clone();
-        let vol_scale = vol_scale.clone();
-        let db_label = db_label.clone();
-        let vol_signal_id = vol_signal_id.clone();
-        let debouncer = volume_debouncer.clone();
-        let debounce_source = volume_debounce_source.clone();
-        move |_| {
-            let context = VolumeChangeContext {
-                vol_scale: &vol_scale,
-                db_label: &db_label,
-                vol_signal_id: Some(vol_signal_id.as_ref()),
-                debouncer: &debouncer,
-                debounce_source: &debounce_source,
-            };
-            dispatch_db_adjust(&nav, &input_id, vol_scale.value(), 1.0, context)
-        }
+    // The three buttons differ only in what they ask for; everything they need
+    // in order to ask is the same.
+    connect_volume_action(&plus, &input.id, controls, nav, |nav, id, value, ctx| {
+        dispatch_db_adjust(nav, id, value, 1.0, ctx);
+    });
+    connect_volume_action(&reset, &input.id, controls, nav, |nav, id, _, ctx| {
+        apply_volume_change(nav, id, 1.0, VolumeDispatch::Immediate, ctx);
+    });
+    connect_volume_action(&minus, &input.id, controls, nav, |nav, id, value, ctx| {
+        dispatch_db_adjust(nav, id, value, -1.0, ctx);
     });
 
-    reset.connect_clicked({
+    controls_box.append(&plus);
+    controls_box.append(&reset);
+    controls_box.append(&minus);
+    controls_box
+}
+
+/// Wire one fine-control button to an action on this card's volume.
+///
+/// The action is handed the current fader value and a `VolumeChangeContext`
+/// already set up to block the fader's own signal, so it cannot mistake the
+/// value it is writing for one the user just dragged.
+fn connect_volume_action(
+    button: &Button,
+    input_id: &str,
+    controls: &VolumeControls,
+    nav: &NavigationContext,
+    action: impl Fn(&NavigationContext, &str, f64, VolumeChangeContext<'_>) + 'static,
+) {
+    button.connect_clicked({
         let nav = nav.clone();
-        let input_id = input.id.clone();
-        let vol_scale = vol_scale.clone();
-        let db_label = db_label.clone();
-        let vol_signal_id = vol_signal_id.clone();
-        let debouncer = volume_debouncer.clone();
-        let debounce_source = volume_debounce_source.clone();
+        let input_id = input_id.to_string();
+        let controls = controls.clone();
         move |_| {
             let context = VolumeChangeContext {
-                vol_scale: &vol_scale,
-                db_label: &db_label,
-                vol_signal_id: Some(vol_signal_id.as_ref()),
-                debouncer: &debouncer,
-                debounce_source: &debounce_source,
+                vol_scale: &controls.scale,
+                db_label: &controls.db_label,
+                vol_signal_id: Some(controls.signal_id.as_ref()),
+                debouncer: &controls.debouncer,
+                debounce_source: &controls.debounce_source,
             };
-            apply_volume_change(&nav, &input_id, 1.0, VolumeDispatch::Immediate, context);
+            action(&nav, &input_id, controls.scale.value(), context);
         }
     });
-
-    minus.connect_clicked({
-        let nav = nav.clone();
-        let input_id = input.id.clone();
-        let vol_scale = vol_scale.clone();
-        let db_label = db_label.clone();
-        let vol_signal_id = vol_signal_id.clone();
-        let debouncer = volume_debouncer.clone();
-        let debounce_source = volume_debounce_source.clone();
-        move |_| {
-            let context = VolumeChangeContext {
-                vol_scale: &vol_scale,
-                db_label: &db_label,
-                vol_signal_id: Some(vol_signal_id.as_ref()),
-                debouncer: &debouncer,
-                debounce_source: &debounce_source,
-            };
-            dispatch_db_adjust(&nav, &input_id, vol_scale.value(), -1.0, context)
-        }
-    });
-
-    controls.append(&plus);
-    controls.append(&reset);
-    controls.append(&minus);
-    controls
 }
 
 fn dispatch_db_adjust(
