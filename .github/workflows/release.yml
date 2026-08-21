@@ -34,6 +34,13 @@ jobs:
 
       - name: Install Linux packaging dependencies
         run: |
+          # Ubuntu 24.04 ships flatpak 1.14.6, which cannot pull the
+          # org.freedesktop.Sdk.Extension.rust-stable//25.08 ref that Flathub
+          # republished on 2026-08-21 — it fails with a bare HTTP 404 while a
+          # current client fetches the same ref without complaint. The PPA is
+          # the upstream Flatpak team's own, and carries 1.18.1 plus a matching
+          # flatpak-builder for noble on both amd64 and arm64.
+          sudo add-apt-repository -y ppa:flatpak/stable
           sudo apt-get update
           sudo apt-get install -y \
             appstream \
