@@ -5,8 +5,8 @@
 
 use adw::prelude::*;
 use gtk4::{
-    Align, Box as GtkBox, Button, FlowBox, FlowBoxChild, Label, Orientation, Paned, PolicyType,
-    ScrolledWindow, Stack, StackTransitionType,
+    Align, Box as GtkBox, Button, FlowBox, Label, Orientation, Paned, PolicyType, ScrolledWindow,
+    Stack, StackTransitionType,
 };
 use i18n_embed_fl::fl;
 
@@ -17,6 +17,7 @@ use crate::domain::scene::{SceneId, SceneInventory};
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::config::OutputConfig;
 use crate::storage::registry::SceneRegistry;
+use crate::ui::insert_compact_flow_child;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::widgets::scene_card::{SceneCardModel, SceneShortcut};
 use crate::ui::widgets::{audio_card, scene_card};
@@ -640,16 +641,6 @@ pub(crate) fn rebuild_audio_cards(
         insert_compact_flow_child(&handle.audio_box, &card.root);
         cards.push(card);
     }
-}
-
-fn insert_compact_flow_child<W: IsA<gtk4::Widget>>(flow: &FlowBox, widget: &W) {
-    let child = FlowBoxChild::new();
-    child.set_halign(Align::Start);
-    child.set_valign(Align::Start);
-    child.set_hexpand(false);
-    child.set_vexpand(false);
-    child.set_child(Some(widget));
-    flow.insert(&child, -1);
 }
 
 #[cfg(test)]

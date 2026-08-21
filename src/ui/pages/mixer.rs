@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use adw::{prelude::*, ComboRow, EntryRow, PreferencesGroup, PreferencesPage, StatusPage};
-use gtk4::{Align, Box as GtkBox, Button, FlowBox, FlowBoxChild, Orientation, StringList};
+use gtk4::{Align, Box as GtkBox, Button, FlowBox, Orientation, StringList};
 
 use crate::controller::command::AppCommand;
 use crate::controller::state::{
@@ -24,8 +24,8 @@ use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::audio_service::AudioService;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::persist::persist_config;
-use crate::ui::string_list;
 use crate::ui::widgets::audio_card;
+use crate::ui::{index_of, insert_compact_flow_child, string_list};
 use i18n_embed_fl::fl;
 
 type MixerRefreshTracker = Rc<RefCell<Option<String>>>;
@@ -173,18 +173,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
         MixerVisibleRenderSource::Scene { scene, status } => match status {
             MixerVisibleAudioStatus::Loading => {
                 clear_tracked_request(refresh_tracker, scene);
-                emit_mixer_inspection(
-                    &inspection_snapshot,
-                    MixerInspectionStatus::LoadingPlaceholderShown,
-                    &[],
-                    MixerRetryInspection::HIDDEN,
-                );
-                append_mixer_status(
-                    root,
-                    "view-refresh-symbolic",
-                    &fl!(LANGUAGE_LOADER, "mixer-loading-title"),
-                    &fl!(LANGUAGE_LOADER, "mixer-loading-description", scene = scene),
-                );
+                append_loading_placeholder(root, &inspection_snapshot, scene);
                 return;
             }
             MixerVisibleAudioStatus::Error(error) => {
@@ -208,18 +197,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
                     refresh_tracker,
                     MixerRefreshRequestIntent::Automatic,
                 );
-                emit_mixer_inspection(
-                    &inspection_snapshot,
-                    MixerInspectionStatus::LoadingPlaceholderShown,
-                    &[],
-                    MixerRetryInspection::HIDDEN,
-                );
-                append_mixer_status(
-                    root,
-                    "view-refresh-symbolic",
-                    &fl!(LANGUAGE_LOADER, "mixer-loading-title"),
-                    &fl!(LANGUAGE_LOADER, "mixer-loading-description", scene = scene),
-                );
+                append_loading_placeholder(root, &inspection_snapshot, scene);
                 return;
             }
         },
@@ -247,18 +225,13 @@ fn build_mode_row(
     selected: MixerMode,
     refresh_tracker: &MixerRefreshTracker,
 ) -> ComboRow {
-    let mode_order = [
-        MixerMode::ActiveScene,
-        MixerMode::SelectedScene,
-        MixerMode::PinnedScene,
-    ];
-    let labels: Vec<String> = mode_order.iter().map(|mode| mode.label()).collect();
+    let labels: Vec<String> = MixerMode::ALL.iter().map(|mode| mode.label()).collect();
     let model = string_list(&labels);
     let row = ComboRow::builder()
         .title(fl!(LANGUAGE_LOADER, "mixer-mode-row-title"))
         .subtitle(fl!(LANGUAGE_LOADER, "mixer-mode-row-subtitle"))
         .model(&model)
-        .selected(mode_to_index(selected))
+        .selected(index_of(&MixerMode::ALL, selected))
         .build();
     row.add_css_class("scenedeck-combo-row");
 
@@ -266,7 +239,7 @@ fn build_mode_row(
         let nav = nav.clone();
         let refresh_tracker = refresh_tracker.clone();
         move |row| {
-            let mode = index_to_mode(row.selected());
+            let mode = mode_at(row.selected());
             {
                 let mut state = nav.state.borrow_mut();
                 state.mixer.mode = mode;
@@ -330,12 +303,7 @@ fn build_scene_row(
 }
 
 fn build_grouping_row(nav: &NavigationContext, selected: MixerGrouping) -> ComboRow {
-    let grouping_order = [
-        MixerGrouping::Scope,
-        MixerGrouping::ScenePath,
-        MixerGrouping::None,
-    ];
-    let labels: Vec<String> = grouping_order
+    let labels: Vec<String> = MixerGrouping::ALL
         .iter()
         .map(|grouping| grouping.label())
         .collect();
@@ -344,14 +312,14 @@ fn build_grouping_row(nav: &NavigationContext, selected: MixerGrouping) -> Combo
         .title(fl!(LANGUAGE_LOADER, "mixer-grouping-row-title"))
         .subtitle(fl!(LANGUAGE_LOADER, "mixer-grouping-row-subtitle"))
         .model(&model)
-        .selected(grouping_to_index(selected))
+        .selected(index_of(&MixerGrouping::ALL, selected))
         .build();
     row.add_css_class("scenedeck-combo-row");
 
     row.connect_selected_notify({
         let nav = nav.clone();
         move |row| {
-            nav.state.borrow_mut().mixer.grouping = index_to_grouping(row.selected());
+            nav.state.borrow_mut().mixer.grouping = grouping_at(row.selected());
             persist_mixer_selection(&nav);
             nav.switch_to_page(crate::controller::state::Page::Mixer);
         }
@@ -546,16 +514,6 @@ fn append_group(
     page.add(&group);
 }
 
-fn insert_compact_flow_child<W: IsA<gtk4::Widget>>(flow: &FlowBox, widget: &W) {
-    let child = FlowBoxChild::new();
-    child.set_halign(Align::Start);
-    child.set_valign(Align::Start);
-    child.set_hexpand(false);
-    child.set_vexpand(false);
-    child.set_child(Some(widget));
-    flow.insert(&child, -1);
-}
-
 fn filter_inputs(inputs: &[AudioInput], search: &str) -> Vec<AudioInput> {
     let needle = search.trim().to_lowercase();
     if needle.is_empty() {
@@ -575,6 +533,32 @@ fn filter_inputs(inputs: &[AudioInput], search: &str) -> Vec<AudioInput> {
         })
         .cloned()
         .collect()
+}
+
+/// Show the "waiting for this scene's audio" placeholder.
+///
+/// Two paths render this: the snapshot is already on its way, and the snapshot
+/// is missing so one has just been requested. What differs between them is the
+/// side effect performed first — clearing the dedupe tracker versus dispatching
+/// a refresh — so that stays at each call site and only the identical rendering
+/// lives here.
+fn append_loading_placeholder(
+    root: &GtkBox,
+    inspection_snapshot: &MixerInspectionSnapshot<'_>,
+    scene: &str,
+) {
+    emit_mixer_inspection(
+        inspection_snapshot,
+        MixerInspectionStatus::LoadingPlaceholderShown,
+        &[],
+        MixerRetryInspection::HIDDEN,
+    );
+    append_mixer_status(
+        root,
+        "view-refresh-symbolic",
+        &fl!(LANGUAGE_LOADER, "mixer-loading-title"),
+        &fl!(LANGUAGE_LOADER, "mixer-loading-description", scene = scene),
+    );
 }
 
 fn emit_mixer_inspection(
@@ -831,36 +815,25 @@ fn clear_tracked_request(refresh_tracker: &MixerRefreshTracker, scene: &str) {
     }
 }
 
-fn mode_to_index(mode: MixerMode) -> u32 {
-    match mode {
-        MixerMode::ActiveScene => 0,
-        MixerMode::SelectedScene => 1,
-        MixerMode::PinnedScene => 2,
-    }
+/// The mode a dropdown row is showing.
+///
+/// GTK reports "nothing selected" as `u32::MAX`, and a row can also outlive
+/// the list it was built from, so an index that is not in `ALL` falls back to
+/// the default rather than being treated as an error. That matches what the
+/// hand-written index tables this replaced did with their `_` arm.
+fn mode_at(index: u32) -> MixerMode {
+    MixerMode::ALL
+        .get(index as usize)
+        .copied()
+        .unwrap_or_default()
 }
 
-fn index_to_mode(index: u32) -> MixerMode {
-    match index {
-        1 => MixerMode::SelectedScene,
-        2 => MixerMode::PinnedScene,
-        _ => MixerMode::ActiveScene,
-    }
-}
-
-fn grouping_to_index(grouping: MixerGrouping) -> u32 {
-    match grouping {
-        MixerGrouping::Scope => 0,
-        MixerGrouping::ScenePath => 1,
-        MixerGrouping::None => 2,
-    }
-}
-
-fn index_to_grouping(index: u32) -> MixerGrouping {
-    match index {
-        1 => MixerGrouping::ScenePath,
-        2 => MixerGrouping::None,
-        _ => MixerGrouping::Scope,
-    }
+/// The grouping a dropdown row is showing. See [`mode_at`].
+fn grouping_at(index: u32) -> MixerGrouping {
+    MixerGrouping::ALL
+        .get(index as usize)
+        .copied()
+        .unwrap_or_default()
 }
 
 fn persist_mixer_selection(nav: &NavigationContext) {

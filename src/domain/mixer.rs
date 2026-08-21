@@ -14,6 +14,9 @@ pub enum MixerMode {
 }
 
 impl MixerMode {
+    /// Every mode, in the order the Mixer page lists them.
+    pub const ALL: [Self; 3] = [Self::ActiveScene, Self::SelectedScene, Self::PinnedScene];
+
     pub fn label(self) -> String {
         match self {
             Self::ActiveScene => fl!(LANGUAGE_LOADER, "mixer-mode-active"),
@@ -62,6 +65,9 @@ pub enum MixerGrouping {
 }
 
 impl MixerGrouping {
+    /// Every grouping, in the order the Mixer page lists them.
+    pub const ALL: [Self; 3] = [Self::Scope, Self::ScenePath, Self::None];
+
     pub fn label(self) -> String {
         match self {
             Self::Scope => fl!(LANGUAGE_LOADER, "mixer-grouping-scope"),

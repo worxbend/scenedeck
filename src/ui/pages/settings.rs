@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use crate::ui::string_list;
+use crate::ui::{index_of, string_list};
 use adw::{
     prelude::*, ActionRow, ComboRow, EntryRow, PasswordEntryRow, PreferencesGroup, PreferencesPage,
     SwitchRow,
@@ -701,10 +701,6 @@ fn hotkey_preview_text(hotkeys: &SceneHotkeyConfig) -> String {
         last = last,
         count = MAX_SLOTS.to_string()
     )
-}
-
-fn index_of<T: PartialEq>(all: &[T], value: T) -> u32 {
-    all.iter().position(|item| *item == value).unwrap_or(0) as u32
 }
 
 /// Prefix a preferences row with a small icon.

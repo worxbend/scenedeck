@@ -19,34 +19,31 @@ use crate::storage::registry::{
 };
 use crate::ui::navigation::NavigationContext;
 use crate::ui::persist::persist_registry;
-use crate::ui::string_list;
 use crate::ui::widgets::icon_picker;
+use crate::ui::{index_of, string_list};
 use i18n_embed_fl::fl;
 
 // ── Role index helpers ────────────────────────────────────────────────────────
 
-fn role_to_index(role: Option<SceneRole>) -> u32 {
-    match role {
-        None => 0,
-        Some(SceneRole::Primary) => 1,
-        Some(SceneRole::Secondary) => 2,
-        Some(SceneRole::Module) => 3,
-        Some(SceneRole::Raw) => 4,
-        Some(SceneRole::Debug) => 5,
-        Some(SceneRole::Archive) => 6,
-    }
+// The role dropdown lists "Unassigned" first and then `SceneRole::ALL`, so a
+// row's index is one more than the role's position. That offset used to be
+// spelled out as two seven-arm tables, which had to be kept in step with each
+// other, with `SceneRole::ALL`, and with the model built at the call site.
+// Below it is stated once in each direction.
+
+/// Dropdown row for a scene's current role. Row 0 is "Unassigned".
+fn role_row(role: Option<SceneRole>) -> u32 {
+    role.map_or(0, |role| index_of(&SceneRole::ALL, role) + 1)
 }
 
-fn index_to_role(idx: u32) -> Option<SceneRole> {
-    match idx {
-        1 => Some(SceneRole::Primary),
-        2 => Some(SceneRole::Secondary),
-        3 => Some(SceneRole::Module),
-        4 => Some(SceneRole::Raw),
-        5 => Some(SceneRole::Debug),
-        6 => Some(SceneRole::Archive),
-        _ => None,
-    }
+/// The role a dropdown row selects, or `None` for "Unassigned".
+///
+/// Row 0 and anything past the end of the list — including the `u32::MAX` GTK
+/// reports when nothing is selected — mean no role, matching what the table
+/// this replaced did with its `_` arm.
+fn role_at(row: u32) -> Option<SceneRole> {
+    row.checked_sub(1)
+        .and_then(|index| SceneRole::ALL.get(index as usize).copied())
 }
 
 // ── Public entry point ────────────────────────────────────────────────────────
@@ -143,7 +140,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
             .title(scene.name.as_str())
             .subtitle(subtitle)
             .model(&role_model)
-            .selected(role_to_index(current_role))
+            .selected(role_row(current_role))
             .build();
         combo_row.add_css_class("scenedeck-combo-row");
 
@@ -492,7 +489,7 @@ fn build_yaml_actions_row(container: &GtkBox, nav: &NavigationContext) -> Action
 }
 
 fn handle_scene_role_change(row: &ComboRow, scene_id: &str, nav: &NavigationContext) {
-    let new_role = index_to_role(row.selected());
+    let new_role = role_at(row.selected());
     // Both directions go through the registry: it owns when an entry is
     // created and when clearing the last piece of metadata removes it.
     persist_registry(nav, "scene role", |registry| {

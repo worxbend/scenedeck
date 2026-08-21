@@ -25,6 +25,36 @@ pub(crate) fn string_list(labels: &[String]) -> gtk4::StringList {
     gtk4::StringList::new(&borrowed)
 }
 
+/// Insert `widget` into `flow` wrapped in a child sized to its contents.
+///
+/// A `FlowBox` stretches its children to fill the row it puts them on, which
+/// turns a row of scene cards into a row of stretched rectangles. Pinning the
+/// wrapper's alignment to the start and switching expansion off keeps each
+/// card at its natural size. The Live and Mixer pages each carried their own
+/// identical copy of this.
+pub(crate) fn insert_compact_flow_child<W: gtk4::glib::object::IsA<gtk4::Widget>>(
+    flow: &gtk4::FlowBox,
+    widget: &W,
+) {
+    use gtk4::prelude::*;
+
+    let child = gtk4::FlowBoxChild::new();
+    child.set_halign(gtk4::Align::Start);
+    child.set_valign(gtk4::Align::Start);
+    child.set_hexpand(false);
+    child.set_vexpand(false);
+    child.set_child(Some(widget));
+    flow.insert(&child, -1);
+}
+
+/// Position of `value` within `all`, for seeding a dropdown from a domain enum.
+///
+/// Falls back to 0 rather than failing: a value missing from the list means
+/// the list is wrong, and showing the first entry is better than showing none.
+pub(crate) fn index_of<T: PartialEq>(all: &[T], value: T) -> u32 {
+    all.iter().position(|item| *item == value).unwrap_or(0) as u32
+}
+
 const ICON_RESOURCE_PATH: &str = "/io/scenedeck/app/icons";
 
 pub fn register_resources() {
