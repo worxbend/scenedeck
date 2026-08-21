@@ -80,27 +80,6 @@ jobs:
           mkdir -p build-assets
           rsvg-convert -w 256 -h 256 "assets/${APP_ID}.svg" -o "build-assets/${APP_ID}.png"
 
-      - name: Vendor Cargo dependencies for Flatpak
-        run: |
-          mkdir -p .cargo
-          cargo vendor vendor > .cargo/config.toml
-
-      - name: Build Flatpak bundle
-        run: |
-          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-          flatpak-builder \
-            --user \
-            --force-clean \
-            --install-deps-from=flathub \
-            --state-dir=/tmp/scenedeck-flatpak-state-${{ matrix.artifact_arch }} \
-            --repo=/tmp/scenedeck-flatpak-repo-${{ matrix.artifact_arch }} \
-            /tmp/scenedeck-flatpak-build-${{ matrix.artifact_arch }} \
-            packaging/flatpak/${APP_ID}.yml
-          flatpak build-bundle \
-            /tmp/scenedeck-flatpak-repo-${{ matrix.artifact_arch }} \
-            ${BIN_NAME}-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.flatpak \
-            ${APP_ID}
-
       - name: Run tests
         run: cargo test --locked
 
@@ -179,6 +158,39 @@ jobs:
             "${appdir}" \
             "${BIN_NAME}-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.AppImage"
 
+      # Flatpak runs last, and on its own terms. It depends on Flathub being
+      # able to serve the GNOME SDK and the rust-stable extension, which is
+      # outside this repository's control — on 2026-08-21 Flathub started
+      # returning HTTP 404 for an object belonging to
+      # org.freedesktop.Sdk.Extension.rust-stable//25.08, and every client
+      # version fails identically because the object is simply not there.
+      #
+      # When that happens the bundle is skipped and the release still ships the
+      # executable, the tarball and the AppImage. Previously this step ran
+      # first and was fatal, so one unavailable packaging format withheld every
+      # other artifact and published nothing at all.
+      - name: Vendor Cargo dependencies for Flatpak
+        run: |
+          mkdir -p .cargo
+          cargo vendor vendor > .cargo/config.toml
+
+      - name: Build Flatpak bundle
+        continue-on-error: true
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak-builder \
+            --user \
+            --force-clean \
+            --install-deps-from=flathub \
+            --state-dir=/tmp/scenedeck-flatpak-state-${{ matrix.artifact_arch }} \
+            --repo=/tmp/scenedeck-flatpak-repo-${{ matrix.artifact_arch }} \
+            /tmp/scenedeck-flatpak-build-${{ matrix.artifact_arch }} \
+            packaging/flatpak/${APP_ID}.yml
+          flatpak build-bundle \
+            /tmp/scenedeck-flatpak-repo-${{ matrix.artifact_arch }} \
+            ${BIN_NAME}-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.flatpak \
+            ${APP_ID}
+
       - name: Upload Linux ${{ matrix.artifact_arch }} artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -189,6 +201,8 @@ jobs:
             scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.flatpak
             scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.AppImage
             scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.AppImage.zsync
+          # The Flatpak bundle is allowed to be absent; see the step above.
+          if-no-files-found: warn
 
   publish-release:
     name: Publish GitHub Release
