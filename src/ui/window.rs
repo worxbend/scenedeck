@@ -37,6 +37,7 @@ use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::hotkey_service::{HotkeyOutcome, SceneHotkeyResolver};
 use crate::ui::navigation::NavigationContext;
 use crate::ui::pages::live::{output_label, LivePageHandle};
+use crate::ui::pages::stats::PopoutSlot as StatsPopoutSlot;
 use crate::ui::register_resources;
 use crate::ui::theme::ThemeManager;
 use crate::ui::widgets::status_bar::{self, StatusBarHandle};
@@ -197,7 +198,7 @@ fn add_pages(
 ) -> (Rc<LivePageHandle>, PageRefreshers) {
     // Live returns a handle; the others return (widget, refresh_fn).
     let live_handle = Rc::new(crate::ui::pages::live::build(nav.clone()));
-    let (stats_widget, stats_refresh) = crate::ui::pages::stats::build(nav.clone());
+    let (stats_widget, stats_refresh, stats_popout) = crate::ui::pages::stats::build(nav.clone());
     let (mixer_widget, mixer_refresh) = crate::ui::pages::mixer::build(nav.clone());
     let (graph_widget, graph_refresh) = crate::ui::pages::graph::build(nav.clone());
     let (inventory_widget, inventory_refresh) = crate::ui::pages::inventory::build(nav.clone());
@@ -223,6 +224,7 @@ fn add_pages(
 
     let refreshers = PageRefreshers {
         stats: stats_refresh,
+        stats_popout,
         mixer: mixer_refresh,
         graph: graph_refresh,
         inventory: inventory_refresh,
@@ -839,8 +841,8 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
             };
             status_bar::set_stats(status_bar, &stats, bitrate_kbps, streaming);
             // History is recorded on every sample; only redraw when the charts
-            // are actually on screen.
-            refreshers.call_if_visible(nav, Page::Stats);
+            // are actually on screen (embedded, or in a detached pop-out).
+            refreshers.refresh_stats(nav);
         }
     }
 }
@@ -1655,6 +1657,9 @@ struct StreamingChrome {
 #[derive(Clone)]
 struct PageRefreshers {
     stats: RefreshFn,
+    /// Set while a detached stats window is open; see
+    /// `ui::pages::stats::PopoutSlot`.
+    stats_popout: StatsPopoutSlot,
     mixer: RefreshFn,
     graph: RefreshFn,
     inventory: RefreshFn,
@@ -1683,6 +1688,15 @@ impl PageRefreshers {
     fn call_if_visible(&self, nav: &NavigationContext, page: Page) {
         if nav.state.borrow().current_page == page {
             self.call(page);
+        }
+    }
+
+    /// Refresh the Stats page when it is on screen, and the pop-out window
+    /// whenever one is open, regardless of which page the sidebar shows.
+    fn refresh_stats(&self, nav: &NavigationContext) {
+        self.call_if_visible(nav, Page::Stats);
+        if let Some(popout_refresh) = self.stats_popout.borrow().as_ref() {
+            popout_refresh();
         }
     }
 

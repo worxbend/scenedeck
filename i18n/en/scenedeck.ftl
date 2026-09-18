@@ -544,6 +544,7 @@ theme-css-parse-error = { $label } CSS parse error: { $message }
 ## stats.rs — live streaming telemetry
 stats-page-title = Stream Statistics
 stats-page-subtitle = Live telemetry polled from OBS once a second while connected.
+stats-popout-button = Open stats in a separate window
 stats-gauge-fps = FPS
 stats-gauge-frame-time = Frame time (ms)
 stats-gauge-dropped = Dropped frames

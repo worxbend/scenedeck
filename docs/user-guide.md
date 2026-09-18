@@ -78,6 +78,12 @@ Stats mid-stream shows the preceding minutes rather than starting from empty.
 Frame counters come from OBS and are cumulative since OBS (or the stream output)
 started, so restarting a stream resets them.
 
+The window-icon button next to the page title opens the same live view in a
+separate, detached window — useful for keeping stats visible on a second
+monitor while you work in the Mixer or Graph pages. Closing that window has no
+effect on stats collection; reopening the button just presents it again while
+it is still open.
+
 The layout adapts to the window width: gauges, charts, and counter cards each
 reflow to fewer columns as the window narrows, ending in a single column so the
 page stays readable in a narrow window without horizontal scrolling.

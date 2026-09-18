@@ -9,13 +9,14 @@
 //! rebuild-per-update would churn the whole widget tree for numbers that mostly
 //! stay the same shape.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk4::prelude::IsA;
 use gtk4::{
-    Align, Box as GtkBox, FlowBox, FlowBoxChild, Label, Orientation, PolicyType, ScrolledWindow,
-    SelectionMode,
+    Align, Box as GtkBox, Button, FlowBox, FlowBoxChild, Label, Orientation, PolicyType,
+    ScrolledWindow, SelectionMode,
 };
 use i18n_embed_fl::fl;
 
@@ -72,24 +73,19 @@ struct StatsCards {
     bitrate: Label,
 }
 
-pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
-    let page = GtkBox::builder()
-        .orientation(Orientation::Vertical)
-        .spacing(18)
-        .build();
-    page.add_css_class("app-page");
-    page.add_css_class("stats-page");
+/// Slot the embedded page's refresh callback shares with its pop-out window.
+///
+/// `None` while no pop-out is open. `PageRefreshers` in `ui/window.rs` calls
+/// through this alongside the embedded page's own refresh so a detached stats
+/// window stays live even while the sidebar shows a different page.
+pub(crate) type PopoutSlot = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
 
-    page.append(&build_header());
+pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>, PopoutSlot) {
+    let popout_slot: PopoutSlot = Rc::new(RefCell::new(None));
+    let popout_window: Rc<RefCell<Option<adw::Window>>> = Rc::new(RefCell::new(None));
 
-    let gauges = build_gauges(&nav);
-    page.append(&gauges.row);
-
-    let charts = build_charts(&nav);
-    page.append(&charts.grid);
-
-    let (cards_widget, cards) = build_cards();
-    page.append(&cards_widget);
+    let popout_button = build_popout_button(&nav, &popout_window, &popout_slot);
+    let (page, refresh) = build_content(&nav, Some(popout_button.upcast_ref::<gtk4::Widget>()));
 
     let scroll = ScrolledWindow::builder()
         .vexpand(true)
@@ -98,6 +94,46 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         .vscrollbar_policy(PolicyType::Automatic)
         .child(&page)
         .build();
+
+    // Ask for a sample immediately on open so the page never shows values that
+    // are up to one poll interval stale.
+    scroll.connect_map({
+        let nav = nav.clone();
+        let refresh = refresh.clone();
+        move |_| {
+            nav.dispatch(AppCommand::RefreshStats);
+            refresh();
+        }
+    });
+
+    (scroll.upcast(), refresh, popout_slot)
+}
+
+/// Build the gauges/charts/cards content shared by the embedded page and its
+/// pop-out window. `header_trailing` is the pop-out button on the embedded
+/// page, and `None` on the pop-out window itself (there is nothing to pop out
+/// of a window that is already detached).
+fn build_content(
+    nav: &NavigationContext,
+    header_trailing: Option<&gtk4::Widget>,
+) -> (GtkBox, Rc<dyn Fn()>) {
+    let page = GtkBox::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(18)
+        .build();
+    page.add_css_class("app-page");
+    page.add_css_class("stats-page");
+
+    page.append(&build_header(header_trailing));
+
+    let gauges = build_gauges(nav);
+    page.append(&gauges.row);
+
+    let charts = build_charts(nav);
+    page.append(&charts.grid);
+
+    let (cards_widget, cards) = build_cards();
+    page.append(&cards_widget);
 
     let refresh: Rc<dyn Fn()> = Rc::new({
         let nav = nav.clone();
@@ -112,18 +148,95 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         }
     });
 
-    // Ask for a sample immediately on open so the page never shows values that
-    // are up to one poll interval stale.
-    scroll.connect_map({
+    (page, refresh)
+}
+
+/// Build the pop-out toggle button. Clicking it opens a detached window with
+/// its own copy of the stats content; clicking again while it is open just
+/// presents the existing window instead of opening a second one.
+fn build_popout_button(
+    nav: &NavigationContext,
+    popout_window: &Rc<RefCell<Option<adw::Window>>>,
+    popout_slot: &PopoutSlot,
+) -> Button {
+    let button = Button::builder()
+        .icon_name("window-new-symbolic")
+        .valign(Align::Center)
+        .tooltip_text(fl!(LANGUAGE_LOADER, "stats-popout-button"))
+        .build();
+    button.add_css_class("flat");
+
+    button.connect_clicked({
         let nav = nav.clone();
-        let refresh = refresh.clone();
-        move |_| {
-            nav.dispatch(AppCommand::RefreshStats);
-            refresh();
+        let popout_window = popout_window.clone();
+        let popout_slot = popout_slot.clone();
+        move |button| {
+            if let Some(window) = popout_window.borrow().as_ref() {
+                window.present();
+                return;
+            }
+            open_popout(button, &nav, &popout_window, &popout_slot);
         }
     });
 
-    (scroll.upcast(), refresh)
+    button
+}
+
+/// Open the detached stats window and register its refresh callback so
+/// `PageRefreshers` keeps it live.
+fn open_popout(
+    button: &Button,
+    nav: &NavigationContext,
+    popout_window: &Rc<RefCell<Option<adw::Window>>>,
+    popout_slot: &PopoutSlot,
+) {
+    let (content, refresh) = build_content(nav, None);
+
+    let scroll = ScrolledWindow::builder()
+        .vexpand(true)
+        .hexpand(true)
+        .hscrollbar_policy(PolicyType::Never)
+        .vscrollbar_policy(PolicyType::Automatic)
+        .child(&content)
+        .build();
+
+    let toolbar = adw::ToolbarView::new();
+    toolbar.add_top_bar(&adw::HeaderBar::new());
+    toolbar.set_content(Some(&scroll));
+
+    let window = adw::Window::builder()
+        .title(fl!(LANGUAGE_LOADER, "stats-page-title"))
+        .default_width(640)
+        .default_height(720)
+        .content(&toolbar)
+        .build();
+
+    // Best-effort: keep the pop-out under the same application so it shares
+    // the app's lifecycle. Nothing relies on this if it is ever unavailable.
+    if let Some(app) = button
+        .root()
+        .and_downcast::<gtk4::Window>()
+        .and_then(|w| w.application())
+    {
+        window.set_application(Some(&app));
+    }
+
+    window.connect_close_request({
+        let popout_window = popout_window.clone();
+        let popout_slot = popout_slot.clone();
+        move |_| {
+            *popout_window.borrow_mut() = None;
+            *popout_slot.borrow_mut() = None;
+            glib::Propagation::Proceed
+        }
+    });
+
+    nav.dispatch(AppCommand::RefreshStats);
+    refresh();
+
+    *popout_slot.borrow_mut() = Some(refresh);
+    window.present();
+    *popout_window.borrow_mut() = Some(window);
 }
 
 /// A section that lays its children out in up to `columns` equal columns and
@@ -152,10 +265,11 @@ fn add_to_section<W: IsA<gtk4::Widget>>(section: &FlowBox, widget: &W) {
     section.insert(&child, -1);
 }
 
-fn build_header() -> GtkBox {
-    let header = GtkBox::builder()
+fn build_header(trailing: Option<&gtk4::Widget>) -> GtkBox {
+    let titles = GtkBox::builder()
         .orientation(Orientation::Vertical)
         .spacing(4)
+        .hexpand(true)
         .build();
 
     let title = Label::builder()
@@ -171,8 +285,19 @@ fn build_header() -> GtkBox {
         .build();
     subtitle.add_css_class("dim-label");
 
-    header.append(&title);
-    header.append(&subtitle);
+    titles.append(&title);
+    titles.append(&subtitle);
+
+    let Some(trailing) = trailing else {
+        return titles;
+    };
+
+    let header = GtkBox::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(12)
+        .build();
+    header.append(&titles);
+    header.append(trailing);
     header
 }
 
