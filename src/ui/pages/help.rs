@@ -178,6 +178,15 @@ fn connecting_group(nav: &NavigationContext) -> PreferencesGroup {
     ));
     group.add(&topic(
         nav,
+        "system-users-symbolic",
+        fl!(LANGUAGE_LOADER, "help-connect-share-title"),
+        fl!(LANGUAGE_LOADER, "help-connect-share-subtitle"),
+        fl!(LANGUAGE_LOADER, "help-connect-share-body"),
+        vec![open(Page::Settings), open(Page::Inventory)],
+        TopicState::Collapsed,
+    ));
+    group.add(&topic(
+        nav,
         "dialog-warning-symbolic",
         fl!(LANGUAGE_LOADER, "help-connect-trouble-title"),
         fl!(LANGUAGE_LOADER, "help-connect-trouble-subtitle"),

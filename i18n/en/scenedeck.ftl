@@ -624,6 +624,15 @@ help-connect-remote-body =
     Prefer a wired connection for the OBS machine. Scene switches over Wi-Fi still work, but a dropped packet is a delayed cut.
     A tip that saves a show: reserve a fixed address for the OBS machine in your router's DHCP settings, so the Host you saved keeps working after a reboot.
 
+help-connect-share-title = Letting a co-host or moderator run the deck
+help-connect-share-subtitle = A second SceneDeck, pointed at the same rig
+help-connect-share-body =
+    OBS's WebSocket server accepts more than one client at once, so a second person on a second computer can run their own copy of SceneDeck against the same rig — the same setup as the previous topic, done twice.
+    There is no per-person login: whoever has the Host, Port, and password in their Settings has exactly the same control you do, including starting and stopping the stream. Only hand it to someone you would hand your OBS session to.
+    Trim their view first. Roles and hidden scenes live in your local Inventory, not in OBS, so set those up on your own machine and have your collaborator export or recreate the Scene Registry YAML rather than starting from a full, unfiltered scene list.
+    Do not forward the WebSocket port to the internet so a remote collaborator can reach it. Put both of you on the same VPN or Tailscale network, or tunnel the connection over SSH, and point Host at the tunnel's address instead.
+    Everyone connected sees the same live state — a scene switch or fader move from either side shows up for both, immediately, the same way it would if you were sitting at the same keyboard.
+
 help-connect-trouble-title = When Connect does not work
 help-connect-trouble-subtitle = Read the error, then work down this list
 help-connect-trouble-body =

@@ -330,6 +330,9 @@
 
           <p class="legend link__note">
             Same machine works too — point SceneDeck at localhost and it behaves the same way.
+            The link is not limited to one client either: a co-host or moderator can run their
+            own copy of SceneDeck against the same rig, over a VPN or SSH tunnel, and switch
+            scenes or ride the mixer right alongside you.
           </p>
         </div>
       </section>
@@ -1062,6 +1065,17 @@
                 <p class="body-md">
                   Yes. There are built-in light and dark theme families, and you can point SceneDeck
                   at your own light and dark CSS files.
+                </p>
+              </details>
+              <details class="qa">
+                <summary class="title-md">Can a moderator or co-host run SceneDeck too?</summary>
+                <p class="body-md">
+                  Yes — OBS's WebSocket server accepts more than one client, so a second person on
+                  a second machine can point their own SceneDeck at the same Host, Port and
+                  password and control the same rig. There is no per-person permission split: the
+                  password grants full control, so only share it with someone you would hand your
+                  own keyboard to, and avoid exposing the port to the open internet — a VPN or SSH
+                  tunnel is the safer path for a remote collaborator.
                 </p>
               </details>
               <details class="qa">
