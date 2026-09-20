@@ -47,6 +47,14 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     with_icon(&status_row, "nf-md-lan-connect-symbolic");
     status_group.add(&status_row);
 
+    if let Some(notice) = nav.state.borrow_mut().startup_notice.take() {
+        let notice_group = PreferencesGroup::new();
+        let notice_row = ActionRow::builder().title(notice).build();
+        with_icon(&notice_row, "dialog-warning-symbolic");
+        notice_group.add(&notice_row);
+        page.add(&notice_group);
+    }
+
     page.add(&appearance_group);
     page.add(&language_group);
     page.add(&obs_group);
