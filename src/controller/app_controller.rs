@@ -103,7 +103,6 @@ impl AppController {
         match cmd {
             AppCommand::Connect => self.session.connect(),
             AppCommand::Disconnect => self.session.disconnect(&self.outputs),
-            AppCommand::RefreshAll => self.session.connect(), // reconnect = full refresh
 
             AppCommand::SwitchPrimaryScene(id) => {
                 self.spawn_with_client(|c, tx| async move {
@@ -120,20 +119,6 @@ impl AppController {
                 });
             }
 
-            AppCommand::CreateProfile(name) => {
-                self.spawn_with_client(|c, tx| async move {
-                    let result = c.create_profile(&name).await;
-                    publish_profiles_after(result, &c, &tx).await;
-                });
-            }
-
-            AppCommand::RemoveProfile(name) => {
-                self.spawn_with_client(|c, tx| async move {
-                    let result = c.remove_profile(&name).await;
-                    publish_profiles_after(result, &c, &tx).await;
-                });
-            }
-
             AppCommand::SetCurrentSceneCollection(name) => {
                 let dependencies = self.dependencies.clone();
                 self.spawn_with_client(|c, tx| async move {
@@ -143,25 +128,9 @@ impl AppController {
                 });
             }
 
-            AppCommand::CreateSceneCollection(name) => {
-                let dependencies = self.dependencies.clone();
-                self.spawn_with_client(|c, tx| async move {
-                    let audio_filter = load_config_blocking(dependencies).await.live.audio_inputs;
-                    let result = c.create_scene_collection(&name).await;
-                    refresh_after_collection_change(result, &c, &tx, &audio_filter).await;
-                });
-            }
-
             AppCommand::SetInputMute { input, muted } => {
                 self.spawn_with_client(|c, tx| async move {
                     report_err(c.set_input_mute(&input, muted).await, &tx);
-                });
-            }
-
-            AppCommand::ToggleInputMute { input } => {
-                self.spawn_with_client(|c, tx| async move {
-                    // Use the native OBS toggle — avoids a read+write round-trip
-                    report_err(c.toggle_input_mute(&input).await, &tx);
                 });
             }
 
@@ -177,7 +146,6 @@ impl AppController {
 
             AppCommand::StartRecording => self.outputs.set_recording(true),
             AppCommand::StopRecording => self.outputs.set_recording(false),
-            AppCommand::RefreshOutputStatus => self.refresh_output_status(),
             AppCommand::RefreshStats => self.refresh_stats(),
 
             AppCommand::RefreshData => self.refresh_data(),
@@ -193,12 +161,6 @@ impl AppController {
             refresh_profile_and_collection_lists(&c, &tx).await;
             refresh_output_statuses(&c, &tx).await;
             refresh_live_data(&c, &tx, &config.live.audio_inputs).await;
-        });
-    }
-
-    fn refresh_output_status(&self) {
-        self.spawn_with_client(|c, tx| async move {
-            refresh_output_statuses(&c, &tx).await;
         });
     }
 

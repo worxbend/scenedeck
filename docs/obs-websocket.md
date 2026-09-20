@@ -36,9 +36,11 @@ SceneDeck currently reads:
 - OBS process statistics: CPU, memory, active FPS, average frame render time,
   and render/output frame counters.
 - Special/global audio input names.
-- OBS input list when an explicit audio scan is needed.
 - Input mute state.
 - Input volume state.
+
+Independent graph, scene-item enabled-state, and audio-state reads run with a
+bounded concurrency limit of eight. Results retain OBS input order.
 
 ## Writes
 
@@ -46,10 +48,7 @@ SceneDeck currently writes:
 
 - Current program scene.
 - Current OBS profile.
-- Create OBS profile.
-- Remove OBS profile.
 - Current scene collection.
-- Create scene collection.
 - Input mute state.
 - Input volume multiplier.
 - Start or stop streaming.

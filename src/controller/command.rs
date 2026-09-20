@@ -6,25 +6,18 @@ pub enum AppCommand {
     // Connection lifecycle
     Connect,
     Disconnect,
-    RefreshAll,
     /// Re-fetch inventory + audio + graph from OBS without reconnecting.
     RefreshData,
 
     // Scene control
     SwitchPrimaryScene(SceneId),
     SetCurrentProfile(String),
-    CreateProfile(String),
-    RemoveProfile(String),
     SetCurrentSceneCollection(String),
-    CreateSceneCollection(String),
 
     // Audio
     SetInputMute {
         input: InputId,
         muted: bool,
-    },
-    ToggleInputMute {
-        input: InputId,
     },
     SetInputVolume {
         input: InputId,
@@ -37,7 +30,6 @@ pub enum AppCommand {
     StopStreaming,
     StartRecording,
     StopRecording,
-    RefreshOutputStatus,
     /// Poll `GetStats` and stream byte counters for the status bar.
     RefreshStats,
 }
