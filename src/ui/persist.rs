@@ -13,6 +13,7 @@
 
 use crate::storage::config::{write_config, AppConfig};
 use crate::storage::registry::{write_registry, SceneRegistry};
+use crate::ui::background_io::SerialLane;
 use crate::ui::navigation::NavigationContext;
 
 /// Edit the cached config and save it, logging a failure.
@@ -46,7 +47,8 @@ pub(crate) fn persist_config_with<Update, Complete>(
         state.config.clone()
     };
     let persisted = config.clone();
-    crate::ui::background_io::run(
+    crate::ui::background_io::run_serialized(
+        SerialLane::Config,
         move || write_config(&persisted),
         move |result| complete(result, config),
     );
@@ -77,7 +79,8 @@ pub(crate) fn persist_registry(
         state.registry.clone()
     };
 
-    crate::ui::background_io::run(
+    crate::ui::background_io::run_serialized(
+        SerialLane::Registry,
         move || write_registry(&registry),
         move |result| {
             if let Err(error) = result {
@@ -121,7 +124,7 @@ pub(crate) fn persist_registry_field<Cached, Disk>(
     if !changed {
         return;
     }
-    crate::ui::background_io::run(disk, move |result| {
+    crate::ui::background_io::run_serialized(SerialLane::Registry, disk, move |result| {
         if let Err(error) = result {
             tracing::warn!(%error, what, "failed to save the scene registry");
         }

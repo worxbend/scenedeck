@@ -5,9 +5,10 @@
 //! between "the last setting did not stick" and "the file no longer parses and
 //! every setting is gone".
 
-use std::fs::{create_dir_all, remove_file, rename, File};
+use std::fs::{create_dir_all, remove_file, rename, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Replace `path` with `contents`, or leave the existing file untouched.
 ///
@@ -31,11 +32,10 @@ pub(crate) fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
         create_dir_all(dir)?;
     }
 
-    let temp = temp_path(path);
+    let (temp, mut file) = create_temp_file(path)?;
 
     // Scoped so the handle is closed before the rename.
     let write_result = (|| {
-        let mut file = File::create(&temp)?;
         file.write_all(contents)?;
         file.sync_all()
     })();
@@ -56,12 +56,33 @@ pub(crate) fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
 /// Sibling path used while the new contents are being written.
 ///
 /// The suffix keeps it out of the way of any real file: the loaders look for
-/// exact names (`config.json`, `registry.json`), so a leftover `.new` from a
+/// exact names (`config.json`, `registry.json`), so a leftover `.new-*` from a
 /// killed process is ignored rather than read.
 fn temp_path(path: &Path) -> std::path::PathBuf {
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
     let mut name = path.file_name().unwrap_or_default().to_os_string();
-    name.push(".new");
+    name.push(format!(
+        ".new-{}-{}",
+        std::process::id(),
+        NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed)
+    ));
     path.with_file_name(name)
+}
+
+/// Create a new sibling without ever truncating another writer's temporary.
+///
+/// The process ID and monotonic counter make collisions unusual; `create_new`
+/// makes them harmless when a stale temporary from a reused PID is present.
+fn create_temp_file(path: &Path) -> io::Result<(std::path::PathBuf, File)> {
+    loop {
+        let temp = temp_path(path);
+        match OpenOptions::new().write(true).create_new(true).open(&temp) {
+            Ok(file) => return Ok((temp, file)),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -134,5 +155,12 @@ mod tests {
         // on many setups, and `rename` across filesystems fails with EXDEV.
         let path = Path::new("/some/where/config.json");
         assert_eq!(temp_path(path).parent(), path.parent());
+    }
+
+    #[test]
+    fn concurrent_writers_receive_distinct_temporary_paths() {
+        let path = Path::new("/some/where/config.json");
+
+        assert_ne!(temp_path(path), temp_path(path));
     }
 }
