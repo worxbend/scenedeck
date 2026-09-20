@@ -563,3 +563,208 @@ stats-value-ms = { $value } ms
 stats-value-percent = { $value } %
 stats-value-mb = { $value } MB
 stats-value-kbps = { $value } kb/s
+
+## Guida, onboarding e messaggi aggiunti nella versione 0.4.
+page-help = Guida
+config-parse-failed-backed-up = Impossibile analizzare le impostazioni: { $detail } — il file è stato conservato in { $path } e sono stati caricati i valori predefiniti.
+stats-popout-button = Apri le statistiche in una finestra separata
+
+## ui/pages/help.rs — guida introduttiva. I corpi sono intenzionalmente su più
+## righe: ogni riga viene visualizzata separatamente in un argomento espandibile.
+help-page-title = Guida e introduzione
+help-hero-title = Benvenuto in SceneDeck
+help-hero-description = Una superficie di controllo nativa per Linux dedicata a OBS Studio. Questa guida illustra la prima connessione, mostra come limitare la pagina Diretta alle scene che usi davvero e spiega ogni pagina della barra laterale. Espandi un argomento per leggerlo.
+help-expand-hint = Seleziona un argomento per espanderlo.
+
+help-open-settings = Apri Impostazioni
+help-open-inventory = Apri Inventario
+help-open-doctor = Apri Diagnostica
+help-open-live = Apri Diretta
+help-open-mixer = Apri Mixer
+help-open-graph = Apri Grafo
+help-open-stats = Apri Statistiche
+
+help-group-start-title = Per iniziare
+help-group-start-description = Il percorso più breve da una nuova installazione al primo cambio di scena.
+
+help-quickstart-title = Cinque passaggi per il primo cambio di scena
+help-quickstart-subtitle = Seguili in ordine la prima volta
+help-quickstart-body =
+    1. In OBS Studio, apri Strumenti → Impostazioni del server WebSocket e seleziona «Abilita server WebSocket». Lascia OBS in esecuzione.
+    2. Nella stessa finestra di OBS, premi «Mostra informazioni di connessione» e annota la porta del server (4455 per impostazione predefinita) e la password del server.
+    3. In SceneDeck, apri Impostazioni e inserisci Host, Porta e Password. Se OBS viene eseguito sullo stesso computer, lascia 127.0.0.1 come Host.
+    4. Premi Connetti in fondo alla barra laterale. La riga di stato sopra il pulsante diventa verde e mostra «Connesso».
+    5. Apri Inventario e assegna il ruolo «Primaria» alle scene che vuoi selezionare durante una trasmissione. Quelle scene —e solo quelle— diventano schede nella pagina Diretta.
+
+help-concepts-title = Come SceneDeck interpreta la tua configurazione
+help-concepts-subtitle = Ruoli, registro e ciò che non modifica mai OBS
+help-concepts-body =
+    SceneDeck non rinomina, elimina o riordina mai nulla all'interno di OBS. Legge le scene tramite la connessione WebSocket di OBS e conserva annotazioni proprie su di esse.
+    Un «ruolo» è una di queste annotazioni: un'etichetta personale che indica lo scopo di una scena, come la scena da mandare in onda, una sovrimpressione riutilizzabile o una vecchia scena di prova.
+    Queste annotazioni si trovano in registry.json accanto al file di configurazione, quindi sopravvivono ai riavvii e possono essere esportate e trasferite su un altro computer dalla pagina Inventario.
+    Poiché le annotazioni sono locali, due persone possono condividere la stessa configurazione OBS e mantenere pagine Diretta diverse.
+
+help-group-connect-title = Connessione a OBS
+help-group-connect-description = Su questo computer o dall'altra parte della stanza.
+
+help-connect-local-title = Connessione a OBS su questo computer
+help-connect-local-subtitle = Il caso predefinito: host 127.0.0.1, porta 4455
+help-connect-local-body =
+    127.0.0.1 è l'indirizzo usato da un computer per comunicare con sé stesso, quindi è l'Host corretto quando OBS e SceneDeck vengono eseguiti affiancati.
+    La porta deve corrispondere alla porta del server nelle Impostazioni del server WebSocket di OBS. OBS usa 4455, a meno che tu non l'abbia cambiata.
+    Se in OBS è selezionato «Abilita autenticazione», incolla la password in Impostazioni → Password. SceneDeck la conserva nel portachiavi del desktop (lo stesso luogo in cui il browser salva gli accessi), mai nel file di configurazione in testo semplice.
+    Premi Connetti nella barra laterale oppure Ctrl+R in qualsiasi momento per riconnetterti.
+
+help-connect-remote-title = Connessione a OBS su un altro computer
+help-connect-remote-subtitle = PC di streaming in un angolo, controllo dal portatile
+help-connect-remote-body =
+    Questa è la configurazione a due computer: OBS viene eseguito sul computer che acquisisce e codifica, SceneDeck su quello davanti a te. Entrambi devono essere sulla stessa rete.
+    Sul computer con OBS, in Strumenti → Impostazioni del server WebSocket, seleziona «Abilita server WebSocket» e «Abilita autenticazione», quindi imposta una password che puoi digitare. Non disattivare l'autenticazione: altrimenti chiunque sulla rete possa raggiungere la porta potrebbe avviare e fermare la trasmissione.
+    Trova l'indirizzo del computer OBS direttamente su quel computer. Su Linux esegui `ip addr` e cerca un indirizzo come 192.168.1.42; su Windows esegui `ipconfig` e leggi l'indirizzo IPv4; su macOS si trova in Impostazioni di Sistema → Rete. È l'indirizzo del computer, non di OBS.
+    Consenti la porta attraverso il firewall del computer OBS. Su Linux con ufw usa `sudo ufw allow 4455/tcp`; su Windows consenti OBS in Windows Defender Firewall per le reti private.
+    Nelle Impostazioni di SceneDeck, inserisci quell'indirizzo come Host (ad esempio 192.168.1.42), lascia la Porta su 4455 e incolla la password. Premi Connetti.
+    Per il computer OBS è preferibile una connessione cablata. I cambi di scena tramite Wi-Fi funzionano comunque, ma un pacchetto perso ritarda il cambio.
+    Un consiglio che può salvare una trasmissione: riserva un indirizzo fisso al computer OBS nelle impostazioni DHCP del router, così l'Host salvato continuerà a funzionare dopo un riavvio.
+
+help-connect-share-title = Consentire a un co-conduttore o moderatore di gestire il pannello
+help-connect-share-subtitle = Un secondo SceneDeck collegato alla stessa regia
+help-connect-share-body =
+    Il server WebSocket di OBS accetta più client contemporaneamente, quindi una seconda persona su un altro computer può usare la propria copia di SceneDeck con la stessa regia: è la configurazione dell'argomento precedente, eseguita due volte.
+    Non esistono accessi personali: chi dispone di Host, Porta e password nelle proprie Impostazioni ha esattamente il tuo stesso controllo, compreso l'avvio e l'arresto della trasmissione. Condividili solo con chi riceverebbe anche la tua sessione OBS.
+    Riduci prima ciò che l'altra persona vedrà. Ruoli e scene nascoste risiedono nell'Inventario locale, non in OBS: configurali sul tuo computer e chiedi al collaboratore di esportare o ricreare lo YAML del registro scene invece di partire da un elenco completo e non filtrato.
+    Non inoltrare la porta WebSocket su Internet per consentire l'accesso a un collaboratore remoto. Collegatevi entrambi alla stessa VPN o rete Tailscale, oppure create un tunnel SSH e impostate come Host l'indirizzo del tunnel.
+    Tutti gli utenti connessi vedono lo stesso stato in diretta: un cambio di scena o lo spostamento di un fader da una parte compare immediatamente anche dall'altra, proprio come se foste davanti alla stessa tastiera.
+
+help-connect-trouble-title = Quando Connetti non funziona
+help-connect-trouble-subtitle = Leggi l'errore, poi segui questo elenco
+help-connect-trouble-body =
+    «Connessione rifiutata» significa quasi sempre che il server WebSocket non è abilitato in OBS o che la porta non corrisponde. Controlla entrambe in Strumenti → Impostazioni del server WebSocket.
+    Una connessione che resta in attesa e poi scade indica in genere che un firewall sta bloccando il traffico o che l'indirizzo Host appartiene a un altro computer.
+    «Autenticazione non riuscita» significa che la password è errata. Inseriscila di nuovo in Impostazioni; il campo è di sola scrittura, quindi appare vuoto anche quando è stata salvata una password.
+    Nessuna indicazione nella barra di stato laterale? Verifica che OBS sia davvero in esecuzione e che non sia bloccato da una propria finestra di dialogo modale.
+    SceneDeck si riconnette automaticamente dopo un'interruzione, mentre Ctrl+R forza subito un nuovo tentativo.
+
+help-group-scenes-title = Organizzazione delle scene
+help-group-scenes-description = La pagina Diretta deve mostrare ciò che selezioni e nient'altro.
+
+help-scenes-hide-title = Nascondere le scene che non mandi mai in onda
+help-scenes-hide-subtitle = La prima impostazione più utile
+help-scenes-hide-body =
+    Una configurazione OBS in uso accumula scene create soltanto per essere annidate in altre o realizzate per una prova e mai eliminate. Mostrarle su una superficie di controllo dal vivo facilita un cambio errato.
+    SceneDeck mostra una scheda in Diretta solo per le scene con ruolo Primaria. Tutti gli altri ruoli sono nascosti, quindi «nascondere una scena» significa semplicemente assegnarle un ruolo diverso da Primaria.
+    Apri Inventario. Ogni scena OBS ha una riga con un selettore di ruolo sulla destra.
+    Imposta Primaria per le poche scene che mandi davvero in onda. Per tutte le altre scegli: Secondaria (una scena reale che talvolta serve, ma che non vuoi in Diretta), Modulo (una sovrimpressione o un sottopancia annidato in un'altra scena), Grezza (una videocamera o acquisizione di base), Debug (una scena di prova) o Archivio (conservata per dopo e tenuta da parte).
+    Anche le scene prive di ruolo restano fuori da Diretta, quindi lasciarle Non assegnate le nasconde. È comunque meglio assegnare un ruolo intenzionalmente: la pagina Diagnostica segnala le scene Non assegnate per farti notare quelle nuove.
+    La modifica ha effetto immediato: torna a Diretta e la scheda sarà scomparsa. In OBS non è cambiato nulla.
+
+help-scenes-order-title = Ordine, colori e icone
+help-scenes-order-subtitle = Rendi evidente la scheda giusta
+help-scenes-order-body =
+    Trascina una scena dalla maniglia a sinistra della sua riga in Inventario per impostare l'ordine. Le schede di Diretta e le scorciatoie numeriche seguono quell'ordine, quindi la scheda attivata con 1 è la prima.
+    Il selettore del colore in evidenza tinge la scheda della scena in Diretta. Riserva un colore intenso alle scene importanti —la scena «siamo in diretta» o la lettura dello sponsor— per individuarle subito.
+    Il selettore di icone a sinistra di ogni riga aggiunge un simbolo alla scheda in Diretta. Sono disponibili trenta icone, oltre a una voce «nessuna icona» per rimuoverla.
+    Ordine, colori e icone vengono salvati nel registro locale, non in OBS.
+
+help-scenes-registry-title = Backup e trasferimento della configurazione
+help-scenes-registry-subtitle = La riga YAML del registro scene in Inventario
+help-scenes-registry-body =
+    Esporta scrive ruoli, ordine, colori in evidenza, icone, tag e regole del grafo in un unico file YAML, un formato di testo semplice che puoi leggere e conservare nel controllo versione.
+    Importa sostituisce il registro locale con il contenuto di quel file. Usalo per trasferire una configurazione completa su un secondo computer o per ripristinarla dopo un esperimento.
+    I nomi delle scene collegano il file a OBS, quindi una scena rinominata in OBS riappare come voce obsoleta. Inventario elenca queste voci e consente di rimuoverle.
+
+help-group-operate-title = Durante una trasmissione
+help-group-operate-description = Le pagine che usi davvero mentre sei in onda.
+
+help-live-title = La pagina Diretta
+help-live-subtitle = Schede delle scene, audio e scena di programma
+help-live-body =
+    Diretta è la vista operativa: la scena di programma corrente in alto, le schede delle scene da un lato e le schede audio compatte dall'altro. Trascina il divisore per dare più spazio alla metà che ti serve.
+    Facendo clic su una scheda, OBS passa a quella scena. Quella corrente è contrassegnata come Attiva, le altre come Pronte.
+    Nessuna scheda dopo la connessione? Nessuna scena ha ancora il ruolo Primaria: consulta «Nascondere le scene che non mandi mai in onda» qui sopra.
+    La barra di stato in basso rimane visibile in ogni pagina e mostra lo stato della connessione, della trasmissione e della registrazione con il tempo trascorso, oltre a FPS, fotogrammi persi, CPU e bitrate in tempo reale.
+
+help-hotkeys-title = Cambiare scena dalla tastiera
+help-hotkeys-subtitle = Ctrl+1 … Ctrl+0 per impostazione predefinita e configurabili
+help-hotkeys-body =
+    Ognuna delle prime dieci schede di Diretta mostra un piccolo contrassegno con la propria cifra: la prima è 1, la nona è 9 e la decima è 0. La didascalia accanto al titolo Scene indica sempre la combinazione corrente.
+    I numeri delle posizioni seguono l'ordine di Inventario, quindi riordinare le schede lì riordina anche le scorciatoie.
+    Impostazioni → Scorciatoie scene consente di scegliere come premere la cifra. Un modificatore più la cifra (Ctrl per impostazione predefinita) evita attivazioni accidentali mentre digiti. La sola cifra è l'opzione più rapida. Lo stile con tasto leader funziona come in vim: premi il tasto leader, rilascialo e poi premi la cifra; mentre attende, la didascalia mostra «Leader attivo».
+    Le scorciatoie funzionano solo nella pagina Diretta e gli stili senza modificatore vengono disattivati quando un campo di testo ha lo stato attivo. Se a una cifra non corrisponde alcuna scena, la didascalia lo segnala senza cambiare scena.
+
+help-audio-title = Audio: la pagina Mixer e gli indicatori
+help-audio-subtitle = Cosa indicano le barre colorate
+help-audio-body =
+    Le schede audio compaiono in Diretta e, con più spazio e controlli, nella pagina Mixer. Prima vengono mostrati i dispositivi audio globali di OBS, poi le sorgenti audio della scena corrente, incluse quelle nelle scene annidate e nei gruppi.
+    Le modalità del Mixer stabiliscono l'audio di quale scena stai osservando. Attiva segue la scena di programma OBS. Selezionata carica una scena e resta su di essa. Fissata mantiene una scena scelta come destinazione permanente mentre OBS prosegue.
+    L'indicatore accanto a ogni fader va da -60 dB in basso a 0 dB in alto e usa le soglie di OBS: verde sotto -20 dB per musica e sottofondo, giallo da -20 a -9 dB per la voce, rosso sopra -9 dB dove inizia la distorsione. Nessun segnale dovrebbe restare sul rosso.
+    Una colonna indica una sorgente mono; due indicano stereo, sinistra e poi destra. Se si muove solo la colonna sinistra, metà degli spettatori non sentirà quella sorgente.
+    La linea sopra il riempimento mostra il picco più alto degli ultimi venti secondi, il modo più rapido per individuare una distorsione sfuggita. Il quadrato in basso mostra il livello in arrivo dal dispositivo prima del fader: se è troppo alto, spostare il fader non lo correggerà.
+    Il pulsante di blocco su una scheda immobilizza soltanto il cursore di SceneDeck. Non blocca nulla in OBS.
+
+help-outputs-title = Avvio e arresto di trasmissione e registrazione
+help-outputs-subtitle = E le conferme che evitano un incidente
+help-outputs-body =
+    I pulsanti Avvia/Arresta trasmissione e Avvia/Arresta registrazione si trovano in fondo alla barra laterale e sono accessibili da ogni pagina. La barra di stato mostra lo stato e da quanto tempo sono in esecuzione.
+    Impostazioni → Sicurezza uscite stabilisce quali delle quattro azioni richiedono una conferma. Per impostazione predefinita, l'arresto di entrambe le uscite chiede conferma mentre l'avvio no: si presume che iniziare in anticipo costi poco e fermarsi in anticipo termini la trasmissione.
+    Anche le modifiche apportate direttamente in OBS compaiono qui: SceneDeck segue gli eventi di OBS invece di presumere che la pressione del proprio pulsante abbia funzionato.
+
+help-group-inspect-title = Verifica della configurazione
+help-group-inspect-description = Trova l'imprevisto prima che accada in onda.
+
+help-doctor-title = Diagnostica
+help-doctor-subtitle = Problemi strutturali ordinati per gravità
+help-doctor-body =
+    Diagnostica legge l'elenco delle scene, le assegnazioni dei ruoli e gli annidamenti, quindi segnala ciò che sembra errato come Errori, Avvisi e Info.
+    Tra i problemi tipici figurano scene senza ruolo, scene memorizzate che non esistono più in OBS, annidamenti circolari e scene annidate in una direzione non consentita dai ruoli.
+    Viene rieseguita ogni volta che apri la pagina; il pulsante Riesegui la forza immediatamente.
+    Vale la pena controllarla dopo ogni modifica alla configurazione OBS e ancora una volta prima di andare in onda.
+
+help-graph-title = Grafo
+help-graph-subtitle = Quali scene sono contenute nelle altre
+help-graph-body =
+    Annidare una scena in un'altra permette di creare sovrimpressioni e layout condivisi in OBS, ma può anche rendere una scena dipendente da qualcosa che hai dimenticato.
+    Grafo elenca ogni scena principale e ciò che contiene, e confronta ciascuna relazione con le regole dei ruoli: corretta, dubbia o vietata.
+    Usalo per rispondere a «cosa smetterà di funzionare se modifico questa scena?» prima di intervenire.
+
+help-stats-title = Statistiche
+help-stats-subtitle = Se il computer riesce a tenere il passo
+help-stats-body =
+    Gli indicatori di FPS, tempo di rendering dei fotogrammi, fotogrammi persi e congestione di rete diventano prima ambra e poi rossi quando ogni valore peggiora: i fotogrammi persi avvisano all'1%, la congestione al 30%.
+    I grafici delle tendenze conservano circa gli ultimi due minuti, mentre gli istogrammi mostrano quando sono stati persi i fotogrammi invece di un totale progressivo, così puoi capire se uno scatto era un singolo momento negativo o una tendenza.
+    I campioni vengono raccolti per tutto il tempo in cui sei connesso, quindi aprire Statistiche durante una trasmissione mostra i minuti precedenti invece di partire da zero.
+    I contatori dei fotogrammi provengono da OBS e si azzerano quando OBS o l'uscita di trasmissione vengono riavviati.
+
+help-group-personalise-title = Personalizzazione
+help-group-personalise-description = Aspetto, lingua e posizione dei file.
+
+help-appearance-title = Temi e aspetto
+help-appearance-subtitle = Compreso un aspetto coordinato con OBS
+help-appearance-body =
+    Lo schema colori segue per impostazione predefinita la preferenza chiara o scura del desktop, ma puoi forzare una delle due modalità.
+    I temi sono famiglie compatibili con chiaro e scuro: scegline uno e verrà applicata la variante corrispondente allo schema colori corrente. La famiglia OBS riproduce l'aspetto di OBS Studio, così la superficie di controllo non stona con l'applicazione che gestisce.
+    Il CSS personalizzato usa file chiari e scuri separati, così anche un aspetto personalizzato segue lo schema colori. Ricarica CSS personalizzato applica le modifiche senza riavviare.
+    Movimento controlla quanto viene animata l'interfaccia: impostalo su Ridotto o Disattivato se il movimento distrae o il computer è sotto carico.
+
+help-files-title = Dove SceneDeck conserva i dati
+help-files-subtitle = Configurazione, registro e password di OBS
+help-files-body =
+    Le impostazioni, inclusi l'host e la porta di OBS, si trovano in $XDG_CONFIG_HOME/scenedeck/config.json, in genere ~/.config/scenedeck/config.json.
+    Ruoli, ordine, colori in evidenza e icone delle scene si trovano in registry.json nella stessa cartella.
+    La password di OBS non è presente in nessuno dei due file. È salvata nel portachiavi Secret Service del desktop, la stessa cassaforte usata dal browser.
+    Esegui il backup di entrambi i file JSON per trasferire un'intera configurazione su un altro computer, oppure usa l'esportazione YAML di Inventario solo per la parte relativa alle scene.
+
+help-shortcuts-title = Scorciatoie da tastiera
+help-shortcuts-subtitle = L'elenco completo
+help-shortcuts-body =
+    F1 — apri questa guida.
+    Ctrl+R — riconnettiti a OBS.
+    Ctrl+, — apri Impostazioni.
+    Ctrl+Q — esci da SceneDeck.
+    Ctrl+1 … Ctrl+0 nella pagina Diretta — passa a una delle prime dieci schede delle scene. La combinazione è configurabile in Impostazioni → Scorciatoie scene.
+
+## ui/window.rs — finestra di benvenuto al primo avvio
+welcome-dialog-heading = Benvenuto in SceneDeck
+welcome-dialog-body = Sembra che questo sia il primo avvio. La pagina Guida spiega come connettersi a OBS —anche quando OBS è su un altro computer— e come limitare la pagina Diretta alle scene che usi davvero. Bastano un paio di minuti e si evitano alcuni errori.
+welcome-dialog-later = Non ora
+welcome-dialog-open = Leggi la guida
+window-help-tooltip = Guida e introduzione

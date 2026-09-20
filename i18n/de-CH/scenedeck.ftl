@@ -563,3 +563,197 @@ stats-value-ms = { $value } ms
 stats-value-percent = { $value } %
 stats-value-mb = { $value } MB
 stats-value-kbps = { $value } kbit/s
+## Help, Onboarding und ergänzende Statusmeldungen
+page-help = Hilfe
+config-parse-failed-backed-up = Einstellungen konnten nicht gelesen werden: { $detail } — die Datei wurde unter { $path } gesichert und die Standardwerte wurden geladen.
+stats-popout-button = Statistik in einem separaten Fenster öffnen
+
+help-page-title = Hilfe & Einführung
+help-hero-title = Willkommen bei SceneDeck
+help-hero-description = Eine native Linux-Steueroberfläche für OBS Studio. Dieser Leitfaden führt durch die erste Verbindung, zeigt, wie auf der Live-Seite nur die tatsächlich geschalteten Szenen erscheinen, und erklärt jede Seite der Seitenleiste. Klappen Sie ein Thema auf, um es zu lesen.
+help-expand-hint = Klicken Sie auf ein Thema, um es aufzuklappen.
+help-open-settings = Einstellungen öffnen
+help-open-inventory = Inventar öffnen
+help-open-doctor = Doctor öffnen
+help-open-live = Live öffnen
+help-open-mixer = Mixer öffnen
+help-open-graph = Graph öffnen
+help-open-stats = Statistik öffnen
+
+help-group-start-title = Erste Schritte
+help-group-start-description = Der kürzeste Weg von der Neuinstallation zum ersten Szenenwechsel.
+help-quickstart-title = In fünf Schritten zum ersten Szenenwechsel
+help-quickstart-subtitle = Führen Sie diese Schritte beim ersten Mal der Reihe nach aus
+help-quickstart-body =
+    1. Öffnen Sie in OBS Studio Werkzeuge → WebSocket-Servereinstellungen und aktivieren Sie „WebSocket-Server aktivieren“. Lassen Sie OBS laufen.
+    2. Klicken Sie im selben OBS-Dialog auf „Verbindungsinformationen anzeigen“ und notieren Sie Serverport (standardmässig 4455) und Serverpasswort.
+    3. Öffnen Sie in SceneDeck die Einstellungen und tragen Sie Host, Port und Passwort ein. Der Host bleibt 127.0.0.1, wenn OBS auf demselben Computer läuft.
+    4. Klicken Sie unten in der Seitenleiste auf Verbinden. Die Statuszeile darüber wird grün und zeigt „Verbunden“.
+    5. Öffnen Sie das Inventar und weisen Sie den Szenen, die Sie während einer Sendung schalten möchten, die Rolle „Primär“ zu. Genau diese Szenen werden als Karten auf der Live-Seite angezeigt.
+
+help-concepts-title = Wie SceneDeck Ihren Aufbau versteht
+help-concepts-subtitle = Rollen, die Registrierung und was OBS nie verändert
+help-concepts-body =
+    SceneDeck benennt in OBS nichts um, löscht nichts und ändert keine Reihenfolge. Es liest Ihre Szenen über die OBS-WebSocket-Verbindung und führt eigene Notizen dazu.
+    Eine „Rolle“ ist eine solche Notiz: Ihre eigene Kennzeichnung für den Zweck einer Szene — etwa eine Szene für die Sendung, eine wiederverwendbare Einblendung oder eine übrig gebliebene Testszene.
+    Diese Notizen liegen in registry.json neben der Konfigurationsdatei. Sie bleiben nach Neustarts erhalten und können über die Inventarseite exportiert und auf einen anderen Computer übertragen werden.
+    Da die Notizen lokal gespeichert sind, können zwei Personen denselben OBS-Aufbau nutzen und jeweils eine andere Live-Seite führen.
+
+help-group-connect-title = Verbindung mit OBS
+help-group-connect-description = Auf diesem Computer oder quer durch den Raum.
+help-connect-local-title = Verbindung mit OBS auf diesem Computer
+help-connect-local-subtitle = Der Standardfall — Host 127.0.0.1, Port 4455
+help-connect-local-body =
+    127.0.0.1 ist die Adresse, über die ein Computer mit sich selbst spricht. Sie ist daher der richtige Host, wenn OBS und SceneDeck nebeneinander laufen.
+    Der Port muss dem Serverport in den WebSocket-Servereinstellungen von OBS entsprechen. OBS verwendet 4455, sofern Sie ihn nicht geändert haben.
+    Wenn in OBS „Authentifizierung aktivieren“ gewählt ist, fügen Sie das Passwort unter Einstellungen → Passwort ein. SceneDeck speichert es im Schlüsselbund Ihres Desktops (dort, wo auch Ihr Browser gespeicherte Anmeldedaten ablegt), niemals in der unverschlüsselten Konfigurationsdatei.
+    Klicken Sie in der Seitenleiste auf Verbinden oder drücken Sie jederzeit Strg+R, um die Verbindung erneut herzustellen.
+
+help-connect-remote-title = Verbindung mit OBS auf einem anderen Computer
+help-connect-remote-subtitle = Streaming-PC in der Ecke, Steuerung vom Laptop
+help-connect-remote-body =
+    Dies ist der Aufbau mit zwei Computern: OBS läuft auf dem Aufnahme- und Kodierrechner, SceneDeck auf dem Computer vor Ihnen. Beide müssen sich im selben Netzwerk befinden.
+    Aktivieren Sie auf dem OBS-Computer unter Werkzeuge → WebSocket-Servereinstellungen den WebSocket-Server und die Authentifizierung und legen Sie ein Passwort fest. Lassen Sie die Authentifizierung nicht ausgeschaltet — sonst könnte jeder im Netzwerk, der den Port erreicht, Ihren Stream starten oder stoppen.
+    Ermitteln Sie die Adresse des OBS-Computers auf diesem Gerät. Führen Sie unter Linux `ip addr` aus und suchen Sie eine Adresse wie 192.168.1.42; führen Sie unter Windows `ipconfig` aus und lesen Sie die IPv4-Adresse; unter macOS steht sie in Systemeinstellungen → Netzwerk. Gemeint ist die Adresse des Computers, nicht von OBS.
+    Geben Sie den Port in der Firewall des OBS-Computers frei. Unter Linux mit ufw lautet der Befehl `sudo ufw allow 4455/tcp`; unter Windows erlauben Sie OBS in der Windows-Defender-Firewall für private Netzwerke.
+    Tragen Sie in den SceneDeck-Einstellungen diese Adresse als Host ein (zum Beispiel 192.168.1.42), belassen Sie den Port bei 4455 und fügen Sie das Passwort ein. Klicken Sie auf Verbinden.
+    Verwenden Sie für den OBS-Computer möglichst eine Kabelverbindung. Szenenwechsel funktionieren auch über WLAN, aber ein verlorenes Paket verzögert den Schnitt.
+    Ein Tipp, der eine Sendung retten kann: Reservieren Sie in den DHCP-Einstellungen Ihres Routers eine feste Adresse für den OBS-Computer, damit der gespeicherte Host auch nach einem Neustart funktioniert.
+
+help-connect-share-title = Einem Co-Host oder Moderator die Steuerung überlassen
+help-connect-share-subtitle = Ein zweites SceneDeck für denselben Aufbau
+help-connect-share-body =
+    Der WebSocket-Server von OBS akzeptiert mehrere Clients gleichzeitig. Eine zweite Person kann daher auf einem zweiten Computer ihr eigenes SceneDeck mit demselben Aufbau verbinden — genau wie im vorherigen Thema, nur zweimal.
+    Es gibt keine persönlichen Anmeldungen: Wer Host, Port und Passwort in den Einstellungen hat, besitzt dieselbe Kontrolle wie Sie, einschliesslich Starten und Stoppen des Streams. Geben Sie diese Daten nur jemandem, dem Sie auch Ihre OBS-Sitzung anvertrauen würden.
+    Begrenzen Sie zunächst die Ansicht. Rollen und ausgeblendete Szenen liegen im lokalen Inventar, nicht in OBS. Richten Sie diese auf Ihrem Computer ein und lassen Sie Ihre Mitwirkenden die Szenenregistrierungs-YAML exportieren oder nachbilden, statt mit einer vollständigen ungefilterten Szenenliste zu beginnen.
+    Leiten Sie den WebSocket-Port nicht ins Internet weiter. Verbinden Sie beide Geräte über dasselbe VPN oder Tailscale-Netzwerk oder tunneln Sie die Verbindung über SSH und tragen Sie die Tunneladresse als Host ein.
+    Alle verbundenen Personen sehen denselben Live-Zustand — ein Szenenwechsel oder eine Reglerbewegung auf einer Seite erscheint sofort auch auf der anderen, als sässen beide an derselben Tastatur.
+
+help-connect-trouble-title = Wenn Verbinden nicht funktioniert
+help-connect-trouble-subtitle = Lesen Sie den Fehler und prüfen Sie dann diese Liste
+help-connect-trouble-body =
+    „Verbindung abgelehnt“ bedeutet fast immer, dass der WebSocket-Server in OBS nicht aktiviert ist oder der Port nicht übereinstimmt. Prüfen Sie beides unter Werkzeuge → WebSocket-Servereinstellungen.
+    Wenn eine Verbindung hängen bleibt und dann abläuft, verwirft meist eine Firewall den Datenverkehr oder die Hostadresse gehört zu einem anderen Computer als gedacht.
+    „Authentifizierung fehlgeschlagen“ bedeutet, dass das Passwort falsch ist. Geben Sie es in den Einstellungen erneut ein; das Feld ist nur zum Schreiben gedacht und sieht daher leer aus, selbst wenn ein Passwort gespeichert ist.
+    Zeigt der Status in der Seitenleiste gar nichts an? Prüfen Sie, ob OBS wirklich läuft und nicht durch einen eigenen modalen Dialog blockiert ist.
+    SceneDeck verbindet sich nach einem Abbruch automatisch erneut; mit Strg+R starten Sie den Versuch sofort.
+
+help-group-scenes-title = Szenen ordnen
+help-group-scenes-description = Die Live-Seite sollte nur das zeigen, worauf Sie tatsächlich schalten.
+help-scenes-hide-title = Szenen ausblenden, auf die Sie nie schalten
+help-scenes-hide-subtitle = Die wichtigste erste Einrichtung
+help-scenes-hide-body =
+    In einem gewachsenen OBS-Aufbau sammeln sich Szenen, die nur in andere Szenen eingebettet werden, oder die für einen einzelnen Test erstellt und nie gelöscht wurden. Auf einer Live-Steueroberfläche können sie zu einem falschen Schnitt führen.
+    SceneDeck zeigt eine Live-Karte nur für Szenen mit der Rolle Primär. Alle anderen Rollen sind auf Live ausgeblendet. Eine Szene auszublenden bedeutet daher einfach, ihr eine andere Rolle als Primär zu geben.
+    Öffnen Sie das Inventar. Jede OBS-Szene erhält eine Zeile mit einer Rollenauswahl auf der rechten Seite.
+    Weisen Sie den wenigen Szenen, auf die Sie tatsächlich schalten, Primär zu. Alles andere erhält eine dieser Rollen: Sekundär (eine echte Szene, die manchmal gebraucht wird, aber nicht auf Live erscheinen soll), Modul (eine Einblendung oder Bauchbinde, die nur in andere Szenen eingebettet wird), Roh (eine reine Kamera- oder Aufnahmehülle), Debug (eine Testszene) oder Archiv (für später aufbewahrt und aus dem Weg).
+    Szenen ohne zugewiesene Rolle bleiben ebenfalls von Live fern; Nicht zugewiesen blendet sie also auch aus. Eine bewusste Zuweisung ist dennoch besser: Doctor meldet nicht zugewiesene Szenen, damit neue auffallen.
+    Die Änderung wirkt sofort — kehren Sie zu Live zurück und die Karte ist verschwunden. In OBS wurde nichts verändert.
+
+help-scenes-order-title = Reihenfolge, Farben und Symbole
+help-scenes-order-subtitle = Die richtige Karte unübersehbar machen
+help-scenes-order-body =
+    Ziehen Sie eine Szene am Griff links in ihrer Inventarzeile, um die Reihenfolge festzulegen. Die Live-Karten und Ziffernkürzel folgen dieser Reihenfolge; die Karte für Taste 1 steht also ganz oben.
+    Die Akzentfarbe färbt die Live-Karte der Szene ein. Verwenden Sie eine kräftige Farbe für Szenen mit Folgen — etwa „Wir sind live“ oder eine Sponsorenbotschaft — damit Ihr Blick sofort dorthin fällt.
+    Über die Symbolauswahl links in jeder Zeile erhält die Live-Karte ein Symbol. Es stehen dreissig Symbole sowie „Kein Symbol“ zum Entfernen zur Verfügung.
+    Reihenfolge, Farben und Symbole werden in der lokalen Registrierung gespeichert, nicht in OBS.
+
+help-scenes-registry-title = Einrichtung sichern und übertragen
+help-scenes-registry-subtitle = Die Zeile „Szenenregistrierungs-YAML“ im Inventar
+help-scenes-registry-body =
+    Der Export schreibt Rollen, Reihenfolge, Akzentfarben, Symbole, Tags und Graphregeln in eine einzige YAML-Datei — ein lesbares Textformat, das Sie in einer Versionsverwaltung ablegen können.
+    Der Import ersetzt die lokale Registrierung durch den Inhalt einer solchen Datei. Damit übertragen Sie eine fertige Einrichtung auf einen zweiten Computer oder kehren nach einem Experiment zu einem früheren Stand zurück.
+    Szenennamen verbinden die Datei mit OBS. Eine in OBS umbenannte Szene erscheint daher als veralteter Eintrag. Das Inventar listet solche Einträge auf und kann sie entfernen.
+
+help-group-operate-title = Eine Sendung durchführen
+help-group-operate-description = Die Seiten, die Sie während eines Streams tatsächlich verwenden.
+help-live-title = Die Live-Seite
+help-live-subtitle = Szenenkarten, Audio und die Programmszene
+help-live-body =
+    Live ist die Bedienansicht: oben die aktuelle Programmszene, auf einer Seite die Szenenkarten und auf der anderen kompakte Audiokarten. Ziehen Sie die Trennlinie, um der benötigten Hälfte mehr Platz zu geben.
+    Ein Klick auf eine Szenenkarte schaltet OBS auf diese Szene. Die aktuelle Szene ist als Aktiv markiert, die übrigen als Bereit.
+    Nach dem Verbinden sind keine Karten zu sehen? Dann hat noch keine Szene die Rolle Primär — siehe oben „Szenen ausblenden, auf die Sie nie schalten“.
+    Die Statusleiste am unteren Rand bleibt auf jeder Seite sichtbar. Sie zeigt Verbindung, Stream- und Aufnahmestatus mit Laufzeit sowie aktuelle Werte für FPS, verworfene Frames, CPU und Bitrate.
+
+help-hotkeys-title = Szenen über die Tastatur wechseln
+help-hotkeys-subtitle = Standardmässig Strg+1 … Strg+0, frei konfigurierbar
+help-hotkeys-body =
+    Jede der ersten zehn Live-Karten trägt ein kleines Ziffernabzeichen: die erste Karte 1, die neunte 9 und die zehnte 0. Der Text neben der Überschrift „Szenen“ zeigt immer die aktuelle Belegung.
+    Die Platznummern folgen der Reihenfolge im Inventar. Wenn Sie die Karten dort neu anordnen, ändern sich die Kürzel entsprechend.
+    Unter Einstellungen → Szenen-Tastenkürzel wählen Sie, wie die Ziffer gedrückt wird. Eine Modifikatortaste plus Ziffer (standardmässig Strg) kann beim Tippen nicht versehentlich auslösen. Eine einzelne Ziffer ist am schnellsten. Der Leader-Stil funktioniert wie in Vim: Leader-Taste drücken, loslassen und dann die Ziffer drücken; währenddessen zeigt der Text „Leader bereit“.
+    Kürzel wirken nur auf der Live-Seite. Varianten ohne Modifikatortaste pausieren, solange ein Textfeld den Fokus hat. Ist einer Ziffer keine Szene zugeordnet, meldet der Text dies, statt etwas zu schalten.
+
+help-audio-title = Audio: Mixer-Seite und Pegelanzeigen
+help-audio-subtitle = Was die farbigen Balken bedeuten
+help-audio-body =
+    Audiokarten erscheinen auf Live und mit mehr Platz und Bedienelementen auf der Mixer-Seite. Globale OBS-Audiogeräte stehen zuerst, danach audiofähige Quellen der aktuellen Szene — einschliesslich Quellen in verschachtelten Szenen und Gruppen.
+    Der Mixer-Modus bestimmt, welche Szene Sie hören und sehen. Aktiv folgt der OBS-Programmszene. Ausgewählt lädt eine Szene und bleibt dort. Angeheftet hält eine gewählte Szene als festes Ziel, während OBS weiterschaltet.
+    Die Anzeige neben jedem Regler reicht von −60 dB unten bis 0 dB oben und verwendet die OBS-Grenzwerte: Grün unter −20 dB für Musik und Hintergrund, Gelb von −20 bis −9 dB für Sprache, Rot über −9 dB, wo Übersteuerung beginnt. Nichts sollte dauerhaft im roten Bereich liegen.
+    Eine Spalte steht für eine Monoquelle, zwei für Stereo — links, dann rechts. Bewegt sich nur die linke Spalte, hört die Hälfte Ihres Publikums von dieser Quelle nichts.
+    Die Linie über der Füllung zeigt den lautesten Spitzenwert der letzten zwanzig Sekunden und macht eine übersehene Übersteuerung schnell sichtbar. Das Quadrat ganz unten zeigt den Pegel, der vor dem Regler vom Gerät eintrifft — ist er zu hoch, hilft keine Reglerbewegung.
+    Die Sperrtaste einer Karte sperrt nur den SceneDeck-Regler. In OBS selbst wird nichts gesperrt.
+
+help-outputs-title = Stream und Aufnahme starten und stoppen
+help-outputs-subtitle = Und Bestätigungen gegen versehentliche Aktionen
+help-outputs-body =
+    Die Schaltflächen zum Starten und Stoppen von Stream und Aufnahme befinden sich unten in der Seitenleiste und sind von jeder Seite erreichbar. Die Statusleiste zeigt Zustand und Laufzeit.
+    Unter Einstellungen → Ausgabesicherheit legen Sie fest, welche der vier Aktionen zuerst nachfragt. Standardmässig muss das Stoppen bestätigt werden, das Starten nicht — früh zu starten kostet wenig, früh zu stoppen beendet die Sendung.
+    Direkt in OBS vorgenommene Änderungen erscheinen ebenfalls hier: SceneDeck folgt den OBS-Ereignissen, statt anzunehmen, dass der eigene Tastendruck erfolgreich war.
+
+help-group-inspect-title = Einrichtung prüfen
+help-group-inspect-description = Finden Sie die Überraschung, bevor sie auf Sendung passiert.
+help-doctor-title = Doctor
+help-doctor-subtitle = Strukturprobleme, nach Schweregrad sortiert
+help-doctor-body =
+    Doctor liest Szenenliste, Rollenzuweisungen und Szenenverschachtelung und meldet Auffälligkeiten als Fehler, Warnungen und Informationen.
+    Typische Befunde: Szenen ohne Rolle, gespeicherte Szenen, die in OBS nicht mehr existieren, zirkuläre Verschachtelungen und Szenen, die entgegen den Rollenregeln ineinander verschachtelt sind.
+    Die Prüfung läuft bei jedem Öffnen der Seite erneut; die Schaltfläche Erneut ausführen erzwingt einen weiteren Lauf.
+    Prüfen Sie die Seite nach jeder Änderung am OBS-Aufbau und noch einmal vor dem Sendestart.
+
+help-graph-title = Graph
+help-graph-subtitle = Welche Szenen in welchen enthalten sind
+help-graph-body =
+    Durch das Verschachteln von Szenen entstehen in OBS Einblendungen und gemeinsame Layouts. Dadurch kann eine Szene aber auch von etwas abhängen, das Sie vergessen haben.
+    Graph listet jede übergeordnete Szene und ihren Inhalt auf und bewertet jede Beziehung anhand Ihrer Rollenregeln als in Ordnung, fragwürdig oder verboten.
+    Damit beantworten Sie vor einer Änderung die Frage: „Was geht kaputt, wenn ich diese Szene ändere?“
+
+help-stats-title = Statistik
+help-stats-subtitle = Ob der Computer Schritt hält
+help-stats-body =
+    Anzeigen für FPS, Frame-Renderzeit, verworfene Frames und Netzwerküberlastung werden bei schlechteren Werten zuerst gelb und dann rot — verworfene Frames warnen ab 1 %, Überlastung ab 30 %.
+    Verlaufsgrafiken speichern ungefähr die letzten zwei Minuten. Balkendiagramme zeigen, wann Frames verloren gingen, statt nur eine laufende Summe anzuzeigen. So erkennen Sie, ob ein Ruckler ein einzelner schlechter Moment oder ein Trend war.
+    Solange die Verbindung besteht, werden fortlaufend Messwerte gesammelt. Wenn Sie Statistik mitten im Stream öffnen, sehen Sie daher die vorherigen Minuten, statt mit einer leeren Ansicht zu beginnen.
+    Frame-Zähler stammen aus OBS und werden zurückgesetzt, wenn OBS oder die Stream-Ausgabe neu startet.
+
+help-group-personalise-title = Persönlich gestalten
+help-group-personalise-description = Erscheinungsbild, Sprache und Speicherorte Ihrer Dateien.
+help-appearance-title = Themen und Erscheinungsbild
+help-appearance-subtitle = Einschliesslich eines Looks passend zu OBS
+help-appearance-body =
+    Das Farbschema folgt standardmässig der Hell-/Dunkel-Einstellung Ihres Desktops; Sie können eine Variante auch erzwingen.
+    Themen sind Familien mit heller und dunkler Variante: Wählen Sie eine aus, und die zum aktuellen Farbschema passende Variante wird angewendet. Die OBS-Familie entspricht dem Erscheinungsbild von OBS Studio, damit die Steueroberfläche zur gesteuerten Anwendung passt.
+    Benutzerdefiniertes CSS verwendet getrennte Dateien für Hell und Dunkel und folgt damit ebenfalls dem Farbschema. „Benutzerdefiniertes CSS neu laden“ übernimmt Änderungen ohne Neustart.
+    Bewegung steuert, wie stark die Oberfläche animiert wird. Wählen Sie Reduziert oder Aus, wenn Bewegung ablenkt oder der Computer stark ausgelastet ist.
+
+help-files-title = Wo SceneDeck Daten speichert
+help-files-subtitle = Konfiguration, Registrierung und Ihr OBS-Passwort
+help-files-body =
+    Einstellungen einschliesslich OBS-Host und -Port liegen unter $XDG_CONFIG_HOME/scenedeck/config.json — normalerweise ~/.config/scenedeck/config.json.
+    Szenenrollen, Reihenfolge, Akzentfarben und Symbole liegen in registry.json im selben Ordner.
+    Das OBS-Passwort steht in keiner der beiden Dateien. Es wird im Secret-Service-Schlüsselbund Ihres Desktops gespeichert, demselben Tresor, den Ihr Browser nutzt.
+    Sichern Sie beide JSON-Dateien, um eine vollständige Einrichtung auf einen anderen Computer zu übertragen, oder verwenden Sie den YAML-Export im Inventar nur für den Szenenteil.
+
+help-shortcuts-title = Tastenkürzel
+help-shortcuts-subtitle = Die vollständige Liste
+help-shortcuts-body =
+    F1 — diesen Leitfaden öffnen.
+    Strg+R — erneut mit OBS verbinden.
+    Strg+, — Einstellungen öffnen.
+    Strg+Q — SceneDeck beenden.
+    Strg+1 … Strg+0 auf der Live-Seite — zu den ersten zehn Szenenkarten wechseln. Die Kombination ist unter Einstellungen → Szenen-Tastenkürzel konfigurierbar.
+
+welcome-dialog-heading = Willkommen bei SceneDeck
+welcome-dialog-body = Dies scheint Ihr erster Start zu sein. Die Hilfeseite erklärt die Verbindung mit OBS — auch auf einem anderen Computer — und zeigt, wie auf der Live-Seite nur die Szenen erscheinen, auf die Sie tatsächlich schalten. Das dauert nur wenige Minuten und vermeidet einige Fehler.
+welcome-dialog-later = Nicht jetzt
+welcome-dialog-open = Leitfaden lesen
+window-help-tooltip = Hilfe und Einführungsleitfaden

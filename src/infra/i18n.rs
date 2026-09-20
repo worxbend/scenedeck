@@ -46,6 +46,20 @@ fn disable_isolating_marks(loader: &FluentLanguageLoader) {
     loader.set_use_isolating(false);
 }
 
+fn is_c_locale(value: &str) -> bool {
+    matches!(
+        value.split(['.', '@']).next().unwrap_or(value),
+        "C" | "POSIX"
+    )
+}
+
+fn desktop_requests_c_locale() -> bool {
+    ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .into_iter()
+        .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
+        .is_some_and(|value| is_c_locale(&value))
+}
+
 /// Select the active locale for [`LANGUAGE_LOADER`] from the user's
 /// [`Language`] preference. Called once at startup after config is read, and
 /// again immediately when the user changes the language in Settings.
@@ -61,6 +75,11 @@ pub(crate) fn init(language: Language) {
             tracing::warn!(%err, tag, "invalid locale tag, using system locale");
             DesktopLanguageRequester::requested_languages()
         }),
+        // `C`, `C.UTF-8`, and `POSIX` deliberately request untranslated
+        // messages, but `DesktopLanguageRequester` tries to parse them as BCP
+        // 47 language tags and logs an error. Select the English fallback
+        // directly for those standard process locales.
+        None if desktop_requests_c_locale() => vec![LANGUAGE_LOADER.fallback_language().clone()],
         None => DesktopLanguageRequester::requested_languages(),
     };
 
@@ -74,6 +93,61 @@ pub(crate) fn init(language: Language) {
 mod tests {
     use super::*;
     use i18n_embed_fl::fl;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    fn message_ids(resource: &str) -> BTreeSet<&str> {
+        resource
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim_end();
+                if line.starts_with([' ', '\t', '#', '-']) {
+                    return None;
+                }
+
+                line.split_once('=')
+                    .map(|(id, _)| id.trim())
+                    .filter(|id| !id.is_empty())
+            })
+            .collect()
+    }
+
+    fn message_variables(resource: &str) -> BTreeMap<String, BTreeSet<String>> {
+        let mut variables = BTreeMap::<String, BTreeSet<String>>::new();
+        let mut current_id = None;
+
+        for line in resource.lines() {
+            let trimmed = line.trim_end();
+            if !trimmed.starts_with([' ', '\t', '#', '-']) {
+                current_id = trimmed
+                    .split_once('=')
+                    .map(|(id, _)| id.trim().to_string())
+                    .filter(|id| !id.is_empty());
+            }
+
+            let Some(id) = &current_id else {
+                continue;
+            };
+            let entry = variables.entry(id.clone()).or_default();
+            let mut remainder = trimmed;
+            while let Some(dollar) = remainder.find('$') {
+                remainder = &remainder[dollar + 1..];
+                let length = remainder
+                    .chars()
+                    .take_while(|character| {
+                        character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
+                    })
+                    .map(char::len_utf8)
+                    .sum();
+                if length == 0 {
+                    continue;
+                }
+                entry.insert(remainder[..length].to_string());
+                remainder = &remainder[length..];
+            }
+        }
+
+        variables
+    }
 
     #[test]
     fn resolves_english_fallback_message() {
@@ -86,6 +160,47 @@ mod tests {
             fl!(LANGUAGE_LOADER, "i18n-loader-smoke-test"),
             "Localization loaded."
         );
+    }
+
+    #[test]
+    fn c_and_posix_locales_are_not_treated_as_language_tags() {
+        for locale in ["C", "C.UTF-8", "C.utf8", "POSIX", "POSIX@variant"] {
+            assert!(is_c_locale(locale), "{locale}");
+        }
+        for locale in ["en_US.UTF-8", "uk_UA.UTF-8", "ca"] {
+            assert!(!is_c_locale(locale), "{locale}");
+        }
+    }
+
+    #[test]
+    fn every_translation_has_the_same_messages_as_english() {
+        let english_resource = include_str!("../../i18n/en/scenedeck.ftl");
+        let english = message_ids(english_resource);
+        let english_variables = message_variables(english_resource);
+        let translations = [
+            ("de-CH", include_str!("../../i18n/de-CH/scenedeck.ftl")),
+            ("de", include_str!("../../i18n/de/scenedeck.ftl")),
+            ("es", include_str!("../../i18n/es/scenedeck.ftl")),
+            ("it", include_str!("../../i18n/it/scenedeck.ftl")),
+            ("pl", include_str!("../../i18n/pl/scenedeck.ftl")),
+            ("pt-PT", include_str!("../../i18n/pt-PT/scenedeck.ftl")),
+            ("uk", include_str!("../../i18n/uk/scenedeck.ftl")),
+        ];
+
+        for (locale, resource) in translations {
+            let translated = message_ids(resource);
+            let translated_variables = message_variables(resource);
+            let missing = english.difference(&translated).copied().collect::<Vec<_>>();
+            let unexpected = translated.difference(&english).copied().collect::<Vec<_>>();
+            assert!(
+                missing.is_empty() && unexpected.is_empty(),
+                "locale {locale} is out of sync: missing={missing:?}, unexpected={unexpected:?}"
+            );
+            assert_eq!(
+                translated_variables, english_variables,
+                "locale {locale} uses a different set of Fluent variables"
+            );
+        }
     }
 
     #[test]

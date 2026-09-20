@@ -566,3 +566,208 @@ stats-value-ms = { $value } ms
 stats-value-percent = { $value } %
 stats-value-mb = { $value } MB
 stats-value-kbps = { $value } kb/s
+
+## Ajuda, integração inicial e mensagens adicionadas na versão 0.4.
+page-help = Ajuda
+config-parse-failed-backed-up = Não foi possível processar as definições: { $detail } — o ficheiro foi mantido em { $path } e foram carregadas as predefinições.
+stats-popout-button = Abrir as estatísticas numa janela separada
+
+## ui/pages/help.rs — guia de integração inicial. Os corpos têm várias linhas
+## de propósito: cada linha é apresentada separadamente num tópico expansível.
+help-page-title = Ajuda e introdução
+help-hero-title = Bem-vindo ao SceneDeck
+help-hero-description = Uma superfície de controlo nativa para Linux destinada ao OBS Studio. Este guia explica a primeira ligação, mostra como limitar a página Direto às cenas que realmente utiliza e descreve todas as páginas da barra lateral. Expanda um tópico para o ler.
+help-expand-hint = Selecione um tópico para o expandir.
+
+help-open-settings = Abrir Definições
+help-open-inventory = Abrir Inventário
+help-open-doctor = Abrir Diagnóstico
+help-open-live = Abrir Direto
+help-open-mixer = Abrir Mesa de Mistura
+help-open-graph = Abrir Grafo
+help-open-stats = Abrir Estatísticas
+
+help-group-start-title = Primeiros passos
+help-group-start-description = O caminho mais curto desde uma instalação nova até à primeira mudança de cena.
+
+help-quickstart-title = Cinco passos para a primeira mudança de cena
+help-quickstart-subtitle = Siga-os por ordem na primeira vez
+help-quickstart-body =
+    1. No OBS Studio, abra Ferramentas → Definições do servidor WebSocket e selecione «Ativar servidor WebSocket». Deixe o OBS em execução.
+    2. Na mesma janela do OBS, prima «Mostrar informações de ligação» e anote a porta do servidor (4455 por predefinição) e a palavra-passe do servidor.
+    3. No SceneDeck, abra Definições e preencha Anfitrião, Porta e Palavra-passe. Mantenha 127.0.0.1 como Anfitrião quando o OBS for executado neste mesmo computador.
+    4. Prima Ligar na parte inferior da barra lateral. A linha de estado acima do botão fica verde e apresenta «Ligado».
+    5. Abra o Inventário e atribua a função «Principal» às cenas que pretende utilizar durante uma transmissão. Essas cenas —e apenas essas— tornam-se cartões na página Direto.
+
+help-concepts-title = Como o SceneDeck interpreta a sua configuração
+help-concepts-subtitle = Funções, o registo e aquilo em que nunca toca no OBS
+help-concepts-body =
+    O SceneDeck nunca muda o nome, elimina ou reordena nada dentro do OBS. Lê as cenas através da ligação WebSocket do OBS e guarda as suas próprias notas sobre elas.
+    Uma «função» é uma dessas notas: uma etiqueta sua que indica para que serve uma cena, como a cena que coloca no ar, uma sobreposição reutilizável ou uma antiga cena de teste.
+    Essas notas ficam em registry.json junto ao ficheiro de configuração, pelo que sobrevivem aos reinícios e podem ser exportadas e transferidas para outro computador a partir da página Inventário.
+    Como as notas são locais, duas pessoas podem partilhar uma configuração do OBS e cada uma manter uma página Direto diferente.
+
+help-group-connect-title = Ligação ao OBS
+help-group-connect-description = Neste computador ou do outro lado da sala.
+
+help-connect-local-title = Ligação ao OBS neste computador
+help-connect-local-subtitle = O caso predefinido: anfitrião 127.0.0.1, porta 4455
+help-connect-local-body =
+    127.0.0.1 é o endereço que um computador utiliza para comunicar consigo próprio, pelo que é o Anfitrião correto quando o OBS e o SceneDeck são executados lado a lado.
+    A porta tem de corresponder à porta do servidor nas Definições do servidor WebSocket do OBS. O OBS utiliza 4455, a menos que a tenha alterado.
+    Se «Ativar autenticação» estiver selecionado no OBS, cole a palavra-passe em Definições → Palavra-passe. O SceneDeck guarda-a no chaveiro do ambiente de trabalho (o mesmo local onde o navegador guarda os inícios de sessão), nunca no ficheiro de configuração em texto simples.
+    Prima Ligar na barra lateral ou prima Ctrl+R em qualquer momento para voltar a ligar.
+
+help-connect-remote-title = Ligação ao OBS noutro computador
+help-connect-remote-subtitle = PC de transmissão num canto, controlo a partir do portátil
+help-connect-remote-body =
+    Esta é a configuração com dois computadores: o OBS é executado no computador que captura e codifica, e o SceneDeck no computador à sua frente. Ambos têm de estar na mesma rede.
+    No computador com o OBS, em Ferramentas → Definições do servidor WebSocket, selecione «Ativar servidor WebSocket» e «Ativar autenticação» e defina uma palavra-passe que possa escrever. Não desative a autenticação: caso contrário, qualquer pessoa na rede que consiga aceder à porta poderá iniciar e parar a transmissão.
+    Encontre o endereço do computador com o OBS nesse mesmo computador. No Linux, execute `ip addr` e procure um endereço como 192.168.1.42; no Windows, execute `ipconfig` e leia o Endereço IPv4; no macOS, encontra-se em Definições do Sistema → Rede. É o endereço do computador, não do OBS.
+    Permita a porta na firewall do computador com o OBS. No Linux com ufw, utilize `sudo ufw allow 4455/tcp`; no Windows, permita o OBS na Firewall do Windows Defender para redes privadas.
+    Nas Definições do SceneDeck, introduza esse endereço como Anfitrião (por exemplo, 192.168.1.42), mantenha a Porta em 4455 e cole a palavra-passe. Prima Ligar.
+    É preferível uma ligação com fios para o computador com o OBS. As mudanças de cena por Wi-Fi funcionam, mas um pacote perdido atrasa a mudança.
+    Uma sugestão que pode salvar uma transmissão: reserve um endereço fixo para o computador com o OBS nas definições de DHCP do router, para que o Anfitrião guardado continue a funcionar depois de reiniciar.
+
+help-connect-share-title = Permitir que um coapresentador ou moderador controle o painel
+help-connect-share-subtitle = Um segundo SceneDeck ligado à mesma régie
+help-connect-share-body =
+    O servidor WebSocket do OBS aceita vários clientes em simultâneo, pelo que uma segunda pessoa noutro computador pode executar a sua própria cópia do SceneDeck com a mesma régie: é a configuração do tópico anterior feita duas vezes.
+    Não existem inícios de sessão individuais: quem tiver o Anfitrião, a Porta e a palavra-passe nas suas Definições tem exatamente o mesmo controlo que o utilizador, incluindo iniciar e parar a transmissão. Partilhe-os apenas com alguém a quem confiaria a sua sessão do OBS.
+    Limite primeiro aquilo que a outra pessoa verá. As funções e as cenas ocultas ficam no Inventário local, não no OBS; configure-as no seu computador e peça ao colaborador que exporte ou recrie o YAML do Registo de Cenas em vez de começar com uma lista completa e não filtrada.
+    Não encaminhe a porta WebSocket para a Internet para dar acesso a um colaborador remoto. Coloquem ambos os computadores na mesma VPN ou rede Tailscale, ou criem um túnel SSH e indiquem como Anfitrião o endereço do túnel.
+    Todas as pessoas ligadas veem o mesmo estado em direto: uma mudança de cena ou de regulador feita de qualquer lado aparece imediatamente em ambos, tal como se estivessem ao mesmo teclado.
+
+help-connect-trouble-title = Quando Ligar não funciona
+help-connect-trouble-subtitle = Leia o erro e percorra esta lista
+help-connect-trouble-body =
+    «Ligação recusada» significa quase sempre que o servidor WebSocket não está ativado no OBS ou que a porta não corresponde. Verifique ambos em Ferramentas → Definições do servidor WebSocket.
+    Uma ligação que fica pendente e depois excede o tempo limite indica normalmente que uma firewall está a bloquear o tráfego ou que o endereço do Anfitrião pertence a outro computador.
+    «Falha na autenticação» significa que a palavra-passe está errada. Introduza-a novamente nas Definições; o campo é apenas de escrita, pelo que parece vazio mesmo quando existe uma palavra-passe guardada.
+    Não aparece nada no estado da barra lateral? Confirme que o OBS está realmente em execução e que não está bloqueado por uma janela de diálogo modal própria.
+    O SceneDeck volta a ligar automaticamente depois de perder a ligação, e Ctrl+R força uma tentativa imediata.
+
+help-group-scenes-title = Organização das cenas
+help-group-scenes-description = A página Direto deve mostrar aquilo para que muda, e nada mais.
+
+help-scenes-hide-title = Ocultar cenas que nunca coloca no ar
+help-scenes-hide-subtitle = A definição mais útil para configurar primeiro
+help-scenes-hide-body =
+    Uma configuração do OBS em utilização acumula cenas que existem apenas para serem aninhadas noutras ou que foram criadas para um teste e nunca eliminadas. Apresentá-las numa superfície de controlo em direto facilita uma mudança errada.
+    O SceneDeck só apresenta um cartão em Direto para cenas com a função Principal. Todas as outras funções ficam ocultas, pelo que «ocultar uma cena» significa simplesmente atribuir-lhe qualquer função diferente de Principal.
+    Abra o Inventário. Cada cena do OBS tem uma linha com um seletor de função à direita.
+    Defina Principal para as poucas cenas que realmente coloca no ar. Para as restantes, escolha: Secundária (uma cena real de que por vezes precisa, mas que não quer em Direto), Módulo (uma sobreposição ou rodapé apenas aninhado noutra cena), Bruta (uma câmara ou captura básica), Depuração (uma cena de teste) ou Arquivo (guardada para mais tarde e afastada).
+    As cenas sem função também ficam fora de Direto, pelo que deixá-las Sem atribuição também as oculta. Ainda assim, é melhor atribuir uma função de propósito: a página Diagnóstico assinala as cenas Sem atribuição para que repare nas novas.
+    A alteração tem efeito imediato: volte a Direto e o cartão terá desaparecido. Nada mudou no OBS.
+
+help-scenes-order-title = Ordem, cores e ícones
+help-scenes-order-subtitle = Torne evidente o cartão certo
+help-scenes-order-body =
+    Arraste uma cena pela pega à esquerda da respetiva linha no Inventário para definir a ordem. Os cartões de Direto e os atalhos numéricos seguem essa ordem, pelo que o cartão ativado com 1 é o primeiro.
+    O seletor da cor de destaque tinge o cartão da cena em Direto. Reserve uma cor forte para as cenas importantes —a cena «estamos em direto» ou a leitura do patrocinador— para que sejam imediatamente visíveis.
+    O seletor de ícones à esquerda de cada linha coloca um símbolo no cartão da cena em Direto. Estão disponíveis trinta ícones, além de uma opção «sem ícone» para o remover.
+    A ordem, as cores e os ícones são guardados no registo local, não no OBS.
+
+help-scenes-registry-title = Cópia de segurança e transferência da configuração
+help-scenes-registry-subtitle = A linha YAML do Registo de Cenas no Inventário
+help-scenes-registry-body =
+    Exportar grava funções, ordem, cores de destaque, ícones, etiquetas e regras do grafo num único ficheiro YAML, um formato de texto simples que pode ler e manter sob controlo de versões.
+    Importar substitui o registo local pelo conteúdo desse ficheiro. Utilize-o para transferir uma configuração concluída para outro computador ou para a repor depois de uma experiência.
+    Os nomes das cenas ligam o ficheiro ao OBS, pelo que uma cena cujo nome seja alterado no OBS reaparece como uma entrada desatualizada. O Inventário apresenta essas entradas e permite removê-las.
+
+help-group-operate-title = Durante uma transmissão
+help-group-operate-description = As páginas que realmente utiliza enquanto está no ar.
+
+help-live-title = A página Direto
+help-live-subtitle = Cartões de cenas, áudio e cena de emissão
+help-live-body =
+    Direto é a vista operacional: a cena de emissão atual em cima, os cartões de cenas de um lado e os cartões de áudio compactos do outro. Arraste o separador para dar mais espaço à metade de que precisa.
+    Ao clicar num cartão, o OBS muda para essa cena. A atual é assinalada como Ativa e as restantes como Prontas.
+    Não há cartões depois de ligar? Nenhuma cena tem ainda a função Principal; consulte «Ocultar cenas que nunca coloca no ar» acima.
+    A barra de estado inferior permanece visível em todas as páginas e mostra o estado da ligação, da transmissão e da gravação com o tempo decorrido, além dos FPS, fotogramas perdidos, CPU e taxa de bits em direto.
+
+help-hotkeys-title = Mudar de cena com o teclado
+help-hotkeys-subtitle = Ctrl+1 … Ctrl+0 por predefinição e configurável
+help-hotkeys-body =
+    Cada um dos primeiros dez cartões de Direto apresenta um pequeno emblema com o respetivo algarismo: o primeiro é 1, o nono é 9 e o décimo é 0. A legenda junto ao título Cenas indica sempre a combinação atual.
+    Os números das posições seguem a ordem do Inventário, pelo que reordenar os cartões nessa página também reordena os atalhos.
+    Definições → Atalhos de Cena permite escolher como premir o algarismo. Um modificador mais o algarismo (Ctrl por predefinição) evita ativações acidentais enquanto escreve. O algarismo isolado é a opção mais rápida. O estilo de tecla líder funciona como no vim: prima a tecla líder, liberte-a e depois prima o algarismo; enquanto aguarda, a legenda apresenta «Líder ativo».
+    Os atalhos funcionam apenas na página Direto e os estilos sem modificador ficam inativos quando um campo de texto tem o foco. Se não houver uma cena associada a um algarismo, a legenda indica-o sem mudar de cena.
+
+help-audio-title = Áudio: a página Mesa de Mistura e os medidores
+help-audio-subtitle = O que indicam as barras coloridas
+help-audio-body =
+    Os cartões de áudio aparecem em Direto e, com mais espaço e controlos, na página Mesa de Mistura. Primeiro surgem os dispositivos de áudio globais do OBS e depois as fontes com áudio da cena atual, incluindo fontes dentro de cenas aninhadas e grupos.
+    Os modos da Mesa de Mistura determinam o áudio da cena que está a observar. Ativo segue a cena de emissão do OBS. Selecionado carrega uma cena e permanece nela. Fixado mantém uma cena escolhida como destino permanente enquanto o OBS avança.
+    O medidor junto de cada regulador vai de -60 dB em baixo a 0 dB em cima e utiliza os limiares do OBS: verde abaixo de -20 dB para música e fundo, amarelo de -20 a -9 dB para a voz e vermelho acima de -9 dB, onde começa a distorção. Nenhum sinal deve permanecer no vermelho.
+    Uma coluna indica uma fonte mono; duas indicam estéreo, esquerda e depois direita. Se apenas a coluna esquerda se mover, metade dos espectadores não ouvirá essa fonte.
+    A linha acima do preenchimento mostra o pico mais alto dos últimos vinte segundos, a forma mais rápida de detetar uma distorção que lhe tenha escapado. O quadrado no fundo mostra o nível que chega do dispositivo antes do regulador; se for demasiado alto, mover o regulador não o corrigirá.
+    O botão de bloqueio de um cartão apenas imobiliza o controlo deslizante do SceneDeck. Não bloqueia nada no OBS.
+
+help-outputs-title = Iniciar e parar a transmissão e a gravação
+help-outputs-subtitle = E as confirmações que evitam um acidente
+help-outputs-body =
+    Os botões Iniciar/Parar transmissão e Iniciar/Parar gravação ficam na parte inferior da barra lateral e estão acessíveis em todas as páginas. A barra de estado mostra o estado e há quanto tempo estão em execução.
+    Definições → Segurança de Saída determina quais das quatro ações pedem confirmação. Por predefinição, parar qualquer saída pede confirmação e iniciar não: parte-se do princípio de que começar cedo custa pouco e parar cedo termina a transmissão.
+    As alterações feitas no próprio OBS também aparecem aqui: o SceneDeck segue os eventos do OBS em vez de presumir que o seu botão funcionou.
+
+help-group-inspect-title = Verificação da configuração
+help-group-inspect-description = Encontre a surpresa antes de ela acontecer no ar.
+
+help-doctor-title = Diagnóstico
+help-doctor-subtitle = Problemas estruturais ordenados por gravidade
+help-doctor-body =
+    O Diagnóstico lê a lista de cenas, as atribuições de funções e os aninhamentos, e comunica o que parece errado como Erros, Avisos e Informação.
+    Entre os problemas típicos estão cenas sem função, cenas memorizadas que já não existem no OBS, aninhamentos circulares e cenas aninhadas numa direção que as respetivas funções não permitem.
+    É executado novamente sempre que abre a página, e o botão Executar novamente força-o de imediato.
+    Vale a pena consultá-lo depois de qualquer alteração à configuração do OBS e mais uma vez antes de entrar em direto.
+
+help-graph-title = Grafo
+help-graph-subtitle = Que cenas estão dentro de quais
+help-graph-body =
+    Aninhar uma cena noutra permite criar sobreposições e disposições partilhadas no OBS, mas também pode fazer com que uma cena dependa de algo de que se esqueceu.
+    O Grafo apresenta cada cena principal e o que contém, e compara cada relação com as regras das suas funções: correta, questionável ou proibida.
+    Utilize-o para responder a «o que deixa de funcionar se eu alterar esta cena?» antes de a modificar.
+
+help-stats-title = Estatísticas
+help-stats-subtitle = Se o computador está a acompanhar
+help-stats-body =
+    Os indicadores de FPS, tempo de renderização dos fotogramas, fotogramas perdidos e congestionamento da rede ficam primeiro âmbar e depois vermelhos à medida que cada valor piora: os fotogramas perdidos avisam a 1% e o congestionamento a 30%.
+    Os gráficos de tendências guardam aproximadamente os últimos dois minutos e os gráficos de barras mostram quando se perderam fotogramas, em vez de um total acumulado, para distinguir um único mau momento de uma tendência.
+    As amostras são recolhidas durante todo o tempo em que permanece ligado, pelo que abrir Estatísticas a meio de uma transmissão mostra os minutos anteriores em vez de começar vazio.
+    Os contadores de fotogramas vêm do OBS e são repostos quando o OBS ou a saída de transmissão reinicia.
+
+help-group-personalise-title = Personalização
+help-group-personalise-description = Aspeto, idioma e localização dos ficheiros.
+
+help-appearance-title = Temas e aspeto
+help-appearance-subtitle = Incluindo um visual que combina com o próprio OBS
+help-appearance-body =
+    O esquema de cores segue por predefinição a preferência clara ou escura do ambiente de trabalho, mas pode forçar uma das opções.
+    Os temas são famílias adaptadas aos modos claro e escuro: escolha uma e será aplicada a variante correspondente ao esquema de cores atual. A família OBS reproduz o aspeto do OBS Studio, para que a superfície de controlo não destoe da aplicação que controla.
+    O CSS personalizado utiliza ficheiros claros e escuros separados, pelo que um visual personalizado também segue o esquema de cores. Recarregar CSS personalizado aplica as alterações sem reiniciar.
+    Movimento controla quanto a interface é animada; defina-o como Reduzido ou Desligado se o movimento distrair ou o computador estiver ocupado.
+
+help-files-title = Onde o SceneDeck guarda os dados
+help-files-subtitle = Configuração, registo e palavra-passe do OBS
+help-files-body =
+    As definições, incluindo o anfitrião e a porta do OBS, ficam em $XDG_CONFIG_HOME/scenedeck/config.json, normalmente ~/.config/scenedeck/config.json.
+    As funções, a ordem, as cores de destaque e os ícones das cenas ficam em registry.json na mesma pasta.
+    A palavra-passe do OBS não consta de nenhum dos ficheiros. É guardada no chaveiro Secret Service do ambiente de trabalho, o mesmo cofre utilizado pelo navegador.
+    Faça uma cópia de segurança dos dois ficheiros JSON para transferir uma configuração completa para outro computador, ou utilize a exportação YAML do Inventário apenas para a parte das cenas.
+
+help-shortcuts-title = Atalhos de teclado
+help-shortcuts-subtitle = A lista completa
+help-shortcuts-body =
+    F1 — abrir este guia.
+    Ctrl+R — voltar a ligar ao OBS.
+    Ctrl+, — abrir Definições.
+    Ctrl+Q — sair do SceneDeck.
+    Ctrl+1 … Ctrl+0 na página Direto — mudar para um dos primeiros dez cartões de cenas. A combinação pode ser configurada em Definições → Atalhos de Cenas.
+
+## ui/window.rs — janela de boas-vindas da primeira execução
+welcome-dialog-heading = Bem-vindo ao SceneDeck
+welcome-dialog-body = Parece ser a primeira vez que executa a aplicação. A página Ajuda explica como ligar ao OBS —incluindo quando o OBS está noutro computador— e como limitar a página Direto às cenas que realmente utiliza. Demora apenas alguns minutos e evita alguns erros.
+welcome-dialog-later = Agora não
+welcome-dialog-open = Ler o guia
+window-help-tooltip = Guia de ajuda e introdução
