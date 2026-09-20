@@ -11,9 +11,9 @@
 
 use std::time::Duration;
 
-use crate::domain::meter::{
-    ChannelLevel, InputLevels, MeterZone, METER_CEILING_DB, METER_CLIP_DB, METER_FLOOR_DB,
-};
+use crate::domain::meter::{ChannelLevel, InputLevels, METER_CEILING_DB, METER_FLOOR_DB};
+#[cfg(test)]
+use crate::domain::meter::{MeterZone, METER_CLIP_DB};
 
 /// Fall-off of the peak bar, in decibels per second.
 ///
@@ -53,11 +53,13 @@ impl MeterChannelDisplay {
     };
 
     /// Zone the peak bar currently sits in, or `None` while it is empty.
+    #[cfg(test)]
     pub fn zone(&self) -> Option<MeterZone> {
         self.peak_db.map(MeterZone::for_db)
     }
 
     /// Whether the channel is at or past the clipping threshold.
+    #[cfg(test)]
     pub fn is_clipping(&self) -> bool {
         self.peak_db.is_some_and(|db| db >= METER_CLIP_DB)
     }
@@ -179,6 +181,7 @@ impl InputMeterState {
     }
 
     /// How many channels are being metered.
+    #[cfg(test)]
     pub fn channel_count(&self) -> usize {
         self.channels.len()
     }
@@ -189,6 +192,7 @@ impl InputMeterState {
     }
 
     /// Whether every channel is empty, so the widget can skip a redraw.
+    #[cfg(test)]
     pub fn is_idle(&self) -> bool {
         self.channels
             .iter()
@@ -208,11 +212,13 @@ pub fn meter_fraction(db: f64) -> f64 {
 }
 
 /// Decibel level at `fraction` of the way up the meter.
+#[cfg(test)]
 pub fn meter_db_at(fraction: f64) -> f64 {
     METER_FLOOR_DB + (METER_CEILING_DB - METER_FLOOR_DB) * fraction.clamp(0.0, 1.0)
 }
 
 /// Whether the LED segment centred on `segment_db` is lit at `peak_db`.
+#[cfg(test)]
 pub fn segment_is_lit(segment_db: f64, peak_db: Option<f64>) -> bool {
     peak_db.is_some_and(|peak| peak >= segment_db)
 }

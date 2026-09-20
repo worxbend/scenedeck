@@ -485,19 +485,7 @@ pub fn write_registry(registry: &SceneRegistry) -> io::Result<()> {
     write_registry_to_path(&xdg::registry_path(), registry)
 }
 
-/// Set or clear one scene role in the registry stored in the XDG config
-/// directory.
-///
-/// Returns `true` when the registry changed. Load failures are returned instead
-/// of being coerced to an empty registry, which avoids overwriting a hand-edited
-/// but temporarily invalid file during UI role assignment.
-pub fn set_scene_role(
-    scene_id: &str,
-    role: Option<SceneRole>,
-) -> Result<bool, RegistryMutationError> {
-    set_scene_role_from_path(&xdg::registry_path(), scene_id, role)
-}
-
+#[cfg(test)]
 fn set_scene_role_from_path(
     path: &Path,
     scene_id: &str,
@@ -506,15 +494,7 @@ fn set_scene_role_from_path(
     mutate_registry(path, |registry| registry.set_scene_role(scene_id, role))
 }
 
-/// Remove one scene entry from the registry stored in the XDG config directory.
-///
-/// Returns `true` when an entry existed and was removed. Load failures are
-/// returned instead of being coerced to an empty registry, which avoids
-/// overwriting a hand-edited but temporarily invalid file during UI cleanup.
-pub fn remove_scene_entry(scene_id: &str) -> Result<bool, RegistryMutationError> {
-    remove_scene_entry_from_path(&xdg::registry_path(), scene_id)
-}
-
+#[cfg(test)]
 fn remove_scene_entry_from_path(
     path: &Path,
     scene_id: &str,

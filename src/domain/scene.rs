@@ -23,13 +23,6 @@ pub struct SceneInventory {
 }
 
 impl SceneInventory {
-    /// Scene matching `current_id`, if it is present in the inventory.
-    pub fn current_scene(&self) -> Option<&Scene> {
-        self.current_id
-            .as_deref()
-            .and_then(|id| self.scenes.iter().find(|s| s.id == id))
-    }
-
     pub fn set_current_scene(&mut self, scene_id: SceneId) {
         if self.current_id.as_deref() != Some(scene_id.as_str()) {
             self.previous_id = self.current_id.replace(scene_id);

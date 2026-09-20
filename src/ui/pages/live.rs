@@ -360,38 +360,6 @@ fn build_disconnected_view() -> GtkBox {
     view
 }
 
-fn set_output_button(button: &Button, status: &OutputStatus, start_label: &str, stop_label: &str) {
-    if status.state.is_transitioning() {
-        let transition_label = match status.state {
-            crate::domain::output::OutputRunState::Starting => {
-                fl!(LANGUAGE_LOADER, "live-button-starting")
-            }
-            crate::domain::output::OutputRunState::Stopping => {
-                fl!(LANGUAGE_LOADER, "live-button-stopping")
-            }
-            crate::domain::output::OutputRunState::Reconnecting => {
-                fl!(LANGUAGE_LOADER, "live-button-reconnecting")
-            }
-            _ => fl!(LANGUAGE_LOADER, "live-button-working"),
-        };
-        button.set_label(&transition_label);
-        button.set_sensitive(false);
-        if status.active {
-            button.add_css_class("destructive-action");
-        } else {
-            button.remove_css_class("destructive-action");
-        }
-    } else if status.active {
-        button.set_label(stop_label);
-        button.set_sensitive(true);
-        button.add_css_class("destructive-action");
-    } else {
-        button.set_label(start_label);
-        button.set_sensitive(true);
-        button.remove_css_class("destructive-action");
-    }
-}
-
 pub(crate) fn output_label(
     kind: OutputKind,
     status: &OutputStatus,

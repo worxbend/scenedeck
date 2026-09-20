@@ -450,10 +450,12 @@ impl AppState {
         self.last_record_command_error = None;
     }
 
+    #[cfg(test)]
     pub fn set_stream_command_failure(&mut self, message: String) {
         self.last_stream_command_error = Some(message);
     }
 
+    #[cfg(test)]
     pub fn set_record_command_failure(&mut self, message: String) {
         self.last_record_command_error = Some(message);
     }

@@ -19,6 +19,7 @@ pub const METER_WARNING_DB: f64 = -20.0;
 /// Level at which the meter enters the red zone.
 pub const METER_ERROR_DB: f64 = -9.0;
 /// Level treated as clipping.
+#[cfg(test)]
 pub const METER_CLIP_DB: f64 = -0.5;
 
 /// Which of the meter's three zones a level falls in.
@@ -63,24 +64,6 @@ impl MeterZone {
             Self::Nominal
         }
     }
-
-    /// CSS class used by the meter legend.
-    pub const fn css_class(self) -> &'static str {
-        match self {
-            Self::Nominal => "audio-meter-nominal",
-            Self::Warning => "audio-meter-warning",
-            Self::Error => "audio-meter-error",
-        }
-    }
-
-    /// User-facing zone name.
-    pub fn label(self) -> String {
-        match self {
-            Self::Nominal => fl!(LANGUAGE_LOADER, "audio-meter-zone-nominal"),
-            Self::Warning => fl!(LANGUAGE_LOADER, "audio-meter-zone-warning"),
-            Self::Error => fl!(LANGUAGE_LOADER, "audio-meter-zone-error"),
-        }
-    }
 }
 
 /// One channel's reading from a single OBS volume-meter update.
@@ -99,6 +82,7 @@ pub struct ChannelLevel {
 
 impl ChannelLevel {
     /// Silence, used before the first reading arrives.
+    #[cfg(test)]
     pub const SILENT: Self = Self {
         magnitude_db: f64::NEG_INFINITY,
         peak_db: f64::NEG_INFINITY,
@@ -151,11 +135,13 @@ impl InputLevels {
     }
 
     /// How many channels this input reports.
+    #[cfg(test)]
     pub fn channel_count(&self) -> usize {
         self.channels.len()
     }
 
     /// Loudest peak across all channels, or `None` when the input is silent.
+    #[cfg(test)]
     pub fn loudest_peak_db(&self) -> Option<f64> {
         self.channels
             .iter()
@@ -210,6 +196,7 @@ impl InputLevelSnapshot {
     }
 
     /// Whether any input reported levels in the last update.
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.levels.is_empty()
     }

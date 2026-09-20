@@ -17,6 +17,7 @@ pub enum AppError {
     Request(String),
 
     /// Local configuration failed validation or persistence.
+    #[cfg(test)]
     #[error("Configuration error: {0}")]
     Config(String),
 
@@ -37,6 +38,7 @@ impl AppError {
     }
 
     /// Normalize a configuration validation or persistence error.
+    #[cfg(test)]
     pub fn config(error: impl std::fmt::Display) -> Self {
         Self::Config(error.to_string())
     }
@@ -61,6 +63,7 @@ impl AppError {
             Self::Request(detail) => {
                 fl!(LANGUAGE_LOADER, "error-request", detail = detail.as_str())
             }
+            #[cfg(test)]
             Self::Config(detail) => fl!(LANGUAGE_LOADER, "error-config", detail = detail.as_str()),
             Self::Storage(detail) => {
                 fl!(LANGUAGE_LOADER, "error-storage", detail = detail.as_str())
@@ -69,6 +72,7 @@ impl AppError {
     }
 
     /// Build a concise notification title for user-visible error toasts.
+    #[cfg(test)]
     pub fn notification_title(&self) -> String {
         fl!(
             LANGUAGE_LOADER,

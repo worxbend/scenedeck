@@ -11,6 +11,7 @@ pub struct ObsNamedList {
 
 impl ObsNamedList {
     /// Return a copy with `current` replaced by the newly reported OBS item.
+    #[cfg(test)]
     pub fn with_current(mut self, current: String) -> Self {
         self.current = Some(current);
         self
@@ -18,6 +19,7 @@ impl ObsNamedList {
 
     /// Return a copy using `fallback_items` only when OBS returned an empty
     /// list.
+    #[cfg(test)]
     pub fn with_fallback_items(mut self, fallback_items: Vec<String>) -> Self {
         if self.items.is_empty() {
             self.items = fallback_items;
@@ -26,6 +28,7 @@ impl ObsNamedList {
     }
 
     /// Position of the current item inside `items`, if both are known.
+    #[cfg(test)]
     pub fn current_index(&self) -> Option<usize> {
         self.current
             .as_ref()
@@ -33,6 +36,7 @@ impl ObsNamedList {
     }
 
     /// Whether the list contains any selectable items.
+    #[cfg(test)]
     pub fn has_items(&self) -> bool {
         !self.items.is_empty()
     }

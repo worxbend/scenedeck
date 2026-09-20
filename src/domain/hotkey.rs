@@ -155,6 +155,7 @@ impl SceneHotkeyStyle {
     /// Whether this style fires on a bare digit, with nothing else held.
     ///
     /// Such bindings are suppressed while a text entry has focus.
+    #[cfg(test)]
     pub const fn is_bare_digit(self) -> bool {
         matches!(self, Self::Plain)
     }

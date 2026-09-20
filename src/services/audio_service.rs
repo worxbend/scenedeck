@@ -2,8 +2,6 @@
 
 use std::time::Duration;
 
-use crate::domain::audio::AudioInput;
-
 pub const VOLUME_SLIDER_DEBOUNCE: Duration = Duration::from_millis(120);
 const VOLUME_MEANINGFUL_DELTA: f64 = 0.005;
 const MIN_VOLUME_DB: f64 = -100.0;
@@ -12,17 +10,6 @@ const MAX_VOLUME_DB: f64 = 0.0;
 pub struct AudioService;
 
 impl AudioService {
-    pub fn filter_configured(inputs: &[AudioInput], configured: &[String]) -> Vec<AudioInput> {
-        if configured.is_empty() {
-            return inputs.to_vec();
-        }
-        inputs
-            .iter()
-            .filter(|i| configured.contains(&i.name))
-            .cloned()
-            .collect()
-    }
-
     pub fn volume_mul_to_db(mul: f64) -> f64 {
         if mul <= 0.0 {
             f64::NEG_INFINITY

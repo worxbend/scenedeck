@@ -165,13 +165,6 @@ impl Default for ThemeId {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum ThemeSource {
-    #[default]
-    BuiltIn,
-    UserCssFile,
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum UiDensity {
     Compact,
     #[default]

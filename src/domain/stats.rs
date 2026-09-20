@@ -115,10 +115,10 @@ pub enum StatsMetric {
     /// Output-thread frames skipped per poll interval.
     OutputSkippedPerInterval,
     /// Stream bitrate in kbps; zero while no bitrate has been derived yet.
+    #[cfg(test)]
     BitrateKbps,
-    /// OBS process CPU usage in percent.
-    CpuPercent,
     /// Stream network congestion as a `0.0..=1.0` fraction.
+    #[cfg(test)]
     Congestion,
 }
 
@@ -130,8 +130,9 @@ impl StatsMetric {
             Self::FrameRenderTimeMs => sample.stats.average_frame_render_time_ms,
             Self::RenderSkippedPerInterval => f64::from(sample.render_skipped_delta),
             Self::OutputSkippedPerInterval => f64::from(sample.output_skipped_delta),
+            #[cfg(test)]
             Self::BitrateKbps => sample.bitrate_kbps.unwrap_or(0.0),
-            Self::CpuPercent => sample.stats.cpu_usage_percent,
+            #[cfg(test)]
             Self::Congestion => sample.stream.map_or(0.0, |stream| stream.congestion),
         }
     }
@@ -209,11 +210,13 @@ impl StatsHistory {
     }
 
     /// Number of samples currently retained.
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.samples.len()
     }
 
     /// Whether no sample has been recorded yet.
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.samples.is_empty()
     }

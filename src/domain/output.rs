@@ -25,9 +25,6 @@ pub enum OutputKind {
 }
 
 impl OutputKind {
-    /// Both outputs, in the order the interface presents them.
-    pub const ALL: [Self; 2] = [Self::Stream, Self::Record];
-
     /// User-facing name of this output.
     pub fn label(self) -> String {
         match self {
@@ -108,6 +105,7 @@ impl OutputStatus {
     }
 
     /// Build an inactive output status with a detail string.
+    #[cfg(test)]
     pub fn inactive_with_detail(detail: impl Into<String>) -> Self {
         Self::inactive().with_detail(detail)
     }
@@ -135,6 +133,7 @@ impl OutputStatus {
     }
 
     /// Compact user-facing label for one output control.
+    #[cfg(test)]
     pub fn summary(&self, output_name: &str) -> String {
         fl!(
             LANGUAGE_LOADER,
@@ -145,6 +144,7 @@ impl OutputStatus {
     }
 
     /// Optional detail suitable for a tooltip.
+    #[cfg(test)]
     pub fn detail_tooltip(&self) -> Option<&str> {
         self.detail.as_deref().filter(|detail| !detail.is_empty())
     }

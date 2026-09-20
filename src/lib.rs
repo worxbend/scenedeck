@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
+#![deny(dead_code)]
 #![deny(missing_docs)]
-#![allow(dead_code)]
 
 //! SceneDeck application crate.
 //!
