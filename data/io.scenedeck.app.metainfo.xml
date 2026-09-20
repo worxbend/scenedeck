@@ -6,6 +6,10 @@
   <name>SceneDeck</name>
   <summary>Role-aware OBS scene and audio controller</summary>
 
+  <developer id="io.github.worxbend">
+    <name>Oleksandr Balyshyn</name>
+  </developer>
+
   <description>
     <p>
       SceneDeck is a native Linux controller for structured OBS Studio setups.
@@ -25,7 +29,9 @@
 
   <launchable type="desktop-id">io.scenedeck.app.desktop</launchable>
 
-  <url type="homepage">https://github.com/</url>
+  <url type="homepage">https://worxbend.github.io/scenedeck/</url>
+  <url type="bugtracker">https://github.com/worxbend/scenedeck/issues</url>
+  <url type="vcs-browser">https://github.com/worxbend/scenedeck</url>
 
   <provides>
     <binary>scenedeck</binary>

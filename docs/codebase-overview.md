@@ -106,11 +106,14 @@ Persistence and local machine integration.
 
 GTK and libadwaita UI.
 
-- `window.rs`: main shell, sidebar, header selectors, event application.
+- `window.rs`: main shell, page orchestration, and event application.
+- `sidebar.rs`: sidebar controls and header selectors.
+- `hotkeys.rs`: window-level Live scene shortcut handling.
 - `navigation.rs`: page switching and command dispatch helper.
 - `actions.rs`: app-level actions and keyboard shortcuts.
-- `background_io.rs`: runs blocking local persistence on worker threads and
-  returns completion callbacks to GTK.
+- `background_io.rs`: runs blocking work off the GTK thread, with FIFO lanes
+  for ordered config and registry writes, and returns completion callbacks to
+  GTK.
 - `pages/`: Live, Stats, Mixer, Graph, Inventory, Doctor, Settings, and Help pages.
 - `widgets/`: reusable scene and audio cards, the volume meter, the icon
   chooser, the bottom status bar, and the

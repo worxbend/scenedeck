@@ -110,6 +110,10 @@ run on Tokio's blocking pool rather than the GTK thread. After connection:
 5. It refreshes scene inventory, graph, and active scene audio.
 6. It enters the OBS event loop.
 
+Independent per-scene and per-input reads are issued with a bounded concurrency
+limit while preserving OBS list order. This avoids serial request chains on
+large collections without flooding OBS or making error ordering nondeterministic.
+
 The session task also owns a one-second statistics poll, raced against the OBS
 event loop with `tokio::select!`. obs-websocket has no push event for `GetStats`
 or `GetStreamStatus`, so live telemetry must be polled; running it inside the
@@ -158,7 +162,11 @@ startup worker and cached in `AppState`. GTK page callbacks mutate those
 snapshots and use `ui::background_io` for filesystem and Secret Service work;
 completion callbacks return to the GTK thread for status updates. This keeps
 the OBS controller contract focused while preventing blocking persistence calls
-from running in GTK callbacks.
+from running in GTK callbacks. Config and registry writes use separate FIFO
+worker lanes, so a slow older snapshot cannot finish after and overwrite a
+newer snapshot. Each atomic replacement also uses a unique, exclusively
+created sibling temporary file, allowing concurrent writers without temp-file
+collisions.
 
 Configuration should prefer domain types over raw strings where the value has a
 closed set of valid states. For example, `theme_mode` is stored as the same

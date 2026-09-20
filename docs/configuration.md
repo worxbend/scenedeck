@@ -16,7 +16,7 @@ Fallback path:
 $HOME/.config/scenedeck/config.json
 ```
 
-Current schema version: `2`.
+Current schema version: `3`.
 
 Example:
 
@@ -87,10 +87,9 @@ Fields:
   recording. Defaults to `true`.
 - `appearance.mode`: `system`, `light`, or `dark`.
 - `appearance.theme`: selected built-in theme id. `adwaita-default` is the
-  fallback. Theme selection UI and built-in theme files are planned for the
-  custom theme work.
-- `appearance.ui_density`: `comfortable` or `compact`. Density-specific UI
-  styling is planned for the custom theme work.
+  fallback. Choose a built-in theme family in Settings under Appearance.
+- `appearance.ui_density`: `comfortable` or `compact`. The field is reserved
+  for density-specific styling; the current UI does not expose it.
 - `appearance.motion`: `full`, `reduced`, or `off`. Controls how much the
   interface animates:
   - `full` — looping animations play. The recording indicator blinks like a
