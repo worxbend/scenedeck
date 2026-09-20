@@ -4,7 +4,7 @@
 //! command path via `NavigationContext`, and drives the Controller→GTK event
 //! path via a 50 ms glib polling timer.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -13,15 +13,10 @@ type RefreshFn = Rc<dyn Fn()>;
 type StreamingChromeRef = Rc<RefCell<Option<StreamingChrome>>>;
 
 use adw::prelude::*;
-use gtk4::gdk;
-use gtk4::gdk::prelude::DisplayExtManual;
-use gtk4::{
-    Box as GtkBox, Button, DropDown, Image, Label, ListBox, Orientation, SelectionMode, Stack,
-    StackTransitionType, StringList,
-};
+use gtk4::{Button, Image, Stack, StackTransitionType};
 use i18n_embed_fl::fl;
 
-use crate::app_info::{APP_ID, APP_NAME};
+use crate::app_info::APP_NAME;
 use crate::controller::app_controller::AppController;
 use crate::controller::command::AppCommand;
 use crate::controller::event::AppEvent;
@@ -30,31 +25,18 @@ use crate::controller::state::{
     ObsStatus, Page,
 };
 use crate::domain::appearance::ThemeMode;
-use crate::domain::hotkey::{KeyStroke, KeySymbol, Modifiers, SceneHotkeyConfig};
-use crate::domain::obs::ObsNamedList;
-use crate::domain::output::{OutputKind, OutputRunState, OutputStatus};
+use crate::domain::output::{OutputKind, OutputStatus};
 use crate::infra::i18n::LANGUAGE_LOADER;
-use crate::services::hotkey_service::{HotkeyOutcome, SceneHotkeyResolver};
 use crate::ui::navigation::NavigationContext;
 use crate::ui::pages::live::{output_label, LivePageHandle};
 use crate::ui::pages::stats::PopoutSlot as StatsPopoutSlot;
 use crate::ui::register_resources;
+use crate::ui::sidebar::{self, HeaderSelectors, SidebarControls, NAV_PAGES};
 use crate::ui::theme::ThemeManager;
 use crate::ui::widgets::status_bar::{self, StatusBarHandle};
 
 const DEFAULT_WIDTH: i32 = 1100;
 const DEFAULT_HEIGHT: i32 = 740;
-
-const NAV_PAGES: [Page; 8] = [
-    Page::Live,
-    Page::Mixer,
-    Page::Graph,
-    Page::Inventory,
-    Page::Doctor,
-    Page::Settings,
-    Page::Help,
-    Page::Stats,
-];
 
 pub fn build_main_window(
     app: &adw::Application,
@@ -94,10 +76,10 @@ pub fn build_main_window(
     let current_page = state.borrow().current_page;
     content_stack.set_visible_child_name(current_page.id());
 
-    let header_selectors = build_header_selectors(&nav);
+    let header_selectors = HeaderSelectors::build(&nav);
 
     // ── Sidebar ───────────────────────────────────────────────────────────────
-    let (sidebar_page, sidebar_list, sidebar_controls) = build_sidebar(&nav);
+    let (sidebar_page, sidebar_list, sidebar_controls) = sidebar::build(&nav);
     // From here on, navigating from anywhere moves the sidebar highlight too.
     nav.attach_sidebar(&sidebar_list, &NAV_PAGES);
     let streaming_chrome: StreamingChromeRef = Rc::new(RefCell::new(None));
@@ -174,7 +156,7 @@ pub fn build_main_window(
     outer_toolbar.add_bottom_bar(&status_bar.root);
     window.set_content(Some(&outer_toolbar));
 
-    install_scene_hotkeys(&window, &nav, live_handle.clone());
+    super::hotkeys::install(&window, &nav, live_handle.clone());
 
     super::actions::install(app, &window, nav.clone());
 
@@ -355,8 +337,7 @@ fn build_content_header(
     );
     content_header.pack_start(&stream_live_icon);
     content_header.pack_start(&refresh_btn);
-    content_header.pack_start(&header_selectors.scene_collections.root);
-    content_header.pack_start(&header_selectors.profiles.root);
+    header_selectors.pack_into(&content_header);
 
     *streaming_chrome.borrow_mut() = Some(StreamingChrome {
         header: content_header.clone(),
@@ -415,215 +396,6 @@ fn maybe_show_welcome_dialog(window: &adw::ApplicationWindow, nav: &NavigationCo
     dialog.present();
 }
 
-// ── Scene hotkeys ─────────────────────────────────────────────────────────────
-
-/// Wire Live-page scene shortcuts to a window-level key controller.
-///
-/// The controller runs in the capture phase so bare digits and the leader key
-/// are seen before any focused widget consumes them, and it re-reads
-/// `config.hotkeys` on every press so changes in Settings apply immediately.
-fn install_scene_hotkeys(
-    window: &adw::ApplicationWindow,
-    nav: &NavigationContext,
-    live: Rc<LivePageHandle>,
-) {
-    let resolver = Rc::new(RefCell::new(SceneHotkeyResolver::new()));
-    let controller = gtk4::EventControllerKey::new();
-    controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
-    controller.connect_key_pressed({
-        let nav = nav.clone();
-        let window = window.clone();
-        move |_, keyval, keycode, modifier_state| {
-            let hotkeys = {
-                let state = nav.state.borrow();
-                // Scene shortcuts belong to the Live page; elsewhere the digits
-                // are just digits.
-                if state.current_page != Page::Live {
-                    resolver.borrow_mut().disarm();
-                    return glib::Propagation::Proceed;
-                }
-                state.config.hotkeys
-            };
-            if !hotkeys.enabled {
-                resolver.borrow_mut().disarm();
-                return glib::Propagation::Proceed;
-            }
-            // Bindings that fire without a modifier would swallow typing, so
-            // they stand down while a text widget has focus.
-            if !binds_with_modifiers(&hotkeys) && text_input_has_focus(&window) {
-                return glib::Propagation::Proceed;
-            }
-
-            let stroke = KeyStroke::new(
-                key_symbol(&window, keyval, keycode),
-                modifiers_from_state(modifier_state),
-            );
-            let outcome = resolver
-                .borrow_mut()
-                .resolve(&hotkeys, stroke, Instant::now());
-            apply_hotkey_outcome(&nav, &live, &hotkeys, outcome);
-
-            if outcome.consumes_event() {
-                glib::Propagation::Stop
-            } else {
-                glib::Propagation::Proceed
-            }
-        }
-    });
-    window.add_controller(controller);
-}
-
-/// How long the "no scene in that slot" notice replaces the shortcut caption.
-const HOTKEY_MISS_NOTICE: Duration = Duration::from_secs(2);
-
-fn apply_hotkey_outcome(
-    nav: &NavigationContext,
-    live: &Rc<LivePageHandle>,
-    hotkeys: &SceneHotkeyConfig,
-    outcome: HotkeyOutcome,
-) {
-    use crate::ui::pages::live::{scene_for_slot, set_hotkey_hint};
-
-    match outcome {
-        HotkeyOutcome::Ignored => {}
-        HotkeyOutcome::LeaderArmed => set_hotkey_hint(
-            live,
-            Some(&fl!(LANGUAGE_LOADER, "hotkey-hint-leader-armed")),
-        ),
-        HotkeyOutcome::LeaderCancelled => {
-            set_hotkey_hint(live, hotkeys.hint_label().as_deref());
-        }
-        HotkeyOutcome::Activate(slot) => {
-            let scene = {
-                let state = nav.state.borrow();
-                scene_for_slot(&state.scene_inventory, &state.registry, slot)
-            };
-            match scene {
-                Some(scene_id) => {
-                    tracing::debug!(slot, scene = %scene_id, "scene hotkey switch");
-                    set_hotkey_hint(live, hotkeys.hint_label().as_deref());
-                    nav.dispatch(AppCommand::SwitchPrimaryScene(scene_id));
-                }
-                // An unbound digit is a miss, not an error: say so in place of
-                // the caption rather than interrupting with a toast, then put
-                // the caption back.
-                None => {
-                    let notice = fl!(
-                        LANGUAGE_LOADER,
-                        "hotkey-hint-empty-slot",
-                        slot = (slot + 1).to_string()
-                    );
-                    set_hotkey_hint(live, Some(&notice));
-                    glib::timeout_add_local_once(HOTKEY_MISS_NOTICE, {
-                        let live = live.clone();
-                        let nav = nav.clone();
-                        move || {
-                            // Only restore what this notice replaced; a later
-                            // press may have moved on to something else.
-                            if live.hotkey_hint.text() != notice {
-                                return;
-                            }
-                            let hotkeys = nav.state.borrow().config.hotkeys;
-                            set_hotkey_hint(&live, hotkeys.hint_label().as_deref());
-                        }
-                    });
-                }
-            }
-        }
-    }
-}
-
-/// Whether the configured binding requires at least one modifier to be held.
-fn binds_with_modifiers(hotkeys: &SceneHotkeyConfig) -> bool {
-    hotkeys
-        .style
-        .modifiers()
-        .is_some_and(|modifiers| !modifiers.is_empty())
-}
-
-fn text_input_has_focus(window: &adw::ApplicationWindow) -> bool {
-    gtk4::prelude::RootExt::focus(window).is_some_and(|widget| {
-        widget.is::<gtk4::Editable>()
-            || widget.is::<gtk4::TextView>()
-            || widget.is::<gtk4::SearchEntry>()
-    })
-}
-
-fn modifiers_from_state(state: gdk::ModifierType) -> Modifiers {
-    Modifiers::new(
-        state.contains(gdk::ModifierType::CONTROL_MASK),
-        state.contains(gdk::ModifierType::ALT_MASK),
-        state.contains(gdk::ModifierType::SHIFT_MASK),
-        state.contains(gdk::ModifierType::SUPER_MASK),
-    )
-}
-
-/// Classify a key press, leader candidates first so a layout that hides a digit
-/// behind one of them cannot steal the leader.
-fn key_symbol(window: &adw::ApplicationWindow, keyval: gdk::Key, keycode: u32) -> KeySymbol {
-    match keyval {
-        gdk::Key::space | gdk::Key::KP_Space => KeySymbol::Space,
-        gdk::Key::comma | gdk::Key::KP_Separator => KeySymbol::Comma,
-        gdk::Key::semicolon => KeySymbol::Semicolon,
-        gdk::Key::backslash => KeySymbol::Backslash,
-        gdk::Key::grave | gdk::Key::dead_grave => KeySymbol::Grave,
-        gdk::Key::Escape => KeySymbol::Escape,
-        gdk::Key::Shift_L
-        | gdk::Key::Shift_R
-        | gdk::Key::Control_L
-        | gdk::Key::Control_R
-        | gdk::Key::Alt_L
-        | gdk::Key::Alt_R
-        | gdk::Key::Meta_L
-        | gdk::Key::Meta_R
-        | gdk::Key::Super_L
-        | gdk::Key::Super_R
-        | gdk::Key::Hyper_L
-        | gdk::Key::Hyper_R
-        | gdk::Key::Caps_Lock
-        | gdk::Key::Shift_Lock
-        | gdk::Key::Num_Lock
-        | gdk::Key::ISO_Level3_Shift => KeySymbol::Modifier,
-        _ => match digit_for_keyval(keyval).or_else(|| digit_for_keycode(window, keycode)) {
-            Some(digit) => KeySymbol::Digit(digit),
-            None => KeySymbol::Other,
-        },
-    }
-}
-
-fn digit_for_keyval(keyval: gdk::Key) -> Option<u8> {
-    match keyval {
-        gdk::Key::KP_0 => return Some(0),
-        gdk::Key::KP_1 => return Some(1),
-        gdk::Key::KP_2 => return Some(2),
-        gdk::Key::KP_3 => return Some(3),
-        gdk::Key::KP_4 => return Some(4),
-        gdk::Key::KP_5 => return Some(5),
-        gdk::Key::KP_6 => return Some(6),
-        gdk::Key::KP_7 => return Some(7),
-        gdk::Key::KP_8 => return Some(8),
-        gdk::Key::KP_9 => return Some(9),
-        _ => {}
-    }
-    keyval
-        .to_unicode()
-        .and_then(|c| c.to_digit(10))
-        .map(|digit| digit as u8)
-}
-
-/// Digit printed on the physical key, whatever level it sits at.
-///
-/// `Shift+1` arrives as `!` on a US layout, and on layouts such as AZERTY the
-/// digits themselves need Shift. Asking the display what the keycode can
-/// produce keeps both working, so the number row means what it is labelled.
-fn digit_for_keycode(window: &adw::ApplicationWindow, keycode: u32) -> Option<u8> {
-    let display = WidgetExt::display(window);
-    display
-        .map_keycode(keycode)?
-        .into_iter()
-        .find_map(|(_, keyval)| digit_for_keyval(keyval))
-}
-
 // ── Event handler ─────────────────────────────────────────────────────────────
 
 /// Apply one `AppEvent` to the widgets.
@@ -661,11 +433,16 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
         ),
 
         AppEvent::Connected(info) => {
+            tracing::info!(
+                obs_version = %info.obs_version,
+                websocket_version = %info.websocket_version,
+                "connected to OBS"
+            );
             let obs_status = ObsStatus::Connected {
                 obs_version: info.obs_version,
             };
             nav.state.borrow_mut().set_obs_status(obs_status.clone());
-            apply_sidebar_connection(sidebar_controls, &obs_status);
+            sidebar_controls.apply_connection(&obs_status);
             sync_output_indicators(nav, sidebar_controls, streaming_chrome);
             status_bar::set_connection(status_bar, &obs_status);
             show_live_view(live);
@@ -708,12 +485,12 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
 
         AppEvent::ProfilesUpdated(profiles) => {
             nav.state.borrow_mut().profiles = profiles.clone();
-            update_named_selector(&header_selectors.profiles, &profiles);
+            header_selectors.update_profiles(&profiles);
         }
 
         AppEvent::SceneCollectionsUpdated(collections) => {
             nav.state.borrow_mut().scene_collections = collections.clone();
-            update_named_selector(&header_selectors.scene_collections, &collections);
+            header_selectors.update_scene_collections(&collections);
         }
 
         AppEvent::CurrentSceneChanged(scene_id) => {
@@ -879,7 +656,7 @@ fn show_no_session_ui(
 
     nav.state.borrow_mut().reset_obs_session(status.clone());
 
-    apply_sidebar_connection(&ui.sidebar_controls, status);
+    ui.sidebar_controls.apply_connection(status);
     sync_output_indicators(nav, &ui.sidebar_controls, &ui.streaming_chrome);
 
     status_bar::set_connection(&ui.status_bar, status);
@@ -892,11 +669,7 @@ fn show_no_session_ui(
     rebuild_audio_cards(&ui.live, &[], nav);
 
     // The header lists belong to the session that just ended.
-    update_named_selector(&ui.header_selectors.profiles, &ObsNamedList::default());
-    update_named_selector(
-        &ui.header_selectors.scene_collections,
-        &ObsNamedList::default(),
-    );
+    ui.header_selectors.clear();
 }
 
 /// Redraw one output's status-bar slot and the indicators that follow it.
@@ -1026,13 +799,6 @@ fn update_live_audio_card(
     }
 }
 
-fn set_status_class(label: &gtk4::Label, new_class: &str) {
-    for class in status_bar::CONNECTION_CSS_CLASSES {
-        label.remove_css_class(class);
-    }
-    label.add_css_class(new_class);
-}
-
 fn update_active_since(active: bool, active_since: &mut Option<Instant>) {
     match (active, active_since.is_some()) {
         (true, false) => *active_since = Some(Instant::now()),
@@ -1084,143 +850,6 @@ fn format_elapsed(since: Instant) -> String {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SidebarButtonModel {
-    label: String,
-    sensitive: bool,
-    suggested: bool,
-    destructive: bool,
-}
-
-fn sidebar_output_button_model(
-    status: &OutputStatus,
-    connected: bool,
-    start_label: String,
-    stop_label: String,
-) -> SidebarButtonModel {
-    if status.state.is_transitioning() {
-        return SidebarButtonModel {
-            label: match status.state {
-                OutputRunState::Starting => fl!(LANGUAGE_LOADER, "window-sidebar-output-starting"),
-                OutputRunState::Stopping => fl!(LANGUAGE_LOADER, "window-sidebar-output-stopping"),
-                OutputRunState::Reconnecting => {
-                    fl!(LANGUAGE_LOADER, "window-sidebar-output-reconnecting")
-                }
-                _ => fl!(LANGUAGE_LOADER, "window-sidebar-output-working"),
-            },
-            sensitive: false,
-            suggested: false,
-            destructive: status.active,
-        };
-    }
-
-    if status.active {
-        SidebarButtonModel {
-            label: stop_label,
-            sensitive: connected,
-            suggested: false,
-            destructive: connected,
-        }
-    } else {
-        SidebarButtonModel {
-            label: start_label,
-            sensitive: connected,
-            suggested: connected,
-            destructive: false,
-        }
-    }
-}
-
-/// How the sidebar's status line and Connect button should look for a
-/// connection state.
-struct SidebarConnectionModel {
-    status_text: String,
-    css_class: &'static str,
-    button: SidebarButtonModel,
-}
-
-/// Derive the sidebar's connection chrome from the connection status.
-///
-/// All four states — connecting, connected, disconnected, failed — used to
-/// spell this out by hand at their own call site, which is how the Error arm
-/// ended up styling its button like the Disconnected arm but writing its own
-/// status text. The CSS class comes from `ObsStatus::css_class` rather than
-/// being written out again here, so the sidebar and the status bar cannot
-/// disagree about what colour a state is.
-fn sidebar_connection_model(status: &ObsStatus) -> SidebarConnectionModel {
-    let (status_text, label, sensitive, suggested, destructive) = match status {
-        ObsStatus::Connecting => (
-            fl!(LANGUAGE_LOADER, "window-status-connecting"),
-            fl!(LANGUAGE_LOADER, "window-connect-btn-connecting"),
-            false,
-            false,
-            false,
-        ),
-        ObsStatus::Connected { obs_version } => (
-            fl!(
-                LANGUAGE_LOADER,
-                "window-status-connected",
-                version = obs_version.clone()
-            ),
-            fl!(LANGUAGE_LOADER, "window-connect-btn-disconnect"),
-            true,
-            false,
-            true,
-        ),
-        ObsStatus::Disconnected => (
-            fl!(LANGUAGE_LOADER, "window-status-disconnected"),
-            fl!(LANGUAGE_LOADER, "window-connect-btn-connect"),
-            true,
-            true,
-            false,
-        ),
-        ObsStatus::Error(error) => (
-            fl!(
-                LANGUAGE_LOADER,
-                "window-status-error",
-                error = error.clone()
-            ),
-            fl!(LANGUAGE_LOADER, "window-connect-btn-retry"),
-            true,
-            true,
-            false,
-        ),
-    };
-
-    SidebarConnectionModel {
-        status_text,
-        css_class: status.css_class(),
-        button: SidebarButtonModel {
-            label,
-            sensitive,
-            suggested,
-            destructive,
-        },
-    }
-}
-
-fn apply_sidebar_connection(sidebar: &SidebarControls, status: &ObsStatus) {
-    let model = sidebar_connection_model(status);
-    sidebar.status_label.set_text(&model.status_text);
-    set_status_class(&sidebar.status_label, model.css_class);
-    apply_sidebar_button(&sidebar.connect_btn, model.button);
-}
-
-fn apply_sidebar_button(button: &Button, model: SidebarButtonModel) {
-    set_button_label(button, &model.label);
-    button.set_sensitive(model.sensitive);
-    if model.suggested {
-        button.add_css_class("suggested-action");
-    } else {
-        button.remove_css_class("suggested-action");
-    }
-    if model.destructive {
-        button.add_css_class("destructive-action");
-    } else {
-        button.remove_css_class("destructive-action");
-    }
-}
-
 fn sync_output_indicators(
     nav: &NavigationContext,
     sidebar: &SidebarControls,
@@ -1228,34 +857,11 @@ fn sync_output_indicators(
 ) {
     let streaming = {
         let state = nav.state.borrow();
-        sync_sidebar_output_buttons(sidebar, &state);
+        sidebar.sync_output_buttons(&state);
         state.stream_status.active
     };
 
     sync_streaming_chrome(streaming_chrome, streaming);
-}
-
-fn sync_sidebar_output_buttons(sidebar: &SidebarControls, state: &AppState) {
-    let connected = matches!(state.obs_status, ObsStatus::Connected { .. });
-    apply_sidebar_button(
-        &sidebar.stream_btn,
-        sidebar_output_button_model(
-            &state.stream_status,
-            connected,
-            fl!(LANGUAGE_LOADER, "window-sidebar-start-stream"),
-            fl!(LANGUAGE_LOADER, "window-sidebar-stop-stream"),
-        ),
-    );
-    apply_sidebar_button(
-        &sidebar.record_btn,
-        sidebar_output_button_model(
-            &state.record_status,
-            connected,
-            fl!(LANGUAGE_LOADER, "window-sidebar-start-recording"),
-            fl!(LANGUAGE_LOADER, "window-sidebar-stop-recording"),
-        ),
-    );
-    sync_live_sidebar_icon(sidebar, state.stream_status.active);
 }
 
 fn sync_streaming_chrome(streaming_chrome: &StreamingChromeRef, streaming: bool) {
@@ -1281,18 +887,6 @@ fn sync_streaming_chrome(streaming_chrome: &StreamingChromeRef, streaming: bool)
     }
 }
 
-fn sync_live_sidebar_icon(sidebar: &SidebarControls, streaming: bool) {
-    if streaming {
-        sidebar
-            .live_icon
-            .add_css_class("scenedeck-sidebar-live-icon-streaming");
-    } else {
-        sidebar
-            .live_icon
-            .remove_css_class("scenedeck-sidebar-live-icon-streaming");
-    }
-}
-
 fn previous_scene_for_inventory_update(
     old_current: Option<&str>,
     old_previous: Option<&str>,
@@ -1302,350 +896,6 @@ fn previous_scene_for_inventory_update(
         (Some(old), Some(new)) if old != new => Some(old.to_string()),
         _ => old_previous.map(str::to_string),
     }
-}
-
-fn build_header_selectors(nav: &NavigationContext) -> HeaderSelectors {
-    let profiles = build_named_selector(
-        &fl!(LANGUAGE_LOADER, "window-selector-profile-label"),
-        &fl!(LANGUAGE_LOADER, "window-selector-profile-tooltip"),
-    );
-    profiles.connect_selection(nav, AppCommand::SetCurrentProfile);
-
-    let scene_collections = build_named_selector(
-        &fl!(LANGUAGE_LOADER, "window-selector-collection-label"),
-        &fl!(LANGUAGE_LOADER, "window-selector-collection-tooltip"),
-    );
-    scene_collections.connect_selection(nav, AppCommand::SetCurrentSceneCollection);
-
-    HeaderSelectors {
-        profiles,
-        scene_collections,
-    }
-}
-
-fn build_named_selector(label: &str, tooltip: &str) -> NamedSelector {
-    let root = GtkBox::builder()
-        .orientation(Orientation::Horizontal)
-        .spacing(6)
-        .valign(gtk4::Align::Center)
-        .build();
-    root.set_visible(false);
-    root.add_css_class("header-selector");
-
-    let caption = Label::builder()
-        .label(label)
-        .valign(gtk4::Align::Center)
-        .build();
-    caption.add_css_class("caption");
-
-    let model = StringList::new(&[]);
-    let dropdown = DropDown::builder()
-        .model(&model)
-        .selected(gtk4::INVALID_LIST_POSITION)
-        .sensitive(false)
-        .build();
-    dropdown.add_css_class("scenedeck-dropdown");
-    dropdown.set_tooltip_text(Some(tooltip));
-    dropdown.set_enable_search(true);
-    dropdown.set_width_request(170);
-
-    root.append(&caption);
-    root.append(&dropdown);
-
-    NamedSelector {
-        root,
-        dropdown,
-        model,
-        updating: Rc::new(Cell::new(false)),
-    }
-}
-
-fn update_named_selector(selector: &NamedSelector, list: &ObsNamedList) {
-    selector.updating.set(true);
-
-    let additions: Vec<&str> = list.items.iter().map(String::as_str).collect();
-    selector
-        .model
-        .splice(0, selector.model.n_items(), &additions);
-
-    let selected = list
-        .current
-        .as_ref()
-        .and_then(|current| list.items.iter().position(|item| item == current))
-        .map(|idx| idx as u32)
-        .unwrap_or(gtk4::INVALID_LIST_POSITION);
-
-    let has_items = !list.items.is_empty();
-    selector.root.set_visible(has_items);
-    selector.dropdown.set_sensitive(has_items);
-    selector.dropdown.set_selected(selected);
-    selector.updating.set(false);
-}
-
-/// Icon on the sidebar's stream button.
-const SIDEBAR_STREAM_ICON: &str = "nf-md-broadcast-symbolic";
-/// Icon on the sidebar's record button.
-const SIDEBAR_RECORD_ICON: &str = "nf-md-record-circle-symbolic";
-/// Icon on the sidebar's connect button.
-const SIDEBAR_CONNECT_ICON: &str = "nf-md-lan-connect-symbolic";
-
-/// Icon-and-label content for a wide sidebar button.
-///
-/// `Button::set_label` would replace this with plain text, so the buttons whose
-/// text changes with state go through `set_button_label` instead.
-fn button_content(icon_name: &str, label: &str) -> GtkBox {
-    let content = GtkBox::builder()
-        .orientation(Orientation::Horizontal)
-        .spacing(8)
-        .halign(gtk4::Align::Center)
-        .build();
-    content.append(&Image::from_icon_name(icon_name));
-    let label = Label::new(Some(label));
-    label.add_css_class("scenedeck-button-label");
-    content.append(&label);
-    content
-}
-
-/// Update the text of a button built by [`button_content`].
-fn set_button_label(button: &Button, text: &str) {
-    let Some(label) = button
-        .child()
-        .and_then(|content| content.last_child())
-        .and_then(|child| child.downcast::<Label>().ok())
-    else {
-        button.set_label(text);
-        return;
-    };
-    label.set_text(text);
-}
-
-/// App logo and name for the top of the sidebar.
-///
-/// The sidebar header was empty, which left the window with nothing naming it
-/// once the title bar is merged into the content header.
-fn build_brand() -> GtkBox {
-    let brand = GtkBox::builder()
-        .orientation(Orientation::Horizontal)
-        .spacing(8)
-        .valign(gtk4::Align::Center)
-        .build();
-    brand.add_css_class("scenedeck-brand");
-
-    let logo = Image::from_icon_name(APP_ID);
-    logo.set_pixel_size(22);
-    logo.add_css_class("scenedeck-brand-logo");
-
-    let name = Label::builder().label(APP_NAME).xalign(0.0).build();
-    name.add_css_class("scenedeck-brand-name");
-
-    brand.append(&logo);
-    brand.append(&name);
-    brand
-}
-
-/// Build one of the three full-width buttons at the foot of the sidebar.
-fn sidebar_button(
-    icon_name: &str,
-    label: &str,
-    css_class: &str,
-    sensitive: bool,
-    on_click: impl Fn(&Button) + 'static,
-) -> Button {
-    let button = Button::builder()
-        .halign(gtk4::Align::Fill)
-        .hexpand(true)
-        .sensitive(sensitive)
-        .build();
-    button.set_child(Some(&button_content(icon_name, label)));
-    button.add_css_class(css_class);
-    button.connect_clicked(move |button| on_click(button));
-    button
-}
-
-fn build_sidebar(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, SidebarControls) {
-    let list = ListBox::builder()
-        .selection_mode(SelectionMode::Single)
-        .vexpand(true)
-        .build();
-    list.add_css_class("navigation-sidebar");
-    list.add_css_class("scenedeck-sidebar-list");
-
-    // Built up front rather than captured out of the loop: output events tint
-    // this icon while a stream is running, so the sidebar has to keep a handle
-    // on it either way, and building it here means there is no "what if the
-    // loop never saw the Live row" case to panic over.
-    let live_icon = Image::from_icon_name(Page::Live.icon_name());
-    live_icon.add_css_class("scenedeck-sidebar-live-icon");
-
-    for page in NAV_PAGES {
-        let icon = if page == Page::Live {
-            live_icon.clone()
-        } else {
-            Image::from_icon_name(page.icon_name())
-        };
-        let row = adw::ActionRow::builder()
-            .title(page.title())
-            .activatable(true)
-            .build();
-        row.add_prefix(&icon);
-        list.append(&row);
-    }
-
-    if let Some(row) = list.row_at_index(0) {
-        list.select_row(Some(&row));
-    }
-
-    let status_label = Label::builder()
-        .label(ObsStatus::Disconnected.label())
-        .xalign(0.0)
-        .wrap(true)
-        .build();
-    status_label.add_css_class("obs-disconnected");
-
-    // Connect starts enabled; the two output buttons wait until there is a
-    // connection to act on.
-    let connect_btn = sidebar_button(
-        SIDEBAR_CONNECT_ICON,
-        &fl!(LANGUAGE_LOADER, "window-connect-btn-connect"),
-        "suggested-action",
-        true,
-        {
-            let nav = nav.clone();
-            move |_: &Button| {
-                let status = nav.state.borrow().obs_status.clone();
-                match status {
-                    ObsStatus::Disconnected | ObsStatus::Error(_) => {
-                        nav.dispatch(AppCommand::Connect);
-                    }
-                    ObsStatus::Connected { .. } | ObsStatus::Connecting => {
-                        nav.dispatch(AppCommand::Disconnect);
-                    }
-                }
-            }
-        },
-    );
-
-    let stream_btn = sidebar_button(
-        SIDEBAR_STREAM_ICON,
-        &fl!(LANGUAGE_LOADER, "window-sidebar-start-stream"),
-        "sidebar-output-button",
-        false,
-        {
-            let nav = nav.clone();
-            move |button: &Button| crate::ui::pages::live::handle_stream_output_toggle(button, &nav)
-        },
-    );
-
-    let record_btn = sidebar_button(
-        SIDEBAR_RECORD_ICON,
-        &fl!(LANGUAGE_LOADER, "window-sidebar-start-recording"),
-        "sidebar-output-button",
-        false,
-        {
-            let nav = nav.clone();
-            move |button: &Button| crate::ui::pages::live::handle_record_output_toggle(button, &nav)
-        },
-    );
-
-    let footer = GtkBox::builder()
-        .orientation(Orientation::Vertical)
-        .spacing(8)
-        .margin_top(12)
-        .margin_bottom(12)
-        .margin_start(12)
-        .margin_end(12)
-        .build();
-    footer.add_css_class("sidebar-obs-footer");
-    footer.append(&status_label);
-    footer.append(&stream_btn);
-    footer.append(&record_btn);
-    footer.append(&connect_btn);
-
-    let sidebar_content = GtkBox::builder()
-        .orientation(Orientation::Vertical)
-        .vexpand(true)
-        .hexpand(true)
-        .build();
-    sidebar_content.add_css_class("scenedeck-sidebar");
-    sidebar_content.append(&list);
-    sidebar_content.append(&footer);
-
-    let sidebar_header = adw::HeaderBar::builder().show_title(false).build();
-    sidebar_header.add_css_class("scenedeck-sidebar-header");
-    sidebar_header.pack_start(&build_brand());
-    let sidebar_toolbar = adw::ToolbarView::new();
-    sidebar_toolbar.add_css_class("scenedeck-sidebar-toolbar");
-    sidebar_toolbar.add_top_bar(&sidebar_header);
-    sidebar_toolbar.set_content(Some(&sidebar_content));
-
-    let nav_page = adw::NavigationPage::builder()
-        .title(APP_NAME)
-        .child(&sidebar_toolbar)
-        .build();
-
-    (
-        nav_page,
-        list,
-        SidebarControls {
-            status_label,
-            live_icon,
-            stream_btn,
-            record_btn,
-            connect_btn,
-        },
-    )
-}
-
-// ── Per-page refresh callbacks ─────────────────────────────────────────────────
-
-#[derive(Clone)]
-struct HeaderSelectors {
-    profiles: NamedSelector,
-    scene_collections: NamedSelector,
-}
-
-#[derive(Clone)]
-struct NamedSelector {
-    root: GtkBox,
-    dropdown: DropDown,
-    model: StringList,
-    updating: Rc<Cell<bool>>,
-}
-
-impl NamedSelector {
-    /// Dispatch `to_command` whenever the user picks a different entry.
-    ///
-    /// The `updating` flag guards against an echo. `update_named_selector`
-    /// rewrites the model when OBS reports a new profile or scene collection,
-    /// and restoring the selection afterwards makes GTK emit the same signal a
-    /// real click does. Without the guard, an update that came *from* OBS would
-    /// be sent straight back to it as a command.
-    ///
-    /// `to_command` is a plain function pointer rather than a closure type, so
-    /// the bare variant constructors can be passed directly and the body is
-    /// compiled once instead of once per call site.
-    fn connect_selection(&self, nav: &NavigationContext, to_command: fn(String) -> AppCommand) {
-        let nav = nav.clone();
-        let model = self.model.clone();
-        let updating = self.updating.clone();
-        self.dropdown.connect_selected_notify(move |dropdown| {
-            if updating.get() {
-                return;
-            }
-            if let Some(name) = model.string(dropdown.selected()) {
-                nav.dispatch(to_command(name.to_string()));
-            }
-        });
-    }
-}
-
-#[derive(Clone)]
-struct SidebarControls {
-    status_label: Label,
-    live_icon: Image,
-    stream_btn: Button,
-    record_btn: Button,
-    connect_btn: Button,
 }
 
 #[derive(Clone)]
@@ -1761,129 +1011,6 @@ mod tests {
         state.mixer.mode = MixerMode::SelectedScene;
         state.mixer.selected_scene = Some("Scene A".to_string());
         state
-    }
-
-    fn output_status(active: bool, state: OutputRunState) -> OutputStatus {
-        OutputStatus {
-            active,
-            state,
-            detail: None,
-        }
-    }
-
-    #[test]
-    fn sidebar_connection_model_covers_every_connection_state() {
-        let connecting = sidebar_connection_model(&ObsStatus::Connecting);
-        assert_eq!(connecting.css_class, "obs-connecting");
-        assert!(!connecting.button.sensitive);
-        // Nothing is in progress that the user could confirm or cancel, so the
-        // button carries neither accent while it waits.
-        assert!(!connecting.button.suggested);
-        assert!(!connecting.button.destructive);
-
-        let connected = sidebar_connection_model(&ObsStatus::Connected {
-            obs_version: "30.1.2".to_string(),
-        });
-        assert_eq!(connected.css_class, "obs-connected");
-        assert!(connected.button.sensitive);
-        // Connected means the button now disconnects, which is destructive.
-        assert!(connected.button.destructive);
-        assert!(!connected.button.suggested);
-        assert!(connected.status_text.contains("30.1.2"));
-
-        let disconnected = sidebar_connection_model(&ObsStatus::Disconnected);
-        assert_eq!(disconnected.css_class, "obs-disconnected");
-        assert!(disconnected.button.sensitive);
-        assert!(disconnected.button.suggested);
-        assert!(!disconnected.button.destructive);
-
-        let failed = sidebar_connection_model(&ObsStatus::Error("refused".to_string()));
-        assert_eq!(failed.css_class, "obs-error");
-        assert!(failed.button.sensitive);
-        // A failure offers a retry, which is the same invitation as connecting.
-        assert!(failed.button.suggested);
-        assert!(!failed.button.destructive);
-        assert!(failed.status_text.contains("refused"));
-    }
-
-    #[test]
-    fn every_connection_css_class_is_one_the_widgets_clear() {
-        // `set_status_class` clears this list before adding the current class;
-        // a class missing from it would never be removed again.
-        for status in [
-            ObsStatus::Connecting,
-            ObsStatus::Connected {
-                obs_version: String::new(),
-            },
-            ObsStatus::Disconnected,
-            ObsStatus::Error(String::new()),
-        ] {
-            assert!(
-                status_bar::CONNECTION_CSS_CLASSES.contains(&status.css_class()),
-                "{:?} uses a class the widgets never clear",
-                status
-            );
-        }
-    }
-
-    #[test]
-    fn sidebar_output_button_model_reflects_connection_and_output_state() {
-        assert_eq!(
-            sidebar_output_button_model(
-                &output_status(false, OutputRunState::Inactive),
-                false,
-                "Start Stream".to_string(),
-                "Stop Stream".to_string(),
-            ),
-            SidebarButtonModel {
-                label: "Start Stream".to_string(),
-                sensitive: false,
-                suggested: false,
-                destructive: false,
-            }
-        );
-        assert_eq!(
-            sidebar_output_button_model(
-                &output_status(false, OutputRunState::Inactive),
-                true,
-                "Start Stream".to_string(),
-                "Stop Stream".to_string(),
-            ),
-            SidebarButtonModel {
-                label: "Start Stream".to_string(),
-                sensitive: true,
-                suggested: true,
-                destructive: false,
-            }
-        );
-        assert_eq!(
-            sidebar_output_button_model(
-                &output_status(true, OutputRunState::Active),
-                true,
-                "Start Stream".to_string(),
-                "Stop Stream".to_string(),
-            ),
-            SidebarButtonModel {
-                label: "Stop Stream".to_string(),
-                sensitive: true,
-                suggested: false,
-                destructive: true,
-            }
-        );
-        assert_eq!(
-            sidebar_output_button_model(
-                &output_status(false, OutputRunState::Starting),
-                true,
-                "Start Stream".to_string(),
-                "Stop Stream".to_string(),
-            ),
-            SidebarButtonModel {
-                label: "Starting…".to_string(),
-                sensitive: false,
-                suggested: false,
-                destructive: false,
-            }
-        );
     }
 
     #[test]

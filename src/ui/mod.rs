@@ -6,9 +6,11 @@
 
 pub(crate) mod actions;
 pub(crate) mod background_io;
+mod hotkeys;
 pub(crate) mod navigation;
 pub(crate) mod pages;
 pub(crate) mod persist;
+mod sidebar;
 pub(crate) mod theme;
 pub(crate) mod widgets;
 pub(crate) mod window;
