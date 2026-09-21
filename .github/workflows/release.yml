@@ -4,10 +4,13 @@ on:
   push:
     tags:
       - 'v*'
+  # Manual runs build and upload the artifacts but structurally cannot
+  # publish: publish-release is gated on tag refs. Use this to dry-run the
+  # packaging before tagging.
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   APP_ID: io.scenedeck.app
@@ -62,13 +65,34 @@ jobs:
             zsync
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.97.0"
 
       - name: Determine package version
         id: version
         run: |
           version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      # The artifacts and the snap are named and published from Cargo.toml's
+      # version, so a tag that disagrees with it would ship mislabeled
+      # artifacts. Fail before building anything. The metainfo's top <release>
+      # is the store-facing version and must agree too.
+      - name: Assert release versions agree
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          metainfo_version="$(grep -m1 -oP '<release version="\K[^"]+' "data/${APP_ID}.metainfo.xml")"
+          if [[ "$metainfo_version" != "$version" ]]; then
+            echo "metainfo release $metainfo_version does not match Cargo.toml $version" >&2
+            exit 1
+          fi
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "v${version}" ]]; then
+            echo "tag ${GITHUB_REF_NAME} does not match Cargo.toml version ${version}" >&2
+            exit 1
+          fi
 
       - name: Validate desktop metadata
         run: |
@@ -81,10 +105,10 @@ jobs:
           rsvg-convert -w 256 -h 256 "assets/${APP_ID}.svg" -o "build-assets/${APP_ID}.png"
 
       - name: Run tests
-        run: cargo test --locked
+        run: cargo test --workspace --all-features --locked
 
       - name: Build release binary
-        run: cargo build --release --locked
+        run: cargo build --release --locked --all-features
 
       - name: Stage standalone executable
         run: |
@@ -98,7 +122,6 @@ jobs:
           mkdir -p \
             "dist/${package}/usr/bin" \
             "dist/${package}/usr/share/applications" \
-            "dist/${package}/usr/share/glib-2.0/schemas" \
             "dist/${package}/usr/share/icons/hicolor/scalable/apps" \
             "dist/${package}/usr/share/icons/hicolor/256x256/apps" \
             "dist/${package}/usr/share/metainfo"
@@ -106,7 +129,6 @@ jobs:
           install -Dm755 "target/release/${BIN_NAME}" "dist/${package}/usr/bin/${BIN_NAME}"
           install -Dm644 "data/${APP_ID}.desktop" "dist/${package}/usr/share/applications/${APP_ID}.desktop"
           install -Dm644 "data/${APP_ID}.metainfo.xml" "dist/${package}/usr/share/metainfo/${APP_ID}.metainfo.xml"
-          install -Dm644 "data/${APP_ID}.gschema.xml" "dist/${package}/usr/share/glib-2.0/schemas/${APP_ID}.gschema.xml"
           install -Dm644 "assets/${APP_ID}.svg" "dist/${package}/usr/share/icons/hicolor/scalable/apps/${APP_ID}.svg"
           install -Dm644 "build-assets/${APP_ID}.png" "dist/${package}/usr/share/icons/hicolor/256x256/apps/${APP_ID}.png"
 
@@ -119,7 +141,6 @@ jobs:
           mkdir -p \
             "${appdir}/usr/bin" \
             "${appdir}/usr/share/applications" \
-            "${appdir}/usr/share/glib-2.0/schemas" \
             "${appdir}/usr/share/icons/hicolor/scalable/apps" \
             "${appdir}/usr/share/icons/hicolor/256x256/apps" \
             "${appdir}/usr/share/metainfo"
@@ -128,19 +149,33 @@ jobs:
           install -Dm755 packaging/appimage/AppRun "${appdir}/AppRun"
           install -Dm644 "data/${APP_ID}.desktop" "${appdir}/usr/share/applications/${APP_ID}.desktop"
           install -Dm644 "data/${APP_ID}.metainfo.xml" "${appdir}/usr/share/metainfo/${APP_ID}.metainfo.xml"
-          install -Dm644 "data/${APP_ID}.gschema.xml" "${appdir}/usr/share/glib-2.0/schemas/${APP_ID}.gschema.xml"
           install -Dm644 "assets/${APP_ID}.svg" "${appdir}/usr/share/icons/hicolor/scalable/apps/${APP_ID}.svg"
           install -Dm644 "build-assets/${APP_ID}.png" "${appdir}/usr/share/icons/hicolor/256x256/apps/${APP_ID}.png"
-          glib-compile-schemas "${appdir}/usr/share/glib-2.0/schemas"
 
           ln -sf "usr/share/applications/${APP_ID}.desktop" "${appdir}/${APP_ID}.desktop"
           ln -sf "usr/share/icons/hicolor/256x256/apps/${APP_ID}.png" "${appdir}/${APP_ID}.png"
           ln -sf "usr/share/icons/hicolor/256x256/apps/${APP_ID}.png" "${appdir}/.DirIcon"
 
+          # linuxdeploy and appimagetool only publish a moving "continuous"
+          # release, so the binaries are pinned by content instead: the SHA256
+          # recorded here was taken on 2026-09-21 and must be updated as a
+          # deliberate, reviewed step rather than silently tracking upstream.
           wget -q -O linuxdeploy-${{ matrix.appimage_arch }}.AppImage \
             https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.appimage_arch }}.AppImage
           wget -q -O appimagetool-${{ matrix.appimage_arch }}.AppImage \
             https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${{ matrix.appimage_arch }}.AppImage
+
+          case "${{ matrix.appimage_arch }}" in
+            x86_64)
+              echo "36a2d7e274d12e1050d0e9ecfe11d339ed54720b2bec464c286d53f8b07f5c62  linuxdeploy-x86_64.AppImage" | sha256sum --check --strict
+              echo "a6d71e2b6cd66f8e8d16c37ad164658985e0cf5fcaa950c90a482890cb9d13e0  appimagetool-x86_64.AppImage" | sha256sum --check --strict
+              ;;
+            aarch64)
+              echo "556ab80baa98e600aa80f0dcedfb70bca0e1ce7e9f147fb345be3fcc3e91b2b1  linuxdeploy-aarch64.AppImage" | sha256sum --check --strict
+              echo "1b00524ba8c6b678dc15ef88a5c25ec24def36cdfc7e3abb32ddcd068e8007fe  appimagetool-aarch64.AppImage" | sha256sum --check --strict
+              ;;
+          esac
+
           chmod +x linuxdeploy-${{ matrix.appimage_arch }}.AppImage appimagetool-${{ matrix.appimage_arch }}.AppImage
 
           APPIMAGE_EXTRACT_AND_RUN=1 ./linuxdeploy-${{ matrix.appimage_arch }}.AppImage \
@@ -171,10 +206,15 @@ jobs:
       # other artifact and published nothing at all.
       - name: Vendor Cargo dependencies for Flatpak
         run: |
+          # The Flatpak manifest copies the whole checkout into the build
+          # sandbox; the release tree is hundreds of MB and no longer needed
+          # now that every artifact above is staged.
+          rm -rf target
           mkdir -p .cargo
           cargo vendor vendor > .cargo/config.toml
 
       - name: Build Flatpak bundle
+        id: flatpak
         continue-on-error: true
         run: |
           flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
@@ -191,6 +231,21 @@ jobs:
             ${BIN_NAME}-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.flatpak \
             ${APP_ID}
 
+      # continue-on-error leaves the step green; without this the only sign of
+      # a missing bundle is an absent file in the artifact upload.
+      - name: Report a skipped Flatpak bundle
+        if: steps.flatpak.outcome == 'failure'
+        run: |
+          echo "::warning::Flatpak bundle skipped — this release ships without it. See the 'Build Flatpak bundle' log."
+
+      - name: Checksum artifacts
+        run: |
+          sha256sum \
+            scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }} \
+            scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.tar.gz \
+            scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.AppImage \
+            > "scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.SHA256SUMS"
+
       - name: Upload Linux ${{ matrix.artifact_arch }} artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -201,6 +256,7 @@ jobs:
             scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.flatpak
             scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.AppImage
             scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.AppImage.zsync
+            scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.SHA256SUMS
           # The Flatpak bundle is allowed to be absent; see the step above.
           if-no-files-found: warn
 
@@ -209,6 +265,8 @@ jobs:
     runs-on: ubuntu-24.04
     needs: build-linux
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
     steps:
       - name: Checkout release history
         uses: actions/checkout@v4
