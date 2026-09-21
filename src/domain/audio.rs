@@ -48,7 +48,6 @@ pub struct AudioInput {
     pub volume_mul: f64,
     /// Gain in decibels.
     pub volume_db: f64,
-    pub locked_locally: bool,
 }
 
 impl AudioInput {
@@ -62,7 +61,6 @@ impl AudioInput {
             muted,
             volume_mul,
             volume_db,
-            locked_locally: false,
         }
     }
 

@@ -203,7 +203,15 @@ fn build_scope_bar(input: &AudioInput, input_id: &str, nav: &NavigationContext) 
 /// The local lock, which freezes this card's fader.
 ///
 /// It disables SceneDeck's own slider only; the source stays unlocked in OBS.
-fn build_lock_button(locked: bool, vol_scale: &Scale) -> ToggleButton {
+/// The state lives in `MixerSelection::locked_inputs` — the card is rebuilt
+/// on every visible volume event, so anything held only by the card would be
+/// silently forgotten on the next one.
+fn build_lock_button(
+    nav: &NavigationContext,
+    input_id: &str,
+    locked: bool,
+    vol_scale: &Scale,
+) -> ToggleButton {
     let lock_btn = ToggleButton::builder()
         .icon_name("changes-prevent-symbolic")
         .active(locked)
@@ -212,13 +220,26 @@ fn build_lock_button(locked: bool, vol_scale: &Scale) -> ToggleButton {
     lock_btn.add_css_class("flat");
     lock_btn.add_css_class("circular");
     lock_btn.connect_toggled({
+        let nav = nav.clone();
+        let input_id = input_id.to_string();
         let vol_scale = vol_scale.clone();
         move |btn| {
             let locked = btn.is_active();
+            {
+                let mut state = nav.state.borrow_mut();
+                if locked {
+                    state.mixer.locked_inputs.insert(input_id.clone());
+                } else {
+                    state.mixer.locked_inputs.remove(&input_id);
+                }
+            }
             vol_scale.set_sensitive(!locked);
             apply_lock_style(btn, locked);
         }
     });
+    // The builder-set active state never fires connect_toggled, so the fader's
+    // sensitivity for an initially locked card has to be set here.
+    vol_scale.set_sensitive(!locked);
     apply_lock_style(&lock_btn, locked);
 
     lock_btn
@@ -353,7 +374,12 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         signal_id: vol_signal_id,
     } = controls.clone();
 
-    let lock_btn = build_lock_button(input.locked_locally, &vol_scale);
+    let lock_btn = build_lock_button(
+        &nav,
+        &input.id,
+        nav.state.borrow().mixer.locked_inputs.contains(&input.id),
+        &vol_scale,
+    );
 
     let meter = volume_meter::build(&input_id, nav.clone());
 

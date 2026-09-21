@@ -1,8 +1,10 @@
+use crate::domain::audio::InputId;
 use crate::domain::scene::SceneId;
 use crate::domain::string_enum_serde;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use i18n_embed_fl::fl;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::enum_variant_names)]
@@ -111,6 +113,11 @@ pub struct MixerSelection {
     pub search: String,
     #[serde(default)]
     pub grouping: MixerGrouping,
+    /// Inputs whose faders are locked against local edits. Session-only: a
+    /// lock is a safeguard against accidental drags during a show, not a
+    /// preference to carry into the next one.
+    #[serde(skip)]
+    pub locked_inputs: BTreeSet<InputId>,
 }
 
 impl Default for MixerSelection {
@@ -121,6 +128,7 @@ impl Default for MixerSelection {
             pinned_scene: None,
             search: String::new(),
             grouping: MixerGrouping::Scope,
+            locked_inputs: BTreeSet::new(),
         }
     }
 }
@@ -140,18 +148,24 @@ mod tests {
     }
 
     #[test]
-    fn mixer_selection_serializes_without_search_filter() {
-        let selection = MixerSelection {
+    fn mixer_selection_serializes_without_session_only_fields() {
+        let mut selection = MixerSelection {
             mode: MixerMode::PinnedScene,
             selected_scene: Some("Main".to_string()),
             pinned_scene: Some("Main".to_string()),
             search: "mic".to_string(),
             grouping: MixerGrouping::ScenePath,
+            locked_inputs: BTreeSet::new(),
         };
+        selection.locked_inputs.insert("Mic".to_string());
 
         let json = serde_json::to_string(&selection).unwrap();
         assert!(json.contains(r#""mode":"pinned""#));
         assert!(json.contains(r#""grouping":"scene_path""#));
         assert!(!json.contains("mic"));
+        assert!(
+            !json.contains("locked"),
+            "fader locks are session-only and must not persist"
+        );
     }
 }
