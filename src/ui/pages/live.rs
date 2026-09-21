@@ -56,6 +56,10 @@ pub(crate) struct LivePageHandle {
     /// Caption above the scene grid naming the active scene shortcut binding.
     pub(crate) hotkey_hint: Label,
     pub(crate) audio_box: FlowBox,
+    /// Status line on the disconnected placeholder, kept so
+    /// `show_disconnected_view` writes the hint here instead of overwriting
+    /// the localized title.
+    pub(crate) disconnected_detail: Label,
     pub(crate) audio_cards: std::cell::RefCell<Vec<audio_card::AudioCardHandle>>,
 }
 
@@ -189,7 +193,7 @@ pub(crate) fn build(_nav: NavigationContext) -> LivePageHandle {
     root.add_css_class("app-page");
     root.add_css_class("live-page");
 
-    let disconnected = build_disconnected_view();
+    let (disconnected, disconnected_detail) = build_disconnected_view();
     root.add_named(&disconnected, Some("disconnected"));
 
     // ── Outer layout ─────────────────────────────────────────────────────────
@@ -239,20 +243,14 @@ pub(crate) fn build(_nav: NavigationContext) -> LivePageHandle {
         scenes_box,
         hotkey_hint,
         audio_box,
+        disconnected_detail,
         audio_cards: std::cell::RefCell::new(Vec::new()),
     }
 }
 
 pub(crate) fn show_disconnected_view(handle: &LivePageHandle, message: &str) {
     handle.root.set_visible_child_name("disconnected");
-    if let Some(page) = handle.root.child_by_name("disconnected") {
-        if let Some(label) = page
-            .first_child()
-            .and_then(|child| child.downcast::<Label>().ok())
-        {
-            label.set_text(message);
-        }
-    }
+    handle.disconnected_detail.set_text(message);
 }
 
 /// The command that flips `kind` from its current state.
@@ -330,7 +328,7 @@ fn heading_with_icon(icon_name: &str, label: &Label) -> GtkBox {
     row
 }
 
-fn build_disconnected_view() -> GtkBox {
+fn build_disconnected_view() -> (GtkBox, Label) {
     let view = GtkBox::builder()
         .orientation(Orientation::Vertical)
         .spacing(10)
@@ -357,7 +355,7 @@ fn build_disconnected_view() -> GtkBox {
 
     view.append(&title);
     view.append(&detail);
-    view
+    (view, detail)
 }
 
 pub(crate) fn output_label(
