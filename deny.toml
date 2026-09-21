@@ -1,6 +1,10 @@
 [advisories]
 version = 2
 yanked = "deny"
+# RUSTSEC-2026-0173 is also ignored in ci.yml's audit-check step; the two
+# gates must stay in sync. Revisit when the affected dependency can move to a
+# fixed release.
+ignore = ["RUSTSEC-2026-0173"]
 
 [licenses]
 version = 2

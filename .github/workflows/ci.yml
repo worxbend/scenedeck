@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  checks: write
 
 jobs:
   rust:
@@ -30,22 +29,34 @@ jobs:
             libgtk-4-dev \
             pkg-config
 
+      # Pin the toolchain explicitly: rust-toolchain.toml would make rustup
+      # silently fetch 1.97.0 on top of whatever this action installed, and
+      # clippy/rustfmt would land on the wrong one.
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.97.0"
           components: clippy, rustfmt
+
+      - name: Cache Cargo build artifacts
+        uses: Swatinem/rust-cache@v2
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      # clippy --all-targets typechecks everything a separate `cargo check`
+      # would, so no standalone check step.
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
       - name: Run tests
         run: cargo test --workspace --all-features --locked
 
-      - name: Check workspace
-        run: cargo check --workspace --all-features --locked
+      # The locale-parity tests mutate the global Fluent loader and are
+      # `#[ignore]`d out of the default suite; run them explicitly so the
+      # catalogs cannot silently drift apart.
+      - name: Run locale parity tests
+        run: cargo test --workspace --all-features --locked -- --ignored --test-threads=1
 
   dependencies:
     name: Dependency checks
@@ -55,6 +66,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Keep the ignore list in sync with deny.toml's [advisories] section;
+      # the two gates must not disagree on the same advisory.
       - name: Audit RustSec advisories
         uses: rustsec/audit-check@v2
         with:
