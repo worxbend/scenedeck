@@ -2210,8 +2210,11 @@ mod tests {
 
         assert_eq!(state.stream_bitrate_kbps, None);
         assert_eq!(
-            state.stats_history.series(StatsMetric::BitrateKbps),
-            vec![0.0]
+            state
+                .stats_history
+                .latest()
+                .and_then(|sample| sample.bitrate_kbps),
+            None
         );
     }
 
@@ -2224,8 +2227,11 @@ mod tests {
 
         assert_eq!(state.stream_bitrate_kbps, Some(6_000.0));
         assert_eq!(
-            state.stats_history.series(StatsMetric::BitrateKbps),
-            vec![6_000.0]
+            state
+                .stats_history
+                .latest()
+                .and_then(|sample| sample.bitrate_kbps),
+            Some(6_000.0)
         );
     }
 

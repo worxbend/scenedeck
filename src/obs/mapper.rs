@@ -36,7 +36,6 @@ pub(super) fn map_scenes(resp: Scenes) -> SceneInventory {
         .rev()
         .map(|s| Scene {
             id: s.id.name.clone(),
-            name: s.id.name.clone(),
         })
         .collect();
 
@@ -262,7 +261,7 @@ mod tests {
                 state: OutputState::Stopped,
                 path: Some("/tmp/done.mkv".to_string()),
             }),
-            ObsEvent::RecordStatusUpdated(OutputStatus::inactive_with_detail("/tmp/done.mkv"))
+            ObsEvent::RecordStatusUpdated(OutputStatus::inactive().with_detail("/tmp/done.mkv"))
         );
 
         assert_eq!(

@@ -152,14 +152,6 @@ impl SceneHotkeyStyle {
         }
     }
 
-    /// Whether this style fires on a bare digit, with nothing else held.
-    ///
-    /// Such bindings are suppressed while a text entry has focus.
-    #[cfg(test)]
-    pub const fn is_bare_digit(self) -> bool {
-        matches!(self, Self::Plain)
-    }
-
     /// Modifier prefix shown in shortcut labels, e.g. `Ctrl+`.
     fn modifier_prefix(self) -> String {
         match self {
@@ -474,16 +466,6 @@ mod tests {
         );
         assert_eq!(SceneHotkeyStyle::Plain.modifiers(), Some(Modifiers::NONE));
         assert_eq!(SceneHotkeyStyle::Leader.modifiers(), None);
-    }
-
-    #[test]
-    fn only_the_plain_style_fires_on_a_bare_digit() {
-        assert!(SceneHotkeyStyle::Plain.is_bare_digit());
-        for style in SceneHotkeyStyle::ALL {
-            if style != SceneHotkeyStyle::Plain {
-                assert!(!style.is_bare_digit(), "{style:?} claimed a bare digit");
-            }
-        }
     }
 
     #[test]

@@ -104,12 +104,6 @@ impl OutputStatus {
         Self::new(false, OutputRunState::Inactive)
     }
 
-    /// Build an inactive output status with a detail string.
-    #[cfg(test)]
-    pub fn inactive_with_detail(detail: impl Into<String>) -> Self {
-        Self::inactive().with_detail(detail)
-    }
-
     /// Build an active output status with no extra detail.
     pub const fn active() -> Self {
         Self::new(true, OutputRunState::Active)
@@ -131,23 +125,6 @@ impl OutputStatus {
         self.detail = detail;
         self
     }
-
-    /// Compact user-facing label for one output control.
-    #[cfg(test)]
-    pub fn summary(&self, output_name: &str) -> String {
-        fl!(
-            LANGUAGE_LOADER,
-            "output-summary",
-            name = output_name,
-            state = self.state.label()
-        )
-    }
-
-    /// Optional detail suitable for a tooltip.
-    #[cfg(test)]
-    pub fn detail_tooltip(&self) -> Option<&str> {
-        self.detail.as_deref().filter(|detail| !detail.is_empty())
-    }
 }
 
 #[cfg(test)]
@@ -155,32 +132,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn summary_uses_output_name_and_run_state_label() {
-        let status = OutputStatus::new(true, OutputRunState::Reconnecting);
-
-        assert_eq!(status.summary("Stream"), "Stream: Reconnecting");
-    }
-
-    #[test]
-    fn detail_tooltip_ignores_empty_details() {
-        let mut status = OutputStatus::inactive().with_detail(String::new());
-        assert_eq!(status.detail_tooltip(), None);
-
-        status.detail = Some("/tmp/recording.mkv".to_string());
-        assert_eq!(status.detail_tooltip(), Some("/tmp/recording.mkv"));
-    }
-
-    #[test]
     fn constructors_build_common_output_states() {
         assert_eq!(OutputStatus::default(), OutputStatus::inactive());
         assert_eq!(OutputStatus::inactive().state, OutputRunState::Inactive);
         assert!(!OutputStatus::inactive().active);
-        assert_eq!(
-            OutputStatus::inactive_with_detail("/tmp/done.mkv")
-                .detail
-                .as_deref(),
-            Some("/tmp/done.mkv")
-        );
         assert_eq!(OutputStatus::active().state, OutputRunState::Active);
         assert!(OutputStatus::active().active);
         assert_eq!(

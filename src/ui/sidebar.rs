@@ -145,13 +145,11 @@ impl NamedSelector {
         self.model.splice(0, self.model.n_items(), &additions);
 
         let selected = list
-            .current
-            .as_ref()
-            .and_then(|current| list.items.iter().position(|item| item == current))
+            .current_index()
             .map(|idx| idx as u32)
             .unwrap_or(gtk4::INVALID_LIST_POSITION);
 
-        let has_items = !list.items.is_empty();
+        let has_items = list.has_items();
         self.root.set_visible(has_items);
         self.dropdown.set_sensitive(has_items);
         self.dropdown.set_selected(selected);

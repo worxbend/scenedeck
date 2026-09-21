@@ -114,12 +114,6 @@ pub enum StatsMetric {
     RenderSkippedPerInterval,
     /// Output-thread frames skipped per poll interval.
     OutputSkippedPerInterval,
-    /// Stream bitrate in kbps; zero while no bitrate has been derived yet.
-    #[cfg(test)]
-    BitrateKbps,
-    /// Stream network congestion as a `0.0..=1.0` fraction.
-    #[cfg(test)]
-    Congestion,
 }
 
 impl StatsMetric {
@@ -130,10 +124,6 @@ impl StatsMetric {
             Self::FrameRenderTimeMs => sample.stats.average_frame_render_time_ms,
             Self::RenderSkippedPerInterval => f64::from(sample.render_skipped_delta),
             Self::OutputSkippedPerInterval => f64::from(sample.output_skipped_delta),
-            #[cfg(test)]
-            Self::BitrateKbps => sample.bitrate_kbps.unwrap_or(0.0),
-            #[cfg(test)]
-            Self::Congestion => sample.stream.map_or(0.0, |stream| stream.congestion),
         }
     }
 }
@@ -371,23 +361,9 @@ mod tests {
         );
 
         assert_eq!(
-            history.series(StatsMetric::BitrateKbps),
-            vec![6000.0, 6100.0]
-        );
-        assert_eq!(
             history.series(StatsMetric::OutputSkippedPerInterval),
             vec![0.0, 2.0]
         );
-        assert_eq!(history.series(StatsMetric::Congestion), vec![0.25, 0.25]);
-    }
-
-    #[test]
-    fn missing_optional_metrics_plot_as_zero() {
-        let mut history = StatsHistory::default();
-        history.push(stats(), None, None);
-
-        assert_eq!(history.series(StatsMetric::BitrateKbps), vec![0.0]);
-        assert_eq!(history.series(StatsMetric::Congestion), vec![0.0]);
     }
 
     #[test]

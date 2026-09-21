@@ -10,25 +10,7 @@ pub struct ObsNamedList {
 }
 
 impl ObsNamedList {
-    /// Return a copy with `current` replaced by the newly reported OBS item.
-    #[cfg(test)]
-    pub fn with_current(mut self, current: String) -> Self {
-        self.current = Some(current);
-        self
-    }
-
-    /// Return a copy using `fallback_items` only when OBS returned an empty
-    /// list.
-    #[cfg(test)]
-    pub fn with_fallback_items(mut self, fallback_items: Vec<String>) -> Self {
-        if self.items.is_empty() {
-            self.items = fallback_items;
-        }
-        self
-    }
-
     /// Position of the current item inside `items`, if both are known.
-    #[cfg(test)]
     pub fn current_index(&self) -> Option<usize> {
         self.current
             .as_ref()
@@ -36,7 +18,6 @@ impl ObsNamedList {
     }
 
     /// Whether the list contains any selectable items.
-    #[cfg(test)]
     pub fn has_items(&self) -> bool {
         !self.items.is_empty()
     }
@@ -71,31 +52,5 @@ mod tests {
         assert_eq!(missing.current_index(), None);
         assert_eq!(unknown.current_index(), None);
         assert!(!ObsNamedList::default().has_items());
-    }
-
-    #[test]
-    fn with_current_replaces_reported_current_item() {
-        let list = ObsNamedList {
-            items: vec!["One".to_string(), "Two".to_string()],
-            current: Some("One".to_string()),
-        };
-
-        assert_eq!(
-            list.with_current("Two".to_string()).current,
-            Some("Two".to_string())
-        );
-    }
-
-    #[test]
-    fn fallback_items_are_used_only_when_list_is_empty() {
-        let empty = ObsNamedList::default().with_fallback_items(vec!["One".to_string()]);
-        let populated = ObsNamedList {
-            items: vec!["Existing".to_string()],
-            current: None,
-        }
-        .with_fallback_items(vec!["Fallback".to_string()]);
-
-        assert_eq!(empty.items, ["One"]);
-        assert_eq!(populated.items, ["Existing"]);
     }
 }
