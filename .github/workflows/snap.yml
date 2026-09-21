@@ -44,10 +44,24 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      # The snap's version comes from Cargo.toml via adopt-info; a tag that
+      # disagrees with it would publish a mislabeled package straight to the
+      # store. Fail before building.
+      - name: Assert tag matches the package version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          if [[ "${GITHUB_REF_NAME}" != "v${version}" ]]; then
+            echo "tag ${GITHUB_REF_NAME} does not match Cargo.toml version ${version}" >&2
+            exit 1
+          fi
 
       - name: Build snap
         id: build

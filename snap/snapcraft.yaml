@@ -12,6 +12,17 @@ description: |
   session, so you can switch scenes, roll recordings, and ride your audio
   without ever breaking focus on your main machine. ✨
 
+  🤝 **Want a co-host or moderator on the controls?**
+
+  OBS accepts more than one WebSocket client at once, so a collaborator can
+  run their own copy of SceneDeck against the same rig. You can both switch
+  scenes and ride the mixer, with every change reflected on both screens.
+
+  The OBS WebSocket password grants full control, not per-person permissions.
+  Share it only with someone you trust, and use a VPN, Tailscale, or an SSH
+  tunnel for remote access instead of exposing the WebSocket port to the open
+  internet. 🔐
+
   🗂️ **Scene list grown out of control?**
 
   Real setups fill up with utility scenes, camera-only scenes, overlays, and
@@ -92,6 +103,9 @@ apps:
     common-id: io.scenedeck.app
     plugs:
       - network
+      # Secret Service over D-Bus, for the OBS password in the system keyring.
+      # Not auto-connected under strict confinement: `snap connect scenedeck:password-manager-service`.
+      - password-manager-service
 
 parts:
   rust-deps:
@@ -100,7 +114,9 @@ parts:
     build-packages:
       - curl
     override-pull: |
-      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile default --default-toolchain stable
+      # Match the channel pinned in rust-toolchain.toml instead of installing
+      # stable and having rustup fetch 1.97.0 on top of it at first use.
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile default --default-toolchain 1.97.0
       . "$HOME/.cargo/env"
       ln -sf "$HOME/.cargo/bin/cargo" /usr/local/bin/cargo
       ln -sf "$HOME/.cargo/bin/rustc" /usr/local/bin/rustc
@@ -136,8 +152,5 @@ parts:
         "${CRAFT_PART_INSTALL}/usr/share/applications/io.scenedeck.app.desktop"
       install -Dm644 data/io.scenedeck.app.metainfo.xml \
         "${CRAFT_PART_INSTALL}/usr/share/metainfo/io.scenedeck.app.metainfo.xml"
-      install -Dm644 data/io.scenedeck.app.gschema.xml \
-        "${CRAFT_PART_INSTALL}/usr/share/glib-2.0/schemas/io.scenedeck.app.gschema.xml"
       install -Dm644 assets/io.scenedeck.app.svg \
         "${CRAFT_PART_INSTALL}/usr/share/icons/hicolor/scalable/apps/io.scenedeck.app.svg"
-      glib-compile-schemas "${CRAFT_PART_INSTALL}/usr/share/glib-2.0/schemas"
