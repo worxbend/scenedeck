@@ -18,9 +18,6 @@ pub const METER_CEILING_DB: f64 = 0.0;
 pub const METER_WARNING_DB: f64 = -20.0;
 /// Level at which the meter enters the red zone.
 pub const METER_ERROR_DB: f64 = -9.0;
-/// Level treated as clipping.
-#[cfg(test)]
-pub const METER_CLIP_DB: f64 = -0.5;
 
 /// Which of the meter's three zones a level falls in.
 ///

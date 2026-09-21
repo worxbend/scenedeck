@@ -12,8 +12,6 @@
 use std::time::Duration;
 
 use crate::domain::meter::{ChannelLevel, InputLevels, METER_CEILING_DB, METER_FLOOR_DB};
-#[cfg(test)]
-use crate::domain::meter::{MeterZone, METER_CLIP_DB};
 
 /// Fall-off of the peak bar, in decibels per second.
 ///
@@ -51,18 +49,6 @@ impl MeterChannelDisplay {
         hold_db: None,
         input_peak_db: None,
     };
-
-    /// Zone the peak bar currently sits in, or `None` while it is empty.
-    #[cfg(test)]
-    pub fn zone(&self) -> Option<MeterZone> {
-        self.peak_db.map(MeterZone::for_db)
-    }
-
-    /// Whether the channel is at or past the clipping threshold.
-    #[cfg(test)]
-    pub fn is_clipping(&self) -> bool {
-        self.peak_db.is_some_and(|db| db >= METER_CLIP_DB)
-    }
 }
 
 /// Peak, hold, and loudness state for one channel.
@@ -131,8 +117,12 @@ impl MeterChannelState {
 
         self.hold_age = self.hold_age.saturating_add(elapsed);
         if self.hold_age >= PEAK_HOLD {
+            // The hold window is over: the marker stops freezing and rides
+            // the decaying peak down, like OBS's own meter. `hold_age` is
+            // deliberately not reset — it stays saturated so every advance
+            // keeps the marker glued to the peak, and a fresh louder peak in
+            // `observe` re-arms the hold by zeroing it.
             self.hold_db = self.peak_db;
-            self.hold_age = Duration::ZERO;
         }
     }
 
@@ -209,18 +199,6 @@ pub fn meter_fraction(db: f64) -> f64 {
         return 0.0;
     }
     ((db - METER_FLOOR_DB) / (METER_CEILING_DB - METER_FLOOR_DB)).clamp(0.0, 1.0)
-}
-
-/// Decibel level at `fraction` of the way up the meter.
-#[cfg(test)]
-pub fn meter_db_at(fraction: f64) -> f64 {
-    METER_FLOOR_DB + (METER_CEILING_DB - METER_FLOOR_DB) * fraction.clamp(0.0, 1.0)
-}
-
-/// Whether the LED segment centred on `segment_db` is lit at `peak_db`.
-#[cfg(test)]
-pub fn segment_is_lit(segment_db: f64, peak_db: Option<f64>) -> bool {
-    peak_db.is_some_and(|peak| peak >= segment_db)
 }
 
 /// Clamp a reading into the range the meter draws, or `None` when inaudible.
@@ -362,6 +340,34 @@ mod tests {
     }
 
     #[test]
+    fn the_expired_hold_marker_rides_the_decaying_peak_down() {
+        let mut state = observed(-6.0);
+
+        // Bring the hold window right up to its edge while a quieter source
+        // keeps the bar alive — too quiet to re-arm the hold.
+        let mut elapsed = Duration::ZERO;
+        while elapsed < PEAK_HOLD - Duration::from_millis(200) {
+            state.advance(Duration::from_millis(100));
+            state.observe(level(-33.0, -30.0, -30.0));
+            elapsed += Duration::from_millis(100);
+        }
+
+        // The source goes silent and the window expires: from here on the
+        // marker must ride the decaying peak, not freeze at the expiry value.
+        state.advance(Duration::from_millis(300));
+        let first = state.display();
+        assert_eq!(first.hold_db, first.peak_db);
+
+        state.advance(Duration::from_millis(500));
+        let later = state.display();
+        assert_eq!(later.hold_db, later.peak_db);
+        assert!(
+            later.hold_db.unwrap() < first.hold_db.unwrap(),
+            "the marker should keep falling with the decaying peak"
+        );
+    }
+
+    #[test]
     fn silence_and_nonsense_readings_leave_the_meter_empty() {
         let mut state = MeterChannelState::new();
 
@@ -378,7 +384,6 @@ mod tests {
         state.observe(level(3.0, 6.0, 6.0));
 
         assert_eq!(state.display().peak_db, Some(METER_CEILING_DB));
-        assert!(state.display().is_clipping());
     }
 
     #[test]
@@ -389,25 +394,6 @@ mod tests {
         state.advance(Duration::ZERO);
 
         assert_eq!(state.display(), before);
-    }
-
-    #[test]
-    fn the_display_reports_its_zone_and_clipping() {
-        let mut state = observed(-30.0);
-        assert_eq!(state.display().zone(), Some(MeterZone::Nominal));
-        assert!(!state.display().is_clipping());
-
-        state.observe(level(-12.0, -10.0, -10.0));
-        assert_eq!(state.display().zone(), Some(MeterZone::Warning));
-
-        state.observe(level(-4.0, -2.0, -2.0));
-        assert_eq!(state.display().zone(), Some(MeterZone::Error));
-        assert!(!state.display().is_clipping());
-
-        state.observe(level(-1.0, -0.2, -0.2));
-        assert!(state.display().is_clipping());
-
-        assert_eq!(MeterChannelDisplay::EMPTY.zone(), None);
     }
 
     #[test]
@@ -460,22 +446,5 @@ mod tests {
         assert!((meter_fraction(-120.0) - 0.0).abs() < 1e-9);
         assert!((meter_fraction(12.0) - 1.0).abs() < 1e-9);
         assert!((meter_fraction(f64::NEG_INFINITY) - 0.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn the_scale_round_trips_through_a_fraction() {
-        for db in [-60.0, -42.0, -20.0, -9.0, 0.0] {
-            assert!((meter_db_at(meter_fraction(db)) - db).abs() < 1e-9);
-        }
-        assert!((meter_db_at(-1.0) - METER_FLOOR_DB).abs() < 1e-9);
-        assert!((meter_db_at(2.0) - METER_CEILING_DB).abs() < 1e-9);
-    }
-
-    #[test]
-    fn segments_light_up_to_the_peak_and_no_further() {
-        assert!(segment_is_lit(-30.0, Some(-12.0)));
-        assert!(segment_is_lit(-12.0, Some(-12.0)));
-        assert!(!segment_is_lit(-6.0, Some(-12.0)));
-        assert!(!segment_is_lit(-60.0, None));
     }
 }
