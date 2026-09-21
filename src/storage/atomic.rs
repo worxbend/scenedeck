@@ -50,6 +50,17 @@ pub(crate) fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
         return Err(error);
     }
 
+    // The rename's durability is only as good as the directory entry's: sync
+    // the parent so a crash cannot roll back to the old file after this call
+    // has reported success. Best-effort — the data itself is already safe by
+    // this point, and a failed directory sync is no reason to tell the caller
+    // the write did not happen.
+    if let Some(dir) = path.parent() {
+        if let Ok(dir_handle) = File::open(dir) {
+            let _ = dir_handle.sync_all();
+        }
+    }
+
     Ok(())
 }
 
