@@ -352,8 +352,9 @@ fn build_language_group(nav: &NavigationContext, cfg: &AppConfig) -> Preferences
         .description(fl!(LANGUAGE_LOADER, "settings-language-description"))
         .build();
 
-    let language_names: Vec<&str> = Language::ALL.iter().map(|l| l.display_name()).collect();
-    let language_model = gtk4::StringList::new(&language_names);
+    let language_names: Vec<String> = Language::ALL.iter().map(|l| l.display_name()).collect();
+    let language_refs: Vec<&str> = language_names.iter().map(String::as_str).collect();
+    let language_model = gtk4::StringList::new(&language_refs);
     let selected_language_index = Language::ALL
         .iter()
         .position(|l| *l == cfg.language)

@@ -465,6 +465,7 @@ settings-language-title = Sprache
 settings-language-description = Änderungen wirken sich erst nach einem Neustart von SceneDeck aus.
 settings-display-language-title = Anzeigesprache
 settings-display-language-subtitle = Eine Sprache wählen oder der Systemsprache folgen.
+language-system-default = Systemstandard
 settings-language-status-title = Sprachstatus
 settings-language-status-initial = Neu starten, um eine geänderte Sprache anzuwenden.
 settings-language-saved = Sprache gespeichert. SceneDeck neu starten, um sie anzuwenden.

@@ -471,6 +471,7 @@ settings-language-title = Мова
 settings-language-description = Зміни набувають чинності після перезапуску SceneDeck.
 settings-display-language-title = Мова інтерфейсу
 settings-display-language-subtitle = Виберіть мову або слідуйте системній локалі.
+language-system-default = Типова мова системи
 settings-language-status-title = Стан мови
 settings-language-status-initial = Перезапустіть, щоб застосувати змінену мову.
 settings-language-saved = Мову збережено. Перезапустіть SceneDeck, щоб застосувати її.

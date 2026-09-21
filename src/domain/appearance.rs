@@ -1,6 +1,8 @@
 //! Appearance preferences that are independent from GTK widgets.
 
 use crate::domain::string_enum_serde;
+use crate::infra::i18n::LANGUAGE_LOADER;
+use i18n_embed_fl::fl;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -104,21 +106,22 @@ impl Language {
         }
     }
 
-    /// Name shown in the Settings language picker, in the language's own
+    /// Name shown in the Settings language picker: the language's own
     /// autonym so a user can find their language regardless of the UI's
-    /// current language.
-    pub const fn display_name(self) -> &'static str {
+    /// current language. The system-following entry has no autonym — it is
+    /// UI copy like any other and goes through Fluent.
+    pub fn display_name(self) -> String {
         match self {
-            Self::System => "System Default",
-            Self::En => "English",
-            Self::EnGb => "English (UK)",
-            Self::De => "Deutsch",
-            Self::DeCh => "Deutsch (Schweiz)",
-            Self::Es => "Español",
-            Self::It => "Italiano",
-            Self::Pl => "Polski",
-            Self::PtPt => "Português (Portugal)",
-            Self::Uk => "Українська",
+            Self::System => fl!(LANGUAGE_LOADER, "language-system-default"),
+            Self::En => "English".to_string(),
+            Self::EnGb => "English (UK)".to_string(),
+            Self::De => "Deutsch".to_string(),
+            Self::DeCh => "Deutsch (Schweiz)".to_string(),
+            Self::Es => "Español".to_string(),
+            Self::It => "Italiano".to_string(),
+            Self::Pl => "Polski".to_string(),
+            Self::PtPt => "Português (Portugal)".to_string(),
+            Self::Uk => "Українська".to_string(),
         }
     }
 }
@@ -148,6 +151,9 @@ string_enum_serde!(Language);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThemeId(pub String);
 
+/// Theme the app falls back to when no selection has been persisted.
+pub const DEFAULT_THEME_ID: &str = "adwaita-default";
+
 impl ThemeId {
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
@@ -160,7 +166,7 @@ impl ThemeId {
 
 impl Default for ThemeId {
     fn default() -> Self {
-        Self::new("adwaita-default")
+        Self::new(DEFAULT_THEME_ID)
     }
 }
 
@@ -315,7 +321,7 @@ impl ThemePreference {
         self.selected_theme
             .as_ref()
             .map(ThemeId::as_str)
-            .unwrap_or("adwaita-default")
+            .unwrap_or(DEFAULT_THEME_ID)
     }
 
     pub fn custom_css_enabled(&self) -> bool {
