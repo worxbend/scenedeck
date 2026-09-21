@@ -66,9 +66,13 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
 }
 
 fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefreshTracker) {
-    let state = nav.state.borrow().clone();
-    let inventory = state.scene_inventory.clone();
-    let mixer = state.mixer.clone();
+    // One immutable borrow for the whole build, rather than cloning all of
+    // AppState — config, registry, stats history, and every mixer snapshot —
+    // on each rebuild. Build-time code below only ever reads state; anything
+    // that mutates runs later, inside a signal handler.
+    let state = nav.state.borrow();
+    let inventory = &state.scene_inventory;
+    let mixer = &state.mixer;
     let active_scene = inventory.current_id.clone();
     let target_scene = state.mixer_scene_refresh_target().map(str::to_string);
     let inspection_snapshot = state.mixer_inspection_snapshot();
@@ -99,15 +103,16 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
         .description(mixer.mode.description())
         .build();
 
-    let mode_row = build_mode_row(nav, mixer.mode, refresh_tracker);
+    let mode_row = build_mode_row(root, nav, mixer.mode, refresh_tracker);
     let scene_row = build_scene_row(
+        root,
         nav,
         &inventory.scenes,
         mixer.selected_scene.as_deref(),
         refresh_tracker,
     );
-    let grouping_row = build_grouping_row(nav, mixer.grouping);
-    let search_row = build_search_row(nav, &mixer.search);
+    let grouping_row = build_grouping_row(root, nav, mixer.grouping, refresh_tracker);
+    let search_row = build_search_row(root, nav, &mixer.search, refresh_tracker);
 
     controls.add(&mode_row);
     controls.add(&scene_row);
@@ -196,7 +201,20 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
     );
 }
 
+/// Refill the page in place after a control row changes how inputs are
+/// sourced, grouped, or filtered.
+///
+/// The handlers below used to call `switch_to_page(Page::Mixer)` for this,
+/// but switching to the already-visible page is a render no-op — no map
+/// signal, no refresh — so the change was invisible until some unrelated
+/// event rebuilt the page. Same pattern as the Inventory page's `rebuild`.
+fn rebuild(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefreshTracker) {
+    crate::ui::clear_children(root);
+    populate(root, nav, refresh_tracker);
+}
+
 fn build_mode_row(
+    root: &GtkBox,
     nav: &NavigationContext,
     selected: MixerMode,
     refresh_tracker: &MixerRefreshTracker,
@@ -213,6 +231,7 @@ fn build_mode_row(
 
     row.connect_selected_notify({
         let nav = nav.clone();
+        let root = root.clone();
         let refresh_tracker = refresh_tracker.clone();
         move |row| {
             let mode = mode_at(row.selected());
@@ -226,7 +245,7 @@ fn build_mode_row(
                 MixerRefreshRequestIntent::Explicit,
             );
             persist_mixer_selection(&nav);
-            nav.switch_to_page(crate::controller::state::Page::Mixer);
+            rebuild(&root, &nav, &refresh_tracker);
         }
     });
 
@@ -234,6 +253,7 @@ fn build_mode_row(
 }
 
 fn build_scene_row(
+    root: &GtkBox,
     nav: &NavigationContext,
     scenes: &[crate::domain::scene::Scene],
     selected_scene: Option<&str>,
@@ -255,6 +275,7 @@ fn build_scene_row(
 
     row.connect_selected_notify({
         let nav = nav.clone();
+        let root = root.clone();
         let refresh_tracker = refresh_tracker.clone();
         let scene_ids: Vec<_> = scenes.iter().map(|scene| scene.id.clone()).collect();
         move |row| {
@@ -271,14 +292,19 @@ fn build_scene_row(
                 MixerRefreshRequestIntent::Explicit,
             );
             persist_mixer_selection(&nav);
-            nav.switch_to_page(crate::controller::state::Page::Mixer);
+            rebuild(&root, &nav, &refresh_tracker);
         }
     });
 
     row
 }
 
-fn build_grouping_row(nav: &NavigationContext, selected: MixerGrouping) -> ComboRow {
+fn build_grouping_row(
+    root: &GtkBox,
+    nav: &NavigationContext,
+    selected: MixerGrouping,
+    refresh_tracker: &MixerRefreshTracker,
+) -> ComboRow {
     let labels: Vec<String> = MixerGrouping::ALL
         .iter()
         .map(|grouping| grouping.label())
@@ -294,17 +320,24 @@ fn build_grouping_row(nav: &NavigationContext, selected: MixerGrouping) -> Combo
 
     row.connect_selected_notify({
         let nav = nav.clone();
+        let root = root.clone();
+        let refresh_tracker = refresh_tracker.clone();
         move |row| {
             nav.state.borrow_mut().mixer.grouping = grouping_at(row.selected());
             persist_mixer_selection(&nav);
-            nav.switch_to_page(crate::controller::state::Page::Mixer);
+            rebuild(&root, &nav, &refresh_tracker);
         }
     });
 
     row
 }
 
-fn build_search_row(nav: &NavigationContext, search: &str) -> EntryRow {
+fn build_search_row(
+    root: &GtkBox,
+    nav: &NavigationContext,
+    search: &str,
+    refresh_tracker: &MixerRefreshTracker,
+) -> EntryRow {
     let row = EntryRow::builder()
         .title(fl!(LANGUAGE_LOADER, "mixer-search-row-title"))
         .text(search)
@@ -313,9 +346,11 @@ fn build_search_row(nav: &NavigationContext, search: &str) -> EntryRow {
 
     row.connect_apply({
         let nav = nav.clone();
+        let root = root.clone();
+        let refresh_tracker = refresh_tracker.clone();
         move |row| {
             nav.state.borrow_mut().mixer.search = row.text().trim().to_string();
-            nav.switch_to_page(crate::controller::state::Page::Mixer);
+            rebuild(&root, &nav, &refresh_tracker);
         }
     });
 
