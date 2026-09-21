@@ -1,9 +1,18 @@
-//! Audio input queries and mutations.  Phase 1: stubs.
+//! Audio input queries and mutations: decibel conversion, slider range
+//! sanitizing, and debouncing of fader drags into OBS volume commands.
 
 use std::time::Duration;
 
 pub const VOLUME_SLIDER_DEBOUNCE: Duration = Duration::from_millis(120);
-const VOLUME_MEANINGFUL_DELTA: f64 = 0.005;
+
+/// Smallest loudness change worth a round trip to OBS.
+///
+/// Loudness is logarithmic, so the threshold is in decibels, not linear
+/// multiplier: a fixed linear delta is a hairline near unity but many
+/// decibels near silence, where it would swallow audible changes whole.
+/// A drag that ends inside the threshold is never sent, leaving the fader
+/// and OBS disagreeing by less than 0.1 dB — below anything audible.
+const VOLUME_MEANINGFUL_DELTA_DB: f64 = 0.1;
 const MIN_VOLUME_DB: f64 = -100.0;
 const MAX_VOLUME_DB: f64 = 0.0;
 
@@ -11,7 +20,7 @@ pub struct AudioService;
 
 impl AudioService {
     pub fn volume_mul_to_db(mul: f64) -> f64 {
-        if mul <= 0.0 {
+        if !mul.is_finite() || mul <= 0.0 {
             f64::NEG_INFINITY
         } else {
             20.0 * mul.log10()
@@ -85,7 +94,6 @@ impl AudioService {
 pub struct VolumeChangeDebouncer {
     last_sent: Option<f64>,
     pending: Option<f64>,
-    meaningful_delta: f64,
 }
 
 impl VolumeChangeDebouncer {
@@ -93,7 +101,6 @@ impl VolumeChangeDebouncer {
         Self {
             last_sent: Some(AudioService::sanitize_volume_mul(initial_volume)),
             pending: None,
-            meaningful_delta: VOLUME_MEANINGFUL_DELTA,
         }
     }
 
@@ -123,7 +130,11 @@ impl VolumeChangeDebouncer {
 
     fn should_send(&self, volume_mul: f64) -> bool {
         self.last_sent
-            .map(|last| (volume_mul - last).abs() >= self.meaningful_delta)
+            .map(|last| {
+                (AudioService::volume_mul_to_db(volume_mul) - AudioService::volume_mul_to_db(last))
+                    .abs()
+                    >= VOLUME_MEANINGFUL_DELTA_DB
+            })
             .unwrap_or(true)
     }
 }
@@ -192,6 +203,28 @@ mod tests {
         debouncer.queue(0.503);
 
         assert_eq!(debouncer.take_due(), None);
+    }
+
+    #[test]
+    fn debouncer_measures_significance_in_decibels_not_multiplier() {
+        // A 0.0049 linear step is nothing near unity but over 15 dB near
+        // silence, where swallowing it would leave the fader and OBS
+        // audibly disagreeing.
+        let mut debouncer = VolumeChangeDebouncer::new(0.001);
+
+        debouncer.queue(0.0059);
+
+        assert_eq!(debouncer.take_due(), Some(0.0059));
+    }
+
+    #[test]
+    fn volume_mul_to_db_maps_nonsense_to_silence() {
+        assert_eq!(AudioService::volume_mul_to_db(f64::NAN), f64::NEG_INFINITY);
+        assert_eq!(
+            AudioService::volume_mul_to_db(f64::INFINITY),
+            f64::NEG_INFINITY
+        );
+        assert_eq!(AudioService::volume_mul_to_db(0.0), f64::NEG_INFINITY);
     }
 
     #[test]
