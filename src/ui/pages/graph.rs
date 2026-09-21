@@ -397,35 +397,54 @@ fn compute_layers(node_count: usize, edges: &BTreeSet<(usize, usize)>) -> Vec<us
         incoming[to].push(from);
     }
 
-    let mut memo = vec![None; node_count];
-    let mut visiting = vec![false; node_count];
-    (0..node_count)
-        .map(|idx| node_depth(idx, &incoming, &mut memo, &mut visiting))
-        .collect()
-}
+    // Iterative longest-path-over-parents with an explicit stack. The
+    // recursive version this replaced walked one frame per edge along the
+    // deepest dependency chain, which a pathologically nested OBS scene graph
+    // could overflow; page layout has no business putting a recursion depth
+    // limit on user data.
+    let mut memo: Vec<Option<usize>> = vec![None; node_count];
+    let mut on_stack = vec![false; node_count];
 
-fn node_depth(
-    idx: usize,
-    incoming: &[Vec<usize>],
-    memo: &mut [Option<usize>],
-    visiting: &mut [bool],
-) -> usize {
-    if let Some(depth) = memo[idx] {
-        return depth;
-    }
-    if visiting[idx] {
-        return 0;
+    for start in 0..node_count {
+        if memo[start].is_some() {
+            continue;
+        }
+        let mut stack = vec![start];
+        while let Some(&idx) = stack.last() {
+            if memo[idx].is_some() {
+                stack.pop();
+                continue;
+            }
+            on_stack[idx] = true;
+
+            let mut unresolved = None;
+            let mut depth = 0;
+            for &parent in &incoming[idx] {
+                if let Some(parent_depth) = memo[parent] {
+                    depth = depth.max(parent_depth + 1);
+                } else if on_stack[parent] {
+                    // Cycle: the in-flight ancestor contributes depth zero,
+                    // exactly as the recursive guard did.
+                    depth = depth.max(1);
+                } else {
+                    unresolved = Some(parent);
+                }
+            }
+
+            match unresolved {
+                // Resolve one parent deeper; `idx` is revisited once the
+                // stack above it unwinds.
+                Some(parent) => stack.push(parent),
+                None => {
+                    memo[idx] = Some(depth);
+                    on_stack[idx] = false;
+                    stack.pop();
+                }
+            }
+        }
     }
 
-    visiting[idx] = true;
-    let depth = incoming[idx]
-        .iter()
-        .map(|&parent| node_depth(parent, incoming, memo, visiting) + 1)
-        .max()
-        .unwrap_or(0);
-    visiting[idx] = false;
-    memo[idx] = Some(depth);
-    depth
+    memo.into_iter().map(|depth| depth.unwrap_or(0)).collect()
 }
 
 fn draw_canvas(ctx: &Context, width: i32, height: i32, model: &GraphModel) {
@@ -596,16 +615,18 @@ fn fitted_text(ctx: &Context, text: &str, max_width: f64) -> String {
         return text.to_string();
     }
 
+    // Truncate with the same ellipsis the rest of the UI's Fluent strings
+    // use, rather than three ASCII dots.
     let mut trimmed = text.to_string();
     while !trimmed.is_empty() {
         trimmed.pop();
-        let candidate = format!("{trimmed}...");
+        let candidate = format!("{trimmed}…");
         if text_width(ctx, &candidate) <= max_width {
             return candidate;
         }
     }
 
-    "...".to_string()
+    "…".to_string()
 }
 
 fn text_width(ctx: &Context, text: &str) -> f64 {
