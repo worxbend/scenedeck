@@ -174,7 +174,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
 
     page.add(&scenes_group);
 
-    if let Some(stale_group) = build_stale_group(&inventory, &registry, nav) {
+    if let Some(stale_group) = build_stale_group(&inventory, &registry, container, nav) {
         page.add(&stale_group);
     }
 
@@ -198,7 +198,7 @@ fn build_accent_controls(
 
     let clear_accent_button = Button::builder()
         .icon_name("edit-clear-symbolic")
-        .tooltip_text("Clear scene accent color")
+        .tooltip_text(fl!(LANGUAGE_LOADER, "inventory-accent-clear-tooltip"))
         .valign(Align::Center)
         .sensitive(
             registry
@@ -253,7 +253,7 @@ fn install_scene_reordering(
     container: &GtkBox,
 ) -> Image {
     let drag_handle = Image::from_icon_name("list-drag-handle-symbolic");
-    drag_handle.set_tooltip_text(Some("Drag to reorder scene"));
+    drag_handle.set_tooltip_text(Some(&fl!(LANGUAGE_LOADER, "inventory-drag-tooltip")));
     drag_handle.set_valign(Align::Center);
     drag_handle.add_css_class("dim-label");
 
@@ -309,6 +309,7 @@ fn install_scene_reordering(
 fn build_stale_group(
     inventory: &SceneInventory,
     registry: &SceneRegistry,
+    container: &GtkBox,
     nav: &NavigationContext,
 ) -> Option<PreferencesGroup> {
     let obs_ids: HashSet<&str> = inventory.scenes.iter().map(|s| s.id.as_str()).collect();
@@ -345,9 +346,9 @@ fn build_stale_group(
 
         remove_btn.connect_clicked({
             let entry_name = entry_name.clone();
-            let stale_row = stale_row.clone();
+            let container = container.clone();
             let nav = nav.clone();
-            move |_| handle_stale_entry_remove(entry_name.as_str(), &stale_row, &nav)
+            move |_| handle_stale_entry_remove(entry_name.as_str(), &container, &nav)
         });
 
         stale_row.add_suffix(&remove_btn);
@@ -405,8 +406,11 @@ fn build_accent_button(
     clear_accent_button: &Button,
 ) -> ColorButton {
     let button = ColorButton::new();
-    button.set_title("Scene accent color");
-    button.set_tooltip_text(Some("Choose scene accent color"));
+    button.set_title(&fl!(LANGUAGE_LOADER, "inventory-accent-dialog-title"));
+    button.set_tooltip_text(Some(&fl!(
+        LANGUAGE_LOADER,
+        "inventory-accent-choose-tooltip"
+    )));
     button.set_use_alpha(false);
     button.set_valign(Align::Center);
     if let Some((red, green, blue)) = accent.and_then(parse_scene_accent) {
@@ -488,12 +492,15 @@ fn handle_scene_role_change(row: &ComboRow, scene_id: &str, nav: &NavigationCont
     row.set_subtitle(&subtitle);
 }
 
-fn handle_stale_entry_remove(entry_name: &str, stale_row: &ActionRow, nav: &NavigationContext) {
+fn handle_stale_entry_remove(entry_name: &str, container: &GtkBox, nav: &NavigationContext) {
     persist_registry(nav, "stale entry removal", |registry| {
         registry.scenes.remove(entry_name).is_some()
     });
 
-    stale_row.set_visible(false);
+    // Rebuild rather than hiding the row in place: removing the last stale
+    // entry must also drop the now-empty group, which `build_stale_group`
+    // already handles by returning `None`.
+    rebuild(container, nav);
 }
 
 /// Persist one scene's icon and mirror it into the cached registry.
@@ -605,7 +612,12 @@ fn show_import_dialog(
                     let status_row = status_row.clone();
                     let container = container.clone();
                     let nav = nav.clone();
-                    crate::ui::background_io::run(
+                    // The write goes through the registry lane so it cannot
+                    // overtake (or be overtaken by) edits queued while the
+                    // dialog was open — a bare thread could land on disk in
+                    // either order relative to them.
+                    crate::ui::background_io::run_serialized(
+                        crate::ui::background_io::SerialLane::Registry,
                         move || {
                             read_registry_yaml_from_path(&path).and_then(|registry| {
                                 write_registry(&registry)?;
