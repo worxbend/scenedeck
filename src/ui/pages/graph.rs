@@ -706,10 +706,7 @@ mod tests {
         SceneInventory {
             scenes: ids
                 .into_iter()
-                .map(|id| Scene {
-                    id: id.to_string(),
-                    name: id.to_string(),
-                })
+                .map(|id| Scene { id: id.to_string() })
                 .collect(),
             current_id: None,
             previous_id: None,

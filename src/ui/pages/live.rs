@@ -549,7 +549,7 @@ pub(crate) fn rebuild_scene_cards(
         let registry_entry = registry.scenes.get(&scene.id);
         let card = scene_card::build(
             SceneCardModel {
-                scene_name: &scene.name,
+                scene_name: &scene.id,
                 scene_id: scene.id.clone(),
                 scene_role: registry_entry
                     .and_then(|entry| entry.role)
@@ -648,7 +648,6 @@ mod tests {
                 .iter()
                 .map(|(id, _)| Scene {
                     id: (*id).to_string(),
-                    name: (*id).to_string(),
                 })
                 .collect(),
             current_id: None,

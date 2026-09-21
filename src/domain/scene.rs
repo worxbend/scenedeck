@@ -3,13 +3,12 @@
 /// Stable identifier for an OBS scene.  Matches `sceneName`.
 pub type SceneId = String;
 
-/// OBS scene identity and user-visible name.
+/// OBS scene identity. The id is the user-visible name OBS reports
+/// (`sceneName`); OBS has no separate display name for scenes.
 #[derive(Debug, Clone)]
 pub struct Scene {
     /// Stable OBS scene identifier.
     pub id: SceneId,
-    /// User-visible scene name.  Currently the same value as `id`.
-    pub name: String,
 }
 
 /// Full scene list plus the currently active scene.

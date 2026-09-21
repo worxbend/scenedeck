@@ -168,13 +168,16 @@ fn edge_diagnostic(
     child_role: Option<SceneRole>,
     status: EdgeStatus,
 ) -> Option<Diagnostic> {
-    let (pr, cr) = (parent_role?, child_role?);
     // An allowed edge has nothing to report. This was previously the first arm
     // of the match below, where a `return` hidden among the classification
     // rules read as if it were one of them.
     if status == EdgeStatus::Ok {
         return None;
     }
+
+    // `classify_edge` returns `Ok` whenever either endpoint lacks a role, so
+    // reaching here with a non-`Ok` status proves both roles are assigned.
+    let (pr, cr) = (parent_role?, child_role?);
 
     // Matching on the status alongside the roles replaces five repeated
     // `if status == ...` guards, so each rule reads as the single triple it
@@ -223,10 +226,7 @@ mod tests {
     use crate::domain::scene::{Scene, SceneInventory};
 
     fn scene(id: &str) -> Scene {
-        Scene {
-            id: id.to_string(),
-            name: id.to_string(),
-        }
+        Scene { id: id.to_string() }
     }
 
     fn metadata(role: SceneRole) -> SceneMetadata {

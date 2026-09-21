@@ -239,7 +239,7 @@ fn build_scene_row(
     selected_scene: Option<&str>,
     refresh_tracker: &MixerRefreshTracker,
 ) -> ComboRow {
-    let names: Vec<&str> = scenes.iter().map(|scene| scene.name.as_str()).collect();
+    let names: Vec<&str> = scenes.iter().map(|scene| scene.id.as_str()).collect();
     let model = StringList::new(&names);
     let selected = selected_scene
         .and_then(|selected| scenes.iter().position(|scene| scene.id == selected))
@@ -1396,7 +1396,6 @@ mod layout_tests {
         state.scene_inventory = SceneInventory {
             scenes: vec![Scene {
                 id: "Main".to_string(),
-                name: "Main".to_string(),
             }],
             current_id: Some("Main".to_string()),
             previous_id: None,

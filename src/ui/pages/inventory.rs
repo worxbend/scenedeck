@@ -123,7 +123,7 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
         let role_model = string_list(&role_labels);
 
         let combo_row = ComboRow::builder()
-            .title(scene.name.as_str())
+            .title(scene.id.as_str())
             .subtitle(subtitle)
             .model(&role_model)
             .selected(role_row(current_role))
