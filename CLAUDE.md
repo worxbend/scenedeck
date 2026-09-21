@@ -9,8 +9,9 @@ libadwaita, Tokio, and the OBS WebSocket protocol (`obws`). Single binary crate
 (`src/lib.rs` exposes only `run()`; every module is `pub(crate)`).
 
 Toolchain is pinned in `rust-toolchain.toml` (1.97.0). Building requires GTK4
-and libadwaita dev libraries plus `glib-compile-resources` (`build.rs` compiles
-`resources/scenedeck.gresource.xml`).
+and libadwaita dev libraries, `libdbus-1-dev` (the keyring's sync Secret
+Service backend links the system libdbus), plus `glib-compile-resources`
+(`build.rs` compiles `resources/scenedeck.gresource.xml`).
 
 ## Commands
 

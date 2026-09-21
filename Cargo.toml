@@ -18,7 +18,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1", features = ["full"] }
 obws         = { version = "0.15", features = ["events"] }
 futures-util = "0.3"
-# Pure-Rust secret-service backend (zbus) — no system libdbus dependency.
+# Synchronous Secret Service client. NOTE: despite the "crypto-rust" feature
+# name, the sync backend (sync-secret-service → dbus-secret-service → dbus)
+# links the system libdbus-1 — it is a build requirement, not dead weight.
+# A pure-Rust zbus backend exists but is async-only; adopting it means making
+# secret.rs await and is a deliberate migration, not a cleanup.
 keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 i18n-embed = { version = "0.16.0", features = ["fluent-system", "desktop-requester"] }
 i18n-embed-fl = "0.10.1"
