@@ -217,6 +217,10 @@ inventory-remove-stale-tooltip = Remove stale entry
 inventory-yaml-row-title = Scene Registry YAML
 inventory-yaml-row-subtitle = Export or import scene roles, colors, order, tags, protection flags, and graph rules.
 inventory-yaml-filter-name = YAML files
+inventory-accent-clear-tooltip = Clear scene accent color
+inventory-drag-tooltip = Drag to reorder scene
+inventory-accent-dialog-title = Scene accent color
+inventory-accent-choose-tooltip = Choose scene accent color
 
 # Shared between the row's Export button, the export FileChooserNative's
 # accept label, and (for Cancel) both the export and import dialogs.
@@ -424,6 +428,14 @@ hotkey-hint-empty-slot = No scene in slot { $slot }
 scene-card-tooltip = { $status } ({ $role })
 scene-card-tooltip-with-hotkey = { $status } ({ $role }) · { $hotkey }
 scene-card-role-suffix = { $role } scene
+scene-card-tooltip-active = Current program scene
+scene-card-tooltip-previous = Previously active scene
+scene-card-tooltip-ready = Switch to this scene
+scene-card-status-active = Active
+scene-card-status-previous = Prev
+scene-card-status-ready = Ready
+scene-card-marker-active = On
+scene-card-marker-previous = Last
 
 ## status_bar.rs
 status-bar-stream-inactive = Stream: Inactive
@@ -511,6 +523,8 @@ settings-obs-error = Error: { $err }
 settings-theme-subtitle = { $description } Swatches: { $swatches }
 settings-theme-loaded = Loaded { $theme } ({ $variant }).
 settings-theme-loaded-with-warnings = Theme loaded with warnings.
+theme-variant-light = Light
+theme-variant-dark = Dark
 
 ## theme.rs
 

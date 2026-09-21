@@ -218,6 +218,10 @@ inventory-remove-stale-tooltip = Remover entrada desatualizada
 inventory-yaml-row-title = YAML do Registo de Cenas
 inventory-yaml-row-subtitle = Exporte ou importe funções de cenas, etiquetas, sinalizadores de proteção e regras do grafo.
 inventory-yaml-filter-name = Ficheiros YAML
+inventory-accent-clear-tooltip = Limpar a cor de destaque da cena
+inventory-drag-tooltip = Arraste para reordenar a cena
+inventory-accent-dialog-title = Cor de destaque da cena
+inventory-accent-choose-tooltip = Escolha a cor de destaque da cena
 
 # Shared between the row's Export button, the export FileChooserNative's
 # accept label, and (for Cancel) both the export and import dialogs.
@@ -425,6 +429,14 @@ hotkey-hint-empty-slot = Sem cena na posição { $slot }
 scene-card-tooltip = { $status } ({ $role })
 scene-card-tooltip-with-hotkey = { $status } ({ $role }) · { $hotkey }
 scene-card-role-suffix = Cena { $role }
+scene-card-tooltip-active = Cena de programa atual
+scene-card-tooltip-previous = Cena anteriormente ativa
+scene-card-tooltip-ready = Mudar para esta cena
+scene-card-status-active = Ativa
+scene-card-status-previous = Anterior
+scene-card-status-ready = Pronta
+scene-card-marker-active = Ativa
+scene-card-marker-previous = Última
 
 ## status_bar.rs
 status-bar-stream-inactive = Emissão: Inativa
@@ -512,6 +524,8 @@ settings-obs-error = Erro: { $err }
 settings-theme-subtitle = { $description } Amostras: { $swatches }
 settings-theme-loaded = { $theme } carregado ({ $variant }).
 settings-theme-loaded-with-warnings = Tema carregado com avisos.
+theme-variant-light = Claro
+theme-variant-dark = Escuro
 
 ## theme.rs
 

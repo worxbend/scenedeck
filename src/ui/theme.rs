@@ -23,6 +23,16 @@ pub(crate) enum ThemeVariant {
     Dark,
 }
 
+impl ThemeVariant {
+    /// User-facing label for status messages.
+    pub(crate) fn label(self) -> String {
+        match self {
+            Self::Light => fl!(LANGUAGE_LOADER, "theme-variant-light"),
+            Self::Dark => fl!(LANGUAGE_LOADER, "theme-variant-dark"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct BuiltInTheme {
     pub(crate) id: &'static str,

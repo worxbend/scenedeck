@@ -221,6 +221,10 @@ inventory-remove-stale-tooltip = Видалити застарілий запи�
 inventory-yaml-row-title = YAML реєстру сцен
 inventory-yaml-row-subtitle = Експортуйте або імпортуйте ролі сцен, теги, позначки захисту та правила графа.
 inventory-yaml-filter-name = Файли YAML
+inventory-accent-clear-tooltip = Скинути колір акцента сцени
+inventory-drag-tooltip = Перетягніть, щоб змінити порядок сцен
+inventory-accent-dialog-title = Колір акцента сцени
+inventory-accent-choose-tooltip = Виберіть колір акцента сцени
 
 # Shared between the row's Export button, the export FileChooserNative's
 # accept label, and (for Cancel) both the export and import dialogs.
@@ -428,6 +432,14 @@ hotkey-hint-empty-slot = Немає сцени на позиції { $slot }
 scene-card-tooltip = { $status } ({ $role })
 scene-card-tooltip-with-hotkey = { $status } ({ $role }) · { $hotkey }
 scene-card-role-suffix = { $role } сцена
+scene-card-tooltip-active = Поточна програмна сцена
+scene-card-tooltip-previous = Попередня активна сцена
+scene-card-tooltip-ready = Перемкнутися на цю сцену
+scene-card-status-active = Активна
+scene-card-status-previous = Попередня
+scene-card-status-ready = Готова
+scene-card-marker-active = Ефір
+scene-card-marker-previous = Остання
 
 ## status_bar.rs
 status-bar-stream-inactive = Трансляція: Неактивно
@@ -515,6 +527,8 @@ settings-obs-error = Помилка: { $err }
 settings-theme-subtitle = { $description } Зразки кольорів: { $swatches }
 settings-theme-loaded = Завантажено { $theme } ({ $variant }).
 settings-theme-loaded-with-warnings = Тему завантажено з попередженнями.
+theme-variant-light = Світла
+theme-variant-dark = Темна
 
 ## theme.rs
 

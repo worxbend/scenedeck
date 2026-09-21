@@ -215,6 +215,10 @@ inventory-remove-stale-tooltip = Rimuovi la voce obsoleta
 inventory-yaml-row-title = YAML del registro scene
 inventory-yaml-row-subtitle = Esporta o importa ruoli delle scene, tag, flag di protezione e regole del grafo.
 inventory-yaml-filter-name = File YAML
+inventory-accent-clear-tooltip = Rimuovi il colore di accento della scena
+inventory-drag-tooltip = Trascina per riordinare la scena
+inventory-accent-dialog-title = Colore di accento della scena
+inventory-accent-choose-tooltip = Scegli il colore di accento della scena
 
 # Shared between the row's Export button, the export FileChooserNative's
 # accept label, and (for Cancel) both the export and import dialogs.
@@ -422,6 +426,14 @@ hotkey-hint-empty-slot = Nessuna scena nella posizione { $slot }
 scene-card-tooltip = { $status } ({ $role })
 scene-card-tooltip-with-hotkey = { $status } ({ $role }) · { $hotkey }
 scene-card-role-suffix = Scena { $role }
+scene-card-tooltip-active = Scena di programma attuale
+scene-card-tooltip-previous = Scena attiva in precedenza
+scene-card-tooltip-ready = Passa a questa scena
+scene-card-status-active = Attiva
+scene-card-status-previous = Precedente
+scene-card-status-ready = Pronta
+scene-card-marker-active = On
+scene-card-marker-previous = Ultima
 
 ## status_bar.rs
 status-bar-stream-inactive = Stream: Inattivo
@@ -509,6 +521,8 @@ settings-obs-error = Errore: { $err }
 settings-theme-subtitle = { $description } Campioni: { $swatches }
 settings-theme-loaded = Caricato { $theme } ({ $variant }).
 settings-theme-loaded-with-warnings = Tema caricato con avvisi.
+theme-variant-light = Chiaro
+theme-variant-dark = Scuro
 
 ## theme.rs
 

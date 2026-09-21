@@ -72,7 +72,7 @@ pub(crate) fn build(model: SceneCardModel<'_>, nav: NavigationContext) -> Button
         card.add_css_class(&class);
     }
     card.set_tooltip_text(Some(&scene_card_tooltip(
-        presentation.tooltip,
+        &presentation.tooltip,
         scene_role,
         shortcut.as_ref(),
     )));
@@ -103,7 +103,7 @@ pub(crate) fn build(model: SceneCardModel<'_>, nav: NavigationContext) -> Button
     }
 
     let status = Label::builder()
-        .label(presentation.status_label)
+        .label(&presentation.status_label)
         .halign(Align::Start)
         .build();
     status.add_css_class(presentation.status_css_class);
@@ -111,7 +111,7 @@ pub(crate) fn build(model: SceneCardModel<'_>, nav: NavigationContext) -> Button
     let spacer = GtkBox::builder().hexpand(true).build();
 
     let marker = Label::builder()
-        .label(presentation.marker_label)
+        .label(&presentation.marker_label)
         .halign(Align::End)
         .build();
     marker.add_css_class("caption");
@@ -216,39 +216,39 @@ fn scene_role_subtitle(role: SceneRole) -> String {
     )
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct SceneCardPresentation {
-    tooltip: &'static str,
-    status_label: &'static str,
+    tooltip: String,
+    status_label: String,
     status_css_class: &'static str,
-    marker_label: &'static str,
+    marker_label: String,
     card_css_class: Option<&'static str>,
 }
 
 impl SceneCardPresentation {
-    const fn for_state(active: bool, previous: bool) -> Self {
+    fn for_state(active: bool, previous: bool) -> Self {
         if active {
             Self {
-                tooltip: "Current program scene",
-                status_label: "Active",
+                tooltip: fl!(LANGUAGE_LOADER, "scene-card-tooltip-active"),
+                status_label: fl!(LANGUAGE_LOADER, "scene-card-status-active"),
                 status_css_class: "scene-card-status-active",
-                marker_label: "On",
+                marker_label: fl!(LANGUAGE_LOADER, "scene-card-marker-active"),
                 card_css_class: Some("scene-card-active"),
             }
         } else if previous {
             Self {
-                tooltip: "Previously active scene",
-                status_label: "Prev",
+                tooltip: fl!(LANGUAGE_LOADER, "scene-card-tooltip-previous"),
+                status_label: fl!(LANGUAGE_LOADER, "scene-card-status-previous"),
                 status_css_class: "scene-card-status-previous",
-                marker_label: "Last",
+                marker_label: fl!(LANGUAGE_LOADER, "scene-card-marker-previous"),
                 card_css_class: Some("scene-card-previous"),
             }
         } else {
             Self {
-                tooltip: "Switch to this scene",
-                status_label: "Ready",
+                tooltip: fl!(LANGUAGE_LOADER, "scene-card-tooltip-ready"),
+                status_label: fl!(LANGUAGE_LOADER, "scene-card-status-ready"),
                 status_css_class: "scene-card-status-ready",
-                marker_label: "",
+                marker_label: String::new(),
                 card_css_class: None,
             }
         }
@@ -264,10 +264,10 @@ mod tests {
         assert_eq!(
             SceneCardPresentation::for_state(true, false),
             SceneCardPresentation {
-                tooltip: "Current program scene",
-                status_label: "Active",
+                tooltip: "Current program scene".to_string(),
+                status_label: "Active".to_string(),
                 status_css_class: "scene-card-status-active",
-                marker_label: "On",
+                marker_label: "On".to_string(),
                 card_css_class: Some("scene-card-active")
             }
         );
@@ -278,10 +278,10 @@ mod tests {
         assert_eq!(
             SceneCardPresentation::for_state(false, true),
             SceneCardPresentation {
-                tooltip: "Previously active scene",
-                status_label: "Prev",
+                tooltip: "Previously active scene".to_string(),
+                status_label: "Prev".to_string(),
                 status_css_class: "scene-card-status-previous",
-                marker_label: "Last",
+                marker_label: "Last".to_string(),
                 card_css_class: Some("scene-card-previous")
             }
         );
@@ -292,10 +292,10 @@ mod tests {
         assert_eq!(
             SceneCardPresentation::for_state(false, false),
             SceneCardPresentation {
-                tooltip: "Switch to this scene",
-                status_label: "Ready",
+                tooltip: "Switch to this scene".to_string(),
+                status_label: "Ready".to_string(),
                 status_css_class: "scene-card-status-ready",
-                marker_label: "",
+                marker_label: String::new(),
                 card_css_class: None
             }
         );

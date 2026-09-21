@@ -789,7 +789,7 @@ fn theme_report_text(report: &crate::ui::theme::ThemeApplyReport) -> String {
             LANGUAGE_LOADER,
             "settings-theme-loaded",
             theme = report.theme_id.as_str(),
-            variant = format!("{:?}", report.variant)
+            variant = report.variant.label()
         )
     } else {
         report
