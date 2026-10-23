@@ -2149,7 +2149,6 @@ name = "scenedeck"
 version = "0.4.0"
 dependencies = [
  "cssparser",
- "fluent-bundle",
  "futures-util",
  "gio",
  "glib",
@@ -2173,7 +2172,6 @@ dependencies = [
  "tokio-websockets",
  "tracing",
  "tracing-subscriber",
- "unic-langid",
 ]
 
 [[package]]

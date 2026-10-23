@@ -27,9 +27,7 @@ futures-util = "0.3"
 keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 i18n-embed = { version = "0.16.0", features = ["fluent-system", "desktop-requester"] }
 i18n-embed-fl = "0.10.1"
-fluent-bundle = "0.16.0"
 rust-embed = { version = "8.12.0", features = ["debug-embed"] }
-unic-langid = { version = "0.9.6", features = ["serde"] }
 nerd_gtk_icons = "0.1"
 libc = "0.2"
 cssparser = { version = "0.38", default-features = false }
