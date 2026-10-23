@@ -248,10 +248,19 @@ fn native_compact_large_text_outputs_and_hidden_pages_fit() {
         let title = find(&card, &|w| w.has_css_class("scene-card-title")).unwrap();
         let card_bounds = card.compute_bounds(&scroller).unwrap();
         let title_bounds = title.compute_bounds(&scroller).unwrap();
-        assert!(card_bounds.y() >= 0.0 && card_bounds.y() + card_bounds.height() <= scroller.height() as f32,
-            "card must fit its short viewport (previews={previews}): {card_bounds:?}; viewport height={}", scroller.height());
-        assert!(title_bounds.y() >= 0.0 && title_bounds.y() + title_bounds.height() <= scroller.height() as f32,
-            "title must be visible without scrolling (previews={previews}): {title_bounds:?}; viewport height={}", scroller.height());
+        // At extreme sizes (CI fonts: 54 px for a 98 px tile) a whole card may
+        // not fit, so require the grid to scroll far enough to reach it and
+        // its title to fit the viewport once scrolled to.
+        let viewport = scroller.height() as f32;
+        let reachable = scroller
+            .downcast_ref::<gtk4::ScrolledWindow>()
+            .unwrap()
+            .vadjustment()
+            .upper() as f32;
+        assert!(card_bounds.y() >= 0.0 && card_bounds.y() + card_bounds.height() <= reachable.max(viewport),
+            "card must be reachable in its short viewport (previews={previews}): {card_bounds:?}; viewport height={viewport}, scrollable={reachable}");
+        assert!(title_bounds.y() >= 0.0 && title_bounds.height() <= viewport,
+            "title must fit the viewport (previews={previews}): {title_bounds:?}; viewport height={viewport}");
     }
     // A topbar-only page must clear the old sidebar selection. Selecting Live
     // again should navigate, even when it was the last sidebar page visited.
