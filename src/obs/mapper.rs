@@ -18,8 +18,11 @@ use crate::obs::event::ObsEvent;
 /// Convert OBS version metadata into controller connection info.
 pub(super) fn map_version(v: &Version) -> ConnectionInfo {
     ConnectionInfo {
+        endpoint: String::new(),
         obs_version: v.obs_studio_version.to_string(),
         websocket_version: v.obs_web_socket_version.to_string(),
+        available_requests: v.available_requests.clone(),
+        supported_image_formats: v.supported_image_formats.clone(),
     }
 }
 
@@ -96,12 +99,22 @@ pub(super) fn map_stream_health(status: StreamStatus) -> StreamHealth {
     }
 }
 
+/// Read the configured video target without deriving it from jittery measurements.
+pub(super) fn configured_fps(settings: &obws::responses::config::VideoSettings) -> Option<f64> {
+    (settings.fps_numerator > 0 && settings.fps_denominator > 0)
+        .then(|| f64::from(settings.fps_numerator) / f64::from(settings.fps_denominator))
+}
+
 /// Convert `GetStats` into the app's normalized OBS performance snapshot.
 pub(super) fn map_stats(stats: Stats) -> ObsStats {
     ObsStats {
+        disk_space_mb: (stats.available_disk_space.is_finite()
+            && stats.available_disk_space >= 0.0)
+            .then_some(stats.available_disk_space),
         cpu_usage_percent: stats.cpu_usage,
         memory_usage_mb: stats.memory_usage,
         active_fps: stats.active_fps,
+        configured_fps: None,
         average_frame_render_time_ms: stats.average_frame_render_time,
         render_skipped_frames: stats.render_skipped_frames,
         render_total_frames: stats.render_total_frames,
@@ -134,7 +147,13 @@ pub(super) fn map_event(event: Event) -> ObsEvent {
             active,
             state,
             path,
-        } => ObsEvent::RecordStatusUpdated(map_output_status(active, state, path)),
+        } => ObsEvent::RecordStatusUpdated(map_output_status(
+            // OBS reports outputActive=false while paused. The recording still
+            // exists and must keep Resume/Stop available.
+            active || matches!(state, OutputState::Paused | OutputState::Resumed),
+            state,
+            path,
+        )),
         Event::RecordFileChanged { path } => {
             ObsEvent::RecordStatusUpdated(OutputStatus::active_with_detail(path))
         }
@@ -170,12 +189,50 @@ pub(super) fn map_event(event: Event) -> ObsEvent {
             ObsEvent::SceneCollectionListChanged(collections)
         }
         Event::SceneListChanged { .. } => ObsEvent::SceneListChanged,
+        Event::ReplayBufferSaved { path } => {
+            ObsEvent::ReplaySaved(path.to_string_lossy().into_owned())
+        }
+        Event::CurrentSceneCollectionChanging { .. } => ObsEvent::CollectionChanging,
+        Event::ReplayBufferStateChanged { .. }
+        | Event::VirtualcamStateChanged { .. }
+        | Event::StudioModeStateChanged { .. }
+        | Event::CurrentPreviewSceneChanged { .. }
+        | Event::CurrentSceneTransitionChanged { .. }
+        | Event::CurrentSceneTransitionDurationChanged { .. }
+        | Event::SceneTransitionEnded { .. }
+        | Event::SourceFilterCreated { .. }
+        | Event::SourceFilterRemoved { .. }
+        | Event::SourceFilterEnableStateChanged { .. }
+        | Event::SourceFilterNameChanged { .. }
+        | Event::SourceFilterSettingsChanged { .. }
+        | Event::SourceFilterListReindexed { .. }
+        | Event::InputSettingsChanged { .. }
+        | Event::InputAudioBalanceChanged { .. }
+        | Event::InputAudioSyncOffsetChanged { .. }
+        | Event::InputAudioTracksChanged { .. }
+        | Event::InputAudioMonitorTypeChanged { .. }
+        | Event::MediaInputPlaybackStarted { .. }
+        | Event::MediaInputPlaybackEnded { .. }
+        | Event::MediaInputActionTriggered { .. } => ObsEvent::ControlsChanged,
         _ => ObsEvent::Ignored,
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn paused_record_event_keeps_recording_active_for_resume_and_stop() {
+        let event = super::map_event(obws::events::Event::RecordStateChanged {
+            active: false,
+            state: obws::events::OutputState::Paused,
+            path: None,
+        });
+        let crate::obs::event::ObsEvent::RecordStatusUpdated(status) = event else {
+            panic!("record status");
+        };
+        assert!(status.active);
+        assert_eq!(status.state, crate::domain::output::OutputRunState::Paused);
+    }
     use super::*;
     use obws::events::OutputState;
 

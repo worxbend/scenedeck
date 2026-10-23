@@ -42,6 +42,7 @@ enum TopicState {
 fn open(page: Page) -> TopicLink {
     let label = match page {
         Page::Live => fl!(LANGUAGE_LOADER, "help-open-live"),
+        Page::Sources => fl!(LANGUAGE_LOADER, "sources-title"),
         Page::Mixer => fl!(LANGUAGE_LOADER, "help-open-mixer"),
         Page::Graph => fl!(LANGUAGE_LOADER, "help-open-graph"),
         Page::Inventory => fl!(LANGUAGE_LOADER, "help-open-inventory"),

@@ -2,7 +2,6 @@
 //! scene list with roles, tags, and protection flags.
 
 use std::collections::HashMap;
-use std::fs::read_to_string;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -467,7 +466,10 @@ pub fn try_read_registry() -> Result<SceneRegistry, RegistryStorageError> {
 
 /// Read registry JSON from an explicit path.
 pub fn read_registry_from_path(path: &Path) -> Result<SceneRegistry, RegistryStorageError> {
-    match read_to_string(path) {
+    match crate::storage::small_file::read_to_string(
+        path,
+        crate::storage::small_file::REGISTRY_LIMIT,
+    ) {
         Ok(raw) => serde_json::from_str(&raw).map_err(|source| RegistryStorageError::Parse {
             path: path.to_path_buf(),
             source,
@@ -504,7 +506,14 @@ fn remove_scene_entry_from_path(
 
 /// Pretty-print registry JSON to an explicit path, creating parents as needed.
 pub fn write_registry_to_path(path: &Path, registry: &SceneRegistry) -> io::Result<()> {
+    // Every JSON write, including imports and whole-cache snapshots, refuses
+    // to destroy an unreadable original. Missing files still initialize normally.
+    read_registry_from_path(path).map_err(io::Error::other)?;
     let raw = serde_json::to_string_pretty(registry).map_err(io::Error::other)?;
+    crate::storage::small_file::check_size(
+        raw.len() as u64,
+        crate::storage::small_file::REGISTRY_LIMIT,
+    )?;
     // Whole-file replacement: a half-written file would be unparsable, and the
     // loaders treat unparsable as absent.
     crate::storage::atomic::write(path, raw.as_bytes())
@@ -512,14 +521,19 @@ pub fn write_registry_to_path(path: &Path, registry: &SceneRegistry) -> io::Resu
 
 /// Read a YAML registry export from an explicit path.
 pub fn read_registry_yaml_from_path(path: &Path) -> io::Result<SceneRegistry> {
-    let raw = read_to_string(path)?;
-    serde_yaml::from_str(&raw).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+    let raw =
+        crate::storage::small_file::read_to_string(path, crate::storage::small_file::YAML_LIMIT)?;
+    serde_saphyr::from_str(&raw).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
 }
 
 /// Write a YAML registry export to an explicit path, creating parents as needed.
 pub fn write_registry_yaml_to_path(path: &Path, registry: &SceneRegistry) -> io::Result<()> {
-    let raw = serde_yaml::to_string(registry)
+    let raw = serde_saphyr::to_string(registry)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    crate::storage::small_file::check_size(
+        raw.len() as u64,
+        crate::storage::small_file::YAML_LIMIT,
+    )?;
     // An export is usually someone's backup; a half-written one is worse than
     // no backup, because it looks like a backup.
     crate::storage::atomic::write(path, raw.as_bytes())
@@ -527,6 +541,92 @@ pub fn write_registry_yaml_to_path(path: &Path, registry: &SceneRegistry) -> io:
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn oversized_registry_and_yaml_writes_preserve_existing_targets() {
+        let path = unique_temp_path("oversized-output", "json");
+        std::fs::write(&path, b"{}").unwrap();
+        let mut registry = SceneRegistry::default();
+        registry.scenes.insert(
+            "Huge".into(),
+            SceneEntry {
+                tags: vec!["x".repeat(crate::storage::small_file::REGISTRY_LIMIT + 1)],
+                ..SceneEntry::default()
+            },
+        );
+        assert_eq!(
+            write_registry_to_path(&path, &registry).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"{}");
+        assert_eq!(
+            write_registry_yaml_to_path(&path, &registry)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"{}");
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn every_registry_json_write_refuses_a_corrupt_original() {
+        let path = unique_temp_path("corrupt-all-writes", "json");
+        let original = br#"{"scenes":{"Camera":{"role":"primary"}}, oops"#;
+        std::fs::write(&path, original).unwrap();
+        for edit in 0..5 {
+            let mut registry = SceneRegistry::default();
+            match edit {
+                0 => {
+                    registry.set_scene_role("New", Some(SceneRole::Primary));
+                }
+                1 => {
+                    registry.set_scene_accent("New", Some("#ABCDEF".into()));
+                }
+                2 => {
+                    registry.set_scene_order(["New".into()]);
+                }
+                3 => {
+                    registry.set_scene_icon("New", Some("nf-md-camera"));
+                }
+                _ => {
+                    registry.set_input_icon("Mic", Some("nf-md-microphone"));
+                }
+            }
+            assert!(write_registry_to_path(&path, &registry).is_err());
+            assert!(mutate_registry(&path, |existing| {
+                *existing = registry;
+                true
+            })
+            .is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+        }
+        std::fs::remove_file(&path).unwrap();
+        let mut first = SceneRegistry::default();
+        first.set_scene_role("First", Some(SceneRole::Primary));
+        write_registry_to_path(&path, &first).unwrap();
+        assert_eq!(
+            read_registry_from_path(&path).unwrap().scenes["First"].role,
+            Some(SceneRole::Primary)
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn yaml_export_writes_only_the_explicitly_selected_target() {
+        for extension in ["txt", "", "yml", "YAML"] {
+            let path = unique_temp_path("exact-export-target", extension);
+            let sibling = path.with_extension("yaml");
+            assert_ne!(path, sibling);
+            std::fs::write(&sibling, b"unselected backup").unwrap();
+            std::fs::write(&path, b"confirmed replacement").unwrap();
+            write_registry_yaml_to_path(&path, &SceneRegistry::default()).unwrap();
+            assert!(read_registry_yaml_from_path(&path).is_ok());
+            assert_eq!(std::fs::read(&sibling).unwrap(), b"unselected backup");
+            std::fs::remove_file(path).unwrap();
+            std::fs::remove_file(sibling).unwrap();
+        }
+    }
 
     #[test]
     fn clearing_an_accent_keeps_an_icon_the_scene_still_has() {
@@ -691,6 +791,85 @@ mod tests {
         assert_eq!(parse_scene_accent("336699"), Some((51, 102, 153)));
         assert_eq!(parse_scene_accent("#33669980"), None);
         assert_eq!(parse_scene_accent("not-a-color"), None);
+    }
+
+    #[test]
+    fn legacy_yaml_export_preserves_roles_order_source_metadata_and_rules() {
+        let path = unique_temp_path("legacy-registry", "yaml");
+        let exported = r##"---
+scenes:
+  'Intro: Привіт':
+    role: primary
+    tags:
+    - live
+    - 'true'
+    protected: true
+    accent_color: '#336699'
+    icon: nf-md-camera
+  Holding:
+    role: secondary
+    tags: []
+    protected: false
+  Module:
+    role: module
+    tags: []
+    protected: false
+  Raw:
+    role: raw
+    tags: []
+    protected: false
+  Debug:
+    role: debug
+    tags: []
+    protected: false
+  Archive:
+    role: archive
+    tags: []
+    protected: false
+scene_order:
+- 'Intro: Привіт'
+- Holding
+inputs:
+  'Mic / Left':
+    icon: nf-md-microphone
+rules:
+  primary_can_depend_on:
+  - module
+  module_can_depend_on:
+  - raw
+  forbidden_edges:
+  - - primary
+    - debug
+"##;
+        std::fs::write(&path, exported).unwrap();
+        let imported = read_registry_yaml_from_path(&path).unwrap();
+        assert_eq!(imported.scenes.len(), 6);
+        for (name, role) in [
+            ("Holding", SceneRole::Secondary),
+            ("Module", SceneRole::Module),
+            ("Raw", SceneRole::Raw),
+            ("Debug", SceneRole::Debug),
+            ("Archive", SceneRole::Archive),
+        ] {
+            assert_eq!(imported.scenes[name].role, Some(role));
+        }
+        let intro = &imported.scenes["Intro: Привіт"];
+        assert_eq!(intro.role, Some(SceneRole::Primary));
+        assert!(intro.protected);
+        assert_eq!(intro.tags, ["live", "true"]);
+        assert_eq!(intro.accent_color.as_deref(), Some("#336699"));
+        assert_eq!(intro.icon.as_deref(), Some("nf-md-camera"));
+        assert_eq!(
+            imported.inputs["Mic / Left"].icon.as_deref(),
+            Some("nf-md-microphone")
+        );
+        assert_eq!(imported.scene_order, ["Intro: Привіт", "Holding"]);
+        assert_eq!(imported.rules.forbidden_edges, [["primary", "debug"]]);
+        let expected = serde_json::to_value(&imported).unwrap();
+        write_registry_yaml_to_path(&path, &imported).unwrap();
+        let actual = read_registry_yaml_from_path(&path).unwrap();
+        assert_eq!(serde_json::to_value(actual).unwrap(), expected);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

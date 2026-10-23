@@ -22,9 +22,101 @@ impl ObsEventStream {
         Self { inner }
     }
 
-    /// Wait for the next normalized OBS event.
+    /// Re-subscribe only after a request proves that a stream gap was not a
+    /// transport close. obws 0.15 reports broadcast lag as `None` too.
+    pub(crate) async fn recover(
+        &mut self,
+        client: &crate::obs::client::ObsClient,
+    ) -> Result<(), crate::infra::error::AppError> {
+        client.get_version().await?;
+        self.inner = client
+            .inner
+            .events()
+            .map_err(crate::infra::error::AppError::connection)?;
+        Ok(())
+    }
+
+    /// Wait for the next event. `None` requires liveness probing, not an
+    /// unconditional disconnect, because the dependency also uses it for lag.
     pub(crate) async fn next(&mut self) -> Option<ObsEvent> {
         self.inner.next().await.map(mapper::map_event)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures_util::{SinkExt, StreamExt};
+    use serde_json::{json, Value};
+    use std::time::Duration;
+    use tokio::sync::oneshot;
+    use tokio_websockets::{Message, ServerBuilder};
+
+    #[tokio::test]
+    async fn broadcast_lag_recovers_after_liveness_without_disconnect() {
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (burst, begin_burst) = oneshot::channel();
+        let (fresh, begin_fresh) = oneshot::channel();
+        let (finish, finished) = oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let (_, mut socket) = ServerBuilder::new().accept(tcp).await.unwrap();
+            socket
+                .send(Message::text(
+                    json!({"op":0,"d":{"obsWebSocketVersion":"5.5.0","rpcVersion":1}}).to_string(),
+                ))
+                .await
+                .unwrap();
+            socket.next().await.unwrap().unwrap();
+            socket
+                .send(Message::text(
+                    json!({"op":2,"d":{"negotiatedRpcVersion":1}}).to_string(),
+                ))
+                .await
+                .unwrap();
+            let mut begin_burst = Some(begin_burst);
+            for index in 0..3 {
+                let request: Value =
+                    serde_json::from_str(socket.next().await.unwrap().unwrap().as_text().unwrap())
+                        .unwrap();
+                assert_eq!(request["d"]["requestType"], "GetVersion");
+                socket.send(Message::text(json!({"op":7,"d":{"requestId":request["d"]["requestId"],"requestType":"GetVersion","requestStatus":{"result":true,"code":100},"responseData":{"obsStudioVersion":"31.0.0","obsWebSocketVersion":"5.5.0","rpcVersion":1,"availableRequests":[],"supportedImageFormats":[],"platform":"mock","platformDescription":"mock"}}}).to_string())).await.unwrap();
+                if index == 0 {
+                    begin_burst.take().unwrap().await.unwrap();
+                    for _ in 0..256 {
+                        socket.send(Message::text(json!({"op":5,"d":{"eventType":"InputVolumeMeters","eventIntent":65536,"eventData":{"inputs":[]}}}).to_string())).await.unwrap();
+                    }
+                }
+            }
+            begin_fresh.await.unwrap();
+            socket.send(Message::text(json!({"op":5,"d":{"eventType":"InputVolumeMeters","eventIntent":65536,"eventData":{"inputs":[]}}}).to_string())).await.unwrap();
+            finished.await.unwrap();
+        });
+        let (client, mut events) = crate::obs::client::ObsClient::connect("127.0.0.1", port, None)
+            .await
+            .unwrap();
+        burst.send(()).unwrap();
+        client.get_version().await.unwrap();
+        assert!(
+            events.next().await.is_none(),
+            "fixture must exercise actual pinned-library lag"
+        );
+        tokio::time::timeout(Duration::from_secs(2), events.recover(&client))
+            .await
+            .unwrap()
+            .unwrap();
+        fresh.send(()).unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), events.next())
+                .await
+                .unwrap(),
+            Some(ObsEvent::InputLevelsUpdated(Vec::new()))
+        );
+        finish.send(()).unwrap();
+        server.await.unwrap();
     }
 }
 
@@ -72,6 +164,12 @@ pub(crate) enum ObsEvent {
     SceneCollectionListChanged(Vec<String>),
     /// OBS scene inventory changed.
     SceneListChanged,
+    /// Native operating controls changed; refresh the current scope.
+    ControlsChanged,
+    /// OBS confirmed an actual replay file save.
+    ReplaySaved(String),
+    /// Collection is changing; requests must pause until change completes.
+    CollectionChanging,
     /// Event not relevant to the current UI state.
     Ignored,
 }

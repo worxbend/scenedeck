@@ -6,27 +6,32 @@
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
 
-use futures_util::future::BoxFuture;
+use crate::controller::event_sender::EventSender;
+use crate::controller::lifecycle::SessionScope;
+use crate::controller::session_controller::REQUEST_BUDGET;
+use futures_util::{future::BoxFuture, FutureExt};
 use i18n_embed_fl::fl;
 use tokio::runtime::Handle;
 
 use crate::controller::event::{
     fallback_status_after_failed_output_command, AppEvent, OutputCommandFailureRecovery,
 };
-use crate::domain::output::{OutputRunState, OutputStatus};
+use crate::domain::output::{OutputKind, OutputRunState, OutputStatus};
 use crate::infra::error::AppError;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::obs::client::ObsClient;
 
 #[derive(Debug, Default)]
 struct OutputPending {
-    stream: bool,
-    record: bool,
+    stream: Option<u64>,
+    record: Option<u64>,
+    next: u64,
 }
 
 pub(crate) struct OutputController {
     runtime: Handle,
-    event_tx: SyncSender<AppEvent>,
+    event_tx: EventSender,
+    scope: SessionScope,
     client_slot: Arc<Mutex<Option<ObsClient>>>,
     pending: Arc<Mutex<OutputPending>>,
     #[cfg(test)]
@@ -41,7 +46,8 @@ impl OutputController {
     ) -> Self {
         Self {
             runtime,
-            event_tx,
+            event_tx: EventSender::new(event_tx),
+            scope: SessionScope::initial(client_slot.clone()),
             client_slot,
             pending: Arc::new(Mutex::new(OutputPending::default())),
             #[cfg(test)]
@@ -49,98 +55,205 @@ impl OutputController {
         }
     }
 
+    pub(crate) fn set_scope(&mut self, scope: SessionScope) {
+        self.clear_pending();
+        self.scope = scope;
+    }
+
     pub(crate) fn set_streaming(&self, active: bool) {
-        if !mark_stream_pending(&self.pending) {
+        let Some(operation) = mark_stream_pending(&self.pending) else {
             tracing::warn!(
                 active,
                 "stream command ignored while previous operation is pending"
             );
             return;
-        }
+        };
 
         let Some(client) = self.client() else {
-            clear_stream_pending(&self.pending);
+            clear_stream_pending(&self.pending, operation);
             let failure = OutputCommandFailureRecovery::with_failed_command_fallback_status(
                 fl!(LANGUAGE_LOADER, "controller-not-connected"),
                 OutputStatus::default(),
             );
-            let _ = self.event_tx.send(AppEvent::StreamCommandFailed(failure));
+            let tx = self.event_tx.scoped(&self.scope);
+            self.scope.spawn(&self.runtime, async move {
+                let _ = tx.send(AppEvent::StreamCommandFailed(failure)).await;
+            });
             return;
         };
 
-        let tx = self.event_tx.clone();
+        let tx = self.event_tx.scoped(&self.scope);
         let pending = Arc::clone(&self.pending);
+        let Some(evidence) = self
+            .scope
+            .operation(super::lifecycle::OperationKind::Stream, client.endpoint())
+        else {
+            clear_stream_pending(&pending, operation);
+            return;
+        };
+        let scope = self.scope.clone();
         let pending_status = pending_status(active);
         let fallback = fallback_status_after_failed_output_command(&pending_status);
-        let _ = tx.send(AppEvent::StreamCommandPending(pending_status));
-
-        self.runtime.spawn(async move {
-            match client.set_streaming(active).await {
+        let completion = PendingOperation {
+            pending: pending.clone(),
+            kind: OutputKind::Stream,
+            operation,
+        };
+        self.scope.spawn_reserved(&self.runtime, async move {
+            let _completion = completion;
+            let _ = tx
+                .send(AppEvent::StreamCommandPending(pending_status))
+                .await;
+            let acknowledged = match client
+                .set_streaming_if(active, &|| {
+                    if !scope.is_active() {
+                        return false;
+                    }
+                    evidence.dispatch();
+                    true
+                })
+                .await
+            {
                 Ok(()) => {
-                    let _ = tx.send(AppEvent::StreamCommandSucceeded);
+                    evidence.acknowledge();
+                    let _ = tx.send(AppEvent::StreamCommandSucceeded).await;
+                    true
                 }
                 Err(error) => {
                     tracing::warn!(%error, active, "stream command failed");
-                    let failure = OutputCommandFailureRecovery::with_failed_command_fallback_status(
-                        error.to_string(),
-                        fallback,
-                    );
-                    let _ = tx.send(AppEvent::StreamCommandFailed(failure));
+                    let uncertain = match &client {
+                        OutputCommandClient::Obs(client) => {
+                            client.wait_retired().now_or_never().is_some()
+                        }
+                        #[cfg(test)]
+                        OutputCommandClient::Fake(_) => matches!(error, AppError::Connection(_)),
+                    };
+                    let failure = if uncertain {
+                        OutputCommandFailureRecovery::outcome_unknown(error.user_message())
+                    } else {
+                        OutputCommandFailureRecovery::with_failed_command_fallback_status(
+                            error.user_message(),
+                            fallback,
+                        )
+                    };
+                    if uncertain {
+                        evidence.unknown(failure.message().to_owned());
+                    } else {
+                        evidence.finish(Err(failure.message().to_owned()));
+                    }
+                    let _ = tx.send(AppEvent::StreamCommandFailed(failure)).await;
+                    false
                 }
+            };
+            let readback = refresh_output_statuses(&client, &tx).await;
+            if acknowledged {
+                evidence.finish(readback.result_for(OutputKind::Stream));
+                readback.publish(&tx).await;
             }
-            refresh_output_statuses(&client, &tx).await;
-            clear_stream_pending(&pending);
+            clear_stream_pending(&pending, operation);
         });
     }
 
     pub(crate) fn set_recording(&self, active: bool) {
-        if !mark_record_pending(&self.pending) {
+        let Some(operation) = mark_record_pending(&self.pending) else {
             tracing::warn!(
                 active,
                 "record command ignored while previous operation is pending"
             );
             return;
-        }
+        };
 
         let Some(client) = self.client() else {
-            clear_record_pending(&self.pending);
+            clear_record_pending(&self.pending, operation);
             let failure = OutputCommandFailureRecovery::with_failed_command_fallback_status(
                 fl!(LANGUAGE_LOADER, "controller-not-connected"),
                 OutputStatus::default(),
             );
-            let _ = self.event_tx.send(AppEvent::RecordCommandFailed(failure));
+            let tx = self.event_tx.scoped(&self.scope);
+            self.scope.spawn(&self.runtime, async move {
+                let _ = tx.send(AppEvent::RecordCommandFailed(failure)).await;
+            });
             return;
         };
 
-        let tx = self.event_tx.clone();
+        let tx = self.event_tx.scoped(&self.scope);
         let pending = Arc::clone(&self.pending);
+        let Some(evidence) = self
+            .scope
+            .operation(super::lifecycle::OperationKind::Record, client.endpoint())
+        else {
+            clear_record_pending(&pending, operation);
+            return;
+        };
+        let scope = self.scope.clone();
         let pending_status = pending_status(active);
         let fallback = fallback_status_after_failed_output_command(&pending_status);
-        let _ = tx.send(AppEvent::RecordCommandPending(pending_status));
-
-        self.runtime.spawn(async move {
-            match client.set_recording(active).await {
-                Ok(path) => {
-                    let _ = tx.send(AppEvent::RecordCommandSucceeded);
-                    if let Some(path) = path {
-                        let _ = tx.send(AppEvent::RecordStatusUpdated(OutputStatus {
-                            active: false,
-                            state: OutputRunState::Inactive,
-                            detail: Some(path),
-                        }));
+        let completion = PendingOperation {
+            pending: pending.clone(),
+            kind: OutputKind::Record,
+            operation,
+        };
+        self.scope.spawn_reserved(&self.runtime, async move {
+            let _completion = completion;
+            let _ = tx
+                .send(AppEvent::RecordCommandPending(pending_status))
+                .await;
+            let acknowledged = match client
+                .set_recording_if(active, &|| {
+                    if !scope.is_active() {
+                        return false;
                     }
+                    evidence.dispatch();
+                    true
+                })
+                .await
+            {
+                Ok(path) => {
+                    evidence.acknowledge();
+                    let _ = tx.send(AppEvent::RecordCommandSucceeded).await;
+                    if let Some(path) = path {
+                        let _ = tx
+                            .send(AppEvent::RecordStatusUpdated(OutputStatus {
+                                active: false,
+                                state: OutputRunState::Inactive,
+                                detail: Some(path),
+                            }))
+                            .await;
+                    }
+                    true
                 }
                 Err(error) => {
                     tracing::warn!(%error, active, "record command failed");
-                    let failure = OutputCommandFailureRecovery::with_failed_command_fallback_status(
-                        error.to_string(),
-                        fallback,
-                    );
-                    let _ = tx.send(AppEvent::RecordCommandFailed(failure));
+                    let uncertain = match &client {
+                        OutputCommandClient::Obs(client) => {
+                            client.wait_retired().now_or_never().is_some()
+                        }
+                        #[cfg(test)]
+                        OutputCommandClient::Fake(_) => matches!(error, AppError::Connection(_)),
+                    };
+                    let failure = if uncertain {
+                        OutputCommandFailureRecovery::outcome_unknown(error.user_message())
+                    } else {
+                        OutputCommandFailureRecovery::with_failed_command_fallback_status(
+                            error.user_message(),
+                            fallback,
+                        )
+                    };
+                    if uncertain {
+                        evidence.unknown(failure.message().to_owned());
+                    } else {
+                        evidence.finish(Err(failure.message().to_owned()));
+                    }
+                    let _ = tx.send(AppEvent::RecordCommandFailed(failure)).await;
+                    false
                 }
+            };
+            let readback = refresh_output_statuses(&client, &tx).await;
+            if acknowledged {
+                evidence.finish(readback.result_for(OutputKind::Record));
+                readback.publish(&tx).await;
             }
-            refresh_output_statuses(&client, &tx).await;
-            clear_record_pending(&pending);
+            clear_record_pending(&pending, operation);
         });
     }
 
@@ -164,7 +277,8 @@ impl OutputController {
 
     pub(crate) fn clear_pending(&self) {
         if let Ok(mut pending) = self.pending.lock() {
-            *pending = OutputPending::default();
+            pending.stream = None;
+            pending.record = None;
         }
     }
 
@@ -196,29 +310,110 @@ pub(crate) enum OutputCommandClient {
 }
 
 impl OutputCommandClient {
-    async fn set_streaming(&self, active: bool) -> Result<(), AppError> {
+    fn endpoint(&self) -> String {
         match self {
-            Self::Obs(client) => client.set_streaming(active).await,
+            Self::Obs(client) => client.endpoint().to_owned(),
             #[cfg(test)]
-            Self::Fake(client) => client.set_streaming(active).await,
+            Self::Fake(_) => "fixture".into(),
         }
     }
 
+    async fn set_streaming(&self, active: bool) -> Result<(), AppError> {
+        self.set_streaming_if(active, &|| true).await
+    }
+
+    async fn set_streaming_if(
+        &self,
+        active: bool,
+        valid: &(impl Fn() -> bool + Sync),
+    ) -> Result<(), AppError> {
+        let operation = async {
+            match self {
+                Self::Obs(client) => client.set_streaming_if(active, valid).await,
+                #[cfg(test)]
+                Self::Fake(client) => {
+                    if !valid() {
+                        return Err(AppError::Connection(
+                            "Command cancelled before dispatch".into(),
+                        ));
+                    }
+                    client.set_streaming(active).await
+                }
+            }
+        };
+        self.with_deadline(operation).await
+    }
+
     async fn set_recording(&self, active: bool) -> Result<Option<String>, AppError> {
+        self.set_recording_if(active, &|| true).await
+    }
+
+    async fn set_recording_if(
+        &self,
+        active: bool,
+        valid: &(impl Fn() -> bool + Sync),
+    ) -> Result<Option<String>, AppError> {
+        let operation = async {
+            match self {
+                Self::Obs(client) => client.set_recording_if(active, valid).await,
+                #[cfg(test)]
+                Self::Fake(client) => {
+                    if !valid() {
+                        return Err(AppError::Connection(
+                            "Command cancelled before dispatch".into(),
+                        ));
+                    }
+                    client.set_recording(active).await
+                }
+            }
+        };
+        self.with_deadline(operation).await
+    }
+
+    pub(crate) fn retire(&self) {
         match self {
-            Self::Obs(client) => client.set_recording(active).await,
+            Self::Obs(client) => client.retire(),
             #[cfg(test)]
-            Self::Fake(client) => client.set_recording(active).await,
+            Self::Fake(_) => {}
+        }
+    }
+
+    async fn with_deadline<T>(
+        &self,
+        operation: impl std::future::Future<Output = Result<T, AppError>>,
+    ) -> Result<T, AppError> {
+        match tokio::time::timeout(REQUEST_BUDGET, operation).await {
+            Ok(result) => result,
+            Err(_) => {
+                match self {
+                    Self::Obs(client) => client.retire_after_deadline(),
+                    #[cfg(test)]
+                    Self::Fake(_) => {}
+                }
+                Err(AppError::Connection(
+                    "OBS deadline exceeded; outcome unknown; command was not retried".into(),
+                ))
+            }
         }
     }
 }
 
 pub(crate) trait OutputStatusReader {
+    fn next_observation(&self) -> Option<u64> {
+        None
+    }
+    fn retire_after_timeout(&self);
     fn read_stream_status(&self) -> BoxFuture<'_, Result<OutputStatus, AppError>>;
     fn read_record_status(&self) -> BoxFuture<'_, Result<OutputStatus, AppError>>;
 }
 
 impl OutputStatusReader for ObsClient {
+    fn next_observation(&self) -> Option<u64> {
+        Some(ObsClient::next_observation(self))
+    }
+    fn retire_after_timeout(&self) {
+        self.retire_after_deadline();
+    }
     fn read_stream_status(&self) -> BoxFuture<'_, Result<OutputStatus, AppError>> {
         Box::pin(async move { self.get_stream_status().await })
     }
@@ -229,6 +424,20 @@ impl OutputStatusReader for ObsClient {
 }
 
 impl OutputStatusReader for OutputCommandClient {
+    fn next_observation(&self) -> Option<u64> {
+        match self {
+            Self::Obs(client) => Some(client.next_observation()),
+            #[cfg(test)]
+            Self::Fake(_) => None,
+        }
+    }
+    fn retire_after_timeout(&self) {
+        match self {
+            Self::Obs(client) => client.retire_after_deadline(),
+            #[cfg(test)]
+            Self::Fake(_) => {}
+        }
+    }
     fn read_stream_status(&self) -> BoxFuture<'_, Result<OutputStatus, AppError>> {
         Box::pin(async move {
             match self {
@@ -258,37 +467,62 @@ pub(crate) trait FakeOutputCommandClient: Send + Sync {
     fn get_record_status(&self) -> BoxFuture<'_, Result<OutputStatus, AppError>>;
 }
 
-fn mark_stream_pending(pending: &Arc<Mutex<OutputPending>>) -> bool {
-    let Ok(mut pending) = pending.lock() else {
-        return false;
-    };
-    if pending.stream {
-        return false;
-    }
-    pending.stream = true;
-    true
+struct PendingOperation {
+    pending: Arc<Mutex<OutputPending>>,
+    kind: OutputKind,
+    operation: u64,
 }
 
-fn clear_stream_pending(pending: &Arc<Mutex<OutputPending>>) {
+impl Drop for PendingOperation {
+    fn drop(&mut self) {
+        match self.kind {
+            OutputKind::Stream => clear_stream_pending(&self.pending, self.operation),
+            OutputKind::Record => clear_record_pending(&self.pending, self.operation),
+        }
+    }
+}
+
+fn mark_stream_pending(pending: &Arc<Mutex<OutputPending>>) -> Option<u64> {
+    let mut pending = pending.lock().ok()?;
+    if pending.stream.is_some() {
+        return None;
+    }
+    pending.next = pending
+        .next
+        .checked_add(1)
+        .expect("output operation exhausted");
+    let operation = pending.next;
+    pending.stream = Some(operation);
+    Some(operation)
+}
+
+fn clear_stream_pending(pending: &Arc<Mutex<OutputPending>>, operation: u64) {
     if let Ok(mut pending) = pending.lock() {
-        pending.stream = false;
+        if pending.stream == Some(operation) {
+            pending.stream = None;
+        }
     }
 }
 
-fn mark_record_pending(pending: &Arc<Mutex<OutputPending>>) -> bool {
-    let Ok(mut pending) = pending.lock() else {
-        return false;
-    };
-    if pending.record {
-        return false;
+fn mark_record_pending(pending: &Arc<Mutex<OutputPending>>) -> Option<u64> {
+    let mut pending = pending.lock().ok()?;
+    if pending.record.is_some() {
+        return None;
     }
-    pending.record = true;
-    true
+    pending.next = pending
+        .next
+        .checked_add(1)
+        .expect("output operation exhausted");
+    let operation = pending.next;
+    pending.record = Some(operation);
+    Some(operation)
 }
 
-fn clear_record_pending(pending: &Arc<Mutex<OutputPending>>) {
+fn clear_record_pending(pending: &Arc<Mutex<OutputPending>>, operation: u64) {
     if let Ok(mut pending) = pending.lock() {
-        pending.record = false;
+        if pending.record == Some(operation) {
+            pending.record = None;
+        }
     }
 }
 
@@ -313,20 +547,212 @@ pub(crate) async fn stop_active_outputs_before_disconnect(client: &OutputCommand
     }
 }
 
+pub(crate) struct OutputReadbackErrors {
+    stream: Option<AppError>,
+    record: Option<AppError>,
+}
+
+impl OutputReadbackErrors {
+    fn result_for(&self, kind: OutputKind) -> Result<(), String> {
+        let error = match kind {
+            OutputKind::Stream => &self.stream,
+            OutputKind::Record => &self.record,
+        };
+        error
+            .as_ref()
+            .map_or(Ok(()), |error| Err(error.user_message()))
+    }
+
+    async fn publish(self, tx: &EventSender) {
+        for (kind, error) in [
+            (OutputKind::Stream, self.stream),
+            (OutputKind::Record, self.record),
+        ] {
+            if let Some(error) = error {
+                let _ = tx
+                    .send(AppEvent::OutputReadbackFailed { kind, error })
+                    .await;
+            }
+        }
+    }
+}
+
 pub(crate) async fn refresh_output_statuses(
     client: &impl OutputStatusReader,
-    tx: &SyncSender<AppEvent>,
-) {
-    match client.read_stream_status().await {
-        Ok(status) => {
-            let _ = tx.send(AppEvent::StreamStatusUpdated(status));
+    tx: &EventSender,
+) -> OutputReadbackErrors {
+    let stream_revision = client.next_observation();
+    let stream = match tokio::time::timeout(REQUEST_BUDGET, client.read_stream_status()).await {
+        Ok(Ok(status)) => {
+            let status = AppEvent::StreamStatusUpdated(status);
+            let event = match stream_revision {
+                Some(revision) => AppEvent::Observation {
+                    revision,
+                    event: Box::new(status),
+                },
+                None => status,
+            };
+            let _ = tx.send(event).await;
+            None
         }
-        Err(error) => tracing::warn!(%error, "stream status refresh failed"),
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "stream status refresh failed");
+            Some(error)
+        }
+        Err(error) => {
+            client.retire_after_timeout();
+            Some(AppError::request(error))
+        }
+    };
+    let record_revision = client.next_observation();
+    let record = match tokio::time::timeout(REQUEST_BUDGET, client.read_record_status()).await {
+        Ok(Ok(status)) => {
+            let status = AppEvent::RecordStatusUpdated(status);
+            let event = match record_revision {
+                Some(revision) => AppEvent::Observation {
+                    revision,
+                    event: Box::new(status),
+                },
+                None => status,
+            };
+            let _ = tx.send(event).await;
+            None
+        }
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "record status refresh failed");
+            Some(error)
+        }
+        Err(error) => {
+            client.retire_after_timeout();
+            Some(AppError::request(error))
+        }
+    };
+    OutputReadbackErrors { stream, record }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::Notify;
+
+    struct GatedOutput {
+        writes: AtomicUsize,
+        reading: Notify,
+        release: Notify,
     }
-    match client.read_record_status().await {
-        Ok(status) => {
-            let _ = tx.send(AppEvent::RecordStatusUpdated(status));
+
+    impl FakeOutputCommandClient for GatedOutput {
+        fn set_streaming(&self, _: bool) -> BoxFuture<'_, Result<(), AppError>> {
+            Box::pin(async move {
+                self.writes.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
         }
-        Err(error) => tracing::warn!(%error, "record status refresh failed"),
+        fn set_recording(&self, _: bool) -> BoxFuture<'_, Result<Option<String>, AppError>> {
+            Box::pin(async { Ok(None) })
+        }
+        fn get_stream_status(&self) -> BoxFuture<'_, Result<OutputStatus, AppError>> {
+            Box::pin(async move {
+                self.reading.notify_one();
+                self.release.notified().await;
+                Err(AppError::Request("readback unavailable".into()))
+            })
+        }
+        fn get_record_status(&self) -> BoxFuture<'_, Result<OutputStatus, AppError>> {
+            Box::pin(async { Ok(OutputStatus::default()) })
+        }
+    }
+
+    async fn receive(rx: &std::sync::mpsc::Receiver<AppEvent>) -> AppEvent {
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                if let Ok(event) = rx.try_recv() {
+                    return event;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap()
+    }
+
+    #[test]
+    fn retired_output_completion_cannot_release_a_new_operation() {
+        let pending = Arc::new(Mutex::new(OutputPending::default()));
+        let old = mark_stream_pending(&pending).unwrap();
+        pending.lock().unwrap().stream = None;
+        let new = mark_stream_pending(&pending).unwrap();
+        drop(PendingOperation {
+            pending: pending.clone(),
+            kind: OutputKind::Stream,
+            operation: old,
+        });
+        assert_eq!(pending.lock().unwrap().stream, Some(new));
+        clear_stream_pending(&pending, new);
+        assert!(pending.lock().unwrap().stream.is_none());
+    }
+
+    #[tokio::test]
+    async fn output_acknowledgement_precedes_readback_and_failed_readback_is_not_replayed() {
+        let (tx, rx) = std::sync::mpsc::sync_channel(8);
+        let outputs = OutputController::new(Handle::current(), tx, Arc::new(Mutex::new(None)));
+        let fake = Arc::new(GatedOutput {
+            writes: AtomicUsize::new(0),
+            reading: Notify::new(),
+            release: Notify::new(),
+        });
+        outputs.set_client_override(OutputCommandClient::Fake(fake.clone()));
+        outputs.set_streaming(true);
+        assert!(matches!(
+            receive(&rx).await,
+            AppEvent::StreamCommandPending(_)
+        ));
+        assert!(matches!(
+            receive(&rx).await,
+            AppEvent::StreamCommandSucceeded
+        ));
+        fake.reading.notified().await;
+        assert!(
+            rx.try_recv().is_err(),
+            "ack arrived while readback remains gated"
+        );
+        fake.release.notify_one();
+        assert!(matches!(
+            receive(&rx).await,
+            AppEvent::RecordStatusUpdated(_)
+        ));
+        assert!(matches!(
+            receive(&rx).await,
+            AppEvent::OutputReadbackFailed {
+                kind: OutputKind::Stream,
+                ..
+            }
+        ));
+        assert_eq!(fake.writes.load(Ordering::SeqCst), 1);
+        outputs.scope.retire();
+        outputs.scope.quiesce().await;
+        assert!(outputs.pending.lock().unwrap().stream.is_none());
+    }
+
+    #[tokio::test]
+    async fn retirement_drops_pending_lease_even_while_readback_is_gated() {
+        let (tx, rx) = std::sync::mpsc::sync_channel(8);
+        let outputs = OutputController::new(Handle::current(), tx, Arc::new(Mutex::new(None)));
+        let fake = Arc::new(GatedOutput {
+            writes: AtomicUsize::new(0),
+            reading: Notify::new(),
+            release: Notify::new(),
+        });
+        outputs.set_client_override(OutputCommandClient::Fake(fake.clone()));
+        outputs.set_streaming(true);
+        let _ = receive(&rx).await;
+        let _ = receive(&rx).await;
+        fake.reading.notified().await;
+        outputs.scope.retire();
+        outputs.scope.quiesce().await;
+        assert!(outputs.pending.lock().unwrap().stream.is_none());
+        fake.release.notify_one();
+        assert!(rx.try_recv().is_err());
     }
 }

@@ -16,6 +16,7 @@ use adw::prelude::*;
 use gtk4::{Button, Image, Stack, StackTransitionType};
 use i18n_embed_fl::fl;
 
+use super::event_reconciliation::update_active_since;
 use crate::app_info::APP_NAME;
 use crate::controller::app_controller::AppController;
 use crate::controller::command::AppCommand;
@@ -37,6 +38,27 @@ use crate::ui::widgets::status_bar::{self, StatusBarHandle};
 
 const DEFAULT_WIDTH: i32 = 1100;
 const DEFAULT_HEIGHT: i32 = 740;
+
+/// Sources may retain page handles while running, but never outlive the shell.
+/// Destroying a Source is idempotent even if its callback already returned Break.
+#[derive(Default)]
+struct WindowSources(Vec<glib::Source>);
+
+impl WindowSources {
+    fn track(&mut self, id: glib::SourceId) {
+        if let Some(source) = glib::MainContext::default().find_source_by_id(&id) {
+            self.0.push(source);
+        }
+    }
+}
+
+impl Drop for WindowSources {
+    fn drop(&mut self) {
+        for source in &self.0 {
+            source.destroy();
+        }
+    }
+}
 
 pub fn build_main_window(
     app: &adw::Application,
@@ -61,17 +83,20 @@ pub fn build_main_window(
         .default_height(DEFAULT_HEIGHT)
         .build();
     window.add_css_class("scenedeck-root");
+    let mut sources = WindowSources::default();
 
     // ── Content stack ─────────────────────────────────────────────────────────
     let content_stack = Stack::builder()
         .vexpand(true)
         .hexpand(true)
+        .hhomogeneous(false)
+        .vhomogeneous(false)
         .transition_type(StackTransitionType::Crossfade)
         .build();
     content_stack.add_css_class("scenedeck-content-stack");
 
     let nav = NavigationContext::new(state.clone(), content_stack.clone(), controller);
-    let (live_handle, refreshers) = add_pages(&content_stack, &nav);
+    let (live_handle, refreshers) = add_pages(&content_stack, &nav, &mut sources);
 
     let current_page = state.borrow().current_page;
     content_stack.set_visible_child_name(current_page.id());
@@ -105,7 +130,7 @@ pub fn build_main_window(
 
     // ── Toast overlay (created early so the event poller can reference it) ────
     let toast_overlay = adw::ToastOverlay::new();
-    let event_ui = EventUiContext {
+    let event_ui = Rc::new(RefCell::new(Some(EventUiContext {
         live: live_handle.clone(),
         toast: toast_overlay.clone(),
         refreshers: refreshers.clone(),
@@ -113,28 +138,25 @@ pub fn build_main_window(
         sidebar_controls: sidebar_controls.clone(),
         streaming_chrome: streaming_chrome.clone(),
         status_bar: status_bar.clone(),
-    };
+    })));
 
-    install_event_polling(&nav, event_rx, &event_ui);
-    install_output_clock(&state, &status_bar);
+    super::previews::install(live_handle.clone(), nav.clone());
+    install_event_polling(app, &nav, event_rx, &event_ui, &refreshers.stats_popout);
+    sources.track(install_output_clock(&state, &status_bar));
 
     // OBS performance stats are not polled from here: the session task owns a
     // poll loop that runs for as long as the connection is up, so the status
-    // bar and the Stats page history stay current regardless of the open page
-    // and regardless of whether the GTK timer fires.
+    // bar and Stats history are reconciled by the application pump regardless
+    // of the open page, including when only a detached Stats window survives.
 
-    let content_header = build_content_header(
-        &window,
-        &nav,
-        &refreshers,
-        &header_selectors,
-        &streaming_chrome,
-    );
+    let content_header = build_content_header(&window, &nav, &header_selectors, &streaming_chrome);
 
     let content_toolbar = adw::ToolbarView::new();
     content_toolbar.add_css_class("scenedeck-content-toolbar");
     content_toolbar.add_top_bar(&content_header);
     content_toolbar.set_content(Some(&content_stack));
+
+    content_toolbar.add_bottom_bar(&crate::ui::widgets::transport_bar::build(nav.clone()));
 
     let content_page = adw::NavigationPage::builder()
         .title(APP_NAME)
@@ -146,6 +168,51 @@ pub fn build_main_window(
     split.add_css_class("scenedeck-split");
     split.set_sidebar(Some(&sidebar_page));
     split.set_content(Some(&content_page));
+    let breakpoint = adw::Breakpoint::new(
+        adw::BreakpointCondition::parse("max-width: 850sp").expect("static breakpoint"),
+    );
+    breakpoint.add_setter(&split, "collapsed", Some(&true.to_value()));
+    breakpoint.add_setter(&content_header, "show-title", Some(&false.to_value()));
+    window.add_breakpoint(breakpoint);
+    let sidebar_toggle = Button::from_icon_name("sidebar-show-symbolic");
+    sidebar_toggle.set_tooltip_text(Some(&fl!(LANGUAGE_LOADER, "window-open-navigation")));
+    sidebar_toggle.set_visible(false);
+    content_header.set_show_back_button(false);
+    content_header.pack_start(&sidebar_toggle);
+    split.connect_collapsed_notify({
+        let button = sidebar_toggle.downgrade();
+
+        move |split| {
+            if let Some(button) = button.upgrade() {
+                button.set_visible(split.is_collapsed());
+            }
+        }
+    });
+    let split_copy = split.downgrade();
+    sidebar_toggle.connect_clicked(move |_| {
+        if let Some(split) = split_copy.upgrade() {
+            split.set_show_content(false);
+        }
+    });
+    sidebar_list.connect_row_selected({
+        let split = split.downgrade();
+        move |_, row| {
+            if row.is_some() {
+                if let Some(split) = split.upgrade() {
+                    split.set_show_content(true);
+                }
+            }
+        }
+    });
+    sidebar_list.connect_row_activated({
+        let split = split.downgrade();
+        move |_, _| {
+            if let Some(split) = split.upgrade() {
+                split.set_show_content(true);
+            }
+        }
+    });
+    split.set_show_content(true);
 
     toast_overlay.add_css_class("scenedeck-toast-overlay");
     toast_overlay.set_child(Some(&split));
@@ -159,6 +226,35 @@ pub fn build_main_window(
     super::hotkeys::install(&window, &nav, live_handle.clone());
 
     super::actions::install(app, &window, nav.clone());
+    let sources = Rc::new(RefCell::new(Some(sources)));
+    app.connect_window_removed({
+        let window = window.downgrade();
+        let sources = sources.clone();
+        let event_ui = event_ui.clone();
+        move |app, removed| {
+            if window
+                .upgrade()
+                .is_some_and(|window| window.upcast_ref::<gtk4::Window>() == removed)
+            {
+                // GtkWidget::destroy is emitted only at finalization, too late
+                // to break application-action retention of the window itself.
+                sources.borrow_mut().take();
+                event_ui.borrow_mut().take();
+                for action in ["about", "reconnect", "settings", "help"] {
+                    app.remove_action(action);
+                }
+            }
+        }
+    });
+    window.connect_destroy({
+        let sources = sources.clone();
+        let event_ui = event_ui.clone();
+        move |_| {
+            // Also cover finalization without normal application removal.
+            sources.borrow_mut().take();
+            event_ui.borrow_mut().take();
+        }
+    });
 
     window.present();
 
@@ -177,22 +273,73 @@ pub fn build_main_window(
 fn add_pages(
     content_stack: &Stack,
     nav: &NavigationContext,
+    sources: &mut WindowSources,
 ) -> (Rc<LivePageHandle>, PageRefreshers) {
     // Live returns a handle; the others return (widget, refresh_fn).
     let live_handle = Rc::new(crate::ui::pages::live::build(nav.clone()));
     let (stats_widget, stats_refresh, stats_popout) = crate::ui::pages::stats::build(nav.clone());
-    let (mixer_widget, mixer_refresh) = crate::ui::pages::mixer::build(nav.clone());
+    let (mixer_widget, mixer_refresh, mixer_handle) = crate::ui::pages::mixer::build(nav.clone());
     let (graph_widget, graph_refresh) = crate::ui::pages::graph::build(nav.clone());
     let (inventory_widget, inventory_refresh) = crate::ui::pages::inventory::build(nav.clone());
     let (doctor_widget, doctor_refresh) = crate::ui::pages::doctor::build(nav.clone());
     let (settings_widget, settings_refresh) = crate::ui::pages::settings::build(nav.clone());
     let (help_widget, help_refresh) = crate::ui::pages::help::build(nav.clone());
+    let (sources_widget, sources_refresh) = crate::ui::pages::sources::build(nav.clone());
+    let weak_live = live_handle.root.downgrade();
+    let weak_sources = sources_widget.downgrade();
+    let last_revision = Rc::new(std::cell::Cell::new(u64::MAX));
+    sources.track(glib::timeout_add_local(Duration::from_millis(200), {
+        let nav = nav.clone();
+        let live = live_handle.clone();
+        let sources_refresh = sources_refresh.clone();
+        move || {
+            let Some(root) = weak_live.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            let sources_visible = weak_sources.upgrade().is_some_and(|w| w.is_mapped());
+            let (revision, refresh) = {
+                let mut state = nav.state.borrow_mut();
+                if state
+                    .workspace
+                    .output_results
+                    .expire(crate::controller::workspace::unix_ms())
+                {
+                    state.workspace.revision = state.workspace.revision.wrapping_add(1);
+                }
+                (
+                    state.workspace.revision,
+                    (root.is_mapped() || sources_visible)
+                        && (state.workspace.dirty
+                            || state
+                                .workspace
+                                .observed_at
+                                .is_none_or(|t| t.elapsed() >= Duration::from_secs(10)))
+                        && !state.workspace.loading
+                        && !state.workspace.pending
+                        && matches!(state.obs_status, ObsStatus::Connected { .. }),
+                )
+            };
+            if revision != last_revision.get() {
+                last_revision.set(revision);
+                if sources_visible {
+                    sources_refresh();
+                }
+                let inventory = nav.state.borrow().scene_inventory.clone();
+                crate::ui::pages::live::rebuild_scene_cards(&live, &inventory, &nav);
+            }
+            if refresh {
+                super::workspace::refresh(&nav);
+            }
+            glib::ControlFlow::Continue
+        }
+    }));
 
     for (page, widget) in [
         (
             Page::Live,
             live_handle.root.clone().upcast::<gtk4::Widget>(),
         ),
+        (Page::Sources, sources_widget),
         (Page::Mixer, mixer_widget),
         (Page::Graph, graph_widget),
         (Page::Inventory, inventory_widget),
@@ -208,11 +355,13 @@ fn add_pages(
         stats: stats_refresh,
         stats_popout,
         mixer: mixer_refresh,
+        mixer_handle,
         graph: graph_refresh,
         inventory: inventory_refresh,
         doctor: doctor_refresh,
         settings: settings_refresh,
         help: help_refresh,
+        sources: sources_refresh,
     };
 
     (live_handle, refreshers)
@@ -224,23 +373,40 @@ fn add_pages(
 /// drains everything queued on each tick so a burst of events costs one tick,
 /// not one tick each.
 fn install_event_polling(
+    app: &adw::Application,
     nav: &NavigationContext,
     event_rx: mpsc::Receiver<AppEvent>,
-    event_ui: &EventUiContext,
+    event_ui: &Rc<RefCell<Option<EventUiContext>>>,
+    stats_popout: &StatsPopoutSlot,
 ) {
-    glib::timeout_add_local(Duration::from_millis(50), {
-        let nav = nav.clone();
-        let event_ui = event_ui.clone();
-        move || {
-            loop {
-                match event_rx.try_recv() {
-                    Ok(event) => apply_event(&nav, event, &event_ui),
-                    Err(mpsc::TryRecvError::Empty) => break,
-                    // The controller is gone; stop the timer with it.
-                    Err(mpsc::TryRecvError::Disconnected) => return glib::ControlFlow::Break,
-                }
+    let nav = nav.clone(); // Navigation holds only weak stack/sidebar references.
+    let event_ui = Rc::downgrade(event_ui);
+    let stats_popout = stats_popout.clone();
+    super::event_pump::install(app, event_rx, move |event| {
+        let shell = event_ui.upgrade().and_then(|slot| slot.borrow().clone());
+        let before = {
+            let state = nav.state.borrow();
+            (
+                state.stats_history.latest().copied(),
+                state.workspace.revision,
+            )
+        };
+        apply_event(&nav, event, shell.as_ref());
+        let changed = {
+            let state = nav.state.borrow();
+            before
+                != (
+                    state.stats_history.latest().copied(),
+                    state.workspace.revision,
+                )
+        };
+        if shell.is_none() && changed {
+            // The surviving pop-out is independent of all shell page handles.
+            // Meter-only traffic must not redraw one-second telemetry charts.
+            let refresh = stats_popout.borrow().clone();
+            if let Some(refresh) = refresh {
+                refresh();
             }
-            glib::ControlFlow::Continue
         }
     });
 }
@@ -249,7 +415,10 @@ fn install_event_polling(
 ///
 /// OBS does not push anything when an output is simply still running, but the
 /// elapsed time in those lines has to keep counting, so this ticks on its own.
-fn install_output_clock(state: &Rc<RefCell<AppState>>, status_bar: &StatusBarHandle) {
+fn install_output_clock(
+    state: &Rc<RefCell<AppState>>,
+    status_bar: &StatusBarHandle,
+) -> glib::SourceId {
     glib::timeout_add_local(Duration::from_secs(1), {
         let state = state.clone();
         let status_bar = status_bar.clone();
@@ -277,7 +446,7 @@ fn install_output_clock(state: &Rc<RefCell<AppState>>, status_bar: &StatusBarHan
             );
             glib::ControlFlow::Continue
         }
-    });
+    })
 }
 
 /// Build the header bar above the content area.
@@ -287,7 +456,6 @@ fn install_output_clock(state: &Rc<RefCell<AppState>>, status_bar: &StatusBarHan
 fn build_content_header(
     window: &adw::ApplicationWindow,
     nav: &NavigationContext,
-    refreshers: &PageRefreshers,
     header_selectors: &HeaderSelectors,
     streaming_chrome: &StreamingChromeRef,
 ) -> adw::HeaderBar {
@@ -304,8 +472,12 @@ fn build_content_header(
         "help-about-symbolic",
         fl!(LANGUAGE_LOADER, "window-about-tooltip"),
         {
-            let window = window.clone();
-            move || super::actions::show_about(&window)
+            let window = window.downgrade();
+            move || {
+                if let Some(window) = window.upgrade() {
+                    super::actions::show_about(&window);
+                }
+            }
         },
     );
     content_header.pack_end(&about_btn);
@@ -325,19 +497,25 @@ fn build_content_header(
         fl!(LANGUAGE_LOADER, "window-refresh-tooltip"),
         {
             let nav = nav.clone();
-            let refreshers = refreshers.clone();
             move || {
-                // Kick off a data re-fetch from OBS (no-op if disconnected).
+                // Readbacks update the relevant widgets; do not redraw old data first.
                 nav.dispatch(AppCommand::RefreshData);
-                // Also immediately rebuild the current page from AppState.
-                let page = nav.state.borrow().current_page;
-                refreshers.call(page);
             }
         },
     );
     content_header.pack_start(&stream_live_icon);
     content_header.pack_start(&refresh_btn);
     header_selectors.pack_into(&content_header);
+    content_header.pack_end(&crate::ui::widgets::studio_controls::toggle(nav.clone()));
+    let sources = header_button(
+        "view-list-symbolic",
+        fl!(LANGUAGE_LOADER, "sources-title"),
+        {
+            let nav = nav.clone();
+            move || nav.switch_to_page(Page::Sources)
+        },
+    );
+    content_header.pack_end(&sources);
 
     *streaming_chrome.borrow_mut() = Some(StreamingChrome {
         header: content_header.clone(),
@@ -395,7 +573,6 @@ fn maybe_show_welcome_dialog(window: &adw::ApplicationWindow, nav: &NavigationCo
     });
     dialog.present();
 }
-
 // ── Event handler ─────────────────────────────────────────────────────────────
 
 /// Apply one `AppEvent` to the widgets.
@@ -405,19 +582,227 @@ fn maybe_show_welcome_dialog(window: &adw::ApplicationWindow, nav: &NavigationCo
 /// to read badly inline, but the routing happens *inside* the match rather than
 /// in a pre-filter above it, so adding a variant to `AppEvent` is a compile
 /// error here instead of a panic when that event first arrives at runtime.
-fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
-    let EventUiContext {
-        live,
-        toast,
-        refreshers,
-        header_selectors,
-        sidebar_controls,
-        streaming_chrome,
-        status_bar,
-    } = ui;
+fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiContext>) {
     use crate::ui::pages::live::{rebuild_audio_cards, rebuild_scene_cards, show_live_view};
 
     match event {
+        AppEvent::SessionRetired(terminal) => {
+            let current = nav.accepts_session_event(terminal.generation, None);
+            if current {
+                let message = crate::infra::error::AppError::Connection(terminal.reason.clone())
+                    .user_message();
+                let status = ObsStatus::Error(message.clone());
+                show_no_session_ui(
+                    nav,
+                    ui,
+                    &status,
+                    &fl!(LANGUAGE_LOADER, "window-obs-connection-failed"),
+                );
+                if let Some(ui) = ui {
+                    ui.toast.add_toast(adw::Toast::new(&message));
+                }
+            }
+            nav.state
+                .borrow_mut()
+                .apply_terminal_evidence(terminal, current);
+            if current {
+                if let Some(ui) = ui {
+                    refresh_output_status_bar(nav, ui, OutputKind::Stream);
+                    refresh_output_status_bar(nav, ui, OutputKind::Record);
+                }
+            }
+        }
+        AppEvent::SessionEvent {
+            generation,
+            collection,
+            event,
+        } => {
+            let accepted = nav.accepts_session_event(generation, collection)
+                && nav
+                    .state
+                    .borrow()
+                    .accepts_session_publication(generation, &event);
+            if accepted {
+                apply_event(nav, *event, ui);
+            }
+        }
+        AppEvent::Observation { revision, event } => {
+            let event = nav
+                .state
+                .borrow_mut()
+                .reconcile_observation(revision, *event);
+            if let Some(event) = event {
+                apply_event(nav, event, ui);
+            }
+        }
+        AppEvent::ActiveAudioLoading { scene } => {
+            if nav.state.borrow().scene_inventory.current_id != scene {
+                return;
+            }
+            nav.state.borrow_mut().invalidate_active_audio();
+            if let Some(ui) = ui {
+                rebuild_audio_cards(&ui.live, &[], nav);
+                ui.refreshers.call_if_visible(nav, Page::Mixer);
+            }
+        }
+        AppEvent::ActiveAudioObserved { scene, result } => {
+            nav.state.borrow_mut().apply_active_audio(scene, result);
+            if let Some(ui) = ui {
+                let inputs = nav.state.borrow().audio_inputs.clone();
+                rebuild_audio_cards(&ui.live, &inputs, nav);
+                ui.refreshers.call_if_visible(nav, Page::Mixer);
+            }
+        }
+        AppEvent::WorkspaceAcknowledged {
+            epoch,
+            sequence,
+            result_id,
+        } => {
+            super::event_reconciliation::acknowledge(
+                &mut nav.state.borrow_mut(),
+                epoch,
+                sequence,
+                result_id,
+            );
+        }
+        AppEvent::CommandFailed { operation, error } => {
+            let label = match operation {
+                "profile" | "profile-readback" => {
+                    fl!(LANGUAGE_LOADER, "window-selector-profile-label")
+                }
+                "collection" | "collection-readback" => {
+                    fl!(LANGUAGE_LOADER, "window-selector-collection-label")
+                }
+                _ => fl!(
+                    LANGUAGE_LOADER,
+                    "error-notification-title",
+                    message = error.user_message()
+                ),
+            };
+            if operation == "profile-readback" {
+                nav.state.borrow_mut().profiles.current = None;
+            }
+            if operation == "collection-readback" {
+                apply_event(nav, AppEvent::WorkspaceScopeChanging, ui);
+            }
+            let message = format!("{label}: {}", error.user_message());
+            if let Some(ui) = ui {
+                ui.toast.add_toast(adw::Toast::new(&message));
+            }
+            let mut state = nav.state.borrow_mut();
+            state
+                .workspace
+                .log(crate::domain::workflow::ActivityOrigin::Failed, message);
+            state.workspace.revision = state.workspace.revision.wrapping_add(1);
+        }
+        AppEvent::GraphInvalidated => {
+            nav.state.borrow_mut().set_topology_loading();
+            if let Some(ui) = ui {
+                ui.refreshers
+                    .call_visible_among(nav, &[Page::Graph, Page::Doctor]);
+            }
+        }
+        AppEvent::GraphFailed(error) | AppEvent::GraphRefreshRejected(error) => {
+            let message = error.user_message();
+            nav.state.borrow_mut().set_topology_failed(message.clone());
+            if let Some(ui) = ui {
+                ui.toast.add_toast(adw::Toast::new(&message));
+            }
+            if let Some(ui) = ui {
+                ui.refreshers
+                    .call_visible_among(nav, &[Page::Graph, Page::Doctor]);
+            }
+        }
+        AppEvent::ThumbnailLoaded { request, result } => {
+            if let Some(ui) = ui {
+                super::previews::apply(&ui.live, nav, request, result);
+            }
+        }
+        AppEvent::WorkspaceMediaLoaded {
+            epoch,
+            sequence,
+            input,
+            result,
+        } => {
+            super::event_reconciliation::media_loaded(
+                &mut nav.state.borrow_mut(),
+                epoch,
+                sequence,
+                input,
+                result,
+            );
+        }
+        AppEvent::WorkspaceLoaded {
+            epoch,
+            sequence,
+            result_id,
+            acknowledged,
+            uncertain,
+            result,
+            action,
+        } => {
+            let accepted = super::event_reconciliation::complete_workspace(
+                &mut nav.state.borrow_mut(),
+                super::event_reconciliation::WorkspaceCompletion {
+                    epoch,
+                    sequence,
+                    result_id,
+                    acknowledged,
+                    uncertain,
+                    result,
+                    action,
+                },
+            );
+            if !accepted {
+                return;
+            }
+            if let Some(ui) = ui {
+                let inventory = nav.state.borrow().scene_inventory.clone();
+                rebuild_scene_cards(&ui.live, &inventory, nav);
+                refresh_output_status_bar(nav, ui, OutputKind::Record);
+                refresh_output_status_bar(nav, ui, OutputKind::Stream);
+                ui.refreshers.call_if_visible(nav, Page::Doctor);
+            }
+        }
+        AppEvent::WorkspaceInvalidated => {
+            let mut state = nav.state.borrow_mut();
+            state.workspace.dirty = true;
+        }
+        AppEvent::WorkspaceScopeChanging => {
+            if let Some(ui) = ui {
+                super::previews::clear(&ui.live, nav);
+            }
+            nav.dispatch(AppCommand::CancelWorkspace);
+            let mut state = nav.state.borrow_mut();
+            state.invalidate_collection_runtime();
+            drop(state);
+            let Some(ui) = ui else {
+                return;
+            };
+            let collections = nav.state.borrow().scene_collections.clone();
+            ui.header_selectors.update_scene_collections(&collections);
+            rebuild_scene_cards(&ui.live, &Default::default(), nav);
+            rebuild_audio_cards(&ui.live, &[], nav);
+            ui.refreshers.call_visible_among(
+                nav,
+                &[
+                    Page::Mixer,
+                    Page::Inventory,
+                    Page::Graph,
+                    Page::Doctor,
+                    Page::Sources,
+                ],
+            );
+        }
+        AppEvent::WorkspaceAudioFailed(error) => {
+            if let Some(ui) = ui {
+                ui.toast.add_toast(adw::Toast::new(&error));
+            }
+            super::event_reconciliation::audio_failed(&mut nav.state.borrow_mut(), error);
+        }
+        AppEvent::ReplaySaved(path) => {
+            super::event_reconciliation::replay_saved(&mut nav.state.borrow_mut(), path);
+        }
         AppEvent::Connecting => show_no_session_ui(
             nav,
             ui,
@@ -433,6 +818,14 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
         ),
 
         AppEvent::Connected(info) => {
+            {
+                let mut state = nav.state.borrow_mut();
+                state.available_requests = info.available_requests.clone();
+                state.supported_image_formats = info.supported_image_formats.clone();
+                state.connected_endpoint = Some(info.endpoint.clone());
+                state.workspace.dirty = true;
+                state.workspace.revision = state.workspace.revision.wrapping_add(1);
+            }
             tracing::info!(
                 obs_version = %info.obs_version,
                 websocket_version = %info.websocket_version,
@@ -442,12 +835,49 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
                 obs_version: info.obs_version,
             };
             nav.state.borrow_mut().set_obs_status(obs_status.clone());
-            sidebar_controls.apply_connection(&obs_status);
-            sync_output_indicators(nav, sidebar_controls, streaming_chrome);
-            status_bar::set_connection(status_bar, &obs_status);
-            show_live_view(live);
+            {
+                let mut state = nav.state.borrow_mut();
+                state.stream_status =
+                    OutputStatus::new(false, crate::domain::output::OutputRunState::Unknown);
+                state.record_status =
+                    OutputStatus::new(false, crate::domain::output::OutputRunState::Unknown);
+            }
+            if let Some(ui) = ui {
+                ui.sidebar_controls.apply_connection(&obs_status);
+                sync_output_indicators(nav, &ui.sidebar_controls, &ui.streaming_chrome);
+                status_bar::set_connection(&ui.status_bar, &obs_status);
+                show_live_view(&ui.live);
+            }
         }
 
+        AppEvent::OutputReadbackFailed { kind, error } => {
+            let message = error.user_message();
+            {
+                let mut state = nav.state.borrow_mut();
+                let unknown =
+                    OutputStatus::new(false, crate::domain::output::OutputRunState::Unknown);
+                match kind {
+                    OutputKind::Stream => {
+                        state.set_stream_status(unknown);
+                        state.last_stream_command_error = Some(message.clone());
+                    }
+                    OutputKind::Record => {
+                        state.set_record_status(unknown);
+                        state.last_record_command_error = Some(message.clone());
+                    }
+                }
+                state.workspace.log(
+                    crate::domain::workflow::ActivityOrigin::Failed,
+                    message.clone(),
+                );
+            }
+            if let Some(ui) = ui {
+                ui.toast.add_toast(adw::Toast::new(&message));
+            }
+            if let Some(ui) = ui {
+                refresh_output_status_bar(nav, ui, kind);
+            }
+        }
         AppEvent::StreamStatusUpdated(_)
         | AppEvent::RecordStatusUpdated(_)
         | AppEvent::StreamCommandPending(_)
@@ -460,7 +890,11 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
         }
 
         AppEvent::SceneInventoryUpdated(inventory) => {
-            show_live_view(live);
+            // Same-scope inventory readbacks must not blank valid cached stills.
+            // Session/collection retirement and the preview scheduler own invalidation.
+            if let Some(ui) = ui {
+                show_live_view(&ui.live);
+            }
             let inventory = {
                 let mut state = nav.state.borrow_mut();
                 let mut inventory = inventory.clone();
@@ -469,43 +903,65 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
                     state.scene_inventory.previous_id.as_deref(),
                     inventory.current_id.as_deref(),
                 );
+                if state.scene_inventory.current_id != inventory.current_id {
+                    state.invalidate_active_audio();
+                }
                 state.scene_inventory = inventory.clone();
                 inventory
             };
-            // Update the current scene label from the inventory's known active scene.
-            let scene_text = inventory.current_id.as_deref().unwrap_or("—");
-            live.current_scene_label.set_text(&fl!(
-                LANGUAGE_LOADER,
-                "window-current-scene",
-                scene = scene_text
-            ));
-            rebuild_scene_cards(live, &inventory, nav);
-            refreshers.call_visible_among(nav, &[Page::Mixer, Page::Inventory, Page::Doctor]);
+            if let Some(ui) = ui {
+                rebuild_scene_cards(&ui.live, &inventory, nav);
+                let inputs = nav.state.borrow().audio_inputs.clone();
+                rebuild_audio_cards(&ui.live, &inputs, nav);
+                ui.refreshers
+                    .call_visible_among(nav, &[Page::Mixer, Page::Inventory, Page::Doctor]);
+            }
         }
 
         AppEvent::ProfilesUpdated(profiles) => {
             nav.state.borrow_mut().profiles = profiles.clone();
-            header_selectors.update_profiles(&profiles);
+            if let Some(ui) = ui {
+                ui.header_selectors.update_profiles(&profiles);
+            }
         }
 
         AppEvent::SceneCollectionsUpdated(collections) => {
-            nav.state.borrow_mut().scene_collections = collections.clone();
-            header_selectors.update_scene_collections(&collections);
+            {
+                let mut state = nav.state.borrow_mut();
+                if state.scene_collections.current != collections.current {
+                    state.invalidate_collection_runtime();
+                }
+                state.scene_collections = collections.clone();
+            }
+            if let Some(ui) = ui {
+                ui.header_selectors.update_scene_collections(&collections);
+            }
         }
 
         AppEvent::CurrentSceneChanged(scene_id) => {
-            live.current_scene_label.set_text(&fl!(
-                LANGUAGE_LOADER,
-                "window-current-scene",
-                scene = scene_id.clone()
-            ));
             let inventory = {
                 let mut state = nav.state.borrow_mut();
-                state.scene_inventory.set_current_scene(scene_id);
+                state.workspace.log(
+                    crate::domain::workflow::ActivityOrigin::Observed,
+                    fl!(
+                        LANGUAGE_LOADER,
+                        "window-current-scene",
+                        scene = scene_id.clone()
+                    ),
+                );
+                state.workspace.dirty = true;
+                state.workspace.revision = state.workspace.revision.wrapping_add(1);
+                state.set_current_program(scene_id);
                 state.scene_inventory.clone()
             };
-            rebuild_scene_cards(live, &inventory, nav);
-            refreshers.call_if_visible(nav, Page::Mixer);
+            if let Some(ui) = ui {
+                rebuild_scene_cards(&ui.live, &inventory, nav);
+            }
+            if let Some(ui) = ui {
+                let inputs = nav.state.borrow().audio_inputs.clone();
+                rebuild_audio_cards(&ui.live, &inputs, nav);
+                ui.refreshers.call_if_visible(nav, Page::Mixer);
+            }
         }
 
         AppEvent::Error(err) => {
@@ -522,56 +978,66 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
 
             // Surface the error as a dismissable toast so it's visible even
             // when the user is on a different page.
-            toast.add_toast(
-                adw::Toast::builder()
-                    .title(fl!(
-                        LANGUAGE_LOADER,
-                        "window-toast-obs-error",
-                        error = message
-                    ))
-                    .timeout(8)
-                    .build(),
-            );
+            if let Some(ui) = ui {
+                ui.toast.add_toast(
+                    adw::Toast::builder()
+                        .title(fl!(
+                            LANGUAGE_LOADER,
+                            "window-toast-obs-error",
+                            error = message
+                        ))
+                        .timeout(8)
+                        .build(),
+                );
+            }
         }
 
+        #[cfg(test)]
         AppEvent::AudioInputsUpdated(inputs) => {
-            nav.state.borrow_mut().audio_inputs = inputs.clone();
-            rebuild_audio_cards(live, &inputs, nav);
-            refreshers.call_if_visible(nav, Page::Mixer);
+            let scene = nav.state.borrow().scene_inventory.current_id.clone();
+            nav.state
+                .borrow_mut()
+                .apply_active_audio(scene, Ok(inputs.clone()));
+            if let Some(ui) = ui {
+                rebuild_audio_cards(&ui.live, &inputs, nav);
+                ui.refreshers.call_if_visible(nav, Page::Mixer);
+            }
         }
 
-        AppEvent::MixerAudioInputsLoading { scene } => {
-            let transition = nav.state.borrow_mut().set_mixer_audio_loading(scene);
-            apply_mixer_audio_transition(nav, refreshers, transition);
-        }
-
-        AppEvent::MixerAudioInputsUpdated { scene, inputs } => {
+        AppEvent::MixerAudioInputsUpdated { request, inputs } => {
             let transition = nav
                 .state
                 .borrow_mut()
-                .set_mixer_audio_success(scene, inputs);
-            apply_mixer_audio_transition(nav, refreshers, transition);
+                .set_mixer_audio_success(request, inputs);
+            if let Some(ui) = ui {
+                apply_mixer_audio_transition(nav, &ui.refreshers, transition);
+            }
         }
 
-        AppEvent::MixerAudioInputsFailed { scene, message } => {
+        AppEvent::MixerAudioInputsFailed { request, message } => {
             let transition = nav
                 .state
                 .borrow_mut()
-                .set_mixer_audio_failure(scene, message);
-            apply_mixer_audio_transition(nav, refreshers, transition);
+                .set_mixer_audio_failure(request, message);
+            if let Some(ui) = ui {
+                apply_mixer_audio_transition(nav, &ui.refreshers, transition);
+            }
         }
 
         AppEvent::InputMuteChanged { input, muted } => {
             let rebuild_mixer = {
                 let mut state = nav.state.borrow_mut();
                 state.apply_input_mute(&input, muted);
+                state.workspace.dirty = true;
+                state.workspace.revision = state.workspace.revision.wrapping_add(1);
                 should_rebuild_visible_mixer_for_input_event(&state, &input)
             };
 
-            update_live_audio_card(live, &input, |card| card.update_mute(muted));
-
-            if rebuild_mixer {
-                refreshers.call(Page::Mixer);
+            if let Some(ui) = ui {
+                update_live_audio_card(&ui.live, &input, |card| card.update_mute(muted));
+                if rebuild_mixer {
+                    ui.refreshers.mixer_handle.update_mute(&input, muted);
+                }
             }
         }
 
@@ -583,15 +1049,20 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
             let rebuild_mixer = {
                 let mut state = nav.state.borrow_mut();
                 state.apply_input_volume(&input, volume_mul, volume_db);
+                state.workspace.dirty = true;
+                state.workspace.revision = state.workspace.revision.wrapping_add(1);
                 should_rebuild_visible_mixer_for_input_event(&state, &input)
             };
 
-            update_live_audio_card(live, &input, |card| {
-                card.update_volume(volume_mul, volume_db)
-            });
-
-            if rebuild_mixer {
-                refreshers.call(Page::Mixer);
+            if let Some(ui) = ui {
+                update_live_audio_card(&ui.live, &input, |card| {
+                    card.update_volume(volume_mul, volume_db)
+                });
+                if rebuild_mixer {
+                    ui.refreshers
+                        .mixer_handle
+                        .update_volume(&input, volume_mul, volume_db);
+                }
             }
         }
 
@@ -602,8 +1073,11 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
         }
 
         AppEvent::GraphUpdated(graph) => {
-            nav.state.borrow_mut().scene_graph = graph;
-            refreshers.call_visible_among(nav, &[Page::Graph, Page::Doctor]);
+            nav.state.borrow_mut().set_topology_ready(graph);
+            if let Some(ui) = ui {
+                ui.refreshers
+                    .call_visible_among(nav, &[Page::Graph, Page::Doctor]);
+            }
         }
 
         AppEvent::StatsUpdated {
@@ -616,10 +1090,14 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
                 state.set_obs_stats(stats, bitrate_kbps, stream);
                 state.stream_status.active
             };
-            status_bar::set_stats(status_bar, &stats, bitrate_kbps, streaming);
+            if let Some(ui) = ui {
+                status_bar::set_stats(&ui.status_bar, &stats, bitrate_kbps, streaming);
+            }
             // History is recorded on every sample; only redraw when the charts
             // are actually on screen (embedded, or in a detached pop-out).
-            refreshers.refresh_stats(nav);
+            if let Some(ui) = ui {
+                ui.refreshers.refresh_stats(nav);
+            }
         }
     }
 }
@@ -648,13 +1126,19 @@ fn apply_mixer_audio_transition(
 /// blocks, and the copies had drifted.
 fn show_no_session_ui(
     nav: &NavigationContext,
-    ui: &EventUiContext,
+    ui: Option<&EventUiContext>,
     status: &ObsStatus,
     live_hint: &str,
 ) {
     use crate::ui::pages::live::{rebuild_audio_cards, show_disconnected_view};
 
+    if let Some(ui) = ui {
+        super::previews::clear(&ui.live, nav);
+    }
     nav.state.borrow_mut().reset_obs_session(status.clone());
+    let Some(ui) = ui else {
+        return;
+    };
 
     ui.sidebar_controls.apply_connection(status);
     sync_output_indicators(nav, &ui.sidebar_controls, &ui.streaming_chrome);
@@ -663,13 +1147,21 @@ fn show_no_session_ui(
     status_bar::clear_stats(&ui.status_bar);
 
     show_disconnected_view(&ui.live, live_hint);
-    ui.live
-        .current_scene_label
-        .set_text(&fl!(LANGUAGE_LOADER, "window-current-scene-none"));
     rebuild_audio_cards(&ui.live, &[], nav);
 
     // The header lists belong to the session that just ended.
     ui.header_selectors.clear();
+    ui.refreshers.call_visible_among(
+        nav,
+        &[
+            Page::Mixer,
+            Page::Inventory,
+            Page::Graph,
+            Page::Doctor,
+            Page::Sources,
+        ],
+    );
+    ui.refreshers.refresh_stats(nav);
 }
 
 /// Redraw one output's status-bar slot and the indicators that follow it.
@@ -701,7 +1193,38 @@ fn refresh_output_status_bar(nav: &NavigationContext, ui: &EventUiContext, kind:
     sync_output_indicators(nav, &ui.sidebar_controls, &ui.streaming_chrome);
 }
 
-fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiContext) {
+fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiContext>) {
+    let observation = match &event {
+        AppEvent::StreamStatusUpdated(status) => Some((OutputKind::Stream, status.clone())),
+        AppEvent::RecordStatusUpdated(status) => Some((OutputKind::Record, status.clone())),
+        _ => None,
+    };
+    if let Some((kind, status)) = observation {
+        let mut state = nav.state.borrow_mut();
+        let previous = match kind {
+            OutputKind::Stream => &state.stream_status,
+            OutputKind::Record => &state.record_status,
+        };
+        if previous != &status {
+            if kind == OutputKind::Record && !status.active {
+                if let Some(path) = status.detail.as_ref().filter(|path| !path.is_empty()) {
+                    let scope = state.workflow_scope();
+                    state.workspace.output_results.observe(
+                        crate::domain::output_result::OutputResultKind::RecordingStop,
+                        scope,
+                        Some(path.clone()),
+                        crate::controller::workspace::unix_ms(),
+                    );
+                }
+            }
+            state.workspace.log(
+                crate::domain::workflow::ActivityOrigin::Observed,
+                format!("{}: {}", kind.label(), status.state.label()),
+            );
+            state.workspace.dirty = true;
+            state.workspace.revision = state.workspace.revision.wrapping_add(1);
+        }
+    }
     // Each arm makes its one state change; rendering is the shared step that
     // follows it.
     let kind = match event {
@@ -740,11 +1263,26 @@ fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiCont
         }
 
         AppEvent::RecordCommandSucceeded => {
-            nav.state.borrow_mut().set_record_command_success();
+            let mut state = nav.state.borrow_mut();
+            if let Some(id) = state.workspace.recording_stop_result.take() {
+                state
+                    .workspace
+                    .output_results
+                    .acknowledge(id, crate::controller::workspace::unix_ms());
+            }
+            state.workspace.revision = state.workspace.revision.wrapping_add(1);
+            state.set_record_command_success();
             OutputKind::Record
         }
 
         AppEvent::StreamCommandFailed(failure) => {
+            if let Some(ui) = ui {
+                ui.toast.add_toast(adw::Toast::new(failure.message()));
+            }
+            nav.state.borrow_mut().workspace.log(
+                crate::domain::workflow::ActivityOrigin::Failed,
+                failure.message().to_owned(),
+            );
             nav.state
                 .borrow_mut()
                 .set_stream_command_failure_with_recovery(failure);
@@ -752,6 +1290,31 @@ fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiCont
         }
 
         AppEvent::RecordCommandFailed(failure) => {
+            if let Some(ui) = ui {
+                ui.toast.add_toast(adw::Toast::new(failure.message()));
+            }
+            {
+                let mut state = nav.state.borrow_mut();
+                if let Some(id) = state.workspace.recording_stop_result.take() {
+                    if failure.uncertain() {
+                        state
+                            .workspace
+                            .output_results
+                            .invalidate(crate::controller::workspace::unix_ms());
+                    } else {
+                        state.workspace.output_results.fail(
+                            id,
+                            failure.message().to_string(),
+                            crate::controller::workspace::unix_ms(),
+                        );
+                    }
+                }
+                state.workspace.log(
+                    crate::domain::workflow::ActivityOrigin::Failed,
+                    failure.message().to_string(),
+                );
+                state.workspace.revision = state.workspace.revision.wrapping_add(1);
+            }
             nav.state
                 .borrow_mut()
                 .set_record_command_failure_with_recovery(failure);
@@ -766,7 +1329,9 @@ fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: &EventUiCont
         }
     };
 
-    refresh_output_status_bar(nav, ui, kind);
+    if let Some(ui) = ui {
+        refresh_output_status_bar(nav, ui, kind);
+    }
 }
 
 /// Keep the last non-empty recording path OBS reported.
@@ -796,14 +1361,6 @@ fn update_live_audio_card(
         .find(|card| card.input_id == input_id)
     {
         change(card);
-    }
-}
-
-fn update_active_since(active: bool, active_since: &mut Option<Instant>) {
-    match (active, active_since.is_some()) {
-        (true, false) => *active_since = Some(Instant::now()),
-        (false, true) => *active_since = None,
-        _ => {}
     }
 }
 
@@ -911,11 +1468,13 @@ struct PageRefreshers {
     /// `ui::pages::stats::PopoutSlot`.
     stats_popout: StatsPopoutSlot,
     mixer: RefreshFn,
+    mixer_handle: Rc<crate::ui::pages::mixer::MixerPageHandle>,
     graph: RefreshFn,
     inventory: RefreshFn,
     doctor: RefreshFn,
     settings: RefreshFn,
     help: RefreshFn,
+    sources: RefreshFn,
 }
 
 #[derive(Clone)]
@@ -972,6 +1531,7 @@ impl PageRefreshers {
             Page::Doctor => (self.doctor)(),
             Page::Settings => (self.settings)(),
             Page::Help => (self.help)(),
+            Page::Sources => (self.sources)(),
             Page::Live => {}
         }
     }
@@ -991,6 +1551,270 @@ mod tests {
     use super::*;
     use crate::domain::audio::AudioInput;
     use crate::domain::mixer::MixerMode;
+
+    #[test]
+    #[ignore = "requires a disposable GTK display; no OBS connection"]
+    fn native_refresh_button_waits_for_new_data_before_redrawing() {
+        crate::ui::test_support::native_test(
+            "ui::window::tests::native_refresh_button_waits_for_new_data_before_redrawing",
+            || {
+                fn find(widget: &gtk4::Widget) -> Option<gtk4::Button> {
+                    if let Some(button) = widget.downcast_ref::<gtk4::Button>() {
+                        if button.icon_name().as_deref() == Some("view-refresh-symbolic") {
+                            return Some(button.clone());
+                        }
+                    }
+                    let mut child = widget.first_child();
+                    while let Some(widget) = child {
+                        if let Some(button) = find(&widget) {
+                            return Some(button);
+                        }
+                        child = widget.next_sibling();
+                    }
+                    None
+                }
+                let (nav, stack, _runtime, _events) = crate::ui::test_support::navigation();
+                nav.state.borrow_mut().current_page = Page::Graph;
+                let mut sources = WindowSources::default();
+                let (_live, _refreshers) = add_pages(&stack, &nav, &mut sources);
+                let app = adw::Application::builder()
+                    .application_id("io.github.worxbend.scenedeck.RefreshFixture")
+                    .flags(gio::ApplicationFlags::NON_UNIQUE)
+                    .build();
+                app.register(None::<&gio::Cancellable>).unwrap();
+                let window = adw::ApplicationWindow::builder()
+                    .application(&app)
+                    .content(&stack)
+                    .build();
+                let header = build_content_header(
+                    &window,
+                    &nav,
+                    &HeaderSelectors::build(&nav),
+                    &Rc::new(RefCell::new(None)),
+                );
+                stack.set_visible_child_name(Page::Graph.id());
+                window.present();
+                crate::ui::test_support::pump(Duration::from_millis(100));
+                let graph = stack.child_by_name(Page::Graph.id()).unwrap();
+                let content = graph.first_child().unwrap();
+                find(header.upcast_ref()).unwrap().emit_clicked();
+                assert_eq!(
+                    graph.first_child(),
+                    Some(content),
+                    "Refresh rebuilt old data before any readback"
+                );
+                window.destroy();
+            },
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display; synthetic state, no OBS connection"]
+    fn native_identical_inventory_readback_keeps_live_preview_paintables() {
+        crate::ui::test_support::native_test(
+            "ui::window::tests::native_identical_inventory_readback_keeps_live_preview_paintables",
+            || {
+                let (nav, stack, _runtime, _events) = crate::ui::test_support::navigation();
+                {
+                    let mut state = nav.state.borrow_mut();
+                    state.config.live.scene_previews = true;
+                    state.obs_status = ObsStatus::Connected {
+                        obs_version: "fixture".into(),
+                    };
+                    state.connected_endpoint = Some("fixture".into());
+                    state.scene_collections.current = Some("Fixture".into());
+                    state.available_requests = vec!["GetSourceScreenshot".into()];
+                    state.scene_inventory.scenes =
+                        vec![crate::domain::scene::Scene { id: "Main".into() }];
+                    state.scene_inventory.current_id = Some("Main".into());
+                    state
+                        .registry
+                        .set_scene_role("Main", Some(crate::domain::role::SceneRole::Primary));
+                    state.workspace.observed_at = Some(std::time::Instant::now());
+                    state.workspace.snapshot = Some(Default::default());
+                }
+                let mut sources = WindowSources::default();
+                let (live, refreshers) = add_pages(&stack, &nav, &mut sources);
+                let (_, _, sidebar_controls) = sidebar::build(&nav);
+                let ui = EventUiContext {
+                    live: live.clone(),
+                    toast: adw::ToastOverlay::new(),
+                    refreshers,
+                    header_selectors: HeaderSelectors::build(&nav),
+                    sidebar_controls,
+                    streaming_chrome: Rc::new(RefCell::new(None)),
+                    status_bar: status_bar::build(),
+                };
+                let inventory = nav.state.borrow().scene_inventory.clone();
+                apply_event(
+                    &nav,
+                    AppEvent::SceneInventoryUpdated(inventory.clone()),
+                    Some(&ui),
+                );
+                stack.set_visible_child_name(Page::Live.id());
+                let window = gtk4::Window::builder()
+                    .default_width(900)
+                    .default_height(700)
+                    .child(&stack)
+                    .build();
+                super::super::previews::install(live.clone(), nav.clone());
+                window.present();
+                crate::ui::test_support::pump(Duration::from_millis(150));
+                let picture = live.scene_cards.borrow()[0].picture.clone();
+                let texture = gtk4::gdk::MemoryTexture::new(
+                    1,
+                    1,
+                    gtk4::gdk::MemoryFormat::R8g8b8a8,
+                    &glib::Bytes::from_owned(vec![255_u8, 255, 255, 255]),
+                    4,
+                );
+                picture.set_paintable(Some(&texture));
+                let paintable = picture.paintable().unwrap();
+                apply_event(&nav, AppEvent::SceneInventoryUpdated(inventory), Some(&ui));
+                assert_eq!(
+                    picture.paintable(),
+                    Some(paintable),
+                    "unchanged inventory blanked the existing preview"
+                );
+                apply_event(&nav, AppEvent::WorkspaceScopeChanging, Some(&ui));
+                assert!(
+                    picture.paintable().is_none(),
+                    "retired collection must still clear old previews"
+                );
+                window.destroy();
+            },
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display; fake config/password, no OBS"]
+    fn native_assembled_window_releases_shell_sources_while_stats_popout_survives() {
+        crate::ui::test_support::native_test(
+            "ui::window::tests::native_assembled_window_releases_shell_sources_while_stats_popout_survives",
+            || {
+                use crate::controller::dependencies::{AppConfigProvider, ControllerDependencies, ObsPasswordProvider};
+                use crate::storage::config::AppConfig;
+                struct NoServices;
+                impl AppConfigProvider for NoServices {
+                    fn load_config(&self) -> AppConfig { panic!("fixture must not read configuration") }
+                }
+                impl ObsPasswordProvider for NoServices {
+                    fn obs_password(&self) -> Result<Option<String>, crate::infra::error::AppError> { panic!("fixture must not access keyring") }
+                }
+                fn find(widget: &gtk4::Widget, predicate: &impl Fn(&gtk4::Widget) -> bool) -> Option<gtk4::Widget> {
+                    if predicate(widget) { return Some(widget.clone()); }
+                    let mut child = widget.first_child();
+                    while let Some(widget) = child {
+                        child = widget.next_sibling();
+                        if let Some(found) = find(&widget, predicate) { return Some(found); }
+                    }
+                    None
+                }
+                let app = adw::Application::builder().application_id("io.github.worxbend.scenedeck.ShellFixture").flags(gio::ApplicationFlags::NON_UNIQUE).build();
+                app.register(None::<&gio::Cancellable>).unwrap();
+                let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                let (tx, rx) = mpsc::sync_channel(128);
+                let controller = Rc::new(RefCell::new(AppController::with_dependencies(runtime.handle().clone(), tx.clone(), ControllerDependencies::new(std::sync::Arc::new(NoServices), std::sync::Arc::new(NoServices)))));
+                let weak_controller = Rc::downgrade(&controller);
+                let mut initial = app_state();
+                initial.config.onboarding.welcome_shown = true;
+                initial.scene_inventory.scenes.push(crate::domain::scene::Scene { id: "Fixture".into() });
+                let state = Rc::new(RefCell::new(initial));
+                let window = build_main_window(&app, state.clone(), controller.clone(), rx);
+                crate::ui::test_support::pump(Duration::from_millis(120));
+                let stack = find(window.upcast_ref(), &|w| w.has_css_class("scenedeck-content-stack")).unwrap().downcast::<gtk4::Stack>().unwrap();
+                let split = find(window.upcast_ref(), &|w| w.is::<adw::NavigationSplitView>()).unwrap();
+                let stats = stack.child_by_name(Page::Stats.id()).unwrap();
+                stack.set_visible_child_name(Page::Stats.id());
+                let popout_button = find(&stats, &|w| w.downcast_ref::<gtk4::Button>().is_some_and(|b| b.icon_name().as_deref() == Some("window-new-symbolic"))).unwrap().downcast::<gtk4::Button>().unwrap();
+                popout_button.emit_clicked();
+                crate::ui::test_support::pump(Duration::from_millis(80));
+                let popout = app.windows().into_iter().find(|w| w != window.upcast_ref::<gtk4::Window>()).expect("real Stats pop-out");
+                let weak_window = window.downgrade();
+                let weak_stack = stack.downgrade();
+                let weak_split = split.downgrade();
+                let live = stack.child_by_name(Page::Live.id()).unwrap().downgrade();
+                let status = find(window.upcast_ref(), &|w| w.has_css_class("scenedeck-status-bar")).expect("production status bar").downgrade();
+                let sources_page = stack.child_by_name(Page::Sources.id()).unwrap().downgrade();
+                drop((stack, split, stats, popout_button));
+                window.close();
+                let weak_state = Rc::downgrade(&state);
+                drop((window, state, controller));
+                crate::ui::test_support::pump(Duration::from_millis(250));
+                assert!(popout.is_visible(), "closing the shell must not close Stats");
+                assert!(weak_window.upgrade().is_none(), "application action retained shell");
+                assert!(weak_stack.upgrade().is_none(), "assembled stack retained");
+                assert!(weak_split.upgrade().is_none(), "split signal cycle retained shell");
+                assert!(live.upgrade().is_none(), "workspace source retained Live");
+                assert!(status.upgrade().is_none(), "output clock retained status bar");
+                let sample = crate::domain::stats::ObsStats {
+                    disk_space_mb: Some(1024.0), cpu_usage_percent: 41.0,
+                    memory_usage_mb: 512.0, configured_fps: Some(60.0), active_fps: 60.0,
+                    average_frame_render_time_ms: 2.0, render_skipped_frames: 0,
+                    render_total_frames: 60, output_skipped_frames: 0, output_total_frames: 60,
+                };
+                for cpu in [41.0, 42.0] {
+                    tx.try_send(AppEvent::SessionEvent {
+                        generation: 0, collection: Some(0),
+                        event: Box::new(AppEvent::Observation {
+                            revision: 1,
+                            event: Box::new(AppEvent::StatsUpdated {
+                                stats: crate::domain::stats::ObsStats { cpu_usage_percent: cpu, ..sample },
+                                bitrate_kbps: None, stream: None,
+                            }),
+                        }),
+                    }).expect("surviving Stats must keep the application receiver alive");
+                    crate::ui::test_support::pump(Duration::from_millis(80));
+                    let expected = fl!(LANGUAGE_LOADER, "stats-value-percent", value = format!("{cpu:.1}"));
+                    assert!(find(popout.upcast_ref(), &|w| w.downcast_ref::<gtk4::Label>().is_some_and(|label| label.text() == expected)).is_some(), "post-shell sample was not rendered in Stats");
+                }
+                tx.try_send(AppEvent::SessionEvent {
+                    generation: 1, collection: None,
+                    event: Box::new(AppEvent::StatsUpdated { stats: sample, bitrate_kbps: None, stream: None }),
+                }).unwrap();
+                crate::ui::test_support::pump(Duration::from_millis(80));
+                assert_eq!(weak_state.upgrade().unwrap().borrow().stats_history.len(), 2, "closed-shell reconciliation must still reject replaced-session publications");
+                tx.try_send(AppEvent::Disconnected).unwrap();
+                crate::ui::test_support::pump(Duration::from_millis(80));
+                assert!(matches!(weak_state.upgrade().unwrap().borrow().obs_status, ObsStatus::Disconnected));
+                assert!(weak_state.upgrade().unwrap().borrow().obs_stats.is_none());
+                let weak_popout = popout.downgrade();
+                let weak_popout_content = popout.clone().downcast::<adw::Window>().unwrap().content().unwrap().downgrade();
+                popout.close();
+                drop(popout);
+                // Accepted saves may retain navigation until GTK publishes their completion.
+                let drained = Rc::new(std::cell::Cell::new(false));
+                crate::ui::background_io::flush_pending(Duration::from_secs(10), {
+                    let drained = drained.clone();
+                    move |outcome| {
+                        outcome.expect("accepted saves must drain before checking controller lifetime");
+                        drained.set(true);
+                    }
+                });
+                let deadline = Instant::now() + Duration::from_secs(15);
+                while !drained.get() {
+                    assert!(Instant::now() < deadline, "accepted-save publication deadline");
+                    glib::MainContext::default().iteration(false);
+                    std::thread::yield_now();
+                }
+                assert!(sources_page.upgrade().is_none(), "Sources page retained shell");
+                assert!(weak_popout.upgrade().is_none(), "closed Stats window retained");
+                assert!(weak_popout_content.upgrade().is_none(), "closed Stats content retained");
+                // Sources' media poll owns navigation, but only weakly reaches its root.
+                // Its one-second terminal tick is independent of the save barrier above.
+                // Require the root to be gone first, then give that source a bounded
+                // chance to return Break. A real navigation/widget cycle still fails.
+                let source_deadline = Instant::now() + Duration::from_secs(2);
+                while weak_controller.strong_count() != 0 && Instant::now() < source_deadline {
+                    glib::MainContext::default().iteration(false);
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                assert!(weak_controller.upgrade().is_none(), "closed shell/pop-out retained controller after saves and terminal source ticks drained");
+                assert!(weak_state.upgrade().is_none(), "application pump retained state after last window closed");
+                assert!(matches!(tx.try_send(AppEvent::GraphInvalidated), Err(mpsc::TrySendError::Disconnected(_))), "last window removal must retire the application event receiver");
+            },
+        );
+    }
 
     fn input(id: &str) -> AudioInput {
         AudioInput::new(id.to_string(), false, 1.0, 0.0)
@@ -1034,7 +1858,7 @@ mod tests {
         let mut state = app_state();
         state.current_page = Page::Mixer;
         state.mixer.mode = MixerMode::ActiveScene;
-        state.audio_inputs = vec![input("Mic"), input("Music")];
+        state.apply_active_audio(None, Ok(vec![input("Mic"), input("Music")]));
 
         assert!(should_rebuild_visible_mixer_for_input_event(&state, "Mic"));
     }
@@ -1044,7 +1868,7 @@ mod tests {
         let mut state = app_state();
         state.current_page = Page::Mixer;
         state.mixer.mode = MixerMode::ActiveScene;
-        state.audio_inputs = vec![input("Mic")];
+        state.apply_active_audio(None, Ok(vec![input("Mic")]));
 
         assert!(!should_rebuild_visible_mixer_for_input_event(
             &state, "Music"
@@ -1054,8 +1878,8 @@ mod tests {
     #[test]
     fn mixer_input_event_rebuilds_for_visible_loaded_selected_input() {
         let mut state = selected_mixer_state();
-        state.set_mixer_audio_loading("Scene A".to_string());
-        state.set_mixer_audio_success("Scene A".to_string(), vec![input("Mic"), input("Music")]);
+        let request = state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_success(request, vec![input("Mic"), input("Music")]);
 
         assert!(should_rebuild_visible_mixer_for_input_event(&state, "Mic"));
     }
@@ -1066,8 +1890,8 @@ mod tests {
         state.current_page = Page::Mixer;
         state.mixer.mode = MixerMode::SelectedScene;
         state.scene_inventory.current_id = Some("Current".to_string());
-        state.set_mixer_audio_loading("Current".to_string());
-        state.set_mixer_audio_success("Current".to_string(), vec![input("Fallback Mic")]);
+        let request = state.set_mixer_audio_loading("Current".to_string());
+        state.set_mixer_audio_success(request, vec![input("Fallback Mic")]);
 
         assert!(should_rebuild_visible_mixer_for_input_event(
             &state,
@@ -1082,8 +1906,8 @@ mod tests {
         state.mixer.mode = MixerMode::PinnedScene;
         state.mixer.selected_scene = Some("Scene A".to_string());
         state.mixer.pinned_scene = Some("Pinned".to_string());
-        state.set_mixer_audio_loading("Pinned".to_string());
-        state.set_mixer_audio_success("Pinned".to_string(), vec![input("Pinned Mic")]);
+        let request = state.set_mixer_audio_loading("Pinned".to_string());
+        state.set_mixer_audio_success(request, vec![input("Pinned Mic")]);
 
         assert!(should_rebuild_visible_mixer_for_input_event(
             &state,
@@ -1098,8 +1922,8 @@ mod tests {
         state.mixer.mode = MixerMode::PinnedScene;
         state.mixer.selected_scene = Some("Selected".to_string());
         state.scene_inventory.current_id = Some("Current".to_string());
-        state.set_mixer_audio_loading("Selected".to_string());
-        state.set_mixer_audio_success("Selected".to_string(), vec![input("Selected Mic")]);
+        let request = state.set_mixer_audio_loading("Selected".to_string());
+        state.set_mixer_audio_success(request, vec![input("Selected Mic")]);
 
         assert!(should_rebuild_visible_mixer_for_input_event(
             &state,
@@ -1117,8 +1941,8 @@ mod tests {
         state.current_page = Page::Mixer;
         state.mixer.mode = MixerMode::PinnedScene;
         state.scene_inventory.current_id = Some("Current".to_string());
-        state.set_mixer_audio_loading("Current".to_string());
-        state.set_mixer_audio_success("Current".to_string(), vec![input("Current Mic")]);
+        let request = state.set_mixer_audio_loading("Current".to_string());
+        state.set_mixer_audio_success(request, vec![input("Current Mic")]);
 
         assert!(should_rebuild_visible_mixer_for_input_event(
             &state,
@@ -1129,8 +1953,8 @@ mod tests {
     #[test]
     fn mixer_input_event_ignores_unrelated_loaded_input() {
         let mut state = selected_mixer_state();
-        state.set_mixer_audio_loading("Scene A".to_string());
-        state.set_mixer_audio_success("Scene A".to_string(), vec![input("Mic")]);
+        let request = state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_success(request, vec![input("Mic")]);
 
         assert!(!should_rebuild_visible_mixer_for_input_event(
             &state, "Music"
@@ -1141,8 +1965,8 @@ mod tests {
     fn mixer_input_event_ignores_non_mixer_page() {
         let mut state = selected_mixer_state();
         state.current_page = Page::Live;
-        state.set_mixer_audio_loading("Scene A".to_string());
-        state.set_mixer_audio_success("Scene A".to_string(), vec![input("Mic")]);
+        let request = state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_success(request, vec![input("Mic")]);
 
         assert!(!should_rebuild_visible_mixer_for_input_event(&state, "Mic"));
     }
@@ -1156,8 +1980,8 @@ mod tests {
         ));
 
         let mut error = selected_mixer_state();
-        error.set_mixer_audio_loading("Scene A".to_string());
-        error.set_mixer_audio_failure("Scene A".to_string(), "OBS failed".to_string());
+        let request = error.set_mixer_audio_loading("Scene A".to_string());
+        error.set_mixer_audio_failure(request, "OBS failed".to_string());
         assert!(!should_rebuild_visible_mixer_for_input_event(&error, "Mic"));
 
         let missing = selected_mixer_state();
@@ -1166,16 +1990,16 @@ mod tests {
         ));
 
         let mut empty = selected_mixer_state();
-        empty.set_mixer_audio_loading("Scene A".to_string());
-        empty.set_mixer_audio_success("Scene A".to_string(), Vec::new());
+        let request = empty.set_mixer_audio_loading("Scene A".to_string());
+        empty.set_mixer_audio_success(request, Vec::new());
         assert!(!should_rebuild_visible_mixer_for_input_event(&empty, "Mic"));
     }
 
     #[test]
     fn mixer_input_event_ignores_snapshot_for_other_scene() {
         let mut state = selected_mixer_state();
-        state.set_mixer_audio_loading("Scene B".to_string());
-        state.set_mixer_audio_success("Scene B".to_string(), vec![input("Mic")]);
+        let request = state.set_mixer_audio_loading("Scene B".to_string());
+        state.set_mixer_audio_success(request, vec![input("Mic")]);
 
         assert!(!should_rebuild_visible_mixer_for_input_event(&state, "Mic"));
     }

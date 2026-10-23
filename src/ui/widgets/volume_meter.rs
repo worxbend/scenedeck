@@ -82,6 +82,7 @@ struct MeterWidgetState {
     /// counted twice and a silent input is allowed to decay.
     consumed_sequence: u64,
     last_frame_us: Option<i64>,
+    last_accessible_us: Option<i64>,
     drawn: Vec<MeterChannelDisplay>,
 }
 
@@ -91,6 +92,7 @@ impl MeterWidgetState {
             meter: InputMeterState::new(),
             consumed_sequence: 0,
             last_frame_us: None,
+            last_accessible_us: None,
             drawn: Vec::new(),
         }
     }
@@ -98,23 +100,44 @@ impl MeterWidgetState {
 
 /// Build a volume meter bound to `input_id`.
 pub(crate) fn build(input_id: &str, nav: NavigationContext) -> VolumeMeterHandle {
+    build_oriented(input_id, nav, false)
+}
+pub(crate) fn build_horizontal(input_id: &str, nav: NavigationContext) -> VolumeMeterHandle {
+    build_oriented(input_id, nav, true)
+}
+fn build_oriented(input_id: &str, nav: NavigationContext, horizontal: bool) -> VolumeMeterHandle {
     let area = DrawingArea::builder()
         .content_width(meter_width(ASSUMED_CHANNELS))
         .content_height(METER_HEIGHT)
         .valign(gtk4::Align::Center)
         .build();
     area.add_css_class("audio-meter");
+    if horizontal {
+        area.set_content_width(128);
+        area.set_content_height(20);
+        area.set_hexpand(true);
+    }
+    area.set_focusable(true);
+    area.update_property(&[gtk4::accessible::Property::Label(&fl!(
+        LANGUAGE_LOADER,
+        "audio-source-meter",
+        source = input_id
+    ))]);
 
     let state = Rc::new(RefCell::new(MeterWidgetState::new()));
     set_meter_tooltip(&area, 0);
 
     area.set_draw_func({
         let state = Rc::clone(&state);
-        move |_, cr, _width, height| {
+        move |_, cr, width, height| {
+            if horizontal {
+                cr.translate(f64::from(width), 0.0);
+                cr.rotate(std::f64::consts::FRAC_PI_2);
+            }
             draw_meter(
                 cr,
                 &state.borrow().drawn,
-                f64::from(height),
+                f64::from(if horizontal { width } else { height }),
                 adw::StyleManager::default().is_dark(),
             );
         }
@@ -124,7 +147,7 @@ pub(crate) fn build(input_id: &str, nav: NavigationContext) -> VolumeMeterHandle
         let state = Rc::clone(&state);
         let input_id = input_id.to_string();
         move |area, clock| {
-            advance_frame(area, clock, &state, &input_id, &nav);
+            advance_frame(area, clock, &state, &input_id, &nav, horizontal);
             glib::ControlFlow::Continue
         }
     });
@@ -139,6 +162,7 @@ fn advance_frame(
     state: &Rc<RefCell<MeterWidgetState>>,
     input_id: &str,
     nav: &NavigationContext,
+    horizontal: bool,
 ) {
     let frame_us = clock.frame_time();
     // Read levels before touching the widget state: `AppState` is shared with
@@ -163,6 +187,30 @@ fn advance_frame(
     }
 
     let display = state.meter.display();
+    if state
+        .last_accessible_us
+        .is_none_or(|last| frame_us.saturating_sub(last) >= 1_000_000)
+    {
+        let levels = display
+            .iter()
+            .enumerate()
+            .map(|(index, channel)| {
+                let value = channel
+                    .peak_db
+                    .map(|db| format!("{db:.0} dB"))
+                    .unwrap_or_else(|| fl!(LANGUAGE_LOADER, "audio-meter-no-level"));
+                format!("{}: {value}", channel_label(index, display.len()))
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        let description = if levels.is_empty() {
+            fl!(LANGUAGE_LOADER, "audio-meter-no-observation")
+        } else {
+            levels
+        };
+        area.update_property(&[gtk4::accessible::Property::Description(&description)]);
+        state.last_accessible_us = Some(frame_us);
+    }
     if display == state.drawn {
         return;
     }
@@ -171,7 +219,11 @@ fn advance_frame(
         // The widget keeps room for two columns even for a mono source, so a
         // row of cards does not jog sideways the moment audio starts.
         let channels = display.len().max(ASSUMED_CHANNELS);
-        area.set_content_width(meter_width(channels));
+        if horizontal {
+            area.set_content_height(meter_width(channels));
+        } else {
+            area.set_content_width(meter_width(channels));
+        }
         set_meter_tooltip(area, display.len());
     }
     state.drawn = display;

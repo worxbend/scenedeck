@@ -52,6 +52,7 @@
       })();
     </script>
 
+    <noscript><style>.patchbay .pane[hidden] { display: flex !important; }</style></noscript>
     <script type="module" src="./scripts/main.js?v=dev"></script>
 
     <script type="application/ld+json">
@@ -62,8 +63,8 @@
         "applicationCategory": "MultimediaApplication",
         "operatingSystem": "Linux",
         "url": "https://worxbend.github.io/scenedeck/",
-        "downloadUrl": "https://github.com/worxbend/scenedeck/releases/latest",
-        "softwareVersion": "0.1.21",
+        "downloadUrl": "https://github.com/worxbend/scenedeck/releases/tag/v0.4.0",
+        "softwareVersion": "0.4.0",
         "license": "https://opensource.org/licenses/MIT",
         "isAccessibleForFree": true,
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
@@ -105,7 +106,7 @@
         </nav>
 
         <div class="rail__actions">
-          <span class="pill rail__version" data-release-version>v0.1.21</span>
+          <span class="pill rail__version" data-release-version>v0.4.0</span>
 
           <button
             class="icon-btn"
@@ -148,7 +149,7 @@
         <div class="shell shell--slab hero__grid">
           <div class="hero__copy">
             <p class="legend" data-reveal>
-              OBS Studio remote · Native Linux · <span data-release-version>v0.1.21</span>
+              OBS Studio remote · Native Linux · <span data-release-version>v0.4.0</span>
             </p>
 
             <h1 class="poster hero__title" data-reveal style="--reveal-delay: 60ms">
@@ -393,15 +394,15 @@
             <h2 class="display-lg" data-reveal>Only the scenes you actually switch to.</h2>
             <p class="body-lg prose" data-reveal>
               Tag scenes by role once. The Live page then shows only your primary scenes, as cards,
-              with your own accent colour behind each one. One click sends a scene to program. No
-              renaming your collection. No restructuring it.
+              with your own accent colour behind each one. A click goes straight to Program in direct
+              mode; in Studio mode it selects Preview, ready for Take. No renaming or restructuring.
             </p>
           </div>
 
           <div class="live__grid">
             <div class="live__demo panel panel--raised" data-reveal>
               <div class="live__demo-head">
-                <p class="legend">Live · Primary scenes</p>
+                <p class="legend">Live · Primary scenes · Direct-mode demo</p>
                 <p class="legend live__pgm">
                   Program: <strong class="mono" id="live-program">Main Cam</strong>
                 </p>
@@ -659,7 +660,8 @@
               <h3 class="title-lg">While connected</h3>
               <p class="body-md prose">
                 Switch OBS profiles and scene collections straight from the SceneDeck header. Start
-                and stop streaming and recording from the sidebar, on any page.
+                and stop streaming and recording from Live's compact output bar, alongside
+                replay buffer and virtual camera. Open Sources from the topbar for detailed inputs.
               </p>
               <p class="legend">Internationalised with Fluent · English is the fallback locale</p>
             </article>
@@ -671,7 +673,7 @@
                 each of the four output actions can ask first. Turn the confirmations on or off
                 independently — start stream, stop stream, start recording, stop recording.
               </p>
-              <p class="legend">Off by default for recording, on for the stream</p>
+              <p class="legend">Start confirmations off by default · Stop confirmations on</p>
             </article>
           </div>
         </div>
@@ -684,8 +686,9 @@
             <p class="section-no" data-reveal>The real thing</p>
             <h2 class="display-lg" data-reveal>Screenshots.</h2>
             <p class="body-lg prose" data-reveal>
-              The actual application, connected to OBS 32.1.2. Everything above this point is a
-              rebuild in HTML so it can theme with the page; these are not.
+              These native captures show an earlier release connected to OBS 32.1.2.
+              The current scene wall, Sources view and responsive Inventory list are documented in
+              the repository; these gallery assets and the HTML demo await a redesign refresh.
             </p>
           </div>
 
@@ -787,7 +790,9 @@
             <p class="section-no" data-reveal>06 / Install</p>
             <h2 class="display-lg" data-reveal>Patch it in.</h2>
             <p class="body-lg prose" data-reveal>
-              Five ways in, on both amd64 and arm64. All of them are one command.
+              Choose Snap, a published download for amd64 or arm64, or a source build.
+              Flatpak bundles are optional and are not available in every release.
+              Download commands below use amd64 filenames; on arm64, use the filename you downloaded.
             </p>
           </div>
 
@@ -833,6 +838,9 @@
                     <svg class="icon icon--check" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check" /></svg>
                   </button>
                 </div>
+                <p class="body-md prose">To let SceneDeck save your OBS password in the desktop Secret Service keyring, connect its non-auto-connected permission:</p>
+                <div class="code"><code><span class="prompt">$</span> sudo snap connect scenedeck:password-manager-service</code></div>
+                <p class="body-md prose">If saving still fails, unlock your desktop keyring and check that a Secret Service is running. Passwords are not stored in the config file.</p>
                 <a class="snapbadge" href="https://snapcraft.io/scenedeck" rel="noopener">
                   <img
                     src="./assets/snap-store.svg"
@@ -846,78 +854,84 @@
               <div class="pane" role="tabpanel" id="pane-flatpak" aria-labelledby="tab-flatpak" tabindex="0" hidden>
                 <h3 class="headline-sm">Install the Flatpak bundle</h3>
                 <p class="body-md prose">
-                  Built against the GNOME runtime and published with every release.
+                  Optional GNOME-runtime bundles. Download a bundle first, then install it locally.
+                  Your Flatpak installation also needs Flathub and the matching GNOME runtime.
                 </p>
-                <div class="code">
-                  <code><span class="prompt">$</span> flatpak install --user ./scenedeck-0.1.21-linux-amd64.flatpak</code>
-                  <button class="copy" type="button" data-copy="flatpak install --user ./scenedeck-0.1.21-linux-amd64.flatpak" aria-label="Copy command">
+                <div class="code" data-release-requires="flatpak-amd64" hidden>
+                  <code data-release-command="flatpak-install"><span class="prompt">$</span> </code>
+                  <button class="copy" type="button" data-release-copy="flatpak-install" aria-label="Copy command" data-copy>
                     <svg class="icon icon--copy" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy" /></svg>
                     <svg class="icon icon--check" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check" /></svg>
                   </button>
                 </div>
-                <div class="code">
+                <div class="code" data-release-requires="flatpak-amd64" hidden>
                   <code><span class="prompt">$</span> flatpak run io.scenedeck.app</code>
                   <button class="copy" type="button" data-copy="flatpak run io.scenedeck.app" aria-label="Copy command">
                     <svg class="icon icon--copy" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy" /></svg>
                     <svg class="icon icon--check" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check" /></svg>
                   </button>
                 </div>
+                <p class="body-md prose" data-release-unavailable="flatpak">No Flatpak bundle is published for this release. Choose Snap, AppImage or a source build instead.</p>
                 <div class="dl-row">
-                  <a class="btn btn--tonal btn--sm" href="https://github.com/worxbend/scenedeck/releases/latest/download/scenedeck-0.1.21-linux-amd64.flatpak">Download .flatpak — amd64</a>
-                  <a class="btn btn--outlined btn--sm" href="https://github.com/worxbend/scenedeck/releases/latest/download/scenedeck-0.1.21-linux-arm64.flatpak">arm64</a>
+                  <a class="btn btn--tonal btn--sm" data-release-asset="flatpak-amd64" hidden>Download .flatpak — amd64</a>
+                  <a class="btn btn--outlined btn--sm" data-release-asset="flatpak-arm64" hidden>arm64</a>
                 </div>
               </div>
 
               <div class="pane" role="tabpanel" id="pane-appimage" aria-labelledby="tab-appimage" tabindex="0" hidden>
                 <h3 class="headline-sm">Run the AppImage</h3>
+                <p class="body-md prose" data-release-unavailable="appimage" hidden>No AppImage is published for this release. See the release page or choose another method.</p>
                 <p class="body-md prose">
-                  Nothing to install. Delta updates are available through the published
-                  <code class="mono">.zsync</code> files.
+                  Download the AppImage for your architecture, mark it executable, then run it.
+                  Use delta updates only when the release also includes matching <code class="mono">.zsync</code> files.
                 </p>
-                <div class="code">
-                  <code><span class="prompt">$</span> chmod +x scenedeck-0.1.21-linux-amd64.AppImage</code>
-                  <button class="copy" type="button" data-copy="chmod +x scenedeck-0.1.21-linux-amd64.AppImage" aria-label="Copy command">
+                <div class="code" data-release-requires="appimage-amd64">
+                  <code data-release-command="appimage-chmod"><span class="prompt">$</span> chmod +x scenedeck-0.4.0-linux-amd64.AppImage</code>
+                  <button class="copy" type="button" data-release-copy="appimage-chmod" aria-label="Copy command" data-copy="chmod +x scenedeck-0.4.0-linux-amd64.AppImage">
                     <svg class="icon icon--copy" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy" /></svg>
                     <svg class="icon icon--check" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check" /></svg>
                   </button>
                 </div>
-                <div class="code">
-                  <code><span class="prompt">$</span> ./scenedeck-0.1.21-linux-amd64.AppImage</code>
-                  <button class="copy" type="button" data-copy="./scenedeck-0.1.21-linux-amd64.AppImage" aria-label="Copy command">
+                <div class="code" data-release-requires="appimage-amd64">
+                  <code data-release-command="appimage-run"><span class="prompt">$</span> ./scenedeck-0.4.0-linux-amd64.AppImage</code>
+                  <button class="copy" type="button" data-release-copy="appimage-run" aria-label="Copy command" data-copy="./scenedeck-0.4.0-linux-amd64.AppImage">
                     <svg class="icon icon--copy" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy" /></svg>
                     <svg class="icon icon--check" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check" /></svg>
                   </button>
                 </div>
                 <div class="dl-row">
-                  <a class="btn btn--tonal btn--sm" href="https://github.com/worxbend/scenedeck/releases/latest/download/scenedeck-0.1.21-linux-amd64.AppImage">Download .AppImage — amd64</a>
-                  <a class="btn btn--outlined btn--sm" href="https://github.com/worxbend/scenedeck/releases/latest/download/scenedeck-0.1.21-linux-arm64.AppImage">arm64</a>
+                  <a class="btn btn--tonal btn--sm" data-release-asset="appimage-amd64" href="https://github.com/worxbend/scenedeck/releases/download/v0.4.0/scenedeck-0.4.0-linux-amd64.AppImage">Download .AppImage — amd64</a>
+                  <a class="btn btn--outlined btn--sm" data-release-asset="appimage-arm64" href="https://github.com/worxbend/scenedeck/releases/download/v0.4.0/scenedeck-0.4.0-linux-arm64.AppImage">arm64</a>
                 </div>
               </div>
 
               <div class="pane" role="tabpanel" id="pane-binary" aria-labelledby="tab-binary" tabindex="0" hidden>
                 <h3 class="headline-sm">Take the compiled binary</h3>
+                <p class="body-md prose" data-release-unavailable="binary" hidden>No binary is published for this release. See the release page or choose another method.</p>
                 <p class="body-md prose">
                   The bare executable, plus a <code class="mono">.tar.gz</code> if you would rather
-                  have an archive. You supply the GTK4 and libadwaita runtime libraries.
+                  have an archive. You supply GTK ≥ 4.10, libadwaita ≥ 1.4 and libdbus-1.
+                  Published native binaries are built on Ubuntu 24.04; older distro ABIs are not guaranteed.
                 </p>
-                <div class="code">
-                  <code><span class="prompt">$</span> chmod +x scenedeck-0.1.21-linux-amd64 &amp;&amp; ./scenedeck-0.1.21-linux-amd64</code>
-                  <button class="copy" type="button" data-copy="chmod +x scenedeck-0.1.21-linux-amd64 && ./scenedeck-0.1.21-linux-amd64" aria-label="Copy command">
+                <div class="code" data-release-requires="binary-amd64">
+                  <code data-release-command="binary-run"><span class="prompt">$</span> chmod +x scenedeck-0.4.0-linux-amd64 &amp;&amp; ./scenedeck-0.4.0-linux-amd64</code>
+                  <button class="copy" type="button" data-release-copy="binary-run" aria-label="Copy command" data-copy="chmod +x scenedeck-0.4.0-linux-amd64 &amp;&amp; ./scenedeck-0.4.0-linux-amd64">
                     <svg class="icon icon--copy" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy" /></svg>
                     <svg class="icon icon--check" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check" /></svg>
                   </button>
                 </div>
                 <div class="dl-row">
-                  <a class="btn btn--tonal btn--sm" href="https://github.com/worxbend/scenedeck/releases/latest/download/scenedeck-0.1.21-linux-amd64">Download binary — amd64</a>
-                  <a class="btn btn--outlined btn--sm" href="https://github.com/worxbend/scenedeck/releases/latest/download/scenedeck-0.1.21-linux-arm64">arm64</a>
-                  <a class="btn btn--outlined btn--sm" href="https://github.com/worxbend/scenedeck/releases/latest/download/scenedeck-0.1.21-linux-amd64.tar.gz">.tar.gz</a>
+                  <a class="btn btn--tonal btn--sm" data-release-asset="binary-amd64" href="https://github.com/worxbend/scenedeck/releases/download/v0.4.0/scenedeck-0.4.0-linux-amd64">Download binary — amd64</a>
+                  <a class="btn btn--outlined btn--sm" data-release-asset="binary-arm64" href="https://github.com/worxbend/scenedeck/releases/download/v0.4.0/scenedeck-0.4.0-linux-arm64">arm64</a>
+                  <a class="btn btn--outlined btn--sm" data-release-asset="tar-amd64" href="https://github.com/worxbend/scenedeck/releases/download/v0.4.0/scenedeck-0.4.0-linux-amd64.tar.gz">.tar.gz</a>
                 </div>
               </div>
 
               <div class="pane" role="tabpanel" id="pane-source" aria-labelledby="tab-source" tabindex="0" hidden>
                 <h3 class="headline-sm">Build from source</h3>
                 <p class="body-md prose">
-                  Needs the GTK4 and libadwaita development libraries,
+                  Needs GTK ≥ 4.10 and libadwaita ≥ 1.4 development libraries,
+                  <code class="mono">libdbus-1-dev</code> (Debian/Ubuntu package name),
                   <code class="mono">glib-compile-resources</code>, and the Rust toolchain pinned in
                   the repository.
                 </p>
@@ -929,8 +943,8 @@
                   </button>
                 </div>
                 <div class="code">
-                  <code><span class="prompt">$</span> cargo build --release</code>
-                  <button class="copy" type="button" data-copy="cargo build --release" aria-label="Copy command">
+                  <code><span class="prompt">$</span> cd scenedeck &amp;&amp; cargo build --release</code>
+                  <button class="copy" type="button" data-copy="cd scenedeck && cargo build --release" aria-label="Copy command">
                     <svg class="icon icon--copy" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy" /></svg>
                     <svg class="icon icon--check" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check" /></svg>
                   </button>
@@ -943,9 +957,9 @@
           </div>
 
           <p class="legend install__verify">
-            Every archive is published on the
-            <a href="https://github.com/worxbend/scenedeck/releases/latest">GitHub Releases page</a>
-            for <span data-release-version>v0.1.21</span>.
+            Available downloads are listed on the
+            <a data-release-page href="https://github.com/worxbend/scenedeck/releases/tag/v0.4.0">GitHub Releases page</a>
+            for <span data-release-version>v0.4.0</span>.
           </p>
         </div>
       </section>
@@ -1031,7 +1045,7 @@
           <div class="spec__grid">
             <dl class="reqs panel" data-reveal>
               <div><dt class="legend">OBS Studio</dt><dd class="body-md">28 or newer — the WebSocket server is built in from 28</dd></div>
-              <div><dt class="legend">Desktop</dt><dd class="body-md">Any Linux desktop with GTK4 and libadwaita</dd></div>
+              <div><dt class="legend">Desktop</dt><dd class="body-md">Linux with GTK ≥ 4.10, libadwaita ≥ 1.4 and libdbus-1; native release binaries target Ubuntu 24.04 or compatible newer ABIs</dd></div>
               <div><dt class="legend">Connection</dt><dd class="body-md">OBS WebSocket, <code class="mono">127.0.0.1:4455</code> by default</dd></div>
               <div><dt class="legend">Password storage</dt><dd class="body-md">The system Secret Service keyring</dd></div>
             </dl>
@@ -1128,7 +1142,7 @@
 
       <div class="shell footer__bottom legend">
         <span>© 2026 worxbend</span>
-        <span data-release-version>v0.1.21</span>
+        <span data-release-version>v0.4.0</span>
         <span>Not affiliated with the OBS Project.</span>
       </div>
     </footer>

@@ -68,10 +68,13 @@ where
 
     let clear = icon_button(PLACEHOLDER_ICON, &no_icon_label(), selected.is_none());
     clear.connect_clicked({
-        let button = button.clone();
-        let popover = popover.clone();
+        let button = button.downgrade();
+        let popover = popover.downgrade();
         let on_choose = Rc::clone(&on_choose);
         move |_| {
+            let (Some(button), Some(popover)) = (button.upgrade(), popover.upgrade()) else {
+                return;
+            };
             if let PickerDisplay::CurrentIcon = display {
                 button.set_icon_name(PLACEHOLDER_ICON);
             }
@@ -85,10 +88,13 @@ where
         let is_selected = selected == Some(icon.key);
         let choice = icon_button(icon.icon_name, &icon.label(), is_selected);
         choice.connect_clicked({
-            let button = button.clone();
-            let popover = popover.clone();
+            let button = button.downgrade();
+            let popover = popover.downgrade();
             let on_choose = Rc::clone(&on_choose);
             move |_| {
+                let (Some(button), Some(popover)) = (button.upgrade(), popover.upgrade()) else {
+                    return;
+                };
                 if let PickerDisplay::CurrentIcon = display {
                     button.set_icon_name(icon.icon_name);
                 }

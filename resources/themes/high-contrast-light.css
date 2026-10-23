@@ -1,3 +1,4 @@
+/* high-contrast: light. Geometry and semantic states are owned by the base CSS. */
 @define-color scenedeck_accent #000000;
 @define-color scenedeck_fg #1d1d1f;
 @define-color scenedeck_muted_fg #555a60;
@@ -10,16 +11,23 @@
 @define-color scenedeck_header #e0e0e0;
 @define-color scenedeck_surface #ffffff;
 @define-color scenedeck_card #ffffff;
+@define-color scenedeck_border #000000;
+@define-color scenedeck_program #a92536;
+@define-color scenedeck_program_fg #ffffff;
+@define-color scenedeck_preview #176845;
+@define-color scenedeck_preview_fg #ffffff;
+@define-color scenedeck_focus #122b8f;
+@define-color scenedeck_image_fg #ffffff;
+@define-color scenedeck_image_scrim #111820;
+@define-color scenedeck_image_fallback #28323e;
+@define-color scenedeck_shadow #000000;
 
-.scene-card,
-.audio-card {
-  border: 2px solid @scenedeck_fg;
+.scene-card { box-shadow: none; }
+.scene-card-preview-enabled .scene-card-title {
+  background-color: @scenedeck_image_scrim;
+  border-radius: 5px;
+  padding: 4px 6px;
+  text-shadow: none;
 }
-
-.scene-card-active {
-  outline: 3px solid @scenedeck_accent;
-}
-
-.audio-card-controls button {
-  border: 1px solid @scenedeck_fg;
-}
+.audio-card { border: 2px solid @scenedeck_border; }
+.audio-card-controls button { border: 1px solid @scenedeck_border; }

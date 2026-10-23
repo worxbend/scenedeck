@@ -89,6 +89,76 @@ mod tests {
             "Edges forbidden by graph policy"
         );
     }
+    #[test]
+    fn iterative_components_handle_long_chains_and_disconnected_cycles() {
+        let mut graph = SceneGraph::default();
+        for index in 0..20_000 {
+            graph
+                .edges
+                .insert(index.to_string(), vec![(index + 1).to_string()]);
+        }
+        assert!(graph.cycle_edges().is_empty());
+        graph.edges.insert("20000".into(), vec!["19999".into()]);
+        graph.edges.insert("Self".into(), vec!["Self".into()]);
+        graph.edges.insert("A".into(), vec!["B".into(), "B".into()]);
+        graph.edges.insert("B".into(), vec!["A".into()]);
+        assert_eq!(
+            graph.cycle_edges(),
+            vec![
+                ("19999", "20000"),
+                ("20000", "19999"),
+                ("A", "B"),
+                ("B", "A"),
+                ("Self", "Self")
+            ]
+        );
+    }
+
+    #[test]
+    fn components_match_reachability_reference_for_every_three_node_graph() {
+        for mask in 0..(1 << 9) {
+            let mut graph = SceneGraph::default();
+            for parent in 0..3 {
+                for child in 0..3 {
+                    if mask & (1 << (parent * 3 + child)) != 0 {
+                        graph
+                            .edges
+                            .entry(parent.to_string())
+                            .or_default()
+                            .push(child.to_string());
+                    }
+                }
+            }
+            let expected: HashSet<&str> = graph
+                .edges
+                .iter()
+                .filter_map(|(parent, children)| {
+                    children
+                        .iter()
+                        .any(|child| {
+                            let mut visited = HashSet::new();
+                            let mut pending = vec![child.as_str()];
+                            while let Some(node) = pending.pop() {
+                                if node == parent {
+                                    return true;
+                                }
+                                if visited.insert(node) {
+                                    pending.extend(graph.children(node).iter().map(String::as_str));
+                                }
+                            }
+                            false
+                        })
+                        .then_some(parent.as_str())
+                })
+                .collect();
+            let actual: HashSet<_> = graph
+                .cycle_edges()
+                .into_iter()
+                .map(|(parent, _)| parent)
+                .collect();
+            assert_eq!(actual, expected, "adjacency mask {mask}");
+        }
+    }
 }
 
 /// Directed dependency graph of OBS scenes.
@@ -107,21 +177,66 @@ impl SceneGraph {
         self.edges.get(scene).map(Vec::as_slice).unwrap_or(&[])
     }
 
-    /// `true` if `from` depends on `to` through any path.
-    pub fn is_reachable(&self, from: &str, to: &str) -> bool {
+    /// One representative cyclic edge per scene, using a linear iterative SCC
+    /// pass followed by deterministic report sorting. No scene depth uses call stack.
+    pub fn cycle_edges(&self) -> Vec<(&str, &str)> {
+        let mut reverse: HashMap<&str, Vec<&str>> = HashMap::new();
+        for (parent, children) in &self.edges {
+            reverse.entry(parent).or_default();
+            for child in children {
+                reverse.entry(child).or_default().push(parent);
+            }
+        }
         let mut visited = HashSet::new();
-        self.dfs(from, to, &mut visited)
-    }
-
-    fn dfs(&self, current: &str, target: &str, visited: &mut HashSet<String>) -> bool {
-        if current == target {
-            return true;
+        let mut order = Vec::new();
+        for &root in reverse.keys() {
+            let mut stack = vec![(root, false)];
+            while let Some((node, finished)) = stack.pop() {
+                if finished {
+                    order.push(node);
+                    continue;
+                }
+                if !visited.insert(node) {
+                    continue;
+                }
+                stack.push((node, true));
+                stack.extend(
+                    self.children(node)
+                        .iter()
+                        .rev()
+                        .map(|child| (child.as_str(), false)),
+                );
+            }
         }
-        if !visited.insert(current.to_string()) {
-            return false; // already explored
+        let mut component = HashMap::new();
+        let mut sizes = Vec::new();
+        for root in order.into_iter().rev() {
+            if component.contains_key(root) {
+                continue;
+            }
+            let id = sizes.len();
+            let mut size = 0;
+            let mut stack = vec![root];
+            while let Some(node) = stack.pop() {
+                if component.contains_key(node) {
+                    continue;
+                }
+                component.insert(node, id);
+                size += 1;
+                stack.extend(reverse[node].iter().copied());
+            }
+            sizes.push(size);
         }
-        self.children(current)
-            .iter()
-            .any(|child| self.dfs(child, target, visited))
+        let mut cycles = Vec::new();
+        for (parent, children) in &self.edges {
+            let id = component[parent.as_str()];
+            if let Some(child) = children.iter().find(|child| {
+                component[child.as_str()] == id && (sizes[id] > 1 || child.as_str() == parent)
+            }) {
+                cycles.push((parent.as_str(), child.as_str()));
+            }
+        }
+        cycles.sort_unstable();
+        cycles
     }
 }

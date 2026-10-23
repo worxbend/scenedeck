@@ -5,14 +5,15 @@
 
 use adw::prelude::*;
 use gtk4::{
-    Align, Box as GtkBox, Button, FlowBox, Label, Orientation, Paned, PolicyType, ScrolledWindow,
-    Stack, StackTransitionType,
+    Align, Box as GtkBox, Button, FlowBox, Label, Orientation, PolicyType, ScrolledWindow, Stack,
+    StackTransitionType,
 };
 use i18n_embed_fl::fl;
 
 use crate::controller::command::AppCommand;
+use crate::controller::state::{ObsStatus, Page};
 use crate::domain::hotkey::{slot_badge, SceneHotkeyConfig};
-use crate::domain::output::{OutputKind, OutputStatus};
+use crate::domain::output::{OutputKind, OutputRunState, OutputStatus};
 use crate::domain::scene::{SceneId, SceneInventory};
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::config::OutputConfig;
@@ -21,13 +22,6 @@ use crate::ui::insert_compact_flow_child;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::widgets::scene_card::{SceneCardModel, SceneShortcut};
 use crate::ui::widgets::{audio_card, scene_card};
-
-/// Icon beside the program-scene heading.
-const PROGRAM_ICON: &str = "nf-md-television-play-symbolic";
-/// Icon beside the Scenes section heading.
-const SCENES_ICON: &str = "nf-md-view-grid-symbolic";
-/// Icon beside the Audio section heading.
-const AUDIO_ICON: &str = "nf-md-tune-vertical-symbolic";
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum OutputAction {
@@ -48,14 +42,40 @@ struct OutputConfirmationDialog {
     appearance: OutputConfirmationAppearance,
 }
 
+#[derive(PartialEq, Eq)]
+struct AudioPresentation {
+    epoch: u64,
+    scope: crate::domain::workflow::ScopeBinding,
+    scene: Option<String>,
+    language: crate::domain::appearance::Language,
+    inputs: Vec<(String, String, String)>,
+}
+
+impl AudioPresentation {
+    fn same_owner(&self, other: &Self) -> bool {
+        self.epoch == other.epoch
+            && self.scope == other.scope
+            && self.scene == other.scene
+            && self.language == other.language
+    }
+}
+
 /// Widget handles that `ui::window` updates when `AppEvent`s arrive.
 pub(crate) struct LivePageHandle {
     pub(crate) root: Stack,
-    pub(crate) current_scene_label: Label,
     pub(crate) scenes_box: FlowBox,
     /// Caption above the scene grid naming the active scene shortcut binding.
     pub(crate) hotkey_hint: Label,
+    pub(crate) hotkey_notice_generation: crate::ui::hotkeys::NoticeGeneration,
     pub(crate) audio_box: FlowBox,
+    scene_signature: std::cell::RefCell<String>,
+    audio_signature: std::cell::RefCell<Option<AudioPresentation>>,
+    audio_refresh_notice: Label,
+    pub(crate) scene_cards: std::cell::RefCell<Vec<scene_card::SceneCardHandle>>,
+    pub(crate) scene_scroll: ScrolledWindow,
+    pub(crate) previews: std::rc::Rc<std::cell::RefCell<crate::ui::previews::PreviewState>>,
+    pub(crate) audio_expanded: std::rc::Rc<std::cell::Cell<bool>>,
+
     /// Status line on the disconnected placeholder, kept so
     /// `show_disconnected_view` writes the hint here instead of overwriting
     /// the localized title.
@@ -63,145 +83,23 @@ pub(crate) struct LivePageHandle {
     pub(crate) audio_cards: std::cell::RefCell<Vec<audio_card::AudioCardHandle>>,
 }
 
-// ── Live panes ────────────────────────────────────────────────────────────────
-
-/// Wrap a pane's contents in the scroller both panes use.
-///
-/// Horizontal scrolling is off on purpose: the flow boxes reflow to the width
-/// they are given, so a horizontal scrollbar would mean the layout had failed
-/// rather than that there was more to see.
-fn pane_scroll(child: &impl IsA<gtk4::Widget>, vexpand: bool, min_height: i32) -> ScrolledWindow {
-    let scroll = ScrolledWindow::builder()
-        .vexpand(vexpand)
-        .hexpand(true)
-        .min_content_height(min_height)
-        .hscrollbar_policy(PolicyType::Never)
-        .vscrollbar_policy(PolicyType::Automatic)
-        .child(child)
-        .build();
-    scroll.add_css_class("live-pane-scroll");
-    scroll
-}
-
-/// The scene-card half of the Live page.
-///
-/// Returns the pane, the flow box the cards go into, and the hint label that
-/// names the current shortcut binding.
-fn build_scenes_pane() -> (GtkBox, FlowBox, Label) {
-    let scenes_pane = GtkBox::builder()
-        .orientation(Orientation::Vertical)
-        .spacing(4)
-        .margin_bottom(8)
-        .vexpand(false)
-        .hexpand(true)
-        .build();
-    let scenes_section_header = GtkBox::builder()
-        .orientation(Orientation::Horizontal)
-        .spacing(8)
-        .hexpand(true)
-        .build();
-    let scenes_section_label = Label::builder()
-        .label(fl!(LANGUAGE_LOADER, "live-scenes-section-label"))
-        .xalign(0.0)
-        .hexpand(true)
-        .build();
-    scenes_section_label.add_css_class("caption-heading");
-    scenes_section_header.append(&section_icon(SCENES_ICON));
-    scenes_section_header.append(&scenes_section_label);
-
-    // Names the shortcut binding once, so each card only needs its digit.
-    let hotkey_hint = Label::builder()
-        .label("")
-        .xalign(1.0)
-        .halign(Align::End)
-        .visible(false)
-        .build();
-    hotkey_hint.add_css_class("caption");
-    hotkey_hint.add_css_class("live-hotkey-hint");
-    scenes_section_header.append(&hotkey_hint);
-    scenes_pane.append(&scenes_section_header);
-
-    let scenes_box = FlowBox::builder()
-        .selection_mode(gtk4::SelectionMode::None)
-        .column_spacing(6)
-        .row_spacing(6)
-        .homogeneous(false)
-        .halign(Align::Start)
-        .valign(Align::Start)
-        .hexpand(false)
-        .vexpand(false)
-        .margin_top(3)
-        .margin_bottom(1)
-        .margin_start(3)
-        .margin_end(3)
-        .min_children_per_line(1)
-        .max_children_per_line(6)
-        .build();
-    insert_scene_placeholder(
-        &scenes_box,
-        &fl!(LANGUAGE_LOADER, "live-scenes-connect-hint"),
-    );
-
-    scenes_pane.append(&pane_scroll(&scenes_box, false, 72));
-
-    (scenes_pane, scenes_box, hotkey_hint)
-}
-
-/// The audio half of the Live page.
-///
-/// Returns the pane and the flow box the audio cards go into.
-fn build_audio_pane() -> (GtkBox, FlowBox) {
-    let audio_pane = GtkBox::builder()
-        .orientation(Orientation::Vertical)
-        .spacing(8)
-        .margin_top(8)
-        .vexpand(true)
-        .hexpand(true)
-        .build();
-
-    let audio_section_label = Label::builder()
-        .label(fl!(LANGUAGE_LOADER, "live-audio-section-label"))
-        .xalign(0.0)
-        .build();
-    audio_section_label.add_css_class("caption-heading");
-    audio_pane.append(&heading_with_icon(AUDIO_ICON, &audio_section_label));
-
-    let audio_box = FlowBox::builder()
-        .selection_mode(gtk4::SelectionMode::None)
-        .column_spacing(5)
-        .row_spacing(6)
-        .homogeneous(false)
-        .halign(Align::Start)
-        .valign(Align::Start)
-        .hexpand(false)
-        .vexpand(false)
-        .min_children_per_line(1)
-        .max_children_per_line(12)
-        .build();
-
-    audio_pane.append(&pane_scroll(&audio_box, true, 232));
-
-    (audio_pane, audio_box)
-}
-
-pub(crate) fn build(_nav: NavigationContext) -> LivePageHandle {
+pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
     let root = Stack::builder()
         .vexpand(true)
         .hexpand(true)
+        .hhomogeneous(false)
+        .vhomogeneous(false)
         .transition_type(StackTransitionType::Crossfade)
         .build();
     root.add_css_class("app-page");
     root.add_css_class("live-page");
-
     let (disconnected, disconnected_detail) = build_disconnected_view();
     root.add_named(&disconnected, Some("disconnected"));
-
-    // ── Outer layout ─────────────────────────────────────────────────────────
     let page = GtkBox::builder()
         .orientation(Orientation::Vertical)
-        .spacing(20)
-        .margin_top(24)
-        .margin_bottom(24)
+        .spacing(12)
+        .margin_top(12)
+        .margin_bottom(12)
         .margin_start(24)
         .margin_end(24)
         .vexpand(true)
@@ -209,42 +107,132 @@ pub(crate) fn build(_nav: NavigationContext) -> LivePageHandle {
         .build();
     root.add_named(&page, Some("live"));
     root.set_visible_child_name("disconnected");
-
-    // ── Program scene label ───────────────────────────────────────────────────
-    let current_label = Label::builder()
-        .label(fl!(LANGUAGE_LOADER, "live-current-scene-placeholder"))
-        .xalign(0.0)
+    page.add_tick_callback(|page, _| {
+        let short = page
+            .root()
+            .and_downcast::<gtk4::Window>()
+            .is_some_and(|window| window.height() < 700);
+        let gap = if short { 8 } else { 12 };
+        page.set_spacing(gap);
+        page.set_margin_top(gap);
+        page.set_margin_bottom(gap);
+        if short {
+            page.add_css_class("live-page-short");
+        } else {
+            page.remove_css_class("live-page-short");
+        }
+        glib::ControlFlow::Continue
+    });
+    page.append(&crate::ui::widgets::studio_controls::transition_row(
+        nav.clone(),
+    ));
+    let hotkey_hint = Label::new(None);
+    hotkey_hint.set_visible(false);
+    hotkey_hint.set_wrap(true);
+    hotkey_hint.set_xalign(0.0);
+    hotkey_hint.add_css_class("caption");
+    page.append(&hotkey_hint);
+    let scenes_box = FlowBox::builder()
+        .selection_mode(gtk4::SelectionMode::None)
+        .column_spacing(16)
+        .row_spacing(16)
+        .homogeneous(true)
+        .halign(Align::Fill)
+        .valign(Align::Start)
+        .hexpand(true)
+        .min_children_per_line(1)
+        .max_children_per_line(8)
         .build();
-    current_label.add_css_class("heading");
-    page.append(&heading_with_icon(PROGRAM_ICON, &current_label));
-
-    // ── Resizeable live panes ─────────────────────────────────────────────────
-    let live_split = Paned::builder()
-        .orientation(Orientation::Vertical)
+    let scene_scroll = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
-        .wide_handle(true)
+        .hscrollbar_policy(PolicyType::Never)
+        .child(&scenes_box)
         .build();
-    live_split.set_resize_start_child(false);
-    live_split.set_resize_end_child(true);
-    live_split.set_shrink_start_child(true);
-    live_split.set_shrink_end_child(false);
-    page.append(&live_split);
-
-    let (scenes_pane, scenes_box, hotkey_hint) = build_scenes_pane();
-    live_split.set_start_child(Some(&scenes_pane));
-
-    let (audio_pane, audio_box) = build_audio_pane();
-    live_split.set_end_child(Some(&audio_pane));
-
+    page.append(&scene_scroll);
+    let audio_strip = GtkBox::new(Orientation::Horizontal, 12);
+    audio_strip.add_css_class("live-audio-strip");
+    let header = GtkBox::new(Orientation::Vertical, 4);
+    header.set_valign(Align::Start);
+    let label = Label::builder()
+        .label(fl!(LANGUAGE_LOADER, "live-audio-section-label"))
+        .hexpand(false)
+        .xalign(0.0)
+        .build();
+    label.add_css_class("heading");
+    header.append(&label);
+    let audio_refresh_notice = Label::builder()
+        .xalign(0.0)
+        .wrap(true)
+        .max_width_chars(14)
+        .visible(false)
+        .build();
+    audio_refresh_notice.add_css_class("dim-label");
+    header.append(&audio_refresh_notice);
+    let expand = gtk4::ToggleButton::builder()
+        .icon_name("pan-down-symbolic")
+        .tooltip_text(fl!(LANGUAGE_LOADER, "live-audio-expand"))
+        .build();
+    expand.add_css_class("flat");
+    header.append(&expand);
+    audio_strip.append(&header);
+    let audio_box = FlowBox::builder()
+        .selection_mode(gtk4::SelectionMode::None)
+        .column_spacing(12)
+        .row_spacing(8)
+        .homogeneous(true)
+        .halign(Align::Fill)
+        .min_children_per_line(1)
+        .max_children_per_line(4)
+        .hexpand(true)
+        .build();
+    audio_strip.append(&audio_box);
+    let audio_expanded = std::rc::Rc::new(std::cell::Cell::new(false));
+    expand.connect_toggled({
+        let audio_expanded = audio_expanded.clone();
+        let audio_box = audio_box.clone();
+        move |button| {
+            audio_expanded.set(button.is_active());
+            button.set_icon_name(if button.is_active() {
+                "pan-up-symbolic"
+            } else {
+                "pan-down-symbolic"
+            });
+            button.set_tooltip_text(Some(&if button.is_active() {
+                fl!(LANGUAGE_LOADER, "live-audio-collapse")
+            } else {
+                fl!(LANGUAGE_LOADER, "live-audio-expand")
+            }));
+            if button.is_active() {
+                audio_box.add_css_class("expanded");
+            } else {
+                audio_box.remove_css_class("expanded");
+            }
+            let mut child = audio_box.first_child();
+            while let Some(row) = child {
+                if let Some(card) = row.first_child() {
+                    audio_card::set_compact_expanded(&card, button.is_active());
+                }
+                child = row.next_sibling();
+            }
+        }
+    });
+    page.append(&audio_strip);
     LivePageHandle {
         root,
-        current_scene_label: current_label,
         scenes_box,
         hotkey_hint,
+        hotkey_notice_generation: Default::default(),
         audio_box,
         disconnected_detail,
         audio_cards: std::cell::RefCell::new(Vec::new()),
+        scene_cards: std::cell::RefCell::new(Vec::new()),
+        scene_signature: std::cell::RefCell::new(String::new()),
+        audio_signature: std::cell::RefCell::new(None),
+        audio_refresh_notice,
+        previews: std::rc::Rc::new(std::cell::RefCell::new(Default::default())),
+        scene_scroll,
+        audio_expanded,
     }
 }
 
@@ -295,6 +283,84 @@ fn handle_output_toggle(button: &Button, nav: &NavigationContext, kind: OutputKi
     }
 }
 
+fn requires_disconnect_confirmation(
+    stream: &OutputStatus,
+    record: &OutputStatus,
+    config: &OutputConfig,
+) -> bool {
+    [stream, record]
+        .iter()
+        .any(|status| status.state == OutputRunState::Unknown || status.state.is_transitioning())
+        || (stream.active && config.confirm_stop_stream)
+        || (record.active && config.confirm_stop_recording)
+}
+
+pub(crate) fn handle_disconnect(button: &Button, nav: &NavigationContext) {
+    let (stream, record, confirm) = {
+        let state = nav.state.borrow();
+        if !matches!(state.obs_status, ObsStatus::Connected { .. }) {
+            return;
+        }
+        (
+            state.stream_status.clone(),
+            state.record_status.clone(),
+            requires_disconnect_confirmation(
+                &state.stream_status,
+                &state.record_status,
+                &state.config.outputs,
+            ),
+        )
+    };
+    if !confirm {
+        nav.dispatch(AppCommand::Disconnect);
+        return;
+    }
+    let parent = button
+        .root()
+        .and_then(|root| root.downcast::<gtk4::Window>().ok());
+    let body = fl!(
+        LANGUAGE_LOADER,
+        "disconnect-confirm-body",
+        stream = stream.state.label(),
+        recording = record.state.label()
+    );
+    let dialog = adw::MessageDialog::new(
+        parent.as_ref(),
+        Some(&fl!(LANGUAGE_LOADER, "disconnect-confirm-heading")),
+        Some(&body),
+    );
+    dialog.add_response("cancel", &fl!(LANGUAGE_LOADER, "live-cancel-button-label"));
+    dialog.add_response(
+        "confirm",
+        &fl!(LANGUAGE_LOADER, "window-stop-disconnect-label"),
+    );
+    dialog.set_default_response(Some("cancel"));
+    dialog.set_close_response("cancel");
+    dialog.set_response_appearance("confirm", adw::ResponseAppearance::Destructive);
+    let nav = nav.scoped();
+    let button = button.clone();
+    dialog.connect_response(None, move |dialog, response| {
+        dialog.close();
+        if response != "confirm" || !nav.is_current() {
+            return;
+        }
+        let unchanged = {
+            let state = nav.state.borrow();
+            if !matches!(state.obs_status, ObsStatus::Connected { .. }) {
+                return;
+            }
+            state.stream_status == stream && state.record_status == record
+        };
+        // Another OBS client may change outputs while this dialog is open.
+        if unchanged {
+            nav.dispatch(AppCommand::Disconnect);
+        } else {
+            handle_disconnect(&button, &nav);
+        }
+    });
+    dialog.present();
+}
+
 pub(crate) fn handle_stream_output_toggle(button: &Button, nav: &NavigationContext) {
     handle_output_toggle(button, nav, OutputKind::Stream);
 }
@@ -305,27 +371,6 @@ pub(crate) fn handle_record_output_toggle(button: &Button, nav: &NavigationConte
 
 pub(crate) fn show_live_view(handle: &LivePageHandle) {
     handle.root.set_visible_child_name("live");
-}
-
-/// Small dimmed icon for a section heading.
-fn section_icon(icon_name: &str) -> gtk4::Image {
-    let icon = gtk4::Image::from_icon_name(icon_name);
-    icon.add_css_class("scenedeck-section-icon");
-    icon.set_valign(Align::Center);
-    icon
-}
-
-/// Pair a heading label with an icon without disturbing the caller's handle on
-/// the label, which `ui::window` keeps updating.
-fn heading_with_icon(icon_name: &str, label: &Label) -> GtkBox {
-    let row = GtkBox::builder()
-        .orientation(Orientation::Horizontal)
-        .spacing(8)
-        .hexpand(true)
-        .build();
-    row.append(&section_icon(icon_name));
-    row.append(label);
-    row
 }
 
 fn build_disconnected_view() -> (GtkBox, Label) {
@@ -454,6 +499,7 @@ fn confirm_output_action(
     dialog.set_default_response(Some("cancel"));
     dialog.set_close_response("cancel");
     dialog.set_response_appearance("confirm", to_adw_response_appearance(metadata.appearance));
+    let nav = nav.scoped();
     dialog.connect_response(None, move |dialog, response| {
         if response == "confirm" {
             nav.dispatch(command.clone());
@@ -461,16 +507,6 @@ fn confirm_output_action(
         dialog.close();
     });
     dialog.present();
-}
-
-fn insert_scene_placeholder(scenes_box: &FlowBox, message: &str) {
-    let hint = Label::builder()
-        .label(message)
-        .wrap(true)
-        .xalign(0.0)
-        .build();
-    hint.add_css_class("dim-label");
-    insert_compact_flow_child(scenes_box, &hint);
 }
 
 /// Scene ids shown on Live, in card order.
@@ -513,32 +549,64 @@ pub(crate) fn rebuild_scene_cards(
     inventory: &SceneInventory,
     nav: &NavigationContext,
 ) {
+    let (registry, hotkeys, images) = {
+        let state = nav.state.borrow();
+        (
+            state.registry.clone(),
+            state.config.hotkeys,
+            state.config.live.scene_previews,
+        )
+    };
+    let scene_order = live_scene_order(inventory, &registry);
+    let binding = {
+        let state = nav.state.borrow();
+        (state.workspace.epoch, state.workflow_scope())
+    };
+    let signature = format!("{scene_order:?}{registry:?}{hotkeys:?}{images}{binding:?}");
+    handle
+        .hotkey_hint
+        .set_tooltip_text(crate::ui::hotkeys::scene_hint(nav, &hotkeys).as_deref());
+    if *handle.scene_signature.borrow() == signature {
+        for card in handle.scene_cards.borrow().iter() {
+            card.update_state(nav, inventory.current_id.as_deref() == Some(&card.scene_id));
+        }
+        return;
+    }
+    *handle.scene_signature.borrow_mut() = signature;
+    handle.scene_cards.borrow_mut().clear();
     // Remove all existing children
     // FlowBox requires removing via the FlowBoxChild wrapper
     while let Some(child) = handle.scenes_box.first_child() {
         handle.scenes_box.remove(&child);
     }
 
-    let (registry, hotkeys) = {
-        let state = nav.state.borrow();
-        (state.registry.clone(), state.config.hotkeys)
-    };
-    let scene_order = live_scene_order(inventory, &registry);
-
     if scene_order.is_empty() {
         // Nothing to bind to, so the shortcut caption would only mislead.
         set_hotkey_hint(handle, None);
+        let empty = GtkBox::new(Orientation::Vertical, 8);
         let hint = Label::builder()
-            .label(fl!(LANGUAGE_LOADER, "live-scenes-no-primary-hint"))
+            .label(if inventory.scenes.is_empty() {
+                fl!(LANGUAGE_LOADER, "live-scenes-obs-empty")
+            } else {
+                fl!(LANGUAGE_LOADER, "live-scenes-no-primary-hint")
+            })
             .wrap(true)
             .xalign(0.0)
             .build();
         hint.add_css_class("dim-label");
-        insert_compact_flow_child(&handle.scenes_box, &hint);
+        empty.append(&hint);
+        if !inventory.scenes.is_empty() {
+            let organize = Button::with_label(&fl!(LANGUAGE_LOADER, "live-organize-scenes"));
+            organize.set_halign(Align::Start);
+            let nav = nav.clone();
+            organize.connect_clicked(move |_| nav.switch_to_page(Page::Inventory));
+            empty.append(&organize);
+        }
+        insert_compact_flow_child(&handle.scenes_box, &empty);
         return;
     }
 
-    set_hotkey_hint(handle, hotkeys.hint_label().as_deref());
+    set_hotkey_hint(handle, None);
 
     for (slot, scene_id) in scene_order.iter().enumerate() {
         let Some(scene) = inventory.scenes.iter().find(|scene| &scene.id == scene_id) else {
@@ -553,15 +621,19 @@ pub(crate) fn rebuild_scene_cards(
                     .and_then(|entry| entry.role)
                     .unwrap_or_default(),
                 is_active: inventory.current_id.as_deref() == Some(&scene.id),
-                is_previous: inventory.previous_id.as_deref() == Some(&scene.id),
                 accent_color: registry_entry.and_then(|entry| entry.accent_color.as_deref()),
                 shortcut: shortcut_for_slot(&hotkeys, slot),
                 icon: registry_entry.and_then(|entry| entry.icon.as_deref()),
             },
             nav.clone(),
         );
-        insert_compact_flow_child(&handle.scenes_box, &card);
+        handle.scenes_box.insert(&card.root, -1);
+        if let Some(wrapper) = card.root.parent() {
+            wrapper.set_focusable(false);
+        }
+        handle.scene_cards.borrow_mut().push(card);
     }
+    crate::ui::previews::restore(handle, nav);
 }
 
 fn shortcut_for_slot(hotkeys: &SceneHotkeyConfig, slot: usize) -> Option<SceneShortcut> {
@@ -573,6 +645,7 @@ fn shortcut_for_slot(hotkeys: &SceneHotkeyConfig, slot: usize) -> Option<SceneSh
 
 /// Set the caption above the scene grid, hiding it when there is nothing to say.
 pub(crate) fn set_hotkey_hint(handle: &LivePageHandle, text: Option<&str>) {
+    handle.hotkey_notice_generation.advance();
     match text {
         Some(text) => {
             handle.hotkey_hint.set_text(text);
@@ -594,27 +667,89 @@ pub(crate) fn rebuild_audio_cards(
     inputs: &[crate::domain::audio::AudioInput],
     nav: &NavigationContext,
 ) {
-    while let Some(child) = handle.audio_box.first_child() {
-        handle.audio_box.remove(&child);
+    let (presentation, notice) = {
+        let state = nav.state.borrow();
+        (
+            AudioPresentation {
+                epoch: state.workspace.epoch,
+                scope: state.workflow_scope(),
+                scene: state.scene_inventory.current_id.clone(),
+                language: state.config.language,
+                inputs: inputs
+                    .iter()
+                    .map(|input| {
+                        (
+                            input.id.clone(),
+                            input.name.clone(),
+                            input.display_name.clone(),
+                        )
+                    })
+                    .collect(),
+            },
+            state.active_audio_notice(),
+        )
+    };
+    if let Some(notice) = notice.as_ref() {
+        let same_owner = handle
+            .audio_signature
+            .borrow()
+            .as_ref()
+            .is_some_and(|previous| previous.same_owner(&presentation));
+        if same_owner && !handle.audio_cards.borrow().is_empty() {
+            for card in handle.audio_cards.borrow().iter() {
+                card.root.set_sensitive(false);
+            }
+            handle.audio_refresh_notice.set_text(notice);
+            handle.audio_refresh_notice.set_visible(true);
+            return;
+        }
+    } else if !inputs.is_empty() && handle.audio_signature.borrow().as_ref() == Some(&presentation)
+    {
+        handle.audio_refresh_notice.set_visible(false);
+        for (card, input) in handle.audio_cards.borrow().iter().zip(inputs) {
+            card.root.set_sensitive(true);
+            card.update_mute(input.muted);
+            card.update_volume(input.volume_mul, input.volume_db);
+            audio_card::set_compact_expanded(card.root.upcast_ref(), handle.audio_expanded.get());
+        }
+        return;
     }
-    let mut cards = handle.audio_cards.borrow_mut();
-    cards.clear();
-
-    if inputs.is_empty() {
-        let hint = Label::builder()
-            .label(fl!(LANGUAGE_LOADER, "live-audio-empty-hint"))
-            .xalign(0.0)
-            .build();
+    handle.audio_refresh_notice.set_visible(false);
+    if notice.is_some() || inputs.is_empty() {
+        let text = notice.unwrap_or_else(|| fl!(LANGUAGE_LOADER, "live-audio-empty-hint"));
+        // A status-only update does not need a new placeholder either.
+        if handle.audio_cards.borrow().is_empty() {
+            if let Some(label) = handle
+                .audio_box
+                .first_child()
+                .and_then(|row| row.first_child())
+                .and_downcast::<Label>()
+            {
+                label.set_text(&text);
+                return;
+            }
+        }
+        clear_audio_cards(handle);
+        let hint = Label::builder().label(text).xalign(0.0).wrap(true).build();
         hint.add_css_class("dim-label");
         insert_compact_flow_child(&handle.audio_box, &hint);
         return;
     }
-
+    clear_audio_cards(handle);
     for input in inputs {
-        let card = audio_card::build(input, nav.clone());
+        let card = audio_card::build_compact(input, nav.clone(), handle.audio_expanded.get());
         insert_compact_flow_child(&handle.audio_box, &card.root);
-        cards.push(card);
+        handle.audio_cards.borrow_mut().push(card);
     }
+    *handle.audio_signature.borrow_mut() = Some(presentation);
+}
+
+fn clear_audio_cards(handle: &LivePageHandle) {
+    while let Some(child) = handle.audio_box.first_child() {
+        handle.audio_box.remove(&child);
+    }
+    handle.audio_cards.borrow_mut().clear();
+    *handle.audio_signature.borrow_mut() = None;
 }
 
 #[cfg(test)]
@@ -625,6 +760,152 @@ mod tests {
     use crate::domain::role::SceneRole;
     use crate::domain::scene::Scene;
     use crate::storage::registry::SceneEntry;
+
+    #[test]
+    #[ignore = "requires a disposable GTK display; no OBS or keyring access"]
+    fn native_audio_refresh_retains_controls_until_their_owner_changes() {
+        crate::ui::test_support::native_test("ui::pages::live::tests::native_audio_refresh_retains_controls_until_their_owner_changes", || {
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            let input = crate::domain::audio::AudioInput::new("Mic".into(), false, 0.5, -6.0);
+            nav.state.borrow_mut().set_current_program("Main".into());
+            nav.state.borrow_mut().apply_active_audio(Some("Main".into()), Ok(vec![input.clone()]));
+            let live = build(nav.clone());
+            rebuild_audio_cards(&live, std::slice::from_ref(&input), &nav);
+            let root = live.audio_cards.borrow()[0].root.clone();
+            rebuild_audio_cards(&live, std::slice::from_ref(&input), &nav);
+            assert_eq!(live.audio_cards.borrow()[0].root, root, "identical audio readback replaced its controls");
+            nav.state.borrow_mut().invalidate_active_audio();
+            rebuild_audio_cards(&live, &[], &nav);
+            assert_eq!(live.audio_cards.borrow()[0].root, root, "same-scene loading should disable, not replace, controls");
+            assert!(!root.is_sensitive());
+            nav.state.borrow_mut().apply_active_audio(Some("Main".into()), Ok(vec![input.clone()]));
+            rebuild_audio_cards(&live, std::slice::from_ref(&input), &nav);
+            assert_eq!(live.audio_cards.borrow()[0].root, root);
+            assert!(root.is_sensitive());
+            nav.state.borrow_mut().set_current_program("Other".into());
+            rebuild_audio_cards(&live, &[], &nav);
+            assert!(live.audio_cards.borrow().is_empty(), "a different Program must not retain stale controls");
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a native GTK display"]
+    fn native_active_audio_readiness_never_presents_previous_program_controls() {
+        crate::ui::test_support::native_test("ui::pages::live::tests::native_active_audio_readiness_never_presents_previous_program_controls", || {
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            {
+                let mut state = nav.state.borrow_mut();
+                state.set_current_program("A".into());
+                state.apply_active_audio(Some("A".into()), Ok(vec![crate::domain::audio::AudioInput::new("MicA".into(), false, 0.5, -6.0)]));
+            }
+            let live = build(nav.clone());
+            let inputs = nav.state.borrow().audio_inputs.clone();
+            rebuild_audio_cards(&live, &inputs, &nav);
+            assert_eq!(live.audio_cards.borrow().len(), 1);
+            nav.state.borrow_mut().set_current_program("B".into());
+            rebuild_audio_cards(&live, &[], &nav);
+            assert!(live.audio_cards.borrow().is_empty());
+            let rendered_hint = || live.audio_box.first_child().unwrap().first_child().unwrap().downcast::<Label>().unwrap().text().to_string();
+            assert_eq!(rendered_hint(), nav.state.borrow().active_audio_notice().unwrap());
+            nav.state.borrow_mut().apply_active_audio(Some("B".into()), Err("fixture observation unavailable".into()));
+            rebuild_audio_cards(&live, &[], &nav);
+            assert!(live.audio_cards.borrow().is_empty());
+            assert!(rendered_hint().contains("fixture observation unavailable"));
+            nav.state.borrow_mut().apply_active_audio(Some("B".into()), Ok(Vec::new()));
+            rebuild_audio_cards(&live, &[], &nav);
+            assert_eq!(rendered_hint(), fl!(LANGUAGE_LOADER, "live-audio-empty-hint"));
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a native GTK display"]
+    fn native_observed_studio_changes_update_hints_without_replacing_cards() {
+        crate::ui::test_support::native_test("ui::pages::live::tests::native_observed_studio_changes_update_hints_without_replacing_cards", || {
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            {
+                let mut state = nav.state.borrow_mut();
+                state.obs_status = ObsStatus::Connected { obs_version: "fixture".into() };
+                state.scene_collections.current = Some("Fixture".into());
+                state.scene_inventory.scenes = vec![Scene { id: "Main".into() }];
+                state.scene_inventory.current_id = Some("Main".into());
+                state.registry.scenes.insert("Main".into(), SceneEntry { role: Some(SceneRole::Primary), ..Default::default() });
+                state.workspace.observed_at = Some(std::time::Instant::now());
+                state.workspace.snapshot = Some(Default::default());
+                state.workspace.snapshot.as_mut().unwrap().studio.enabled = Some(false);
+            }
+            let live = build(nav.clone());
+            let inventory = nav.state.borrow().scene_inventory.clone();
+            rebuild_scene_cards(&live, &inventory, &nav);
+            let root = live.scene_cards.borrow()[0].root.clone();
+            for studio in [false, true, false] {
+                {
+                    let mut state = nav.state.borrow_mut();
+                    state.workspace.snapshot.as_mut().unwrap().studio.enabled = Some(studio);
+                    state.workspace.pending = false;
+                    state.workspace.loading = false;
+                    state.workspace.observed_at = Some(std::time::Instant::now());
+                }
+                rebuild_scene_cards(&live, &inventory, &nav);
+                assert_eq!(live.scene_cards.borrow()[0].root, root);
+                let hint = if studio { fl!(LANGUAGE_LOADER, "scene-card-stage-hint") }
+                    else { fl!(LANGUAGE_LOADER, "scene-card-tooltip-ready") };
+                assert!(root.tooltip_text().unwrap().contains(&hint));
+                assert_eq!(live.hotkey_hint.tooltip_text().as_deref(), crate::ui::hotkeys::scene_hint(&nav, &nav.state.borrow().config.hotkeys).as_deref());
+                root.emit_clicked();
+                let expected = if studio { fl!(LANGUAGE_LOADER, "control-preview", scene = "Main") }
+                    else { fl!(LANGUAGE_LOADER, "control-program", scene = "Main") };
+                assert_eq!(nav.state.borrow().workspace.activity.entries.back().unwrap().description, expected);
+            }
+        });
+    }
+
+    #[test]
+    fn disconnect_confirmation_respects_stops_and_unknown_states() {
+        let mut config = OutputConfig {
+            confirm_stop_stream: false,
+            confirm_stop_recording: false,
+            ..Default::default()
+        };
+        assert!(!requires_disconnect_confirmation(
+            &OutputStatus::inactive(),
+            &OutputStatus::inactive(),
+            &config
+        ));
+        assert!(!requires_disconnect_confirmation(
+            &OutputStatus::active(),
+            &OutputStatus::active(),
+            &config
+        ));
+        config.confirm_stop_stream = true;
+        assert!(requires_disconnect_confirmation(
+            &OutputStatus::active(),
+            &OutputStatus::inactive(),
+            &config
+        ));
+        assert!(!requires_disconnect_confirmation(
+            &OutputStatus::inactive(),
+            &OutputStatus::active(),
+            &config
+        ));
+        config.confirm_stop_recording = true;
+        assert!(requires_disconnect_confirmation(
+            &OutputStatus::inactive(),
+            &OutputStatus::active(),
+            &config
+        ));
+        for state in [
+            OutputRunState::Unknown,
+            OutputRunState::Starting,
+            OutputRunState::Stopping,
+            OutputRunState::Reconnecting,
+        ] {
+            assert!(requires_disconnect_confirmation(
+                &OutputStatus::new(false, state),
+                &OutputStatus::inactive(),
+                &config
+            ));
+        }
+    }
 
     fn scene_entry(role: SceneRole) -> SceneEntry {
         SceneEntry {

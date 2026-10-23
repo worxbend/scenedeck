@@ -2,7 +2,8 @@
    Page chrome: colour scheme, scroll progress, reveals, copy, tabs, toast.
    ========================================================================== */
 
-export const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+import { RELEASE_API, normalizeRelease, applyRelease } from "./release.js";
+import { reducedMotion } from "./activity.js";
 
 /** Shared scroll/pointer snapshot. Written once per frame, read by everything
  *  else — so nothing else is allowed to touch scrollY during a frame. */
@@ -231,41 +232,19 @@ export function initTabs() {
    deploys. If it does not, nothing changes and every link still works. */
 
 export async function refreshRelease() {
-  let version;
+  // A failed optional lookup deliberately leaves the immutable authored links.
+  let release;
   try {
-    const response = await fetch("https://api.github.com/repos/worxbend/scenedeck/releases/latest", {
+    const response = await fetch(RELEASE_API, {
       headers: { Accept: "application/vnd.github+json" },
+      signal: AbortSignal.timeout(8000),
     });
     if (!response.ok) return;
-    const data = await response.json();
-    version = String(data.tag_name || "").replace(/^v/, "");
-  } catch (e) {
-    return; // Offline, rate-limited, or blocked. The baked-in version stands.
+    release = normalizeRelease(await response.json());
+  } catch (error) {
+    return; // Offline, malformed, timed out or rate-limited: use the fallback.
   }
-
-  if (!/^\d+\.\d+\.\d+$/.test(version)) return;
-
-  document.querySelectorAll("[data-release-version]").forEach((el) => {
-    el.textContent = `v${version}`;
-  });
-
-  const swap = (value) => value.replace(/scenedeck-\d+\.\d+\.\d+-linux/g, `scenedeck-${version}-linux`);
-
-  document.querySelectorAll('a[href*="scenedeck-"]').forEach((a) => {
-    a.href = swap(a.href);
-  });
-  document.querySelectorAll("[data-copy]").forEach((el) => {
-    el.setAttribute("data-copy", swap(el.getAttribute("data-copy")));
-  });
-  // Only the text nodes are rewritten. Replacing textContent wholesale would
-  // flatten the <span class="prompt">$</span> that colours the shell prompt.
-  document.querySelectorAll(".pane code, .hero__code code").forEach((el) => {
-    for (const node of el.childNodes) {
-      if (node.nodeType === Node.TEXT_NODE && node.nodeValue.includes("scenedeck-")) {
-        node.nodeValue = swap(node.nodeValue);
-      }
-    }
-  });
+  applyRelease(document, release);
 }
 
 /* ---- Screenshot viewer --------------------------------------------------- */

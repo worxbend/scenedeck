@@ -1,59 +1,63 @@
-//! Scene architecture diagnostics.
+//! Scene architecture diagnostics over domain snapshots.
 //!
-//! Pure functions over the scene inventory, the local registry, and the
-//! dependency graph.  No OBS or GTK types.  Produces a list of `Diagnostic`s
-//! sorted most-severe first.
+//! `evaluate` produces pure rule results; `run` preserves the localized Doctor
+//! page contract by formatting those results only after their stable sort.
 
-use i18n_embed_fl::fl;
-
-use crate::domain::diagnostic::{Diagnostic, DiagnosticSeverity};
+use crate::domain::diagnostic::{Diagnostic, DiagnosticSeverity, DoctorFinding, DoctorFindingKind};
 use crate::domain::graph::{EdgeStatus, SceneGraph};
 use crate::domain::registry::SceneRegistrySnapshot;
 use crate::domain::role::SceneRole;
 use crate::domain::scene::SceneInventory;
-use crate::infra::i18n::LANGUAGE_LOADER;
+use crate::services::doctor_format::format_finding;
 use crate::services::graph_service::classify_edge;
 
 /// Runs scene architecture diagnostics over domain state.
 pub struct DoctorService;
 
 impl DoctorService {
-    /// Return diagnostics sorted most-severe first.
+    /// Return localized diagnostics sorted most-severe first.
     pub fn run(
         inventory: &SceneInventory,
         registry: &SceneRegistrySnapshot,
         graph: &SceneGraph,
     ) -> Vec<Diagnostic> {
-        let mut diags = Vec::new();
-
-        Self::check_role_coverage(inventory, registry, &mut diags);
-        Self::check_stale_entries(inventory, registry, &mut diags);
-        Self::check_protected_switchable(registry, &mut diags);
-        Self::check_edges(registry, graph, &mut diags);
-        Self::check_cycles(graph, &mut diags);
-
-        // Most severe first; stable within a severity.
-        diags.sort_by_key(|d| std::cmp::Reverse(d.severity));
-        diags
+        Self::evaluate(inventory, registry, graph)
+            .into_iter()
+            .map(format_finding)
+            .collect()
     }
 
-    fn role_of(registry: &SceneRegistrySnapshot, scene: &str) -> Option<SceneRole> {
-        registry.scene_role(scene)
+    /// Evaluate all rules without consulting localization or display labels.
+    ///
+    /// Most severe first; ties retain rule traversal order (including the
+    /// existing registry/graph iteration order, not a new alphabetical order).
+    pub fn evaluate(
+        inventory: &SceneInventory,
+        registry: &SceneRegistrySnapshot,
+        graph: &SceneGraph,
+    ) -> Vec<DoctorFinding> {
+        let mut findings = Vec::new();
+        Self::check_role_coverage(inventory, registry, &mut findings);
+        Self::check_stale_entries(inventory, registry, &mut findings);
+        Self::check_protected_switchable(registry, &mut findings);
+        Self::check_edges(registry, graph, &mut findings);
+        Self::check_cycles(graph, &mut findings);
+        findings.sort_by_key(|finding| std::cmp::Reverse(finding.severity));
+        findings
     }
 
     /// Every OBS scene should have a role assigned.
     fn check_role_coverage(
         inventory: &SceneInventory,
         registry: &SceneRegistrySnapshot,
-        diags: &mut Vec<Diagnostic>,
+        findings: &mut Vec<DoctorFinding>,
     ) {
         for scene in &inventory.scenes {
             if !registry.contains_scene(&scene.id) {
-                diags.push(Diagnostic {
+                findings.push(DoctorFinding {
                     severity: DiagnosticSeverity::Warning,
-                    scene: Some(scene.id.clone()),
-                    message: fl!(LANGUAGE_LOADER, "doctor-no-role"),
-                    suggestion: Some(fl!(LANGUAGE_LOADER, "doctor-no-role-suggestion")),
+                    scene: scene.id.clone(),
+                    kind: DoctorFindingKind::NoRole,
                 });
             }
         }
@@ -63,36 +67,32 @@ impl DoctorService {
     fn check_stale_entries(
         inventory: &SceneInventory,
         registry: &SceneRegistrySnapshot,
-        diags: &mut Vec<Diagnostic>,
+        findings: &mut Vec<DoctorFinding>,
     ) {
         for (scene_name, _) in registry.scenes() {
-            if !inventory.scenes.iter().any(|s| &s.id == scene_name) {
-                diags.push(Diagnostic {
+            if !inventory.scenes.iter().any(|scene| &scene.id == scene_name) {
+                findings.push(DoctorFinding {
                     severity: DiagnosticSeverity::Info,
-                    scene: Some(scene_name.clone()),
-                    message: fl!(LANGUAGE_LOADER, "doctor-stale-entry"),
-                    suggestion: Some(fl!(LANGUAGE_LOADER, "doctor-stale-entry-suggestion")),
+                    scene: scene_name.clone(),
+                    kind: DoctorFindingKind::StaleEntry,
                 });
             }
         }
     }
 
     /// Protected scenes should not be in a live-switchable role.
-    fn check_protected_switchable(registry: &SceneRegistrySnapshot, diags: &mut Vec<Diagnostic>) {
+    fn check_protected_switchable(
+        registry: &SceneRegistrySnapshot,
+        findings: &mut Vec<DoctorFinding>,
+    ) {
         for (name, metadata) in registry.scenes() {
             if metadata.protected && metadata.role.is_live_switchable() {
-                diags.push(Diagnostic {
+                findings.push(DoctorFinding {
                     severity: DiagnosticSeverity::Warning,
-                    scene: Some(name.clone()),
-                    message: fl!(
-                        LANGUAGE_LOADER,
-                        "doctor-protected-switchable",
-                        role = metadata.role.label()
-                    ),
-                    suggestion: Some(fl!(
-                        LANGUAGE_LOADER,
-                        "doctor-protected-switchable-suggestion"
-                    )),
+                    scene: name.clone(),
+                    kind: DoctorFindingKind::ProtectedSwitchable {
+                        role: metadata.role,
+                    },
                 });
             }
         }
@@ -102,57 +102,36 @@ impl DoctorService {
     fn check_edges(
         registry: &SceneRegistrySnapshot,
         graph: &SceneGraph,
-        diags: &mut Vec<Diagnostic>,
+        findings: &mut Vec<DoctorFinding>,
     ) {
         for (parent, children) in &graph.edges {
-            let parent_role = Self::role_of(registry, parent);
+            let parent_role = registry.scene_role(parent);
             for child in children {
-                let child_role = Self::role_of(registry, child);
+                let child_role = registry.scene_role(child);
                 let status = classify_edge(parent_role, child_role, registry.graph_policy());
-                let diagnostic = edge_diagnostic(parent, parent_role, child, child_role, status);
-                if let Some(diag) = diagnostic {
-                    diags.push(diag);
+                if let Some(finding) = edge_finding(parent, parent_role, child, child_role, status)
+                {
+                    findings.push(finding);
                 }
             }
         }
     }
 
     /// Detect circular scene references (A nests B … nests A).
-    fn check_cycles(graph: &SceneGraph, diags: &mut Vec<Diagnostic>) {
-        let mut reported: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-        for parent in graph.edges.keys() {
-            for child in graph.children(parent) {
-                // A cycle exists if `child` can reach back to `parent`.
-                if graph.is_reachable(child, parent) {
-                    // Report each cyclic scene once.
-                    if reported.insert(parent.clone()) {
-                        diags.push(Diagnostic {
-                            severity: DiagnosticSeverity::Error,
-                            scene: Some(parent.clone()),
-                            message: fl!(
-                                LANGUAGE_LOADER,
-                                "doctor-cycle",
-                                parent = parent.as_str(),
-                                child = child.as_str()
-                            ),
-                            suggestion: Some(fl!(LANGUAGE_LOADER, "doctor-cycle-suggestion")),
-                        });
-                    }
-                }
-            }
+    fn check_cycles(graph: &SceneGraph, findings: &mut Vec<DoctorFinding>) {
+        for (parent, child) in graph.cycle_edges() {
+            findings.push(DoctorFinding {
+                severity: DiagnosticSeverity::Error,
+                scene: parent.to_owned(),
+                kind: DoctorFindingKind::Cycle {
+                    child: child.to_owned(),
+                },
+            });
         }
     }
 }
 
-/// Severity a non-`Ok` edge contributes, stated once for every edge rule.
-///
-/// Every edge rule below used to repeat this alongside its message, which made
-/// the two look independent when they are not: how bad an edge is depends only
-/// on whether the policy forbids it, never on which roles are involved. The
-/// variants are spelled out rather than caught by a `_` arm, so adding a
-/// fourth `EdgeStatus` fails to compile here instead of silently landing on a
-/// default.
+/// Severity depends only on the policy status, not the endpoint roles.
 const fn edge_severity(status: EdgeStatus) -> DiagnosticSeverity {
     match status {
         EdgeStatus::Forbidden => DiagnosticSeverity::Error,
@@ -160,60 +139,38 @@ const fn edge_severity(status: EdgeStatus) -> DiagnosticSeverity {
     }
 }
 
-/// Classify a single parent→child role relationship into an optional diagnostic.
-fn edge_diagnostic(
+/// Retain the existing role/status precedence, including custom-policy fallbacks.
+fn edge_finding(
     parent: &str,
     parent_role: Option<SceneRole>,
     child: &str,
     child_role: Option<SceneRole>,
     status: EdgeStatus,
-) -> Option<Diagnostic> {
-    // An allowed edge has nothing to report. This was previously the first arm
-    // of the match below, where a `return` hidden among the classification
-    // rules read as if it were one of them.
+) -> Option<DoctorFinding> {
     if status == EdgeStatus::Ok {
         return None;
     }
-
-    // `classify_edge` returns `Ok` whenever either endpoint lacks a role, so
-    // reaching here with a non-`Ok` status proves both roles are assigned.
-    let (pr, cr) = (parent_role?, child_role?);
-
-    // Matching on the status alongside the roles replaces five repeated
-    // `if status == ...` guards, so each rule reads as the single triple it
-    // applies to. Arm order is unchanged, so the same rule still wins.
-    let (message, suggestion) = match (pr, cr, status) {
-        (SceneRole::Primary, SceneRole::Debug, EdgeStatus::Forbidden) => (
-            fl!(LANGUAGE_LOADER, "doctor-edge-primary-debug", child = child),
-            fl!(LANGUAGE_LOADER, "doctor-edge-primary-debug-suggestion"),
-        ),
-        (SceneRole::Primary, SceneRole::Raw, EdgeStatus::Warning) => (
-            fl!(LANGUAGE_LOADER, "doctor-edge-primary-raw", child = child),
-            fl!(LANGUAGE_LOADER, "doctor-edge-primary-raw-suggestion"),
-        ),
-        (SceneRole::Module, SceneRole::Primary, EdgeStatus::Forbidden) => (
-            fl!(LANGUAGE_LOADER, "doctor-edge-module-primary", child = child),
-            fl!(LANGUAGE_LOADER, "doctor-edge-module-primary-suggestion"),
-        ),
-        (SceneRole::Raw, _, EdgeStatus::Forbidden) => (
-            fl!(LANGUAGE_LOADER, "doctor-edge-raw-nests", child = child),
-            fl!(LANGUAGE_LOADER, "doctor-edge-raw-nests-suggestion"),
-        ),
-        (_, _, EdgeStatus::Forbidden) => (
-            fl!(LANGUAGE_LOADER, "doctor-edge-forbidden", child = child),
-            fl!(LANGUAGE_LOADER, "doctor-edge-adjust-suggestion"),
-        ),
-        _ => (
-            fl!(LANGUAGE_LOADER, "doctor-edge-outside-policy", child = child),
-            fl!(LANGUAGE_LOADER, "doctor-edge-adjust-suggestion"),
-        ),
+    // `classify_edge` returns `Ok` for an unassigned endpoint.
+    let (parent_role, child_role) = (parent_role?, child_role?);
+    let child = child.to_owned();
+    let kind = match (parent_role, child_role, status) {
+        (SceneRole::Primary, SceneRole::Debug, EdgeStatus::Forbidden) => {
+            DoctorFindingKind::PrimaryDebug { child }
+        }
+        (SceneRole::Primary, SceneRole::Raw, EdgeStatus::Warning) => {
+            DoctorFindingKind::PrimaryRaw { child }
+        }
+        (SceneRole::Module, SceneRole::Primary, EdgeStatus::Forbidden) => {
+            DoctorFindingKind::ModulePrimary { child }
+        }
+        (SceneRole::Raw, _, EdgeStatus::Forbidden) => DoctorFindingKind::RawNests { child },
+        (_, _, EdgeStatus::Forbidden) => DoctorFindingKind::ForbiddenEdge { child },
+        _ => DoctorFindingKind::OutsidePolicy { child },
     };
-
-    Some(Diagnostic {
+    Some(DoctorFinding {
         severity: edge_severity(status),
-        scene: Some(parent.to_string()),
-        message,
-        suggestion: Some(suggestion),
+        scene: parent.to_owned(),
+        kind,
     })
 }
 
@@ -222,11 +179,11 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    use crate::domain::registry::{SceneMetadata, SceneRegistrySnapshot};
-    use crate::domain::scene::{Scene, SceneInventory};
+    use crate::domain::registry::{GraphDependencyPolicy, RoleDependency, SceneMetadata};
+    use crate::domain::scene::Scene;
 
     fn scene(id: &str) -> Scene {
-        Scene { id: id.to_string() }
+        Scene { id: id.to_owned() }
     }
 
     fn metadata(role: SceneRole) -> SceneMetadata {
@@ -243,10 +200,22 @@ mod tests {
         SceneRegistrySnapshot::new(
             entries
                 .into_iter()
-                .map(|(scene, role)| (scene.to_string(), metadata(role)))
-                .collect::<HashMap<_, _>>(),
+                .map(|(name, role)| (name.to_owned(), metadata(role)))
+                .collect(),
             Default::default(),
         )
+    }
+
+    fn finding(
+        severity: DiagnosticSeverity,
+        scene: &str,
+        kind: DoctorFindingKind,
+    ) -> DoctorFinding {
+        DoctorFinding {
+            severity,
+            scene: scene.to_owned(),
+            kind,
+        }
     }
 
     #[test]
@@ -319,5 +288,426 @@ mod tests {
         assert!(diags
             .iter()
             .any(|d| d.message.contains("Circular scene reference")));
+    }
+
+    #[test]
+    fn pure_rule_result_retains_scene_and_typed_role_without_localizing() {
+        let inventory = SceneInventory {
+            scenes: vec![scene("Protected")],
+            ..Default::default()
+        };
+        let registry = SceneRegistrySnapshot::new(
+            HashMap::from([(
+                "Protected".into(),
+                SceneMetadata {
+                    protected: true,
+                    ..metadata(SceneRole::Primary)
+                },
+            )]),
+            Default::default(),
+        );
+        assert_eq!(
+            DoctorService::evaluate(&inventory, &registry, &SceneGraph::default()),
+            vec![DoctorFinding {
+                severity: DiagnosticSeverity::Warning,
+                scene: "Protected".into(),
+                kind: DoctorFindingKind::ProtectedSwitchable {
+                    role: SceneRole::Primary
+                },
+            }]
+        );
+    }
+
+    #[test]
+    fn coverage_stale_and_protected_keep_rule_order() {
+        let inventory = SceneInventory {
+            scenes: ["Missing Z", "Missing A", "Protected"].map(scene).into(),
+            ..Default::default()
+        };
+        let registry = SceneRegistrySnapshot::new(
+            HashMap::from([
+                (
+                    "Protected".into(),
+                    SceneMetadata {
+                        protected: true,
+                        ..metadata(SceneRole::Primary)
+                    },
+                ),
+                ("Stale".into(), metadata(SceneRole::Raw)),
+            ]),
+            Default::default(),
+        );
+        assert_eq!(
+            DoctorService::evaluate(&inventory, &registry, &SceneGraph::default()),
+            vec![
+                finding(
+                    DiagnosticSeverity::Warning,
+                    "Missing Z",
+                    DoctorFindingKind::NoRole
+                ),
+                finding(
+                    DiagnosticSeverity::Warning,
+                    "Missing A",
+                    DoctorFindingKind::NoRole
+                ),
+                finding(
+                    DiagnosticSeverity::Warning,
+                    "Protected",
+                    DoctorFindingKind::ProtectedSwitchable {
+                        role: SceneRole::Primary
+                    }
+                ),
+                finding(
+                    DiagnosticSeverity::Info,
+                    "Stale",
+                    DoctorFindingKind::StaleEntry
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn edge_rules_preserve_precedence_severity_and_literal_arguments() {
+        use DiagnosticSeverity::{Error, Warning};
+        use EdgeStatus::Forbidden;
+        use SceneRole::{Debug, Module, Primary, Raw, Secondary};
+        let child = "Child <&> 日本語";
+        for (parent_role, child_role, status, severity, kind) in [
+            (
+                Primary,
+                Debug,
+                Forbidden,
+                Error,
+                DoctorFindingKind::PrimaryDebug {
+                    child: child.into(),
+                },
+            ),
+            (
+                Primary,
+                Raw,
+                EdgeStatus::Warning,
+                Warning,
+                DoctorFindingKind::PrimaryRaw {
+                    child: child.into(),
+                },
+            ),
+            (
+                Module,
+                Primary,
+                Forbidden,
+                Error,
+                DoctorFindingKind::ModulePrimary {
+                    child: child.into(),
+                },
+            ),
+            (
+                Raw,
+                Module,
+                Forbidden,
+                Error,
+                DoctorFindingKind::RawNests {
+                    child: child.into(),
+                },
+            ),
+            (
+                Secondary,
+                Debug,
+                Forbidden,
+                Error,
+                DoctorFindingKind::ForbiddenEdge {
+                    child: child.into(),
+                },
+            ),
+            (
+                Primary,
+                Raw,
+                Forbidden,
+                Error,
+                DoctorFindingKind::ForbiddenEdge {
+                    child: child.into(),
+                },
+            ),
+            (
+                Primary,
+                Debug,
+                EdgeStatus::Warning,
+                Warning,
+                DoctorFindingKind::OutsidePolicy {
+                    child: child.into(),
+                },
+            ),
+            (
+                Module,
+                Raw,
+                EdgeStatus::Warning,
+                Warning,
+                DoctorFindingKind::OutsidePolicy {
+                    child: child.into(),
+                },
+            ),
+        ] {
+            assert_eq!(
+                edge_finding(
+                    "Parent <&>",
+                    Some(parent_role),
+                    child,
+                    Some(child_role),
+                    status
+                ),
+                Some(finding(severity, "Parent <&>", kind))
+            );
+        }
+        assert!(edge_finding("P", Some(Primary), "C", Some(Module), EdgeStatus::Ok).is_none());
+        assert!(edge_finding("P", None, "C", Some(Module), Forbidden).is_none());
+        assert!(edge_finding("P", Some(Primary), "C", None, EdgeStatus::Warning).is_none());
+    }
+
+    #[test]
+    fn custom_policy_controls_fallbacks_and_stable_severity_sort() {
+        let inventory = SceneInventory {
+            scenes: ["P", "D", "R", "M"].map(scene).into(),
+            ..Default::default()
+        };
+        let registry = SceneRegistrySnapshot::new(
+            [
+                ("P", SceneRole::Primary),
+                ("D", SceneRole::Debug),
+                ("R", SceneRole::Raw),
+                ("M", SceneRole::Module),
+            ]
+            .into_iter()
+            .map(|(name, role)| (name.into(), metadata(role)))
+            .collect(),
+            GraphDependencyPolicy {
+                primary_can_depend_on: vec![SceneRole::Module],
+                module_can_depend_on: vec![],
+                forbidden_edges: vec![RoleDependency::new(SceneRole::Primary, SceneRole::Raw)],
+            },
+        );
+        let mut graph = SceneGraph::default();
+        graph.edges.insert(
+            "P".into(),
+            vec!["D".into(), "R".into(), "M".into(), "Unknown".into()],
+        );
+        assert_eq!(
+            DoctorService::evaluate(&inventory, &registry, &graph),
+            vec![
+                finding(
+                    DiagnosticSeverity::Error,
+                    "P",
+                    DoctorFindingKind::ForbiddenEdge { child: "R".into() }
+                ),
+                finding(
+                    DiagnosticSeverity::Warning,
+                    "P",
+                    DoctorFindingKind::OutsidePolicy { child: "D".into() }
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn self_cycle_and_disconnected_cycles_keep_representative_order() {
+        let mut graph = SceneGraph::default();
+        graph.edges.insert("Self".into(), vec!["Self".into()]);
+        graph.edges.insert("A".into(), vec!["B".into(), "B".into()]);
+        graph.edges.insert("B".into(), vec!["A".into()]);
+        graph.edges.insert("C".into(), vec!["D".into()]);
+        graph.edges.insert("D".into(), vec!["C".into()]);
+        let registry = registry(["A", "B", "C", "D", "Self"].map(|name| (name, SceneRole::Module)));
+        let inventory = SceneInventory {
+            scenes: ["A", "B", "C", "D", "Self"].map(scene).into(),
+            ..Default::default()
+        };
+        let expected = [
+            ("A", "B"),
+            ("B", "A"),
+            ("C", "D"),
+            ("D", "C"),
+            ("Self", "Self"),
+        ]
+        .map(|(parent, child)| {
+            finding(
+                DiagnosticSeverity::Error,
+                parent,
+                DoctorFindingKind::Cycle {
+                    child: child.into(),
+                },
+            )
+        });
+        assert_eq!(
+            DoctorService::evaluate(&inventory, &registry, &graph),
+            expected
+        );
+    }
+
+    #[test]
+    fn empty_and_assigned_non_switchable_protected_scenes_have_no_findings() {
+        assert!(DoctorService::evaluate(
+            &SceneInventory::default(),
+            &SceneRegistrySnapshot::default(),
+            &SceneGraph::default()
+        )
+        .is_empty());
+        for role in SceneRole::ALL {
+            for protected in [false, true] {
+                let inventory = SceneInventory {
+                    scenes: vec![scene("Scene")],
+                    ..Default::default()
+                };
+                let registry = SceneRegistrySnapshot::new(
+                    HashMap::from([(
+                        "Scene".into(),
+                        SceneMetadata {
+                            protected,
+                            ..metadata(role)
+                        },
+                    )]),
+                    Default::default(),
+                );
+                let expected = if protected && role == SceneRole::Primary {
+                    vec![finding(
+                        DiagnosticSeverity::Warning,
+                        "Scene",
+                        DoctorFindingKind::ProtectedSwitchable { role },
+                    )]
+                } else {
+                    vec![]
+                };
+                assert_eq!(
+                    DoctorService::evaluate(&inventory, &registry, &SceneGraph::default()),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn registry_and_graph_ties_retain_existing_iteration_order() {
+        let registry = SceneRegistrySnapshot::new(
+            ["Z", "A", "M"]
+                .into_iter()
+                .map(|name| {
+                    (
+                        name.into(),
+                        SceneMetadata {
+                            protected: true,
+                            ..metadata(SceneRole::Primary)
+                        },
+                    )
+                })
+                .collect(),
+            Default::default(),
+        );
+        let expected: Vec<_> = registry
+            .scenes()
+            .map(|(name, _)| {
+                finding(
+                    DiagnosticSeverity::Warning,
+                    name,
+                    DoctorFindingKind::ProtectedSwitchable {
+                        role: SceneRole::Primary,
+                    },
+                )
+            })
+            .chain(registry.scenes().map(|(name, _)| {
+                finding(
+                    DiagnosticSeverity::Info,
+                    name,
+                    DoctorFindingKind::StaleEntry,
+                )
+            }))
+            .collect();
+        assert_eq!(
+            DoctorService::evaluate(
+                &SceneInventory::default(),
+                &registry,
+                &SceneGraph::default()
+            ),
+            expected
+        );
+
+        let registry = registry_for_edges();
+        let inventory = SceneInventory {
+            scenes: ["P1", "P2", "D1", "D2"].map(scene).into(),
+            ..Default::default()
+        };
+        let graph = SceneGraph {
+            edges: HashMap::from([
+                ("P1".into(), vec!["D2".into(), "D1".into(), "D2".into()]),
+                ("P2".into(), vec!["D1".into(), "D2".into()]),
+            ]),
+        };
+        let expected: Vec<_> = graph
+            .edges
+            .iter()
+            .flat_map(|(parent, children)| {
+                children.iter().map(|child| {
+                    finding(
+                        DiagnosticSeverity::Error,
+                        parent,
+                        DoctorFindingKind::PrimaryDebug {
+                            child: child.clone(),
+                        },
+                    )
+                })
+            })
+            .collect();
+        assert_eq!(
+            DoctorService::evaluate(&inventory, &registry, &graph),
+            expected
+        );
+    }
+
+    fn registry_for_edges() -> SceneRegistrySnapshot {
+        registry([
+            ("P1", SceneRole::Primary),
+            ("P2", SceneRole::Primary),
+            ("D1", SceneRole::Debug),
+            ("D2", SceneRole::Debug),
+        ])
+    }
+
+    #[test]
+    fn default_policy_flags_each_original_edge_example() {
+        for (parent, child, severity, kind) in [
+            (
+                SceneRole::Module,
+                SceneRole::Primary,
+                DiagnosticSeverity::Error,
+                DoctorFindingKind::ModulePrimary { child: "C".into() },
+            ),
+            (
+                SceneRole::Primary,
+                SceneRole::Raw,
+                DiagnosticSeverity::Warning,
+                DoctorFindingKind::PrimaryRaw { child: "C".into() },
+            ),
+            (
+                SceneRole::Raw,
+                SceneRole::Module,
+                DiagnosticSeverity::Error,
+                DoctorFindingKind::RawNests { child: "C".into() },
+            ),
+            (
+                SceneRole::Primary,
+                SceneRole::Debug,
+                DiagnosticSeverity::Error,
+                DoctorFindingKind::PrimaryDebug { child: "C".into() },
+            ),
+        ] {
+            let registry = registry([("P", parent), ("C", child)]);
+            let inventory = SceneInventory {
+                scenes: ["P", "C"].map(scene).into(),
+                ..Default::default()
+            };
+            let graph = SceneGraph {
+                edges: HashMap::from([("P".into(), vec!["C".into()])]),
+            };
+            assert_eq!(
+                DoctorService::evaluate(&inventory, &registry, &graph),
+                vec![finding(severity, "P", kind)]
+            );
+        }
     }
 }

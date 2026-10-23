@@ -40,16 +40,30 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
 }
 
 fn populate(container: &GtkBox, nav: &NavigationContext) {
-    let (graph, inventory) = {
+    let (graph, inventory, topology_status) = {
         let state = nav.state.borrow();
-        (state.scene_graph.clone(), state.scene_inventory.clone())
+        (
+            state.scene_graph.clone(),
+            state.scene_inventory.clone(),
+            state.topology_status.clone(),
+        )
     };
 
-    if graph.edges.is_empty() {
+    if let Some((title, description)) = topology_status.notice() {
+        let unavailable = StatusPage::builder()
+            .icon_name("view-grid-symbolic")
+            .title(&title)
+            .description(glib::markup_escape_text(&description))
+            .build();
+        container.append(&unavailable);
+        return;
+    }
+
+    if graph.edges.is_empty() && inventory.scenes.is_empty() {
         let empty = StatusPage::builder()
             .icon_name("view-grid-symbolic")
-            .title(fl!(LANGUAGE_LOADER, "graph-empty-title"))
-            .description(fl!(LANGUAGE_LOADER, "graph-empty-description"))
+            .title(fl!(LANGUAGE_LOADER, "topology-empty-title"))
+            .description(fl!(LANGUAGE_LOADER, "topology-empty-description"))
             .build();
         container.append(&empty);
         return;
@@ -94,6 +108,55 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
         .build();
     header.append(&reset_btn);
     page.append(&header);
+    let relationships = gtk4::Expander::builder()
+        .label(fl!(LANGUAGE_LOADER, "graph-relationship-list"))
+        .expanded(false)
+        .build();
+    let list = gtk4::ListBox::builder()
+        .selection_mode(gtk4::SelectionMode::None)
+        .build();
+    list.add_css_class("boxed-list");
+    let mut scenes = BTreeSet::new();
+    scenes.extend(inventory.scenes.iter().map(|scene| scene.id.clone()));
+    for (parent, children) in &graph.edges {
+        scenes.insert(parent.clone());
+        scenes.extend(children.iter().cloned());
+    }
+    for parent in scenes {
+        let children = graph.children(&parent);
+        let row = adw::ExpanderRow::builder().use_markup(false).build();
+        row.set_title(&parent);
+        if children.is_empty() {
+            row.set_subtitle(&fl!(LANGUAGE_LOADER, "graph-no-dependencies"));
+            row.set_enable_expansion(false);
+        }
+        for child in children {
+            let status = classify_edge(
+                registry.scene_role(&parent),
+                registry.scene_role(child),
+                registry.graph_policy(),
+            );
+            let edge = adw::ActionRow::builder()
+                .use_markup(false)
+                .focusable(true)
+                .build();
+            edge.set_title(child);
+            edge.set_subtitle(&status.summary_label());
+            let icon = Image::from_icon_name(status.icon_name());
+            icon.add_css_class(status.css_class());
+            edge.add_prefix(&icon);
+            row.add_row(&edge);
+        }
+        list.append(&row);
+    }
+    let list_scroll = ScrolledWindow::builder()
+        .max_content_height(260)
+        .propagate_natural_height(true)
+        .hscrollbar_policy(PolicyType::Never)
+        .child(&list)
+        .build();
+    relationships.set_child(Some(&list_scroll));
+    page.append(&relationships);
 
     let canvas = DrawingArea::builder()
         .content_width(model.borrow().content_width as i32)
@@ -112,11 +175,14 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
 
     reset_btn.connect_clicked({
         let model = model.clone();
-        let canvas = canvas.clone();
+        let canvas = canvas.downgrade();
         let graph = graph.clone();
         let inventory = inventory.clone();
         let registry = registry.clone();
         move |_| {
+            let Some(canvas) = canvas.upgrade() else {
+                return;
+            };
             let updated = GraphModel::build(&graph, &inventory, &registry);
             canvas.set_content_width(updated.content_width as i32);
             canvas.set_content_height(updated.content_height as i32);
@@ -165,11 +231,14 @@ fn install_drag_controller(canvas: &DrawingArea, model: &Rc<RefCell<GraphModel>>
 
     drag.connect_drag_update({
         let model = model.clone();
-        let canvas = canvas.clone();
+        let canvas = canvas.downgrade();
         let target = target.clone();
         let start_node_x = start_node_x.clone();
         let start_node_y = start_node_y.clone();
         move |_, offset_x, offset_y| {
+            let Some(canvas) = canvas.upgrade() else {
+                return;
+            };
             if let Some(node_idx) = *target.borrow() {
                 let mut graph_model = model.borrow_mut();
                 let max_x = (graph_model.content_width - NODE_WIDTH).max(0.0);
@@ -202,7 +271,11 @@ impl GraphModel {
         inventory: &SceneInventory,
         registry: &SceneRegistrySnapshot,
     ) -> Self {
-        let mut node_ids = BTreeSet::new();
+        let mut node_ids: BTreeSet<String> = inventory
+            .scenes
+            .iter()
+            .map(|scene| scene.id.clone())
+            .collect();
         for (parent, children) in &graph.edges {
             node_ids.insert(parent.clone());
             for child in children {
@@ -690,8 +763,101 @@ impl Palette {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::controller::state::ObsStatus;
     use crate::domain::registry::SceneMetadata;
     use crate::domain::scene::Scene;
+
+    #[test]
+    #[ignore = "requires a native GTK display"]
+    fn native_graph_distinguishes_missing_empty_failed_and_reset_topology() {
+        crate::ui::test_support::native_test(
+            "ui::pages::graph::tests::native_graph_distinguishes_missing_empty_failed_and_reset_topology",
+            || {
+                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+                let container = GtkBox::new(Orientation::Vertical, 0);
+                nav.state.borrow_mut().scene_inventory = inventory(["Main"]);
+                populate(&container, &nav);
+                assert!(page_text(container.upcast_ref()).contains("Scene topology not observed"));
+                assert!(!page_text(container.upcast_ref()).contains("No nested scene dependencies"));
+                nav.state.borrow_mut().scene_inventory = inventory([]);
+                nav.state.borrow_mut().set_topology_ready(SceneGraph::default());
+                crate::ui::clear_children(&container);
+                populate(&container, &nav);
+                assert!(page_text(container.upcast_ref()).contains("No scenes observed"));
+                {
+                    let mut state = nav.state.borrow_mut();
+                    state.scene_inventory = inventory(["Main"]);
+                    state.set_topology_ready(SceneGraph::default());
+                }
+                crate::ui::clear_children(&container);
+                populate(&container, &nav);
+                assert!(page_text(container.upcast_ref()).contains("Scene Dependencies"));
+                nav.state.borrow_mut().set_topology_failed("Group <b>& read failed".into());
+                crate::ui::clear_children(&container);
+                populate(&container, &nav);
+                let text = page_text(container.upcast_ref());
+                assert!(text.contains("Scene topology could not be read"));
+                assert!(text.contains("Group <b>& read failed"));
+                assert!(!text.contains("No nested scene dependencies"));
+                nav.state.borrow_mut().set_topology_loading();
+                crate::ui::clear_children(&container);
+                populate(&container, &nav);
+                assert!(page_text(container.upcast_ref()).contains("Reading scene topology"));
+                nav.state.borrow_mut().set_topology_ready(SceneGraph::default());
+                crate::ui::clear_children(&container);
+                populate(&container, &nav);
+                assert!(page_text(container.upcast_ref()).contains("Scene Dependencies"));
+                nav.state.borrow_mut().invalidate_collection_runtime();
+                crate::ui::clear_children(&container);
+                populate(&container, &nav);
+                assert!(page_text(container.upcast_ref()).contains("Scene topology not observed"));
+                nav.state.borrow_mut().reset_obs_session(ObsStatus::Disconnected);
+                crate::ui::clear_children(&container);
+                populate(&container, &nav);
+                assert!(page_text(container.upcast_ref()).contains("Scene topology not observed"));
+            },
+        );
+    }
+
+    fn page_text(widget: &gtk4::Widget) -> String {
+        let mut text = widget
+            .downcast_ref::<Label>()
+            .map(|label| label.text().to_string())
+            .unwrap_or_default();
+        let mut child = widget.first_child();
+        while let Some(widget) = child {
+            text.push_str(&page_text(&widget));
+            child = widget.next_sibling();
+        }
+        text
+    }
+
+    #[test]
+    #[ignore = "requires a native GTK display"]
+    fn native_graph_gesture_releases_its_canvas_and_model() {
+        crate::ui::test_support::native_test(
+            "ui::pages::graph::tests::native_graph_gesture_releases_its_canvas_and_model",
+            || {
+                let model = Rc::new(RefCell::new(GraphModel::build(
+                    &SceneGraph::default(),
+                    &inventory(["Main"]),
+                    &registry([]),
+                )));
+                let weak_model = Rc::downgrade(&model);
+                let canvas = DrawingArea::new();
+                canvas.set_draw_func({
+                    let model = model.clone();
+                    move |_, ctx, width, height| draw_canvas(ctx, width, height, &model.borrow())
+                });
+                install_drag_controller(&canvas, &model);
+                let weak_canvas = canvas.downgrade();
+                drop(model);
+                drop(canvas);
+                assert!(weak_canvas.upgrade().is_none());
+                assert!(weak_model.upgrade().is_none());
+            },
+        );
+    }
 
     #[test]
     fn graph_model_counts_edge_statuses_from_registry_policy() {
@@ -713,6 +879,25 @@ mod tests {
         assert_eq!(model.edge_summary.count(EdgeStatus::Ok), 1);
         assert_eq!(model.edge_summary.count(EdgeStatus::Warning), 1);
         assert_eq!(model.edge_summary.count(EdgeStatus::Forbidden), 0);
+    }
+
+    #[test]
+    fn graph_model_keeps_isolated_scenes_with_no_edges() {
+        let model = GraphModel::build(
+            &SceneGraph::default(),
+            &inventory(["Solo", "Other"]),
+            &registry([]),
+        );
+        assert_eq!(
+            model
+                .nodes
+                .iter()
+                .map(|node| node.label.as_str())
+                .collect::<Vec<_>>(),
+            ["Solo", "Other"]
+        );
+        assert!(model.edges.is_empty());
+        assert!(model.content_height.is_finite());
     }
 
     #[test]

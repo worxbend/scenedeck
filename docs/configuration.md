@@ -28,6 +28,7 @@ Example:
     "port": 4455
   },
   "live": {
+    "scene_previews": false,
     "show_roles": ["primary"],
     "audio_inputs": [],
     "allow_switching_only": ["primary"]
@@ -55,6 +56,10 @@ Example:
     "pinned_scene": null,
     "grouping": "scope"
   },
+  "inventory": {
+    "name_width": 360,
+    "role_width": 240
+  },
   "hotkeys": {
     "enabled": true,
     "style": "ctrl",
@@ -71,6 +76,8 @@ Fields:
 
 - `obs.host`: OBS WebSocket host.
 - `obs.port`: OBS WebSocket port.
+- `live.scene_previews`: scene thumbnails on Live. Defaults to `false`; change it
+  in Settings. Disabling previews returns compact scene tiles.
 - `live.show_roles`: roles intended for Live display. Current Live filtering is
   driven by the local registry role semantics.
 - `live.audio_inputs`: optional allow-list of OBS input names for scene audio.
@@ -115,6 +122,9 @@ Fields:
 - `mixer.selected_scene`: optional scene name used by Selected mode.
 - `mixer.pinned_scene`: optional scene name remembered by Pinned mode.
 - `mixer.grouping`: `scope`, `scene_path`, or `none`.
+- Legacy `inventory.name_width` / `inventory.role_width` keys are accepted but
+  ignored, and omitted when settings are saved. The responsive Inventory list
+  adapts automatically; there are no width controls.
 - `hotkeys.enabled`: whether Live scene cards can be switched from the keyboard.
   Defaults to `true`.
 - `hotkeys.style`: which key combination activates a scene slot. One of
@@ -189,6 +199,11 @@ $HOME/.config/scenedeck/registry.json
 ```
 
 The registry stores local metadata for OBS scenes and audio sources.
+Edits appear immediately in the cached view, but persistence is confirmed
+separately. Inventory shows a failed-save message and Retry when a registry write
+fails. Repeating an unchanged dirty edit also retries retained intent; successful
+retry preserves newer accepted edits. Close/Quit keeps unresolved failures
+explicit rather than treating a later unrelated save as recovery.
 
 Example:
 
@@ -230,9 +245,9 @@ Roles:
 - `archive`: preserved but excluded from workflows.
 
 The UI edits scene roles, optional scene accent colors, scene and source icons,
-scene ordering, and stale entries. Accent colors use `#RRGGBB`; Live always
-renders them at 50% alpha. Tags, protected flags, and custom rule fields remain
-available in the file for deeper workflows and Doctor logic.
+scene ordering, and stale entries. Accent colors use `#RRGGBB`; Live renders a small accent chip that stays separate
+from Program/Preview state and image shading. Tags, protected flags, and custom
+rule fields remain available in the file for registry metadata and Doctor logic.
 
 `icon` holds a key from SceneDeck's curated icon catalogue — `camera`,
 `microphone`, `game`, and so on — not a raw Nerd Fonts glyph name, so the

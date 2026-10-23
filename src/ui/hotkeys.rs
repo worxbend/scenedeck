@@ -1,6 +1,6 @@
 //! Window-level keyboard handling for Live-page scene shortcuts.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -20,6 +20,26 @@ use crate::ui::pages::live::LivePageHandle;
 /// How long the "no scene in that slot" notice replaces the shortcut caption.
 const HOTKEY_MISS_NOTICE: Duration = Duration::from_secs(2);
 
+/// Distinguishes identical notices armed at different times.
+#[derive(Default)]
+pub(crate) struct NoticeGeneration(Cell<u64>);
+
+impl NoticeGeneration {
+    pub(super) fn advance(&self) -> u64 {
+        let next = self.0.get().wrapping_add(1);
+        self.0.set(next);
+        next
+    }
+
+    fn current(&self) -> u64 {
+        self.0.get()
+    }
+
+    fn accepts(&self, token: u64) -> bool {
+        self.current() == token
+    }
+}
+
 /// Wire Live-page scene shortcuts to a window-level key controller.
 ///
 /// The controller runs in the capture phase so bare digits and the leader key
@@ -35,8 +55,12 @@ pub(super) fn install(
     controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
     controller.connect_key_pressed({
         let nav = nav.clone();
-        let window = window.clone();
+        let window = window.downgrade();
+        let live = Rc::downgrade(&live);
         move |_, keyval, keycode, modifier_state| {
+            let (Some(window), Some(live)) = (window.upgrade(), live.upgrade()) else {
+                return glib::Propagation::Proceed;
+            };
             let hotkeys = {
                 let state = nav.state.borrow();
                 if state.current_page != Page::Live {
@@ -49,7 +73,8 @@ pub(super) fn install(
                 resolver.borrow_mut().disarm();
                 return glib::Propagation::Proceed;
             }
-            if !binds_with_modifiers(&hotkeys) && text_input_has_focus(&window) {
+            if text_input_has_focus(&window) {
+                resolver.borrow_mut().disarm();
                 return glib::Propagation::Proceed;
             }
 
@@ -82,12 +107,13 @@ fn apply_outcome(
 
     match outcome {
         HotkeyOutcome::Ignored => {}
-        HotkeyOutcome::LeaderArmed => set_hotkey_hint(
-            live,
-            Some(&fl!(LANGUAGE_LOADER, "hotkey-hint-leader-armed")),
-        ),
+        HotkeyOutcome::LeaderArmed => {
+            let notice = fl!(LANGUAGE_LOADER, "hotkey-hint-leader-armed");
+            set_hotkey_hint(live, Some(&notice));
+            expire_notice(live, hotkeys.leader_timeout());
+        }
         HotkeyOutcome::LeaderCancelled => {
-            set_hotkey_hint(live, hotkeys.hint_label().as_deref());
+            set_hotkey_hint(live, None);
         }
         HotkeyOutcome::Activate(slot) => {
             let scene = {
@@ -97,7 +123,7 @@ fn apply_outcome(
             match scene {
                 Some(scene_id) => {
                     tracing::debug!(slot, scene = %scene_id, "scene hotkey switch");
-                    set_hotkey_hint(live, hotkeys.hint_label().as_deref());
+                    set_hotkey_hint(live, None);
                     nav.dispatch(AppCommand::SwitchPrimaryScene(scene_id));
                 }
                 None => {
@@ -107,28 +133,39 @@ fn apply_outcome(
                         slot = (slot + 1).to_string()
                     );
                     set_hotkey_hint(live, Some(&notice));
-                    glib::timeout_add_local_once(HOTKEY_MISS_NOTICE, {
-                        let live = live.clone();
-                        let nav = nav.clone();
-                        move || {
-                            if live.hotkey_hint.text() != notice {
-                                return;
-                            }
-                            let hotkeys = nav.state.borrow().config.hotkeys;
-                            set_hotkey_hint(&live, hotkeys.hint_label().as_deref());
-                        }
-                    });
+                    expire_notice(live, HOTKEY_MISS_NOTICE);
                 }
             }
         }
     }
 }
 
-fn binds_with_modifiers(hotkeys: &SceneHotkeyConfig) -> bool {
-    hotkeys
-        .style
-        .modifiers()
-        .is_some_and(|modifiers| !modifiers.is_empty())
+fn expire_notice(live: &Rc<LivePageHandle>, timeout: Duration) {
+    let token = live.hotkey_notice_generation.current();
+    let live = Rc::downgrade(live);
+    glib::timeout_add_local_once(timeout, move || {
+        if let Some(live) = live.upgrade() {
+            if live.hotkey_notice_generation.accepts(token) {
+                crate::ui::pages::live::set_hotkey_hint(&live, None);
+            }
+        }
+    });
+}
+
+pub(crate) fn scene_hint(nav: &NavigationContext, hotkeys: &SceneHotkeyConfig) -> Option<String> {
+    let binding = hotkeys.hint_label()?;
+    let studio = nav
+        .state
+        .borrow()
+        .workspace
+        .snapshot
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.studio.enabled == Some(true));
+    Some(if studio {
+        fl!(LANGUAGE_LOADER, "hotkey-hint-stage-take", binding = binding)
+    } else {
+        binding
+    })
 }
 
 fn text_input_has_focus(window: &adw::ApplicationWindow) -> bool {
@@ -205,4 +242,66 @@ fn digit_for_keycode(window: &adw::ApplicationWindow, keycode: u32) -> Option<u8
         .map_keycode(keycode)?
         .into_iter()
         .find_map(|(_, keyval)| digit_for_keyval(keyval))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::hotkey::{MAX_LEADER_TIMEOUT_MS, MIN_LEADER_TIMEOUT_MS};
+
+    #[test]
+    fn identical_rearmed_notices_reject_old_expiry_tokens() {
+        let notice = NoticeGeneration::default();
+        let first = notice.advance();
+        let second = notice.advance();
+        assert!(!notice.accepts(first));
+        assert!(notice.accepts(second));
+        notice.advance();
+        assert!(!notice.accepts(second));
+    }
+
+    #[test]
+    fn adapter_timeout_uses_the_resolvers_effective_window() {
+        for (raw, expected) in [
+            (0, MIN_LEADER_TIMEOUT_MS),
+            (1_500, 1_500),
+            (u64::MAX, MAX_LEADER_TIMEOUT_MS),
+        ] {
+            let hotkeys = SceneHotkeyConfig {
+                leader_timeout_ms: raw,
+                ..Default::default()
+            };
+            assert_eq!(hotkeys.leader_timeout(), Duration::from_millis(expected));
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a native GTK display"]
+    fn native_rearm_keeps_the_new_notice_until_its_own_expiry() {
+        crate::ui::test_support::native_test(
+            "ui::hotkeys::tests::native_rearm_keeps_the_new_notice_until_its_own_expiry",
+            || {
+                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+                let live = Rc::new(crate::ui::pages::live::build(nav));
+                let notice = "identical notice";
+                crate::ui::pages::live::set_hotkey_hint(&live, Some(notice));
+                expire_notice(&live, Duration::from_millis(30));
+                crate::ui::test_support::pump(Duration::from_millis(15));
+                crate::ui::pages::live::set_hotkey_hint(&live, Some(notice));
+                expire_notice(&live, Duration::from_millis(100));
+                crate::ui::test_support::pump(Duration::from_millis(40));
+                assert_eq!(live.hotkey_hint.text(), notice);
+                crate::ui::test_support::pump(Duration::from_millis(90));
+                assert!(!live.hotkey_hint.is_visible());
+                crate::ui::pages::live::set_hotkey_hint(&live, Some(notice));
+                expire_notice(&live, Duration::from_secs(5));
+                let weak = Rc::downgrade(&live);
+                drop(live);
+                assert!(
+                    weak.upgrade().is_none(),
+                    "notice timeout retained the page handle"
+                );
+            },
+        );
+    }
 }

@@ -1,12 +1,9 @@
+/* Overlay example: use with either light or dark built-in variants. */
 @define-color scenedeck_accent #2f6fed;
-@define-color scenedeck_card alpha(@card_bg_color, 0.96);
+@define-color scenedeck_accent_fg #ffffff;
 
+/* State colors and image layers remain owned by the built-in theme. */
 .scene-card,
 .audio-card {
-  background-color: @scenedeck_card;
+  border-radius: 14px;
 }
-
-.scene-card-active {
-  outline: 2px solid @scenedeck_accent;
-}
-

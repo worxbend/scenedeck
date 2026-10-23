@@ -17,46 +17,33 @@ keep local metadata about how scenes are used.
 
 ## Current Capabilities
 
-- Connect to OBS Studio through the built-in OBS WebSocket server.
-- Switch OBS profiles and scene collections from the header once connected.
-- Display the active OBS program scene.
-- Show live-switchable scene cards for configured roles, `Primary` by default.
-- Switch program scenes from the Live page.
-- Switch Live scenes by keyboard, with configurable digit shortcuts — bare
-  digits, a modifier plus digit, or a vim-style leader key.
-- Display global audio sources first, then audio-capable inputs from the active
-  scene, including nested scenes and groups.
-- Mute or unmute audio inputs.
-- Control input volume with compact inverted vertical sliders.
-- Read live per-channel volume meters with OBS's zones, peak fall-off, and a
-  twenty-second peak hold, on audio cards laid out like OBS mixer strips.
-- Pin an icon to any scene from Inventory and to any audio source from its
-  card, chosen from a curated Nerd Fonts set.
-- Lock an audio card slider locally to prevent accidental UI changes.
-- Display and control streaming and recording state.
-- Show live telemetry on a Stats page — FPS, average frame render time,
-  render/output frames missed or skipped, congestion, and bitrate as gauges and
-  charts, in a layout that reflows for narrow windows.
-- Keep FPS and dropped frames visible in the bottom status bar on every page.
-- Assign local scene roles in Inventory.
-- Assign optional scene accent colors in Inventory for 50%-alpha Live-card
-  highlights.
-- Drag scenes into a persistent Inventory order that is also used on Live.
-- Export and import the local scene registry as YAML from Inventory.
-- Show nested scene dependencies in Graph.
-- Run Doctor diagnostics over scene roles and scene dependency structure.
-- Read a built-in onboarding guide on the Help page, opened from the sidebar,
-  the header button, or F1.
-- Store OBS host and port in the config file and the OBS password in the system
-  Secret Service keyring.
-- Follow the system color scheme or force light/dark mode.
-- Choose a built-in light/dark-aware theme family — including an `OBS` family
-  that mirrors OBS Studio's own look — and optionally load separate custom CSS
-  files for light and dark mode.
+- **Live scene wall:** compact scene tiles or larger shaded scene previews,
+  Program/Preview labels, keyboard switching, a synchronized topbar Studio mode
+  switch, and a transition/Take row while Studio mode is enabled.
+- **Audio and outputs:** an expandable audio strip below the scenes, a dedicated
+  Mixer with Active/Selected/Pinned modes, and one Live output bar for streaming,
+  recording, replay and virtual camera. Pause, save, split, chapters and OBS-host
+  output evidence are available through its contextual menu where supported.
+- **Sources:** a focused scene-item list and input details, opened from the
+  topbar. Inspect visibility, shared-source usage, media, built-in text, filters
+  and advanced audio without switching Program.
+- **Organization and telemetry:** readable, resizable Inventory columns, local
+  roles/icons/accents, keyboard or drag ordering, registry YAML import/export,
+  nested-scene Graph, structural Doctor checks, and bounded Stats history.
+- **Desktop appearance:** 12 light/dark theme families, custom CSS, motion
+  preferences, eight Fluent catalogs, XDG settings and Secret Service passwords.
+
+Scene previews are controlled in Settings and default to off conservatively.
+They are periodically refreshed still images, not live video. Current validation and screenshots are tracked in the
+[redesign evidence](docs/verification/redesign-2026-10-19/README.md).
+
+All remote control uses native OBS WebSocket. There are no chat or third-party
+service integrations. See the [operating workspace guide](docs/obs-operating-workspace.md)
+for capabilities, freshness rules and feature limits.
 
 ## Requirements
 
-- Linux desktop with GTK4 and libadwaita runtime libraries.
+- Linux desktop with GTK 4.10 or newer and libadwaita 1.4 or newer.
 - OBS Studio with WebSocket enabled.
 - Rust stable toolchain for development builds.
 - `glib-compile-resources`, usually provided by GLib development packages.
@@ -76,22 +63,20 @@ SceneDeck, open Settings, set the OBS host, port, and optional password, then
 use the Connect control at the bottom of the sidebar.
 
 The Live page stays in a disconnected view until OBS is connected. Profile and
-scene collection selectors appear in the header only after SceneDeck receives
-those lists from OBS.
+scene collection selectors are available under **OBS setup** in the header
+after SceneDeck receives those lists from OBS.
 
 ## Using SceneDeck
 
-Use the sidebar to move between the app views:
+Use the sidebar for Live, Mixer, Stats, Graph, Inventory, Doctor, Settings and
+Help. Open **Sources** from the topbar for detailed input control. The Studio
+switch also lives in the topbar and follows changes made in OBS.
 
-- Live: switch Primary scenes and control active scene audio. Stream and record
-  outputs are controlled from the persistent sidebar.
-- Stats: live streaming and OBS performance telemetry.
-- Graph: inspect nested scene dependencies.
-- Inventory: assign local roles to OBS scenes.
-- Doctor: run structural checks over scenes, roles, and dependencies.
-- Settings: configure appearance and OBS connection settings.
-- Help: a built-in onboarding guide covering connection (including OBS on
-  another machine), scene curation, hotkeys, audio, and where files live.
+On Live, activating a scene changes Program in direct mode and stages Preview
+in Studio mode. Transition selection, supported duration editing and Take appear
+only in Studio mode. The scene grid scrolls independently of the audio and output
+controls. Inventory stores local scene roles, order, icons and accent colors;
+Doctor checks structural scene/role/dependency issues.
 
 SceneDeck does not require you to rename or restructure OBS scenes. The app
 keeps its own local registry for role metadata, then uses that registry to
@@ -100,7 +85,8 @@ classified.
 
 ## User Guide
 
-See [docs/user-guide.md](docs/user-guide.md) for setup, page-by-page usage,
+See [docs/obs-operating-workspace.md](docs/obs-operating-workspace.md) for the
+OBS operating workspace, and [docs/user-guide.md](docs/user-guide.md) for setup, page-by-page usage,
 scene roles, audio behavior, and troubleshooting.
 
 ## Developer Guide
@@ -128,10 +114,25 @@ Use these checks before committing changes:
 
 ```sh
 cargo fmt --all -- --check
-cargo check --workspace --all-features
-cargo test --workspace --all-features
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo check --workspace --all-features --locked
+cargo test --workspace --all-features --locked
+cargo test --workspace --all-features --locked --lib infra::i18n::tests::every_shipped_locale_parses_and_loads -- --exact --ignored --test-threads=1
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo build --locked
+python3 tools/check-advisory-exceptions.py &&
+  cargo audit &&
+  cargo deny --locked --all-features check advisories bans licenses sources
+python3 tools/test-native.py
 ```
+
+The dependency gate includes a single user-approved, expiring maintenance
+exception; see the [advisory policy](docs/advisory-exceptions.md). Run its checker
+before the scanners so the UTC expiry is enforced locally as well as in CI.
+
+The native runner requires Xvfb, xauth, a session D-Bus launcher and GNU timeout;
+it gives each GTK test a separate process/display and disposable XDG paths.
+The locale command selects only the Fluent validation test, not every ignored
+display test. See the developer guide for site and publication-contract checks.
 
 ## License
 

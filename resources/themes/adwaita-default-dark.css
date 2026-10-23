@@ -1,4 +1,4 @@
-/* Adwaita Default: dark variant intentionally stays close to libadwaita. */
+/* adwaita-default: dark. Geometry and semantic states are owned by the base CSS. */
 @define-color scenedeck_window #1e1e1e;
 @define-color scenedeck_sidebar #242424;
 @define-color scenedeck_header #303030;
@@ -11,6 +11,13 @@
 @define-color scenedeck_success #57e389;
 @define-color scenedeck_warning #f8e45c;
 @define-color scenedeck_error #ff8f8f;
-
-.scenedeck-root {
-}
+@define-color scenedeck_border #8391a3;
+@define-color scenedeck_program #ff9eac;
+@define-color scenedeck_program_fg #251017;
+@define-color scenedeck_preview #8cddb6;
+@define-color scenedeck_preview_fg #08281b;
+@define-color scenedeck_focus #a9cbff;
+@define-color scenedeck_image_fg #ffffff;
+@define-color scenedeck_image_scrim #111820;
+@define-color scenedeck_image_fallback #28323e;
+@define-color scenedeck_shadow #000000;

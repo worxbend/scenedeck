@@ -2,6 +2,7 @@
 
 pub mod appearance;
 pub mod audio;
+pub mod control;
 pub mod diagnostic;
 pub mod graph;
 pub mod hotkey;
@@ -10,10 +11,12 @@ pub mod meter;
 pub mod mixer;
 pub mod obs;
 pub mod output;
+pub mod output_result;
 pub mod registry;
 pub mod role;
 pub mod scene;
 pub mod stats;
+pub mod workflow;
 
 /// Derive `Serialize`/`Deserialize` for an enum stored as a lowercase string.
 ///

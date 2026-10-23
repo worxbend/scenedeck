@@ -1,0 +1,5 @@
+# Single approval, not a general exception registry. The checker fixes this deadline.
+id = "RUSTSEC-2026-0374"
+owner = "SceneDeck maintainer"
+expires = "2026-11-20"
+reason = "Temporary maintenance-only acceptance: basic-toml 0.1.10 via i18n-config 0.4.8 in localization proc macros; no compatible published fix; cargo-i18n PR #176 is unreleased. Remove earlier when a compatible fixed release is available."

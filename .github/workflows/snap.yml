@@ -3,155 +3,196 @@ name: Snap
 on:
   workflow_dispatch:
     inputs:
+      tag:
+        description: Existing immutable vX.Y.Z tag to validate, build and publish (never a branch)
+        required: true
+        type: string
       channel:
-        description: Snap Store channel to release to.
+        description: Snap Store channel to release to
         required: true
         type: choice
         default: stable
-        options:
-          - edge
-          - beta
-          - candidate
-          - stable
+        options: [edge, beta, candidate, stable]
   push:
-    branches:
-      - main
-    tags:
-      - "v*"
+    branches: [main]
+    tags: ['v*']
   pull_request:
 
 permissions:
   contents: read
 
 concurrency:
-  group: snap-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  group: snap-build-${{ github.ref }}-${{ inputs.tag }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  snap:
-    name: Build and Publish Snap ${{ matrix.artifact_arch }}
+  prepare:
+    name: Resolve Snap source identity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+      version: ${{ steps.source.outputs.version }}
+      tag: ${{ steps.ref.outputs.tag }}
+      channel: ${{ steps.ref.outputs.channel }}
+    steps:
+      - name: Validate dispatch/tag selection before checkout
+        id: ref
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_CHANNEL: ${{ inputs.channel }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            tag="$INPUT_TAG"
+            channel="$INPUT_CHANNEL"
+          elif [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            tag="$GITHUB_REF_NAME"
+            channel=stable
+          else
+            tag=''
+            channel=''
+          fi
+          if [[ -n "$tag" ]]; then
+            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            case "$channel" in edge|beta|candidate|stable) ;; *) exit 1 ;; esac
+          elif [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            echo 'A version tag is required for manual publishing.' >&2
+            exit 1
+          fi
+          printf 'tag=%s\nchannel=%s\n' "$tag" "$channel" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.ref.outputs.tag || github.sha }}
+          persist-credentials: false
+      - name: Resolve immutable commit and validate package metadata
+        id: source
+        env:
+          TAG: ${{ steps.ref.outputs.tag }}
+        run: |
+          args=(--commit "$(git rev-parse HEAD)")
+          if [[ -n "$TAG" ]]; then args+=(--tag "$TAG" --remote); fi
+          python3 tools/verify-source.py "${args[@]}" >> "$GITHUB_OUTPUT"
+
+  validate:
+    needs: prepare
+    uses: ./.github/workflows/ci.yml
+    with:
+      commit: ${{ needs.prepare.outputs.commit }}
+    # Deliberately no inherited secrets or publication permissions.
+
+  build:
+    name: Build Snap ${{ matrix.arch }} (no Store credentials)
+    needs: [prepare, validate]
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
-          - artifact_arch: amd64
+          - arch: amd64
             runner: ubuntu-24.04
-            snap_arch: amd64
-          - artifact_arch: arm64
+          - arch: arm64
             runner: ubuntu-24.04-arm
-            snap_arch: arm64
-
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      COMMIT: ${{ needs.prepare.outputs.commit }}
+      ARCH: ${{ matrix.arch }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.commit }}
           persist-credentials: false
-
-      # The snap's version comes from Cargo.toml via adopt-info; a tag that
-      # disagrees with it would publish a mislabeled package straight to the
-      # store. Fail before building.
-      - name: Assert tag matches the package version
-        if: github.ref_type == 'tag'
-        shell: bash
+      - name: Verify tested source and install inspection tools
         run: |
-          set -euo pipefail
-          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
-          if [[ "${GITHUB_REF_NAME}" != "v${version}" ]]; then
-            echo "tag ${GITHUB_REF_NAME} does not match Cargo.toml version ${version}" >&2
-            exit 1
-          fi
-
+          python3 tools/verify-source.py --commit "$COMMIT"
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools python3-yaml
       - name: Build snap
         id: build
-        uses: snapcore/action-build@v1
+        uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1.3.0
         with:
           snapcraft-channel: 9.x/stable
-          snapcraft-args: pack --build-for=${{ matrix.snap_arch }}
-
-      - name: Print Snapcraft logs
-        if: failure()
-        shell: bash
+          snapcraft-args: pack --build-for=${{ matrix.arch }}
+          build-info: true
+      - name: Verify Snap metadata, ELF architecture and exact checksums
+        env:
+          BUILT_SNAP: ${{ steps.build.outputs.snap }}
         run: |
-          set -euo pipefail
-
-          log_dir="${HOME}/.local/state/snapcraft/log"
-          if [[ ! -d "${log_dir}" ]]; then
-            echo "Snapcraft log directory not found: ${log_dir}"
-            exit 0
-          fi
-
-          found=false
-          for log in "${log_dir}"/*.log; do
-            if [[ ! -f "${log}" ]]; then
-              continue
-            fi
-
-            found=true
-            echo "::group::$(basename "${log}")"
-            sed -n '1,400p' "${log}"
-            echo "::endgroup::"
-          done
-
-          if [[ "${found}" == "false" ]]; then
-            echo "No Snapcraft log files found in ${log_dir}"
-          fi
-
-      - name: Upload Snapcraft logs
-        if: failure()
-        uses: actions/upload-artifact@v4
+          mkdir snap-artifacts
+          test -f "$BUILT_SNAP" && test ! -L "$BUILT_SNAP"
+          cp -- "$BUILT_SNAP" "snap-artifacts/scenedeck_${VERSION}_${ARCH}.snap"
+          /usr/bin/python3 tools/verify-snap.py create --directory snap-artifacts \
+            --version "$VERSION" --commit "$COMMIT" --arch "$ARCH"
+      - name: Upload only verified Snap and verification data
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: snapcraft-logs-${{ matrix.artifact_arch }}
+          name: scenedeck-snap-${{ matrix.arch }}
+          path: snap-artifacts/*
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain Snapcraft logs on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: snapcraft-logs-${{ matrix.arch }}
           path: ~/.local/state/snapcraft/log/*.log
           if-no-files-found: ignore
+          retention-days: 3
 
-      - name: Upload snap artifact
-        uses: actions/upload-artifact@v4
+  publish:
+    name: Publish previously verified Snap pair
+    needs: [prepare, validate, build]
+    if: github.event_name != 'pull_request' && needs.prepare.outputs.tag != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: snap-store
+    # Channel-wide serialization spans tags; the Store check also rejects old reruns.
+    concurrency:
+      group: snap-store-${{ needs.prepare.outputs.channel }}
+      cancel-in-progress: false
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      COMMIT: ${{ needs.prepare.outputs.commit }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      CHANNEL: ${{ needs.prepare.outputs.channel }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: scenedeck-snap-${{ matrix.artifact_arch }}
-          path: ${{ steps.build.outputs.snap }}
-          if-no-files-found: error
-
-      - name: Resolve Snap Store channel
-        id: channel
-        if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
-        shell: bash
-        env:
-          INPUT_CHANNEL: ${{ inputs.channel }}
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: scenedeck-snap-amd64
+          path: snap-artifacts
+          digest-mismatch: error
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: scenedeck-snap-arm64
+          path: snap-artifacts
+          digest-mismatch: error
+      - name: Revalidate source and both Snaps; refuse channel downgrades
         run: |
-          set -euo pipefail
-
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            channel="${INPUT_CHANNEL}"
-          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            channel="stable"
-          else
-            echo "Snap Store publishing is only enabled for workflow_dispatch or tag runs." >&2
-            exit 1
-          fi
-
-          echo "channel=${channel}" >> "${GITHUB_OUTPUT}"
-          echo "Resolved Snap Store channel: ${channel}"
-
-      - name: Check Snap Store credentials
-        if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
-        shell: bash
-        env:
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${SNAPCRAFT_STORE_CREDENTIALS}" ]]; then
-            echo "SNAPCRAFT_STORE_CREDENTIALS is required to publish to the Snap Store." >&2
-            exit 1
-          fi
-
-      - name: Publish snap
-        if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
-        uses: snapcore/action-publish@v1
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools python3-yaml
+          python3 tools/verify-source.py --commit "$COMMIT" --tag "$TAG" --remote
+          /usr/bin/python3 tools/verify-snap.py store-check --directory snap-artifacts \
+            --version "$VERSION" --commit "$COMMIT" --arch amd64 --arch arm64 --channel "$CHANNEL"
+      # Store credentials exist only in these two trusted, post-validation steps.
+      - name: Publish amd64 Snap
+        uses: snapcore/action-publish@214b86e5ca036ead1668c79afb81e550e6c54d40 # v1.2.0
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         with:
-          snap: ${{ steps.build.outputs.snap }}
-          release: ${{ steps.channel.outputs.channel }}
+          snap: snap-artifacts/scenedeck_${{ needs.prepare.outputs.version }}_amd64.snap
+          release: ${{ needs.prepare.outputs.channel }}
+      - name: Publish arm64 Snap
+        uses: snapcore/action-publish@214b86e5ca036ead1668c79afb81e550e6c54d40 # v1.2.0
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        with:
+          snap: snap-artifacts/scenedeck_${{ needs.prepare.outputs.version }}_arm64.snap
+          release: ${{ needs.prepare.outputs.channel }}
+      - name: Read back exact Store versions, sizes and SHA3-384 hashes
+        run: |
+          /usr/bin/python3 tools/verify-snap.py store-readback --directory snap-artifacts \
+            --version "$VERSION" --commit "$COMMIT" --arch amd64 --arch arm64 --channel "$CHANNEL"

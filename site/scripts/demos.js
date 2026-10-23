@@ -8,7 +8,8 @@
    ========================================================================== */
 
 import { hexToOklch, oklchToHex, contrast } from "./color.js";
-import { toast, reducedMotion } from "./ui.js";
+import { toast } from "./ui.js";
+import { whileVisible } from "./activity.js";
 
 /* ---- Fixtures ------------------------------------------------------------ */
 /* A believable mid-size collection: six primary scenes plus the utility scenes
@@ -49,7 +50,16 @@ const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyV
    does, done in the open. The WebGL layer reads the same hue, so the metal and
    the signal retint with the page in one motion. */
 
+let selectedAccent = null;
+let watchingTheme = false;
+
 export function applyAccent(hex) {
+  selectedAccent = hex;
+  if (!watchingTheme) {
+    watchingTheme = true;
+    // Retain the selected hue, not the mode-specific roles derived from it.
+    window.addEventListener("scenedeck:theme", () => applyAccent(selectedAccent));
+  }
   const root = document.documentElement;
   const { C, H } = hexToOklch(hex);
   const chroma = Math.min(C, 0.2);
@@ -291,10 +301,7 @@ export function initMixer() {
 
   // The meters. Attack fast, release slow — the asymmetry is what makes it
   // read as audio instead of as a sine wave.
-  if (reducedMotion.matches) {
-    strips.forEach(({ state, segments }) => paintMeter(segments, state.muted ? 0 : state.level * 0.8));
-    return;
-  }
+  strips.forEach(({ state, segments }) => paintMeter(segments, state.muted ? 0 : state.level * 0.8));
 
   let t = 0;
   whileVisible(mixer, 100, () => {
@@ -307,30 +314,6 @@ export function initMixer() {
       state.peak += (target - state.peak) * rate;
       paintMeter(segments, state.peak);
     });
-  });
-}
-
-/** Run `tick` on an interval, but only while `el` is on screen and the tab is
- *  visible. A demo that animates in a scrolled-past section is pure waste. */
-function whileVisible(el, ms, tick) {
-  let timer = 0;
-
-  const start = () => {
-    if (!timer) timer = setInterval(tick, ms);
-  };
-  const stop = () => {
-    clearInterval(timer);
-    timer = 0;
-  };
-
-  const observer = new IntersectionObserver(([entry]) => {
-    if (entry.isIntersecting && !document.hidden) start();
-    else stop();
-  });
-  observer.observe(el);
-
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) stop();
   });
 }
 
@@ -421,34 +404,19 @@ export function initStats() {
   gauges.forEach(paintGauge);
   paintCharts();
 
-  if (reducedMotion.matches) return;
-
-  // The Stats page polls OBS once a second, so the demo advances once a second
-  // too — and it only runs while the section is actually on screen.
-  let timer = 0;
-  const observer = new IntersectionObserver(
-    ([entry]) => {
-      if (entry.isIntersecting && !timer) {
-        timer = setInterval(() => {
-          gauges.forEach((g) => {
-            const drift = { fps: 0.35, frame: 0.22, congestion: 0.012 }[g.id];
-            g.value = clampTo(g, g.value + (Math.random() - 0.5) * drift * 2);
-            paintGauge(g);
-          });
-          bitrate.push(clamp(bitrate[bitrate.length - 1] + (Math.random() - 0.5) * 420, 4800, 6800));
-          bitrate.shift();
-          frame.push(clamp(frame[frame.length - 1] + (Math.random() - 0.5) * 0.7, 1.8, 7.5));
-          frame.shift();
-          paintCharts();
-        }, 1000);
-      } else if (!entry.isIntersecting && timer) {
-        clearInterval(timer);
-        timer = 0;
-      }
-    },
-    { threshold: 0 }
-  );
-  observer.observe(document.getElementById("stats"));
+  // The Stats page polls OBS once a second; the illustrative demo follows it.
+  whileVisible(document.getElementById("stats"), 1000, () => {
+    gauges.forEach((g) => {
+      const drift = { fps: 0.35, frame: 0.22, congestion: 0.012 }[g.id];
+      g.value = clampTo(g, g.value + (Math.random() - 0.5) * drift * 2);
+      paintGauge(g);
+    });
+    bitrate.push(clamp(bitrate[bitrate.length - 1] + (Math.random() - 0.5) * 420, 4800, 6800));
+    bitrate.shift();
+    frame.push(clamp(frame[frame.length - 1] + (Math.random() - 0.5) * 0.7, 1.8, 7.5));
+    frame.shift();
+    paintCharts();
+  });
 }
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -686,7 +654,9 @@ export function initDeck() {
 
   const pages = [...document.querySelectorAll(".deck__page")];
 
+  let stopMeters = () => {};
   const show = (name) => {
+    stopMeters();
     screen.innerHTML = SCREENS[name]();
     // Illustration only — the switcher buttons above it are the real controls.
     screen.setAttribute("aria-hidden", "true");
@@ -695,8 +665,7 @@ export function initDeck() {
       page.classList.toggle("is-active", active);
       page.setAttribute("aria-pressed", String(active));
     }
-    deckGeneration += 1;
-    if (name === "live" || name === "mixer") animateDeckMeters(screen, deckGeneration);
+    stopMeters = name === "live" || name === "mixer" ? animateDeckMeters(screen) : () => {};
   };
 
   pages.forEach((page) => page.addEventListener("click", () => show(page.dataset.page)));
@@ -704,7 +673,6 @@ export function initDeck() {
 
   // Status-bar numbers drift, because a status bar that never moves reads as a
   // screenshot. Linear, like the rest of the telemetry.
-  if (reducedMotion.matches) return;
   const fps = document.querySelector('[data-metric="fps"]');
   const bit = document.querySelector('[data-metric="bitrate"]');
   const cpu = document.querySelector('[data-metric="cpu"]');
@@ -715,24 +683,16 @@ export function initDeck() {
   });
 }
 
-/** Incremented on every screen swap; a running loop whose generation is stale
- *  stops on its next tick. Without it, clicking Live twice left the first loop
- *  running forever against nodes that had already been replaced. */
-let deckGeneration = 0;
-
-function animateDeckMeters(root, generation) {
+function animateDeckMeters(root) {
   const meters = [...root.querySelectorAll("[data-deck-meter]")].map((m) => [...m.children]);
-  if (!meters.length || reducedMotion.matches) return;
+  meters.forEach((segments) => paintMeter(segments, 0.55));
 
   let t = 0;
-  const step = () => {
-    if (generation !== deckGeneration || !meters[0][0].isConnected) return;
+  return whileVisible(root, 110, () => {
     t += 0.12;
     meters.forEach((segs, i) => {
       const level = 0.45 + 0.3 * Math.sin(t * 1.6 + i * 0.7) + 0.12 * Math.sin(t * 3.9 + i);
       paintMeter(segs, Math.max(0, level));
     });
-    setTimeout(step, 110);
-  };
-  step();
+  });
 }

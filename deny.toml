@@ -1,10 +1,11 @@
 [advisories]
 version = 2
 yanked = "deny"
-# RUSTSEC-2026-0173 is also ignored in ci.yml's audit-check step; the two
-# gates must stay in sync. Revisit when the affected dependency can move to a
-# fixed release.
-ignore = ["RUSTSEC-2026-0173"]
+unused-ignored-advisory = "deny"
+# cargo-deny 0.20.2 has no expiry field; CI checks the record before either scanner.
+ignore = [
+    { id = "RUSTSEC-2026-0374", reason = "Temporary maintenance-only acceptance: basic-toml 0.1.10 via i18n-config 0.4.8 in localization proc macros; no compatible published fix; cargo-i18n PR #176 is unreleased. Remove earlier when a compatible fixed release is available. Owner: SceneDeck maintainer. Expires: 2026-11-20 00:00:00 UTC." },
+]
 
 [licenses]
 version = 2

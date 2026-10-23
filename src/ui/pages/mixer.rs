@@ -28,7 +28,190 @@ use crate::ui::widgets::audio_card;
 use crate::ui::{index_of, insert_compact_flow_child, string_list};
 use i18n_embed_fl::fl;
 
-type MixerRefreshTracker = Rc<RefCell<Option<String>>>;
+type MixerRefreshTracker = Rc<MixerPageHandle>;
+
+/// Stable visible cards. Audio echoes never replace controls or their draft state.
+pub(crate) struct MixerPageHandle {
+    root: glib::WeakRef<GtkBox>,
+    nav: NavigationContext,
+    requested_scene: RefCell<Option<String>>,
+    signature: RefCell<Option<String>>,
+    binding: RefCell<Option<(u64, crate::domain::workflow::ScopeBinding)>>,
+    cards: RefCell<BTreeMap<String, audio_card::AudioCardHandle>>,
+}
+
+impl MixerPageHandle {
+    fn is_current(&self) -> bool {
+        let state = self.nav.state.borrow();
+        matches!(
+            state.obs_status,
+            crate::controller::state::ObsStatus::Connected { .. }
+        ) && self.binding.borrow().as_ref()
+            == Some(&(state.workspace.epoch, state.workflow_scope()))
+    }
+
+    /// Apply an OBS mute echo to the existing visible input card.
+    pub(crate) fn update_mute(&self, input: &str, muted: bool) {
+        if self.is_current() {
+            if let Some(card) = self.cards.borrow().get(input) {
+                card.update_mute(muted);
+            }
+        }
+    }
+
+    /// Apply an OBS gain echo without resetting unrelated controls or search drafts.
+    pub(crate) fn update_volume(&self, input: &str, mul: f64, db: f64) {
+        if self.is_current() {
+            if let Some(card) = self.cards.borrow().get(input) {
+                card.update_volume(mul, db);
+            }
+        }
+    }
+
+    fn refresh(self: &Rc<Self>) {
+        let Some(root) = self.root.upgrade() else {
+            return;
+        };
+        let state = self.nav.state.borrow();
+        let signature = mixer_structure(&state);
+        if self.signature.borrow().as_ref() == Some(&signature) {
+            let inputs = visible_inputs(&state);
+            for input in inputs {
+                self.update_mute(&input.id, input.muted);
+                self.update_volume(&input.id, input.volume_mul, input.volume_db);
+            }
+            return;
+        }
+        let binding = (state.workspace.epoch, state.workflow_scope());
+        drop(state);
+        let view = MixerViewState::capture(&root);
+        self.cards.borrow_mut().clear();
+        if self.binding.borrow().as_ref() != Some(&binding) {
+            self.requested_scene.borrow_mut().take();
+        }
+        *self.binding.borrow_mut() = Some(binding);
+        *self.signature.borrow_mut() = Some(signature);
+        crate::ui::rebuild_page(&root, |root| populate(root, &self.nav, self));
+        view.restore(&root);
+    }
+}
+
+fn visible_inputs(state: &crate::controller::state::AppState) -> &[AudioInput] {
+    match state.visible_mixer_render_source() {
+        MixerVisibleRenderSource::ActiveScene(inputs)
+        | MixerVisibleRenderSource::Scene {
+            status: MixerVisibleAudioStatus::Loaded(inputs),
+            ..
+        } => inputs,
+        _ => &[],
+    }
+}
+
+fn mixer_structure(state: &crate::controller::state::AppState) -> String {
+    let inputs: Vec<_> = visible_inputs(state)
+        .iter()
+        .map(|input| {
+            (
+                &input.id,
+                &input.name,
+                &input.display_name,
+                input.source_scope,
+                &input.parent_scene_path,
+                state.registry.input_icon(&input.id),
+            )
+        })
+        .collect();
+    let source = match state.visible_mixer_render_source() {
+        MixerVisibleRenderSource::ActiveScene(_) => "active".to_string(),
+        MixerVisibleRenderSource::MissingScene => "missing-scene".to_string(),
+        MixerVisibleRenderSource::Scene { scene, status } => match status {
+            MixerVisibleAudioStatus::Loaded(_) => format!("loaded:{scene}"),
+            _ => format!("{scene}:{status:?}"),
+        },
+    };
+    let selection = (
+        &state.mixer.mode,
+        &state.mixer.selected_scene,
+        &state.mixer.pinned_scene,
+        &state.mixer.grouping,
+        &state.mixer.search,
+    );
+    format!(
+        "{:?}{:?}{:?}{:?}{selection:?}{source:?}{inputs:?}",
+        state.workspace.epoch,
+        state.workflow_scope(),
+        state.obs_status,
+        state.scene_inventory
+    )
+}
+
+#[derive(Default)]
+struct MixerViewState {
+    search_draft: Option<String>,
+    expanded: bool,
+    scroll: Option<f64>,
+}
+
+fn visit_mixer(widget: &gtk4::Widget, visit: &mut impl FnMut(&gtk4::Widget)) {
+    visit(widget);
+    let mut child = widget.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        visit_mixer(&widget, visit);
+    }
+}
+
+impl MixerViewState {
+    fn capture(root: &GtkBox) -> Self {
+        let mut view = Self::default();
+        visit_mixer(root.upcast_ref(), &mut |widget| {
+            if let Some(search) = widget.downcast_ref::<EntryRow>() {
+                view.search_draft = Some(search.text().to_string());
+            }
+            if let Some(options) = widget.downcast_ref::<adw::ExpanderRow>() {
+                view.expanded = options.is_expanded();
+            }
+            if let Some(scroll) = widget.downcast_ref::<gtk4::ScrolledWindow>() {
+                view.scroll
+                    .get_or_insert_with(|| scroll.vadjustment().value());
+            }
+        });
+        view
+    }
+
+    fn restore(self, root: &GtkBox) {
+        visit_mixer(root.upcast_ref(), &mut |widget| {
+            if let (Some(search), Some(draft)) = (
+                widget.downcast_ref::<EntryRow>(),
+                self.search_draft.as_deref(),
+            ) {
+                search.set_text(draft);
+            }
+            if let Some(options) = widget.downcast_ref::<adw::ExpanderRow>() {
+                options.set_expanded(self.expanded);
+            }
+        });
+        let Some(position) = self.scroll else { return };
+        let frames = std::cell::Cell::new(0);
+        root.add_tick_callback(move |root, _| {
+            // The replacement page needs an allocation before its adjustment can scroll.
+            frames.set(frames.get() + 1);
+            if frames.get() < 2 {
+                return glib::ControlFlow::Continue;
+            }
+            let mut restored = false;
+            visit_mixer(root.upcast_ref(), &mut |widget| {
+                if !restored {
+                    if let Some(scroll) = widget.downcast_ref::<gtk4::ScrolledWindow>() {
+                        scroll.vadjustment().set_value(position);
+                        restored = true;
+                    }
+                }
+            });
+            glib::ControlFlow::Break
+        });
+    }
+}
 const MIXER_INSPECT_ENV: &str = "SCENEDECK_MIXER_INSPECT";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,15 +237,39 @@ impl MixerRetryInspection {
     };
 }
 
-pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
-    // Tracks which scene an audio refresh has already been requested for, so
-    // repeated rebuilds do not re-dispatch the same request. It outlives each
-    // rebuild, so it is created here rather than inside `populate`.
-    let refresh_tracker: MixerRefreshTracker = Rc::new(RefCell::new(None));
-
-    crate::ui::rebuildable_page("mixer-page", true, move |root| {
-        populate(root, &nav, &refresh_tracker);
-    })
+pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>, Rc<MixerPageHandle>) {
+    let root = GtkBox::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .vexpand(true)
+        .hexpand(true)
+        .build();
+    root.add_css_class("app-page");
+    root.add_css_class("mixer-page");
+    let handle = Rc::new(MixerPageHandle {
+        root: root.downgrade(),
+        nav,
+        requested_scene: RefCell::new(None),
+        signature: RefCell::new(None),
+        binding: RefCell::new(None),
+        cards: RefCell::new(BTreeMap::new()),
+    });
+    let refresh: Rc<dyn Fn()> = Rc::new({
+        let handle = handle.clone();
+        move || handle.refresh()
+    });
+    root.connect_map({
+        let handle = Rc::downgrade(&handle);
+        move |_| {
+            let handle = handle.clone();
+            glib::idle_add_local_once(move || {
+                if let Some(handle) = handle.upgrade() {
+                    handle.refresh();
+                }
+            });
+        }
+    });
+    handle.refresh();
+    (root.upcast(), refresh, handle)
 }
 
 fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefreshTracker) {
@@ -103,32 +310,39 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
         .description(mixer.mode.description())
         .build();
 
-    let mode_row = build_mode_row(root, nav, mixer.mode, refresh_tracker);
+    let mode_row = build_mode_row(nav, mixer.mode, refresh_tracker);
     let scene_row = build_scene_row(
-        root,
         nav,
         &inventory.scenes,
         mixer.selected_scene.as_deref(),
         refresh_tracker,
     );
-    let grouping_row = build_grouping_row(root, nav, mixer.grouping, refresh_tracker);
-    let search_row = build_search_row(root, nav, &mixer.search, refresh_tracker);
+    let grouping_row = build_grouping_row(nav, mixer.grouping, refresh_tracker);
+    let search_row = build_search_row(nav, &mixer.search, refresh_tracker);
 
     controls.add(&mode_row);
     controls.add(&scene_row);
-    controls.add(&grouping_row);
-    controls.add(&search_row);
     page.add(&controls);
+    let options = PreferencesGroup::new();
+    let options_row = adw::ExpanderRow::builder()
+        .use_markup(false)
+        .title(fl!(LANGUAGE_LOADER, "mixer-secondary-options"))
+        .build();
+    options_row.add_row(&grouping_row);
+    options_row.add_row(&search_row);
+    options.add(&options_row);
+    page.add(&options);
 
     let summary_group = PreferencesGroup::new();
     let summary = adw::ActionRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "mixer-summary-title"))
-        .subtitle(source_summary(
-            mixer.mode,
-            active_scene.as_deref(),
-            target_details,
-        ))
         .build();
+    summary.set_subtitle(&source_summary(
+        mixer.mode,
+        active_scene.as_deref(),
+        target_details,
+    ));
     summary_group.add(&summary);
     page.add(&summary_group);
 
@@ -173,19 +387,24 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
                 inputs.to_vec()
             }
             MixerVisibleAudioStatus::Missing => {
+                append_loading_placeholder(root, &inspection_snapshot, scene);
+                drop(state);
                 request_visible_mixer_scene_audio(
                     nav,
                     refresh_tracker,
                     MixerRefreshRequestIntent::Automatic,
                 );
-                append_loading_placeholder(root, &inspection_snapshot, scene);
                 return;
             }
         },
     };
     let inputs = filter_inputs(&source_inputs, &mixer.search);
     let inspection_status = append_mixer_inputs(
-        MixerSurfaces { root, page: &page },
+        MixerSurfaces {
+            root,
+            page: &page,
+            tracker: refresh_tracker,
+        },
         nav,
         &inputs,
         source_inputs.len(),
@@ -201,20 +420,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
     );
 }
 
-/// Refill the page in place after a control row changes how inputs are
-/// sourced, grouped, or filtered.
-///
-/// The handlers below used to call `switch_to_page(Page::Mixer)` for this,
-/// but switching to the already-visible page is a render no-op — no map
-/// signal, no refresh — so the change was invisible until some unrelated
-/// event rebuilt the page. Same pattern as the Inventory page's `rebuild`.
-fn rebuild(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefreshTracker) {
-    crate::ui::clear_children(root);
-    populate(root, nav, refresh_tracker);
-}
-
 fn build_mode_row(
-    root: &GtkBox,
     nav: &NavigationContext,
     selected: MixerMode,
     refresh_tracker: &MixerRefreshTracker,
@@ -222,6 +428,7 @@ fn build_mode_row(
     let labels: Vec<String> = MixerMode::ALL.iter().map(|mode| mode.label()).collect();
     let model = string_list(&labels);
     let row = ComboRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "mixer-mode-row-title"))
         .subtitle(fl!(LANGUAGE_LOADER, "mixer-mode-row-subtitle"))
         .model(&model)
@@ -231,9 +438,11 @@ fn build_mode_row(
 
     row.connect_selected_notify({
         let nav = nav.clone();
-        let root = root.clone();
-        let refresh_tracker = refresh_tracker.clone();
+        let refresh_tracker = Rc::downgrade(refresh_tracker);
         move |row| {
+            let Some(refresh_tracker) = refresh_tracker.upgrade() else {
+                return;
+            };
             let mode = mode_at(row.selected());
             {
                 let mut state = nav.state.borrow_mut();
@@ -245,7 +454,7 @@ fn build_mode_row(
                 MixerRefreshRequestIntent::Explicit,
             );
             persist_mixer_selection(&nav);
-            rebuild(&root, &nav, &refresh_tracker);
+            refresh_tracker.refresh();
         }
     });
 
@@ -253,7 +462,6 @@ fn build_mode_row(
 }
 
 fn build_scene_row(
-    root: &GtkBox,
     nav: &NavigationContext,
     scenes: &[crate::domain::scene::Scene],
     selected_scene: Option<&str>,
@@ -266,6 +474,7 @@ fn build_scene_row(
         .unwrap_or(0) as u32;
 
     let row = ComboRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "mixer-scene-row-title"))
         .subtitle(fl!(LANGUAGE_LOADER, "mixer-scene-row-subtitle"))
         .model(&model)
@@ -275,10 +484,12 @@ fn build_scene_row(
 
     row.connect_selected_notify({
         let nav = nav.clone();
-        let root = root.clone();
-        let refresh_tracker = refresh_tracker.clone();
+        let refresh_tracker = Rc::downgrade(refresh_tracker);
         let scene_ids: Vec<_> = scenes.iter().map(|scene| scene.id.clone()).collect();
         move |row| {
+            let Some(refresh_tracker) = refresh_tracker.upgrade() else {
+                return;
+            };
             if let Some(scene_id) = scene_ids.get(row.selected() as usize) {
                 let mut state = nav.state.borrow_mut();
                 state.mixer.selected_scene = Some(scene_id.clone());
@@ -292,7 +503,7 @@ fn build_scene_row(
                 MixerRefreshRequestIntent::Explicit,
             );
             persist_mixer_selection(&nav);
-            rebuild(&root, &nav, &refresh_tracker);
+            refresh_tracker.refresh();
         }
     });
 
@@ -300,7 +511,6 @@ fn build_scene_row(
 }
 
 fn build_grouping_row(
-    root: &GtkBox,
     nav: &NavigationContext,
     selected: MixerGrouping,
     refresh_tracker: &MixerRefreshTracker,
@@ -311,6 +521,7 @@ fn build_grouping_row(
         .collect();
     let model = string_list(&labels);
     let row = ComboRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "mixer-grouping-row-title"))
         .subtitle(fl!(LANGUAGE_LOADER, "mixer-grouping-row-subtitle"))
         .model(&model)
@@ -320,12 +531,14 @@ fn build_grouping_row(
 
     row.connect_selected_notify({
         let nav = nav.clone();
-        let root = root.clone();
-        let refresh_tracker = refresh_tracker.clone();
+        let refresh_tracker = Rc::downgrade(refresh_tracker);
         move |row| {
+            let Some(refresh_tracker) = refresh_tracker.upgrade() else {
+                return;
+            };
             nav.state.borrow_mut().mixer.grouping = grouping_at(row.selected());
             persist_mixer_selection(&nav);
-            rebuild(&root, &nav, &refresh_tracker);
+            refresh_tracker.refresh();
         }
     });
 
@@ -333,12 +546,13 @@ fn build_grouping_row(
 }
 
 fn build_search_row(
-    root: &GtkBox,
     nav: &NavigationContext,
     search: &str,
     refresh_tracker: &MixerRefreshTracker,
 ) -> EntryRow {
     let row = EntryRow::builder()
+        .use_markup(false)
+        .name("mixer-search-entry")
         .title(fl!(LANGUAGE_LOADER, "mixer-search-row-title"))
         .text(search)
         .show_apply_button(true)
@@ -346,11 +560,13 @@ fn build_search_row(
 
     row.connect_apply({
         let nav = nav.clone();
-        let root = root.clone();
-        let refresh_tracker = refresh_tracker.clone();
+        let refresh_tracker = Rc::downgrade(refresh_tracker);
         move |row| {
+            let Some(refresh_tracker) = refresh_tracker.upgrade() else {
+                return;
+            };
             nav.state.borrow_mut().mixer.search = row.text().trim().to_string();
-            rebuild(&root, &nav, &refresh_tracker);
+            refresh_tracker.refresh();
         }
     });
 
@@ -362,6 +578,7 @@ fn build_search_row(
 struct MixerSurfaces<'a> {
     root: &'a GtkBox,
     page: &'a PreferencesPage,
+    tracker: &'a MixerRefreshTracker,
 }
 
 fn append_mixer_inputs(
@@ -373,7 +590,7 @@ fn append_mixer_inputs(
     search: &str,
     target_scene: Option<&str>,
 ) -> MixerInspectionStatus<'static> {
-    let MixerSurfaces { root, page } = surfaces;
+    let root = surfaces.root;
     if inputs.is_empty() {
         if source_count == 0 && search.trim().is_empty() {
             let scene_label = target_scene
@@ -402,7 +619,7 @@ fn append_mixer_inputs(
     } else {
         match grouping {
             MixerGrouping::None => append_group(
-                page,
+                &surfaces,
                 nav,
                 &fl!(LANGUAGE_LOADER, "mixer-group-all-sources"),
                 inputs,
@@ -416,7 +633,7 @@ fn append_mixer_inputs(
                         .push(input.clone());
                 }
                 for (title, inputs) in groups {
-                    append_group(page, nav, &title, &inputs);
+                    append_group(&surfaces, nav, &title, &inputs);
                 }
             }
             MixerGrouping::ScenePath => {
@@ -432,7 +649,7 @@ fn append_mixer_inputs(
                         .push(input.clone());
                 }
                 for (title, inputs) in groups {
-                    append_group(page, nav, &title, &inputs);
+                    append_group(&surfaces, nav, &title, &inputs);
                 }
             }
         }
@@ -478,11 +695,17 @@ fn append_mixer_error_status(
         let nav = nav.clone();
         let refresh_tracker = refresh_tracker.clone();
         move |_| {
-            request_visible_mixer_scene_audio(
-                &nav,
-                &refresh_tracker,
-                MixerRefreshRequestIntent::Explicit,
-            );
+            let active = nav.state.borrow().mixer.mode == MixerMode::ActiveScene;
+            if active {
+                nav.state.borrow_mut().invalidate_active_audio();
+                nav.dispatch(AppCommand::RefreshData);
+            } else {
+                request_visible_mixer_scene_audio(
+                    &nav,
+                    &refresh_tracker,
+                    MixerRefreshRequestIntent::Explicit,
+                );
+            }
         }
     });
     status.set_child(Some(&retry_btn));
@@ -496,7 +719,7 @@ fn append_mixer_error_status(
 /// window. A group that owned its own scroller would fight that one and, when
 /// the window is short, overflow it.
 fn append_group(
-    page: &PreferencesPage,
+    surfaces: &MixerSurfaces<'_>,
     nav: &NavigationContext,
     title: &str,
     inputs: &[AudioInput],
@@ -519,10 +742,15 @@ fn append_group(
     for input in inputs {
         let card = audio_card::build(input, nav.clone());
         insert_compact_flow_child(&flow, &card.root);
+        surfaces
+            .tracker
+            .cards
+            .borrow_mut()
+            .insert(input.id.clone(), card);
     }
 
     group.add(&flow);
-    page.add(&group);
+    surfaces.page.add(&group);
 }
 
 fn filter_inputs(inputs: &[AudioInput], search: &str) -> Vec<AudioInput> {
@@ -771,7 +999,7 @@ fn request_mixer_scene_audio(
 ) {
     let command = {
         let state = nav.state.borrow();
-        let mut tracked_scene = refresh_tracker.borrow_mut();
+        let mut tracked_scene = refresh_tracker.requested_scene.borrow_mut();
         prepare_mixer_scene_audio_request(
             intent,
             scene,
@@ -780,8 +1008,9 @@ fn request_mixer_scene_audio(
         )
     };
 
-    if let Some(command) = command {
-        nav.dispatch(command);
+    if let Some(scene) = command {
+        let request = nav.state.borrow_mut().set_mixer_audio_loading(scene);
+        nav.dispatch(AppCommand::RefreshMixerSceneAudio(request));
     }
 }
 
@@ -790,13 +1019,13 @@ fn prepare_mixer_scene_audio_request(
     scene: &str,
     visible_status: MixerVisibleAudioStatus<'_>,
     tracked_scene: &mut Option<String>,
-) -> Option<AppCommand> {
+) -> Option<String> {
     if !should_request_mixer_scene_audio(intent, visible_status, scene, tracked_scene.as_deref()) {
         return None;
     }
 
     *tracked_scene = Some(scene.to_string());
-    Some(AppCommand::RefreshMixerSceneAudio(scene.to_string()))
+    Some(scene.to_string())
 }
 
 pub(crate) fn should_request_mixer_scene_audio(
@@ -820,7 +1049,7 @@ pub(crate) fn should_request_mixer_scene_audio(
 }
 
 fn clear_tracked_request(refresh_tracker: &MixerRefreshTracker, scene: &str) {
-    let mut tracked_scene = refresh_tracker.borrow_mut();
+    let mut tracked_scene = refresh_tracker.requested_scene.borrow_mut();
     if tracked_scene.as_deref() == Some(scene) {
         *tracked_scene = None;
     }
@@ -861,7 +1090,6 @@ mod tests {
         should_request_mixer_scene_audio, source_summary, MixerRefreshRequestIntent,
         MixerRetryInspection,
     };
-    use crate::controller::command::AppCommand;
     use crate::controller::state::{
         AppState, MixerAudioError, MixerInspectionStatus, MixerSceneRefreshTargetReason,
         MixerVisibleAudioStatus,
@@ -869,6 +1097,28 @@ mod tests {
     use crate::domain::audio::AudioInput;
     use crate::domain::mixer::MixerMode;
     use crate::services::audio_service::AudioService;
+
+    #[test]
+    fn mixer_structure_ignores_audio_echoes_but_tracks_membership_and_scope() {
+        let mut state = app_state();
+        state.apply_active_audio(
+            None,
+            Ok(vec![AudioInput::new("Mic".into(), false, 1.0, 0.0)]),
+        );
+        let initial = super::mixer_structure(&state);
+        state.audio_inputs[0].muted = true;
+        state.audio_inputs[0].volume_mul = 0.5;
+        state.audio_inputs[0].volume_db = -6.0;
+        state.mixer.locked_inputs.insert("Mic".into());
+        assert_eq!(initial, super::mixer_structure(&state));
+        state
+            .audio_inputs
+            .push(AudioInput::new("Other".into(), false, 1.0, 0.0));
+        assert_ne!(initial, super::mixer_structure(&state));
+        state.audio_inputs.pop();
+        state.workspace.epoch += 1;
+        assert_ne!(initial, super::mixer_structure(&state));
+    }
 
     fn app_state() -> AppState {
         AppState::new(
@@ -921,13 +1171,6 @@ mod tests {
         json["status"]["kind"]
             .as_str()
             .expect("inspection status kind")
-    }
-
-    fn command_scene(command: Option<AppCommand>) -> Option<String> {
-        match command {
-            Some(AppCommand::RefreshMixerSceneAudio(scene)) => Some(scene),
-            _ => None,
-        }
     }
 
     #[test]
@@ -1110,8 +1353,8 @@ mod tests {
         let mut state = app_state();
         state.mixer.mode = MixerMode::SelectedScene;
         state.mixer.selected_scene = Some("Scene A".to_string());
-        state.set_mixer_audio_loading("Scene A".to_string());
-        state.set_mixer_audio_failure("Scene A".to_string(), "OBS failed".to_string());
+        let request = state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_failure(request, "OBS failed".to_string());
         let snapshot = state.mixer_inspection_snapshot();
 
         let json = inspection_json(&format_mixer_inspection_line(
@@ -1148,7 +1391,7 @@ mod tests {
             MixerVisibleAudioStatus::Missing,
             &mut tracked_scene,
         );
-        assert_eq!(command_scene(command).as_deref(), Some("Scene A"));
+        assert_eq!(command.as_deref(), Some("Scene A"));
         assert_eq!(tracked_scene.as_deref(), Some("Scene A"));
 
         let json = inspection_json(&format_mixer_inspection_line(
@@ -1174,8 +1417,8 @@ mod tests {
         let mut state = app_state();
         state.mixer.mode = MixerMode::SelectedScene;
         state.mixer.selected_scene = Some("Scene A".to_string());
-        state.set_mixer_audio_loading("Scene A".to_string());
-        state.set_mixer_audio_success("Scene A".to_string(), Vec::new());
+        let request = state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_success(request, Vec::new());
         let snapshot = state.mixer_inspection_snapshot();
         assert_eq!(snapshot.status, MixerInspectionStatus::LoadedNoAudioSources);
 
@@ -1207,8 +1450,8 @@ mod tests {
         state.mixer.mode = MixerMode::SelectedScene;
         state.mixer.selected_scene = Some("Scene A".to_string());
         state.mixer.search = "does-not-match".to_string();
-        state.set_mixer_audio_loading("Scene A".to_string());
-        state.set_mixer_audio_success("Scene A".to_string(), vec![input("Mic", false, 1.0, 0.0)]);
+        let request = state.set_mixer_audio_loading("Scene A".to_string());
+        state.set_mixer_audio_success(request, vec![input("Mic", false, 1.0, 0.0)]);
         let snapshot = state.mixer_inspection_snapshot();
         assert_eq!(
             snapshot.status,
@@ -1317,7 +1560,7 @@ mod tests {
             &mut tracked_scene,
         );
 
-        assert_eq!(command_scene(command).as_deref(), Some("scene-a"));
+        assert_eq!(command.as_deref(), Some("scene-a"));
         assert_eq!(tracked_scene.as_deref(), Some("scene-a"));
 
         let command = prepare_mixer_scene_audio_request(
@@ -1327,7 +1570,7 @@ mod tests {
             &mut tracked_scene,
         );
 
-        assert_eq!(command_scene(command), None);
+        assert_eq!(command, None);
         assert_eq!(tracked_scene.as_deref(), Some("scene-a"));
     }
 
@@ -1343,7 +1586,7 @@ mod tests {
             &mut tracked_scene,
         );
 
-        assert_eq!(command_scene(command), None);
+        assert_eq!(command, None);
         assert_eq!(tracked_scene, None);
     }
 
@@ -1359,7 +1602,7 @@ mod tests {
             &mut tracked_scene,
         );
 
-        assert_eq!(command_scene(command).as_deref(), Some("scene-a"));
+        assert_eq!(command.as_deref(), Some("scene-a"));
         assert_eq!(tracked_scene.as_deref(), Some("scene-a"));
 
         let command = prepare_mixer_scene_audio_request(
@@ -1369,7 +1612,7 @@ mod tests {
             &mut tracked_scene,
         );
 
-        assert_eq!(command_scene(command), None);
+        assert_eq!(command, None);
     }
 
     #[test]
@@ -1383,7 +1626,7 @@ mod tests {
             &mut tracked_scene,
         );
 
-        assert_eq!(command_scene(command), None);
+        assert_eq!(command, None);
         assert_eq!(tracked_scene, None);
     }
 
@@ -1399,7 +1642,7 @@ mod tests {
             &mut tracked_scene,
         );
 
-        assert_eq!(command_scene(command), None);
+        assert_eq!(command, None);
         assert_eq!(tracked_scene.as_deref(), Some("scene-a"));
     }
 }
@@ -1414,6 +1657,151 @@ mod layout_tests {
 
     fn audio_input(name: &str) -> AudioInput {
         AudioInput::new(name.to_string(), false, 1.0, 0.0)
+    }
+
+    #[test]
+    #[ignore = "requires a native GTK display"]
+    fn native_mixer_echoes_preserve_cards_drafts_focus_and_popovers() {
+        crate::ui::test_support::native_test("ui::pages::mixer::layout_tests::native_mixer_echoes_preserve_cards_drafts_focus_and_popovers", || {
+            use std::time::Duration;
+            let (nav, stack, _runtime, _events) = crate::ui::test_support::navigation();
+            {
+                let mut state = nav.state.borrow_mut();
+                state.obs_status = crate::controller::state::ObsStatus::Connected { obs_version: "fixture".into() };
+                state.scene_collections.current = Some("Fixture".into());
+                state.scene_inventory.scenes = vec![Scene { id: "Main".into() }];
+                state.scene_inventory.current_id = Some("Main".into());
+                state.apply_active_audio(Some("Main".into()), Ok(vec![audio_input("Mic"), audio_input("Music")]));
+            }
+            let (page, refresh, handle) = build(nav.clone());
+            stack.add_named(&page, Some("mixer-fixture"));
+            let window = gtk4::Window::builder().default_width(1000).default_height(1100).child(&stack).build();
+            window.present();
+            crate::ui::test_support::pump(Duration::from_millis(150));
+            let mut search = None;
+            let mut options = None;
+            visit_mixer(&page, &mut |widget| {
+                if let Some(row) = widget.downcast_ref::<EntryRow>() { search = Some(row.clone()); }
+                if let Some(row) = widget.downcast_ref::<adw::ExpanderRow>() { options = Some(row.clone()); }
+            });
+            let search = search.unwrap();
+            let options = options.unwrap();
+            options.set_expanded(true);
+            search.set_text("unapplied <draft> & search");
+            let first = handle.cards.borrow()["Mic"].root.clone();
+            let second = handle.cards.borrow()["Music"].root.clone();
+            let mut scale = None;
+            visit_mixer(second.upcast_ref(), &mut |widget| {
+                if let Some(fader) = widget.downcast_ref::<gtk4::Scale>() { scale = Some(fader.clone()); }
+            });
+            let scale = scale.unwrap();
+            crate::ui::test_support::pump(Duration::from_millis(80));
+            assert!(scale.grab_focus());
+            scale.set_value(-6.0);
+            crate::ui::test_support::pump(crate::services::audio_service::VOLUME_SLIDER_DEBOUNCE + Duration::from_millis(30));
+            scale.set_value(-9.0);
+            let sent = f64::from(AudioService::volume_db_to_mul(-6.0) as f32);
+            let sent_db = AudioService::volume_mul_to_db(sent);
+            {
+                let mut state = nav.state.borrow_mut();
+                state.audio_inputs[1].volume_mul = sent;
+                state.audio_inputs[1].volume_db = sent_db;
+            }
+            handle.update_volume("Music", sent, sent_db);
+            refresh();
+            assert_eq!(scale.value(), -9.0, "a delayed same-input echo reset the newer edit");
+            let focus = gtk4::prelude::RootExt::focus(&window).unwrap();
+            for index in 0..128 {
+                let mul = 0.1 + index as f64 / 200.0;
+                let db = AudioService::volume_mul_to_db(mul);
+                {
+                    let mut state = nav.state.borrow_mut();
+                    state.audio_inputs[0].muted = index % 2 == 0;
+                    state.audio_inputs[0].volume_mul = mul;
+                    state.audio_inputs[0].volume_db = db;
+                }
+                handle.update_mute("Mic", index % 2 == 0);
+                handle.update_volume("Mic", mul, db);
+                refresh();
+                assert_eq!(handle.cards.borrow()["Mic"].root, first);
+                assert_eq!(handle.cards.borrow()["Music"].root, second);
+            }
+            assert_eq!(gtk4::prelude::RootExt::focus(&window), Some(focus));
+            assert_eq!(scale.value(), -9.0, "an unrelated echo reset the active fader");
+            assert_eq!(search.text(), "unapplied <draft> & search");
+            let mut menu = None;
+            visit_mixer(first.upcast_ref(), &mut |widget| {
+                if let Some(button) = widget.downcast_ref::<gtk4::MenuButton>() { menu = Some(button.clone()); }
+            });
+            let menu = menu.unwrap();
+            menu.popup();
+            crate::ui::test_support::pump(Duration::from_millis(100));
+            let popover = menu.popover().unwrap();
+            assert!(popover.is_mapped());
+            for _ in 0..64 { handle.update_mute("Mic", true); }
+            assert!(popover.is_mapped());
+            assert_eq!(handle.cards.borrow().len(), 2);
+            popover.popdown();
+            nav.state.borrow_mut().audio_inputs.push(audio_input("Third"));
+            refresh();
+            let mut restored_draft = None;
+            visit_mixer(&page, &mut |widget| {
+                if let Some(row) = widget.downcast_ref::<EntryRow>() { restored_draft = Some(row.text().to_string()); }
+            });
+            assert_eq!(restored_draft.as_deref(), Some("unapplied <draft> & search"));
+            assert_eq!(handle.cards.borrow().len(), 3);
+            let weak_scale = scale.downgrade();
+            drop((scale, first, second, search, options, menu, popover));
+            crate::ui::test_support::pump(Duration::from_millis(80));
+            assert!(weak_scale.upgrade().is_none(), "structural replacement retained the old fader");
+            *handle.requested_scene.borrow_mut() = Some("Main".into());
+            nav.state.borrow_mut().workspace.epoch += 1;
+            refresh();
+            assert!(handle.requested_scene.borrow().is_none(), "old scope suppressed a new same-name request");
+            let weak_page = page.downgrade();
+            window.destroy();
+            stack.remove(&page);
+            drop((window, page, refresh, handle, nav, stack));
+            crate::ui::test_support::pump(Duration::from_millis(250));
+            assert!(weak_page.upgrade().is_none());
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a native GTK display"]
+    fn native_inspected_scene_without_snapshot_issues_one_request_without_borrowing_state_twice() {
+        crate::ui::test_support::native_test(
+            "ui::pages::mixer::layout_tests::native_inspected_scene_without_snapshot_issues_one_request_without_borrowing_state_twice",
+            || {
+                for mode in [MixerMode::SelectedScene, MixerMode::PinnedScene] {
+                    let (nav, stack, _runtime, _events) = crate::ui::test_support::navigation();
+                    {
+                        let mut state = nav.state.borrow_mut();
+                        state.obs_status = crate::controller::state::ObsStatus::Connected {
+                            obs_version: "fixture".into(),
+                        };
+                        state.scene_collections.current = Some("Fixture".into());
+                        state.scene_inventory.scenes = vec![
+                            Scene { id: "Program".into() },
+                            Scene { id: "Inspected".into() },
+                        ];
+                        state.scene_inventory.current_id = Some("Program".into());
+                        state.mixer.mode = mode;
+                        state.mixer.selected_scene = Some("Inspected".into());
+                        state.mixer.pinned_scene = Some("Inspected".into());
+                    }
+                    let (page, refresh, handle) = build(nav.clone());
+                    assert_eq!(nav.state.borrow().mixer_audio_refresh.requested_scene(), Some("Inspected"));
+                    assert_eq!(handle.requested_scene.borrow().as_deref(), Some("Inspected"));
+                    refresh();
+                    assert_eq!(nav.state.borrow().mixer_audio_refresh.requested_scene(), Some("Inspected"));
+                    let weak_page = page.downgrade();
+                    drop((page, refresh, handle, nav, stack));
+                    crate::ui::test_support::pump(std::time::Duration::from_millis(20));
+                    assert!(weak_page.upgrade().is_none());
+                }
+            },
+        );
     }
 
     /// Build the Mixer page against a state holding `count` audio sources.
@@ -1435,22 +1823,21 @@ mod layout_tests {
             current_id: Some("Main".to_string()),
             previous_id: None,
         };
-        state.audio_inputs = (0..count)
+        let inputs = (0..count)
             .map(|index| audio_input(&format!("Source {index}")))
             .collect();
+        state.apply_active_audio(Some("Main".into()), Ok(inputs));
 
         let nav =
             NavigationContext::new(Rc::new(RefCell::new(state)), gtk4::Stack::new(), controller);
-        let (widget, _refresh) = build(nav);
+        let (widget, _refresh, _handle) = build(nav);
         widget.measure(gtk4::Orientation::Vertical, -1).0
     }
 
     #[test]
-    #[ignore = "temporary: needs a display"]
+    #[ignore = "requires a native GTK display"]
     fn mixer_page_minimum_height_does_not_grow_with_the_card_count() {
-        gtk4::init().expect("gtk init");
-        crate::ui::register_resources();
-
+        crate::ui::test_support::native_test("ui::pages::mixer::layout_tests::mixer_page_minimum_height_does_not_grow_with_the_card_count", || {
         let one = measure_mixer_page_min_height(1);
         let many = measure_mixer_page_min_height(24);
 
@@ -1459,5 +1846,6 @@ mod layout_tests {
             one, many,
             "the page must scroll its cards instead of demanding room for them"
         );
+        });
     }
 }

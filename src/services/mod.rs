@@ -4,6 +4,7 @@
 //! should stay independent of GTK widgets and `obws` response structs.
 
 pub(crate) mod audio_service;
+pub(crate) mod doctor_format;
 pub(crate) mod doctor_service;
 pub(crate) mod graph_service;
 pub(crate) mod hotkey_service;

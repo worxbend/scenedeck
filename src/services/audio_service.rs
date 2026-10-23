@@ -1,7 +1,9 @@
 //! Audio input queries and mutations: decibel conversion, slider range
 //! sanitizing, and debouncing of fader drags into OBS volume commands.
 
-use std::time::Duration;
+use std::{collections::VecDeque, time::Duration};
+
+use crate::domain::audio::{self, MAX_VOLUME_DB, MIN_VOLUME_DB};
 
 pub const VOLUME_SLIDER_DEBOUNCE: Duration = Duration::from_millis(120);
 
@@ -13,31 +15,20 @@ pub const VOLUME_SLIDER_DEBOUNCE: Duration = Duration::from_millis(120);
 /// A drag that ends inside the threshold is never sent, leaving the fader
 /// and OBS disagreeing by less than 0.1 dB — below anything audible.
 const VOLUME_MEANINGFUL_DELTA_DB: f64 = 0.1;
-const MIN_VOLUME_DB: f64 = -100.0;
-const MAX_VOLUME_DB: f64 = 0.0;
 
 pub struct AudioService;
 
 impl AudioService {
     pub fn volume_mul_to_db(mul: f64) -> f64 {
-        if !mul.is_finite() || mul <= 0.0 {
-            f64::NEG_INFINITY
-        } else {
-            20.0 * mul.log10()
-        }
+        audio::volume_mul_to_db(mul)
     }
 
     pub fn volume_db_to_mul(db: f64) -> f64 {
-        let db = Self::sanitize_volume_db(db);
-        if db <= MIN_VOLUME_DB {
-            0.0
-        } else {
-            10.0_f64.powf(db / 20.0)
-        }
+        audio::volume_db_to_mul(db)
     }
 
     pub fn format_db(db: f64) -> String {
-        if db <= -100.0 || !db.is_finite() {
+        if db <= MIN_VOLUME_DB || !db.is_finite() {
             "-inf dB".to_string()
         } else if db.abs() < 0.05 {
             "0.0 dB".to_string()
@@ -68,11 +59,7 @@ impl AudioService {
     }
 
     pub fn sanitize_volume_db(volume_db: f64) -> f64 {
-        if volume_db.is_finite() {
-            volume_db.clamp(MIN_VOLUME_DB, MAX_VOLUME_DB)
-        } else {
-            MIN_VOLUME_DB
-        }
+        audio::sanitize_volume_db(volume_db)
     }
 
     pub fn slider_db_from_mul(volume_mul: f64) -> f64 {
@@ -90,10 +77,16 @@ impl AudioService {
     }
 }
 
+// OBS gain events carry no command ID. Retain a bounded history of actual
+// sends, including acknowledged values (snapshots can repeat an echo). An
+// unmatched observation clears the history and remains authoritative.
+const MAX_SENT_GAIN_HISTORY: usize = 32;
+
 #[derive(Debug, Clone)]
 pub struct VolumeChangeDebouncer {
     last_sent: Option<f64>,
     pending: Option<f64>,
+    sent_history: VecDeque<f64>,
 }
 
 impl VolumeChangeDebouncer {
@@ -101,6 +94,7 @@ impl VolumeChangeDebouncer {
         Self {
             last_sent: Some(AudioService::sanitize_volume_mul(initial_volume)),
             pending: None,
+            sent_history: VecDeque::new(),
         }
     }
 
@@ -111,7 +105,7 @@ impl VolumeChangeDebouncer {
     pub fn take_due(&mut self) -> Option<f64> {
         let pending = self.pending.take()?;
         if self.should_send(pending) {
-            self.last_sent = Some(pending);
+            self.mark_sent(pending);
             Some(pending)
         } else {
             None
@@ -119,13 +113,34 @@ impl VolumeChangeDebouncer {
     }
 
     pub fn mark_sent(&mut self, volume_mul: f64) {
-        self.last_sent = Some(AudioService::sanitize_volume_mul(volume_mul));
+        let volume_mul = AudioService::sanitize_volume_mul(volume_mul);
+        self.last_sent = Some(volume_mul);
+        if self.sent_history.len() == MAX_SENT_GAIN_HISTORY {
+            self.sent_history.pop_front();
+        }
+        self.sent_history.push_back(volume_mul);
         self.pending = None;
     }
 
-    pub fn reset_to_observed(&mut self, volume_mul: f64) {
-        self.last_sent = Some(AudioService::sanitize_volume_mul(volume_mul));
+    /// Return whether the observation should replace the visible local value.
+    /// An echo of any retained send cannot supersede a newer unsent edit. Other
+    /// observations remain authoritative, including readback after a failed send.
+    pub fn reset_to_observed(&mut self, volume_mul: f64) -> bool {
+        let volume_mul = AudioService::sanitize_volume_mul(volume_mul);
+        let sent_echo = self.sent_history.iter().any(|sent| {
+            // OBS receives f32 gain; tolerate its round-trip representation only.
+            (sent - volume_mul).abs() <= f64::from(f32::EPSILON) * sent.abs().max(volume_mul.abs())
+        });
+        if sent_echo && self.pending.is_some() {
+            // Do not move the send baseline backwards to an older acknowledgement.
+            return false;
+        }
+        self.last_sent = Some(volume_mul);
+        if !sent_echo {
+            self.sent_history.clear();
+        }
         self.pending = None;
+        true
     }
 
     fn should_send(&self, volume_mul: f64) -> bool {
@@ -225,6 +240,141 @@ mod tests {
             f64::NEG_INFINITY
         );
         assert_eq!(AudioService::volume_mul_to_db(0.0), f64::NEG_INFINITY);
+    }
+
+    #[test]
+    fn delayed_sent_echo_preserves_newer_pending_gain() {
+        let mut debouncer = VolumeChangeDebouncer::new(1.0);
+        let sent = AudioService::volume_db_to_mul(-6.0);
+        let newer = AudioService::volume_db_to_mul(-9.0);
+        debouncer.queue(sent);
+        assert_eq!(debouncer.take_due(), Some(sent));
+        debouncer.queue(newer);
+
+        // OBS accepts single-precision gain, so its echo need not be bit-identical.
+        debouncer.reset_to_observed(f64::from(sent as f32));
+
+        assert_eq!(debouncer.take_due(), Some(newer));
+        assert_eq!(debouncer.take_due(), None);
+    }
+
+    #[test]
+    fn multiple_outstanding_sends_preserve_newer_pending_gain() {
+        for reverse_echoes in [false, true] {
+            let mut debouncer = VolumeChangeDebouncer::new(1.0);
+            let a = AudioService::volume_db_to_mul(-6.0);
+            let b = AudioService::volume_db_to_mul(-9.0);
+            let c = AudioService::volume_db_to_mul(-12.0);
+            debouncer.queue(a);
+            assert_eq!(debouncer.take_due(), Some(a));
+            debouncer.queue(b);
+            assert_eq!(debouncer.take_due(), Some(b));
+            debouncer.queue(c);
+
+            let echoes = if reverse_echoes { [b, a] } else { [a, b] };
+            for echo in echoes {
+                assert!(
+                    !debouncer.reset_to_observed(f64::from(echo as f32)),
+                    "an outstanding own echo replaced the newer local edit"
+                );
+            }
+            assert_eq!(debouncer.take_due(), Some(c));
+            assert_eq!(debouncer.take_due(), None);
+        }
+    }
+
+    #[test]
+    fn old_echo_does_not_rebase_a_newer_send() {
+        let mut debouncer = VolumeChangeDebouncer::new(1.0);
+        debouncer.mark_sent(0.5);
+        debouncer.mark_sent(0.3);
+        debouncer.queue(0.5);
+
+        assert!(!debouncer.reset_to_observed(0.5));
+        assert_eq!(debouncer.take_due(), Some(0.5));
+    }
+
+    #[test]
+    fn unmatched_external_gain_retires_all_sent_history() {
+        let mut debouncer = VolumeChangeDebouncer::new(1.0);
+        debouncer.mark_sent(0.5);
+        debouncer.mark_sent(0.3);
+        debouncer.queue(0.2);
+        // Close to A, but well outside f32 round-trip precision.
+        assert!(debouncer.reset_to_observed(0.50001));
+        assert_eq!(debouncer.take_due(), None);
+        debouncer.queue(0.1);
+        assert!(debouncer.reset_to_observed(0.5));
+        assert_eq!(debouncer.take_due(), None);
+    }
+
+    #[test]
+    fn sent_gain_history_is_bounded_and_evicts_oldest_first() {
+        let mut debouncer = VolumeChangeDebouncer::new(1.0);
+        for index in 1..=MAX_SENT_GAIN_HISTORY + 1 {
+            debouncer.mark_sent(index as f64 / 100.0);
+        }
+        assert_eq!(debouncer.sent_history.len(), MAX_SENT_GAIN_HISTORY);
+        debouncer.queue(0.7);
+        assert!(!debouncer.reset_to_observed(0.02));
+        assert!(
+            debouncer.reset_to_observed(0.01),
+            "evicted sends are no longer own echoes"
+        );
+        assert_eq!(debouncer.take_due(), None);
+    }
+
+    #[test]
+    fn repeated_sent_echoes_preserve_the_same_pending_gain() {
+        let mut debouncer = VolumeChangeDebouncer::new(1.0);
+        debouncer.mark_sent(0.5);
+        debouncer.queue(0.3);
+
+        assert!(!debouncer.reset_to_observed(0.5));
+        assert!(!debouncer.reset_to_observed(0.5));
+        assert_eq!(debouncer.take_due(), Some(0.3));
+    }
+
+    #[test]
+    fn external_gain_supersedes_pending_local_intent() {
+        let mut debouncer = VolumeChangeDebouncer::new(1.0);
+        debouncer.mark_sent(0.5);
+        debouncer.queue(0.3);
+
+        assert!(debouncer.reset_to_observed(0.7));
+        assert_eq!(debouncer.take_due(), None);
+        debouncer.queue(0.7);
+        assert_eq!(debouncer.take_due(), None);
+    }
+
+    #[test]
+    fn failed_send_readback_reconciles_without_suppressing_retry() {
+        let mut debouncer = VolumeChangeDebouncer::new(1.0);
+        debouncer.mark_sent(0.5);
+        debouncer.queue(0.3);
+
+        assert!(debouncer.reset_to_observed(1.0));
+        assert_eq!(debouncer.take_due(), None);
+        debouncer.queue(0.5);
+        assert_eq!(debouncer.take_due(), Some(0.5));
+    }
+
+    #[test]
+    fn initial_observation_is_not_mistaken_for_a_sent_echo() {
+        let mut debouncer = VolumeChangeDebouncer::new(1.0);
+        debouncer.queue(0.3);
+
+        assert!(debouncer.reset_to_observed(1.0));
+        assert_eq!(debouncer.take_due(), None);
+    }
+
+    #[test]
+    fn sent_echo_without_a_newer_edit_reconciles_normally() {
+        let mut debouncer = VolumeChangeDebouncer::new(1.0);
+        debouncer.mark_sent(0.5);
+
+        assert!(debouncer.reset_to_observed(0.5));
+        assert_eq!(debouncer.take_due(), None);
     }
 
     #[test]

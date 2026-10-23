@@ -63,6 +63,51 @@ impl DiagnosticSeverity {
     }
 }
 
+/// Unlocalized result of one Doctor rule, including its presentation arguments.
+///
+/// Rule evaluation only constructs these values; localized labels and Fluent
+/// lookups belong to the formatting phase behind `DoctorService::run`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DoctorFinding {
+    /// Importance used for the stable, most-severe-first ordering.
+    pub severity: DiagnosticSeverity,
+    /// Scene reported by the rule (also the parent argument for a cycle).
+    pub scene: String,
+    /// Rule identity and typed arguments, independent of the active locale.
+    pub kind: DoctorFindingKind,
+}
+
+/// Doctor rule identities; child names stay literal until presentation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DoctorFindingKind {
+    NoRole,
+    StaleEntry,
+    ProtectedSwitchable {
+        role: crate::domain::role::SceneRole,
+    },
+    PrimaryDebug {
+        child: String,
+    },
+    PrimaryRaw {
+        child: String,
+    },
+    ModulePrimary {
+        child: String,
+    },
+    RawNests {
+        child: String,
+    },
+    ForbiddenEdge {
+        child: String,
+    },
+    OutsidePolicy {
+        child: String,
+    },
+    Cycle {
+        child: String,
+    },
+}
+
 /// A single architecture or configuration finding shown in the Doctor page.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {

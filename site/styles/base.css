@@ -8,6 +8,11 @@
   box-sizing: border-box;
 }
 
+/* Author display rules must not reveal unavailable downloads or commands. */
+[hidden] {
+  display: none !important;
+}
+
 html {
   -webkit-text-size-adjust: 100%;
   scroll-behavior: smooth;

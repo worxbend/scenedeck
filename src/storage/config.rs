@@ -4,7 +4,6 @@
 //! Scene role assignments live in `registry.json` (see `storage::registry`).
 //! OBS passwords live in the Secret Service (see `storage::secret`).
 
-use std::fs::read_to_string;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -116,6 +115,9 @@ impl Default for OutputConfig {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LiveConfig {
+    /// Opt-in scene thumbnails; disabled until the local performance budget passes.
+    #[serde(default)]
+    pub scene_previews: bool,
     /// Roles whose scenes appear on the Live page.
     #[serde(default = "default_show_roles")]
     pub show_roles: Vec<String>,
@@ -203,7 +205,8 @@ pub fn read_config() -> LoadedConfig {
 }
 
 pub fn read_config_from_path(path: &Path) -> LoadedConfig {
-    match read_to_string(path) {
+    match crate::storage::small_file::read_to_string(path, crate::storage::small_file::CONFIG_LIMIT)
+    {
         Ok(raw) => match serde_json::from_str::<AppConfig>(&raw) {
             Ok(mut config) => {
                 // Apply any schema migrations and persist if anything changed.
@@ -337,7 +340,21 @@ pub fn write_config(config: &AppConfig) -> io::Result<()> {
 }
 
 pub fn write_config_to_path(path: &Path, config: &AppConfig) -> io::Result<()> {
+    // If preserving an invalid startup file failed (or reading was refused),
+    // a defaults-based save must not silently destroy the original either.
+    match crate::storage::small_file::read_to_string(path, crate::storage::small_file::CONFIG_LIMIT)
+    {
+        Ok(raw) => {
+            serde_json::from_str::<AppConfig>(&raw).map_err(io::Error::other)?;
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
     let raw = serde_json::to_string_pretty(config).map_err(io::Error::other)?;
+    crate::storage::small_file::check_size(
+        raw.len() as u64,
+        crate::storage::small_file::CONFIG_LIMIT,
+    )?;
     // Whole-file replacement: a half-written file would be unparsable, and the
     // loaders treat unparsable as absent.
     crate::storage::atomic::write(path, raw.as_bytes())
@@ -348,6 +365,30 @@ pub fn write_config_to_path(path: &Path, config: &AppConfig) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_writes_cannot_replace_refused_or_unpreserved_inputs() {
+        let path = std::env::temp_dir().join(format!(
+            "scenedeck-refused-config-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"invalid original").unwrap();
+        assert!(write_config_to_path(&path, &AppConfig::default()).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"invalid original");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(crate::storage::small_file::CONFIG_LIMIT as u64 + 1)
+            .unwrap();
+        let loaded = read_config_from_path(&path);
+        assert!(matches!(
+            loaded.startup_notice,
+            Some(ConfigStartupNotice::ReadFailed(_))
+        ));
+        assert!(write_config_to_path(&path, &AppConfig::default()).is_err());
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn empty_object_uses_defaults() {
@@ -494,6 +535,43 @@ mod tests {
             serde_json::from_str::<AppConfig>(&json).unwrap().hotkeys,
             parsed.hotkeys
         );
+    }
+
+    #[test]
+    fn legacy_inventory_widths_preserve_preview_settings_without_being_saved() {
+        let old: AppConfig = serde_json::from_str("{}").unwrap();
+        assert!(!old.live.scene_previews);
+        let parsed: AppConfig = serde_json::from_str(
+            r#"{"inventory":{"name_width":420,"role_width":280},"live":{"scene_previews":true}}"#,
+        )
+        .unwrap();
+        let saved = serde_json::to_value(&parsed).unwrap();
+        assert!(
+            saved.get("inventory").is_none(),
+            "removed width settings must not be saved"
+        );
+        let reread: AppConfig = serde_json::from_value(saved).unwrap();
+        assert!(reread.live.scene_previews);
+        let partial: AppConfig =
+            serde_json::from_str(r#"{"inventory":{"role_width":300}}"#).unwrap();
+        assert!(!partial.live.scene_previews);
+        assert!(serde_json::to_value(partial)
+            .unwrap()
+            .get("inventory")
+            .is_none());
+    }
+
+    #[test]
+    fn legacy_inventory_widths_accept_invalid_values_without_affecting_settings() {
+        let expected = serde_json::to_value(AppConfig::default()).unwrap();
+        for legacy in [
+            r#"{"inventory":{"name_width":-50,"role_width":2147483647}}"#,
+            r#"{"inventory":{"name_width":1000,"role_width":600}}"#,
+            r#"{"inventory":{}}"#,
+        ] {
+            let parsed: AppConfig = serde_json::from_str(legacy).unwrap();
+            assert_eq!(serde_json::to_value(parsed).unwrap(), expected);
+        }
     }
 
     #[test]

@@ -49,13 +49,28 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
 
     if let Some(notice) = nav.state.borrow_mut().startup_notice.take() {
         let notice_group = PreferencesGroup::new();
-        let notice_row = ActionRow::builder().title(notice).build();
+        // GObject builder property order may set title before use-markup.
+        let notice_row = ActionRow::builder().use_markup(false).build();
+        notice_row.set_title(&notice);
         with_icon(&notice_row, "dialog-warning-symbolic");
         notice_group.add(&notice_row);
         page.add(&notice_group);
     }
 
     page.add(&appearance_group);
+    let previews = SwitchRow::builder()
+        .use_markup(false)
+        .title(fl!(LANGUAGE_LOADER, "settings-scene-previews"))
+        .subtitle(fl!(LANGUAGE_LOADER, "settings-scene-previews-description"))
+        .active(cfg.live.scene_previews)
+        .build();
+    previews.connect_active_notify({
+        let nav = nav.clone();
+        move |row| {
+            persist_config(&nav, |config| config.live.scene_previews = row.is_active());
+        }
+    });
+    appearance_group.add(&previews);
     page.add(&language_group);
     page.add(&obs_group);
     page.add(&output_group);
@@ -66,8 +81,12 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     // (or when the external refresh button is pressed).
     let refresh_fn: Rc<dyn Fn()> = Rc::new({
         let nav = nav.clone();
-        let status_row = status_row.clone();
-        move || status_row.set_subtitle(&obs_status_text(&nav))
+        let status_row = status_row.downgrade();
+        move || {
+            if let Some(status_row) = status_row.upgrade() {
+                status_row.set_subtitle(&obs_status_text(&nav));
+            }
+        }
     });
 
     page.connect_map({
@@ -93,6 +112,7 @@ fn build_color_scheme_row(nav: &NavigationContext) -> ComboRow {
         ThemeMode::Dark => 2,
     };
     let theme_row = ComboRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "settings-color-scheme-title"))
         .subtitle(fl!(LANGUAGE_LOADER, "settings-color-scheme-subtitle"))
         .model(&theme_options)
@@ -136,6 +156,7 @@ fn build_motion_row(nav: &NavigationContext, cfg: &AppConfig) -> ComboRow {
         .position(|level| *level == cfg.appearance.motion)
         .unwrap_or(0) as u32;
     let motion_row = ComboRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "settings-motion-title"))
         .subtitle(fl!(LANGUAGE_LOADER, "settings-motion-subtitle"))
         .model(&motion_options)
@@ -180,18 +201,21 @@ fn build_custom_css_rows(
     theme_status_row: &ActionRow,
 ) -> CustomCssRows {
     let custom_css_row = SwitchRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "settings-custom-css-title"))
         .subtitle(fl!(LANGUAGE_LOADER, "settings-custom-css-subtitle"))
         .active(cfg.appearance.custom_css.enabled)
         .build();
 
     let light_css_row = EntryRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "settings-custom-light-css-title"))
         .text(path_text(cfg.appearance.custom_css.light_path.as_ref()))
         .show_apply_button(true)
         .build();
 
     let dark_css_row = EntryRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "settings-custom-dark-css-title"))
         .text(path_text(cfg.appearance.custom_css.dark_path.as_ref()))
         .show_apply_button(true)
@@ -203,12 +227,16 @@ fn build_custom_css_rows(
         move |row| {
             let active = row.is_active();
             let theme_status_row = theme_status_row.clone();
+            let current = nav.state.clone();
             persist_config_with(
                 &nav,
                 move |config| config.appearance.custom_css.enabled = active,
-                move |result, config| match result {
+                move |result, _| match result {
                     Ok(()) => {
-                        apply_theme_with_status(config.appearance, theme_status_row);
+                        apply_theme_with_status(
+                            current.borrow().config.appearance.clone(),
+                            theme_status_row,
+                        );
                     }
                     Err(err) => report_save_failure(&theme_status_row, &err),
                 },
@@ -229,6 +257,7 @@ fn build_custom_css_rows(
     });
 
     let reload_css_row = ActionRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "settings-reload-css-title"))
         .subtitle(fl!(LANGUAGE_LOADER, "settings-reload-css-subtitle"))
         .build();
@@ -284,14 +313,18 @@ fn build_appearance_group(nav: &NavigationContext, cfg: &AppConfig) -> Preferenc
         .copied()
         .unwrap_or(themes[0]);
     let family_row = ComboRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "settings-theme-title"))
-        .subtitle(theme_subtitle(selected_theme))
+        .subtitle(selected_theme.localized_description())
+        .subtitle_lines(2)
+        .tooltip_text(selected_theme.localized_name())
         .model(&theme_model)
         .selected(selected_theme_index)
         .build();
     family_row.add_css_class("scenedeck-combo-row");
 
     let theme_status_row = ActionRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "settings-theme-status-title"))
         .subtitle(fl!(LANGUAGE_LOADER, "settings-theme-status-initial"))
         .build();
@@ -307,13 +340,17 @@ fn build_appearance_group(nav: &NavigationContext, cfg: &AppConfig) -> Preferenc
 
             let row = row.clone();
             let theme_status_row = theme_status_row.clone();
+            let current = nav.state.clone();
             persist_config_with(
                 &nav,
                 move |config| config.appearance.selected_theme = Some(ThemeId::new(theme.id)),
-                move |result, config| match result {
+                move |result, _| match result {
                     Ok(()) => {
-                        row.set_subtitle(&theme_subtitle(theme));
-                        apply_theme_with_status(config.appearance, theme_status_row);
+                        let appearance = current.borrow().config.appearance.clone();
+                        let theme = ThemeManager::find_theme(appearance.selected_theme_id());
+                        row.set_subtitle(&theme.localized_description());
+                        row.set_tooltip_text(Some(&theme.localized_name()));
+                        apply_theme_with_status(appearance, theme_status_row);
                     }
                     Err(err) => report_save_failure(&theme_status_row, &err),
                 },
@@ -360,6 +397,7 @@ fn build_language_group(nav: &NavigationContext, cfg: &AppConfig) -> Preferences
         .position(|l| *l == cfg.language)
         .unwrap_or(0) as u32;
     let language_row = ComboRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "settings-display-language-title"))
         .subtitle(fl!(LANGUAGE_LOADER, "settings-display-language-subtitle"))
         .model(&language_model)
@@ -368,6 +406,7 @@ fn build_language_group(nav: &NavigationContext, cfg: &AppConfig) -> Preferences
     language_row.add_css_class("scenedeck-combo-row");
 
     let language_status_row = ActionRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "settings-language-status-title"))
         .subtitle(fl!(LANGUAGE_LOADER, "settings-language-status-initial"))
         .build();
@@ -416,19 +455,24 @@ fn build_obs_group(nav: &NavigationContext, cfg: &AppConfig) -> (PreferencesGrou
         .build();
 
     let host_row = EntryRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "settings-host-title"))
         .text(&cfg.obs.host)
         .show_apply_button(true)
         .build();
+    host_row.set_widget_name("settings-obs-host");
 
     let port_row = EntryRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "settings-port-title"))
         .text(cfg.obs.port.to_string())
         .show_apply_button(true)
         .build();
+    port_row.set_widget_name("settings-obs-port");
 
     // Password is stored in the system keyring, never in config.json.
     let password_row = PasswordEntryRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "settings-password-title"))
         .show_apply_button(true)
         .build();
@@ -437,16 +481,22 @@ fn build_obs_group(nav: &NavigationContext, cfg: &AppConfig) -> (PreferencesGrou
     }
 
     let status_row = ActionRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "settings-obs-status-title"))
-        .subtitle(obs_status_text(nav))
         .build();
+    status_row.set_subtitle(&obs_status_text(nav));
 
     let save_handler = {
         let nav = nav.clone();
-        let host_row = host_row.clone();
-        let port_row = port_row.clone();
-        let status_row = status_row.clone();
+        let host_row = host_row.downgrade();
+        let port_row = port_row.downgrade();
+        let status_row = status_row.downgrade();
         move || {
+            let (Some(host_row), Some(port_row), Some(status_row)) =
+                (host_row.upgrade(), port_row.upgrade(), status_row.upgrade())
+            else {
+                return;
+            };
             let host = host_row.text().trim().to_string();
             let port: u16 = match port_row.text().trim().parse() {
                 Ok(p) => p,
@@ -479,27 +529,38 @@ fn build_obs_group(nav: &NavigationContext, cfg: &AppConfig) -> (PreferencesGrou
         move |_| save()
     });
 
+    // Secret completion must not overwrite connection/config save feedback.
+    let password_status = ActionRow::builder()
+        .use_markup(false)
+        .title(fl!(LANGUAGE_LOADER, "settings-password-title"))
+        .build();
+    let password_writes = PasswordWrites::new(nav.state.borrow().obs_password.clone());
     password_row.connect_apply({
-        let status_row = status_row.clone();
+        let status_row = password_status.clone();
         let nav = nav.clone();
         move |row| {
             let password = (!row.text().is_empty()).then(|| row.text().to_string());
-            nav.state.borrow_mut().obs_password = password.clone();
             let status_row = status_row.clone();
-            crate::ui::background_io::run(
-                move || match password {
-                    Some(password) => secret::set_obs_password(&password),
+            let nav = nav.clone();
+            password_writes.submit(
+                password,
+                |password| match password {
+                    Some(password) => secret::set_obs_password(password),
                     None => secret::delete_obs_password(),
                 },
-                move |result| match result {
-                    Ok(()) => {
-                        status_row.set_subtitle(&fl!(LANGUAGE_LOADER, "settings-password-saved"))
+                move |result, confirmed| {
+                    // On failure the snapshot includes preceding successful jobs,
+                    // even if their GTK completions have not been delivered yet.
+                    nav.state.borrow_mut().obs_password = confirmed;
+                    match result {
+                        Ok(()) => status_row
+                            .set_subtitle(&fl!(LANGUAGE_LOADER, "settings-password-saved")),
+                        Err(error) => status_row.set_subtitle(&fl!(
+                            LANGUAGE_LOADER,
+                            "settings-keyring-error",
+                            err = error.to_string()
+                        )),
                     }
-                    Err(error) => status_row.set_subtitle(&fl!(
-                        LANGUAGE_LOADER,
-                        "settings-keyring-error",
-                        err = error.to_string()
-                    )),
                 },
             );
         }
@@ -511,8 +572,56 @@ fn build_obs_group(nav: &NavigationContext, cfg: &AppConfig) -> (PreferencesGrou
     obs_group.add(&port_row);
     with_entry_icon(&password_row, "nf-md-key-variant-symbolic");
     obs_group.add(&password_row);
+    obs_group.add(&password_status);
 
     (obs_group, status_row)
+}
+
+/// The worker snapshot is the last successful operation, not the latest draft.
+/// Only the latest submitted request may publish cache/status on GTK. Keeping
+/// confirmation on the FIFO worker also handles a successful old set followed
+/// by a failed delete whose GTK callbacks happen to arrive in reverse order.
+#[derive(Clone)]
+struct PasswordWrites {
+    latest: Rc<std::cell::Cell<u64>>,
+    confirmed: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+}
+
+impl PasswordWrites {
+    fn new(confirmed: Option<String>) -> Self {
+        Self {
+            latest: Rc::new(std::cell::Cell::new(0)),
+            confirmed: std::sync::Arc::new(std::sync::Mutex::new(confirmed)),
+        }
+    }
+
+    fn submit<E, Work, Complete>(&self, password: Option<String>, work: Work, complete: Complete)
+    where
+        E: Send + 'static,
+        Work: FnOnce(&Option<String>) -> Result<(), E> + Send + 'static,
+        Complete: FnOnce(Result<(), E>, Option<String>) + 'static,
+    {
+        let generation = self.latest.get().wrapping_add(1);
+        self.latest.set(generation);
+        let latest = Rc::clone(&self.latest);
+        let confirmed = std::sync::Arc::clone(&self.confirmed);
+        crate::ui::background_io::run_serialized(
+            crate::ui::background_io::SerialLane::Secret,
+            move || {
+                let result = work(&password);
+                let mut confirmed = confirmed.lock().expect("password confirmation lock");
+                if result.is_ok() {
+                    *confirmed = password;
+                }
+                (result, confirmed.clone())
+            },
+            move |(result, confirmed)| {
+                if latest.get() == generation {
+                    complete(result, confirmed);
+                }
+            },
+        );
+    }
 }
 
 /// Which output actions ask for confirmation first.
@@ -582,6 +691,7 @@ fn build_hotkey_group(nav: &NavigationContext) -> PreferencesGroup {
     let hotkeys = nav.state.borrow().config.hotkeys;
 
     let enabled_row = SwitchRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "settings-hotkeys-enabled-title"))
         .subtitle(fl!(LANGUAGE_LOADER, "settings-hotkeys-enabled-subtitle"))
         .active(hotkeys.enabled)
@@ -592,6 +702,7 @@ fn build_hotkey_group(nav: &NavigationContext) -> PreferencesGroup {
         .map(|style| style.label())
         .collect();
     let style_row = ComboRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "settings-hotkeys-style-title"))
         .subtitle(fl!(LANGUAGE_LOADER, "settings-hotkeys-style-subtitle"))
         .model(&string_list(&style_strings))
@@ -601,6 +712,7 @@ fn build_hotkey_group(nav: &NavigationContext) -> PreferencesGroup {
 
     let leader_strings: Vec<String> = LeaderKey::ALL.iter().map(|key| key.label()).collect();
     let leader_row = ComboRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "settings-hotkeys-leader-title"))
         .subtitle(fl!(LANGUAGE_LOADER, "settings-hotkeys-leader-subtitle"))
         .model(&string_list(&leader_strings))
@@ -613,11 +725,13 @@ fn build_hotkey_group(nav: &NavigationContext) -> PreferencesGroup {
         MAX_LEADER_TIMEOUT_MS as f64,
         50.0,
     );
+    timeout_row.set_use_markup(false);
     timeout_row.set_title(&fl!(LANGUAGE_LOADER, "settings-hotkeys-timeout-title"));
     timeout_row.set_subtitle(&fl!(LANGUAGE_LOADER, "settings-hotkeys-timeout-subtitle"));
     timeout_row.set_value(hotkeys.leader_timeout().as_millis() as f64);
 
     let preview_row = ActionRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "settings-hotkeys-preview-title"))
         .build();
 
@@ -625,11 +739,19 @@ fn build_hotkey_group(nav: &NavigationContext) -> PreferencesGroup {
     // consistent without each handler re-deriving it.
     let refresh: Rc<dyn Fn()> = Rc::new({
         let nav = nav.clone();
-        let style_row = style_row.clone();
-        let leader_row = leader_row.clone();
-        let timeout_row = timeout_row.clone();
-        let preview_row = preview_row.clone();
+        let style_row = style_row.downgrade();
+        let leader_row = leader_row.downgrade();
+        let timeout_row = timeout_row.downgrade();
+        let preview_row = preview_row.downgrade();
         move || {
+            let (Some(style_row), Some(leader_row), Some(timeout_row), Some(preview_row)) = (
+                style_row.upgrade(),
+                leader_row.upgrade(),
+                timeout_row.upgrade(),
+                preview_row.upgrade(),
+            ) else {
+                return;
+            };
             let hotkeys = nav.state.borrow().config.hotkeys;
             let leader_style = hotkeys.style == SceneHotkeyStyle::Leader;
             style_row.set_sensitive(hotkeys.enabled);
@@ -751,6 +873,7 @@ fn obs_status_text(nav: &NavigationContext) -> String {
 
 fn output_switch_row(title: &str, subtitle: &str, active: bool) -> SwitchRow {
     SwitchRow::builder()
+        .use_markup(false)
         .title(title)
         .subtitle(subtitle)
         .active(active)
@@ -772,15 +895,6 @@ where
             persist_config(&nav, |_| {});
         }
     });
-}
-
-fn theme_subtitle(theme: crate::ui::theme::BuiltInTheme) -> String {
-    fl!(
-        LANGUAGE_LOADER,
-        "settings-theme-subtitle",
-        description = theme.localized_description(),
-        swatches = theme.swatches.join(", ")
-    )
 }
 
 fn theme_report_text(report: &crate::ui::theme::ThemeApplyReport) -> String {
@@ -835,15 +949,16 @@ fn save_custom_css_path(
     };
 
     let status_row = status_row.clone();
+    let current = nav.state.clone();
     persist_config_with(
         nav,
         move |config| match kind {
             CssPathKind::Light => config.appearance.custom_css.light_path = path,
             CssPathKind::Dark => config.appearance.custom_css.dark_path = path,
         },
-        move |result, config| match result {
+        move |result, _| match result {
             Ok(()) => {
-                apply_theme_with_status(config.appearance, status_row);
+                apply_theme_with_status(current.borrow().config.appearance.clone(), status_row);
             }
             Err(err) => report_save_failure(&status_row, &err),
         },
@@ -865,4 +980,188 @@ fn report_save_failure(row: &ActionRow, err: &std::io::Error) {
 fn path_text(path: Option<&PathBuf>) -> String {
     path.map(|path| path.display().to_string())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PasswordWrites;
+    use std::{
+        cell::RefCell,
+        rc::Rc,
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
+
+    #[test]
+    #[ignore = "requires a disposable GTK display; no keyring or OBS access"]
+    fn native_settings_constructor_releases_entries_and_hotkey_rows() {
+        crate::ui::test_support::native_test(
+            "ui::pages::settings::tests::native_settings_constructor_releases_entries_and_hotkey_rows",
+            || {
+                use adw::prelude::*;
+                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+                let (page, refresh) = super::build(nav);
+                fn rows(widget: &gtk4::Widget, tracked: &mut Vec<glib::WeakRef<gtk4::Widget>>) {
+                    if widget.is::<adw::EntryRow>() || widget.is::<adw::ComboRow>() || widget.is::<adw::SpinRow>() {
+                        tracked.push(widget.downgrade());
+                    }
+                    let mut child = widget.first_child();
+                    while let Some(widget) = child {
+                        child = widget.next_sibling();
+                        rows(&widget, tracked);
+                    }
+                }
+                let mut tracked = Vec::new();
+                rows(&page, &mut tracked);
+                assert!(tracked.len() >= 10, "track real host/port and hotkey descendants");
+                let weak = page.downgrade();
+                drop(page);
+                refresh(); // A retained public refresher must not own descendants.
+                assert!(weak.upgrade().is_none(), "Settings root retained");
+                assert!(tracked.iter().all(|row| row.upgrade().is_none()), "Settings entries/hotkey rows retained");
+            },
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a native GTK display; no keyring or OBS access"]
+    fn native_settings_rows_render_external_status_and_notice_literally() {
+        if !crate::ui::background_io::isolated_test_child("ui::pages::settings::tests::native_settings_rows_render_external_status_and_notice_literally") { return; }
+        use crate::controller::{
+            app_controller::AppController,
+            state::{AppState, ObsStatus},
+        };
+        use adw::prelude::*;
+        adw::init().expect("native GTK display");
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let (tx, _events) = std::sync::mpsc::sync_channel(8);
+        let payload = "<a href=\"https://example.invalid\">OBS & path <b>literal</b></a>";
+        let state = Rc::new(RefCell::new(AppState::new(
+            crate::storage::config::AppConfig::default(),
+            crate::storage::registry::SceneRegistry::default(),
+            None,
+            Some(payload.into()),
+        )));
+        state.borrow_mut().obs_status = ObsStatus::Error(payload.into());
+        let nav = crate::ui::navigation::NavigationContext::new(
+            state,
+            gtk4::Stack::new(),
+            Rc::new(RefCell::new(AppController::new(
+                runtime.handle().clone(),
+                tx,
+            ))),
+        );
+        let (page, _) = super::build(nav);
+        fn visit(widget: &gtk4::Widget, payload: &str, literal_count: &mut usize) {
+            if let Some(row) = widget.downcast_ref::<adw::PreferencesRow>() {
+                assert!(
+                    !row.uses_markup(),
+                    "settings row must be literal: {} ({})",
+                    row.title(),
+                    widget.type_().name()
+                );
+            }
+            if let Some(label) = widget.downcast_ref::<gtk4::Label>() {
+                if label.text().contains(payload) {
+                    assert!(!label.uses_markup());
+                    *literal_count += 1;
+                }
+            }
+            let mut child = widget.first_child();
+            while let Some(widget) = child {
+                visit(&widget, payload, literal_count);
+                child = widget.next_sibling();
+            }
+        }
+        let mut literal_count = 0;
+        visit(&page, payload, &mut literal_count);
+        assert!(
+            literal_count >= 2,
+            "notice and external status must retain the exact payload"
+        );
+    }
+
+    #[test]
+    fn password_lane_is_fifo_and_only_latest_confirmed_cache_status_publishes() {
+        if !crate::ui::background_io::isolated_test_child("ui::pages::settings::tests::password_lane_is_fifo_and_only_latest_confirmed_cache_status_publishes") { return; }
+        for (second, first_fails, second_fails, expected) in [
+            (None, false, false, None),
+            (Some("B"), false, false, Some("B")),
+            (Some("B"), false, true, Some("A")),
+            (None, false, true, Some("A")),
+            (Some("B"), true, false, Some("B")),
+            (None, true, true, Some("original")),
+        ] {
+            let store = Arc::new(Mutex::new(Some("original".to_string())));
+            let writes = PasswordWrites::new(Some("original".into()));
+            let published = Rc::new(RefCell::new(Vec::new()));
+            let (started_tx, started_rx) = std::sync::mpsc::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::channel();
+            writes.submit(
+                Some("A".into()),
+                {
+                    let store = store.clone();
+                    move |password| {
+                        started_tx.send(()).unwrap();
+                        release_rx.recv().unwrap();
+                        if first_fails {
+                            return Err("first failed");
+                        }
+                        *store.lock().unwrap() = password.clone();
+                        Ok(())
+                    }
+                },
+                {
+                    let published = published.clone();
+                    move |result, confirmed| {
+                        published.borrow_mut().push((result.is_ok(), confirmed))
+                    }
+                },
+            );
+            started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+            writes.submit(
+                second.map(str::to_string),
+                {
+                    let store = store.clone();
+                    move |password| {
+                        if second_fails {
+                            return Err("second failed");
+                        }
+                        *store.lock().unwrap() = password.clone();
+                        Ok(())
+                    }
+                },
+                {
+                    let published = published.clone();
+                    move |result, confirmed| {
+                        published.borrow_mut().push((result.is_ok(), confirmed))
+                    }
+                },
+            );
+            assert_eq!(store.lock().unwrap().as_deref(), Some("original"));
+            assert!(
+                published.borrow().is_empty(),
+                "draft was published before persistence"
+            );
+            release_tx.send(()).unwrap();
+            let main_loop = glib::MainLoop::new(None, false);
+            crate::ui::background_io::flush_pending(Duration::from_secs(1), {
+                let main_loop = main_loop.clone();
+                move |result| {
+                    assert_eq!(result, Ok(()));
+                    main_loop.quit();
+                }
+            });
+            main_loop.run();
+            assert_eq!(store.lock().unwrap().as_deref(), expected);
+            assert_eq!(
+                *published.borrow(),
+                vec![(!second_fails, expected.map(str::to_string))]
+            );
+        }
+    }
 }

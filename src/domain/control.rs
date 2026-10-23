@@ -1,0 +1,176 @@
+//! Native OBS operating controls. These values contain no protocol or GTK types.
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ControlSnapshot {
+    pub scene: Option<String>,
+    pub items: Vec<SourceItem>,
+    pub warnings: Vec<String>,
+    pub studio: StudioState,
+    pub replay_active: Option<bool>,
+    pub last_replay_path: Option<String>,
+    pub virtual_camera_active: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StudioState {
+    pub enabled: Option<bool>,
+    pub program: Option<String>,
+    pub preview: Option<String>,
+    pub transitions: Vec<String>,
+    pub transition: Option<String>,
+    pub transition_duration_ms: Option<i64>,
+    pub transition_fixed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceItem {
+    pub owner: String,
+    pub item_id: i64,
+    pub input: String,
+    pub input_uuid: String,
+    pub kind: Option<String>,
+    pub path: Vec<String>,
+    pub enabled: bool,
+    pub ancestor_enabled: bool,
+    pub is_group: bool,
+    pub is_scene: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SourceDetail {
+    pub input: String,
+    pub kind: String,
+    pub filters: Vec<SourceFilter>,
+    pub media: Option<MediaStatus>,
+    pub audio: Option<AudioSettings>,
+    pub muted: Option<bool>,
+    pub volume_db: Option<f64>,
+    pub text: Option<String>,
+    pub text_from_file: bool,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceFilter {
+    pub name: String,
+    pub kind: String,
+    pub enabled: bool,
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct MediaStatus {
+    pub state: String,
+    pub duration_ms: Option<i64>,
+    pub cursor_ms: Option<i64>,
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct AudioSettings {
+    pub balance: f32,
+    pub sync_offset_ms: i64,
+    pub monitor: AudioMonitor,
+    pub tracks: [bool; 6],
+}
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AudioMonitor {
+    Off,
+    MonitorOnly,
+    MonitorAndOutput,
+}
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MediaAction {
+    Play,
+    Pause,
+    Stop,
+    Restart,
+    Next,
+    Previous,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ControlAction {
+    SetItemEnabled {
+        owner: String,
+        item_id: i64,
+        enabled: bool,
+    },
+    /// A click retains the observed mode as a precondition, never a cached target.
+    ActivateScene {
+        scene: String,
+        studio_enabled: bool,
+    },
+    SetStudioMode(bool),
+    SetProgram(String),
+    Take,
+    SetTransition(String),
+    SetTransitionDuration(i64),
+    SetRecordingPaused(bool),
+    SplitRecording,
+    RecordChapter(String),
+    SetReplayActive(bool),
+    SaveReplay,
+    SetVirtualCamera(bool),
+    Media {
+        input: String,
+        action: MediaAction,
+    },
+    SeekMedia {
+        input: String,
+        position_ms: i64,
+    },
+    SetFilterEnabled {
+        input: String,
+        filter: String,
+        enabled: bool,
+    },
+    SetText {
+        input: String,
+        text: String,
+    },
+    SetInputMuted {
+        input: String,
+        muted: bool,
+    },
+    SetInputVolumeDb {
+        input: String,
+        db: f64,
+    },
+    SetAudioMonitor {
+        input: String,
+        monitor: AudioMonitor,
+    },
+    SetAudioSync {
+        input: String,
+        offset_ms: i64,
+    },
+    SetAudioBalance {
+        input: String,
+        balance: f32,
+    },
+    SetAudioTracks {
+        input: String,
+        tracks: [bool; 6],
+    },
+}
+
+/// Only OBS's built-in text sources have a defined text-editing contract.
+pub fn is_text_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "text_ft2_source"
+            | "text_ft2_source_v2"
+            | "text_gdiplus"
+            | "text_gdiplus_v2"
+            | "text_gdiplus_v3"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn text_allowlist_excludes_browser_and_arbitrary_plugins() {
+        assert!(is_text_kind("text_ft2_source"));
+        assert!(is_text_kind("text_gdiplus_v2"));
+        assert!(!is_text_kind("browser_source"));
+        assert!(!is_text_kind("my_text_plugin"));
+    }
+}

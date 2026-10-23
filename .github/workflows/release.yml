@@ -4,9 +4,7 @@ on:
   push:
     tags:
       - 'v*'
-  # Manual runs build and upload the artifacts but structurally cannot
-  # publish: publish-release is gated on tag refs. Use this to dry-run the
-  # packaging before tagging.
+  # Manual runs validate/build only, including when dispatched on a tag.
   workflow_dispatch:
 
 permissions:
@@ -16,10 +14,66 @@ env:
   APP_ID: io.scenedeck.app
   BIN_NAME: scenedeck
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  prepare:
+    name: Resolve release identity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+      version: ${{ steps.source.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate Cargo, AppStream, tag and immutable commit
+        id: source
+        run: |
+          args=(--commit "$GITHUB_SHA")
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            args+=(--tag "$GITHUB_REF_NAME" --remote)
+          fi
+          python3 tools/verify-source.py "${args[@]}" >> "$GITHUB_OUTPUT"
+      - name: Generate release notes without publication credentials
+        uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1
+        with:
+          version: v2.14.2
+          config: cliff.toml
+          args: --latest --strip header
+          github_token: ${{ github.token }}
+        env:
+          OUTPUT: release-notes.md
+      - run: test -s release-notes.md
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+          retention-days: 7
+
+  validate:
+    needs: prepare
+    uses: ./.github/workflows/ci.yml
+    with:
+      commit: ${{ needs.prepare.outputs.commit }}
+    # No secrets are passed into the unprivileged reusable gates.
+
   build-linux:
     name: Build Linux ${{ matrix.artifact_arch }} release artifacts
+    needs: [prepare, validate]
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      COMMIT: ${{ needs.prepare.outputs.commit }}
+      ARTIFACT_ARCH: ${{ matrix.artifact_arch }}
+      APPIMAGE_ARCH: ${{ matrix.appimage_arch }}
     strategy:
       fail-fast: false
       matrix:
@@ -33,17 +87,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
 
       - name: Install Linux packaging dependencies
         run: |
-          # Ubuntu 24.04 ships flatpak 1.14.6, which cannot pull the
-          # org.freedesktop.Sdk.Extension.rust-stable//25.08 ref that Flathub
-          # republished on 2026-08-21 — it fails with a bare HTTP 404 while a
-          # current client fetches the same ref without complaint. The PPA is
-          # the upstream Flatpak team's own, and carries 1.18.1 plus a matching
-          # flatpak-builder for noble on both amd64 and arm64.
-          sudo add-apt-repository -y ppa:flatpak/stable
+          # Use distro packages. Flatpak SDK availability is optional and is
+          # reported from the actual build outcome, not an unverified PPA claim.
           sudo apt-get update
           sudo apt-get install -y \
             appstream \
@@ -59,40 +111,20 @@ jobs:
             libglib2.0-dev \
             libgtk-4-dev \
             librsvg2-bin \
+            ostree \
             patchelf \
             pkg-config \
             wget \
             zsync
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # reviewed 2026-10-19
         with:
-          toolchain: "1.97.0"
+          toolchain: '1.99.1'
 
-      - name: Determine package version
-        id: version
+      - name: Verify build source identity
         run: |
-          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-
-      # The artifacts and the snap are named and published from Cargo.toml's
-      # version, so a tag that disagrees with it would ship mislabeled
-      # artifacts. Fail before building anything. The metainfo's top <release>
-      # is the store-facing version and must agree too.
-      - name: Assert release versions agree
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="${{ steps.version.outputs.version }}"
-          metainfo_version="$(grep -m1 -oP '<release version="\K[^"]+' "data/${APP_ID}.metainfo.xml")"
-          if [[ "$metainfo_version" != "$version" ]]; then
-            echo "metainfo release $metainfo_version does not match Cargo.toml $version" >&2
-            exit 1
-          fi
-          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "v${version}" ]]; then
-            echo "tag ${GITHUB_REF_NAME} does not match Cargo.toml version ${version}" >&2
-            exit 1
-          fi
+          python3 tools/verify-source.py --commit "$COMMIT"
 
       - name: Validate desktop metadata
         run: |
@@ -104,9 +136,6 @@ jobs:
           mkdir -p build-assets
           rsvg-convert -w 256 -h 256 "assets/${APP_ID}.svg" -o "build-assets/${APP_ID}.png"
 
-      - name: Run tests
-        run: cargo test --workspace --all-features --locked
-
       - name: Build release binary
         run: cargo build --release --locked --all-features
 
@@ -114,11 +143,11 @@ jobs:
         run: |
           install -Dm755 \
             "target/release/${BIN_NAME}" \
-            "${BIN_NAME}-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}"
+            "${BIN_NAME}-${VERSION}-linux-${ARTIFACT_ARCH}"
 
       - name: Package release tarball
         run: |
-          package="${BIN_NAME}-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}"
+          package="${BIN_NAME}-${VERSION}-linux-${ARTIFACT_ARCH}"
           mkdir -p \
             "dist/${package}/usr/bin" \
             "dist/${package}/usr/share/applications" \
@@ -156,16 +185,15 @@ jobs:
           ln -sf "usr/share/icons/hicolor/256x256/apps/${APP_ID}.png" "${appdir}/${APP_ID}.png"
           ln -sf "usr/share/icons/hicolor/256x256/apps/${APP_ID}.png" "${appdir}/.DirIcon"
 
-          # linuxdeploy and appimagetool only publish a moving "continuous"
-          # release, so the binaries are pinned by content instead: the SHA256
-          # recorded here was taken on 2026-09-21 and must be updated as a
-          # deliberate, reviewed step rather than silently tracking upstream.
-          wget -q -O linuxdeploy-${{ matrix.appimage_arch }}.AppImage \
-            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.appimage_arch }}.AppImage
-          wget -q -O appimagetool-${{ matrix.appimage_arch }}.AppImage \
-            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${{ matrix.appimage_arch }}.AppImage
+          # These existing URLs serve mutable continuous-release assets. Keep
+          # the reviewed content hashes: if upstream replaces a file, fail closed
+          # rather than silently trusting new bytes. Immutable mirroring is separate.
+          wget -q -O linuxdeploy-${APPIMAGE_ARCH}.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${APPIMAGE_ARCH}.AppImage
+          wget -q -O appimagetool-${APPIMAGE_ARCH}.AppImage \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${APPIMAGE_ARCH}.AppImage
 
-          case "${{ matrix.appimage_arch }}" in
+          case "${APPIMAGE_ARCH}" in
             x86_64)
               echo "36a2d7e274d12e1050d0e9ecfe11d339ed54720b2bec464c286d53f8b07f5c62  linuxdeploy-x86_64.AppImage" | sha256sum --check --strict
               echo "a6d71e2b6cd66f8e8d16c37ad164658985e0cf5fcaa950c90a482890cb9d13e0  appimagetool-x86_64.AppImage" | sha256sum --check --strict
@@ -176,9 +204,9 @@ jobs:
               ;;
           esac
 
-          chmod +x linuxdeploy-${{ matrix.appimage_arch }}.AppImage appimagetool-${{ matrix.appimage_arch }}.AppImage
+          chmod +x linuxdeploy-${APPIMAGE_ARCH}.AppImage appimagetool-${APPIMAGE_ARCH}.AppImage
 
-          APPIMAGE_EXTRACT_AND_RUN=1 ./linuxdeploy-${{ matrix.appimage_arch }}.AppImage \
+          APPIMAGE_EXTRACT_AND_RUN=1 ./linuxdeploy-${APPIMAGE_ARCH}.AppImage \
             --appdir "${appdir}" \
             --executable "${appdir}/usr/bin/${BIN_NAME}" \
             --desktop-file "${appdir}/usr/share/applications/${APP_ID}.desktop" \
@@ -186,116 +214,168 @@ jobs:
 
           install -Dm755 packaging/appimage/AppRun "${appdir}/AppRun"
 
-          update_info="gh-releases-zsync|worxbend|scenedeck|latest|${BIN_NAME}-*-linux-${{ matrix.artifact_arch }}.AppImage"
+          update_info="gh-releases-zsync|worxbend|scenedeck|latest|${BIN_NAME}-*-linux-${ARTIFACT_ARCH}.AppImage"
 
-          ARCH=${{ matrix.appimage_arch }} APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool-${{ matrix.appimage_arch }}.AppImage \
+          ARCH=${APPIMAGE_ARCH} APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool-${APPIMAGE_ARCH}.AppImage \
             --updateinformation "${update_info}" \
             "${appdir}" \
-            "${BIN_NAME}-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.AppImage"
+            "${BIN_NAME}-${VERSION}-linux-${ARTIFACT_ARCH}.AppImage"
 
-      # Flatpak runs last, and on its own terms. It depends on Flathub being
-      # able to serve the GNOME SDK and the rust-stable extension, which is
-      # outside this repository's control — on 2026-08-21 Flathub started
-      # returning HTTP 404 for an object belonging to
-      # org.freedesktop.Sdk.Extension.rust-stable//25.08, and every client
-      # version fails identically because the object is simply not there.
-      #
-      # When that happens the bundle is skipped and the release still ships the
-      # executable, the tarball and the AppImage. Previously this step ran
-      # first and was fatal, so one unavailable packaging format withheld every
-      # other artifact and published nothing at all.
-      - name: Vendor Cargo dependencies for Flatpak
-        run: |
-          # The Flatpak manifest copies the whole checkout into the build
-          # sandbox; the release tree is hundreds of MB and no longer needed
-          # now that every artifact above is staged.
-          rm -rf target
-          mkdir -p .cargo
-          cargo vendor vendor > .cargo/config.toml
-
-      - name: Build Flatpak bundle
+      # Flathub runtimes/SDKs may be unavailable. Never disguise this as a
+      # mandatory format: record the real outcome in the release manifest.
+      - name: Build optional Flatpak bundle
         id: flatpak
+        timeout-minutes: 20
         continue-on-error: true
         run: |
+          rm -rf target
+          mkdir -p .cargo
+          cargo vendor --locked vendor > .cargo/config.toml
           flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-          flatpak-builder \
-            --user \
-            --force-clean \
-            --install-deps-from=flathub \
-            --state-dir=/tmp/scenedeck-flatpak-state-${{ matrix.artifact_arch }} \
-            --repo=/tmp/scenedeck-flatpak-repo-${{ matrix.artifact_arch }} \
-            /tmp/scenedeck-flatpak-build-${{ matrix.artifact_arch }} \
-            packaging/flatpak/${APP_ID}.yml
-          flatpak build-bundle \
-            /tmp/scenedeck-flatpak-repo-${{ matrix.artifact_arch }} \
-            ${BIN_NAME}-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.flatpak \
-            ${APP_ID}
+          flatpak-builder --user --force-clean --install-deps-from=flathub \
+            --state-dir="$RUNNER_TEMP/flatpak-state-$ARTIFACT_ARCH" \
+            --repo="$RUNNER_TEMP/flatpak-repo-$ARTIFACT_ARCH" \
+            "$RUNNER_TEMP/flatpak-build-$ARTIFACT_ARCH" "packaging/flatpak/${APP_ID}.yml"
+          flatpak build-bundle --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
+            "$RUNNER_TEMP/flatpak-repo-$ARTIFACT_ARCH" \
+            "${BIN_NAME}-${VERSION}-linux-${ARTIFACT_ARCH}.flatpak" "$APP_ID"
 
-      # continue-on-error leaves the step green; without this the only sign of
-      # a missing bundle is an absent file in the artifact upload.
       - name: Report a skipped Flatpak bundle
-        if: steps.flatpak.outcome == 'failure'
+        if: steps.flatpak.outcome != 'success'
         run: |
-          echo "::warning::Flatpak bundle skipped — this release ships without it. See the 'Build Flatpak bundle' log."
+          echo "::warning::Flatpak unavailable for $ARTIFACT_ARCH; no bundle is shipped for this architecture."
+          echo "Flatpak ($ARTIFACT_ARCH): unavailable; see build log." >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Checksum artifacts
+      - name: Verify and checksum the exact artifact set before upload
+        env:
+          FLATPAK_OUTCOME: ${{ steps.flatpak.outcome }}
         run: |
-          sha256sum \
-            scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }} \
-            scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.tar.gz \
-            scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.AppImage \
-            > "scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.SHA256SUMS"
+          base="${BIN_NAME}-${VERSION}-linux-${ARTIFACT_ARCH}"
+          mkdir release-assets
+          args=()
+          mv "$base" "$base.tar.gz" "$base.AppImage" release-assets/
+          if [[ "$FLATPAK_OUTCOME" == success ]]; then
+            mv "$base.flatpak" release-assets/
+            args+=(--flatpak)
+          else
+            rm -f "$base.flatpak"
+          fi
+          if [[ -e "$base.AppImage.zsync" ]]; then
+            mv "$base.AppImage.zsync" release-assets/
+            args+=(--zsync)
+          fi
+          python3 tools/verify-release.py create --directory release-assets \
+            --version "$VERSION" --commit "$COMMIT" --arch "$ARTIFACT_ARCH" "${args[@]}"
+          # GitHub artifact ZIPs reset file modes. Transfer a tar to retain them.
+          (cd release-assets && tar -cf "../release-${ARTIFACT_ARCH}.tar" -- *)
 
       - name: Upload Linux ${{ matrix.artifact_arch }} artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: scenedeck-linux-${{ matrix.artifact_arch }}-release
-          path: |
-            scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}
-            scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.tar.gz
-            scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.flatpak
-            scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.AppImage
-            scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.AppImage.zsync
-            scenedeck-${{ steps.version.outputs.version }}-linux-${{ matrix.artifact_arch }}.SHA256SUMS
-          # The Flatpak bundle is allowed to be absent; see the step above.
-          if-no-files-found: warn
+          path: release-${{ matrix.artifact_arch }}.tar
+          if-no-files-found: error
+          retention-days: 7
 
   publish-release:
-    name: Publish GitHub Release
+    name: Verify draft assets and publish GitHub Release
     runs-on: ubuntu-24.04
-    needs: build-linux
-    if: startsWith(github.ref, 'refs/tags/v')
+    timeout-minutes: 15
+    needs: [prepare, validate, build-linux]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    environment: github-release
     permissions:
       contents: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      COMMIT: ${{ needs.prepare.outputs.commit }}
     steps:
-      - name: Checkout release history
-        uses: actions/checkout@v4
+      - name: Checkout exactly the validated source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
-
-      - name: Generate release notes
-        id: release-notes
-        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4.8.0
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - name: Download amd64 transfer
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          version: v2.13.1
-          config: cliff.toml
-          args: --latest --strip header
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          name: scenedeck-linux-amd64-release
+          path: transfers
+          digest-mismatch: error
+      - name: Download arm64 transfer
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: scenedeck-linux-arm64-release
+          path: transfers
+          digest-mismatch: error
+      - name: Download release notes
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-notes
+          path: notes
+          digest-mismatch: error
+      - name: Install native offline bundle inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak ostree
+      - name: Revalidate tag, architectures, exact filenames and all checksums
+        run: |
+          python3 tools/verify-source.py --commit "$COMMIT" --tag "$GITHUB_REF_NAME" --remote
+          for arch in amd64 arm64; do
+            python3 tools/verify-release.py extract --archive "transfers/release-$arch.tar" \
+              --directory release-artifacts --version "$VERSION" --commit "$COMMIT" --arch "$arch"
+          done
+          python3 tools/verify-release.py verify --directory release-artifacts \
+            --version "$VERSION" --commit "$COMMIT" --arch amd64 --arch arm64
+          test -s notes/release-notes.md
+          printf '\n### Artifact availability\n' >> notes/release-notes.md
+          for arch in amd64 arm64; do
+            base="${BIN_NAME}-${VERSION}-linux-${arch}"
+            flatpak=unavailable
+            zsync=unavailable
+            if [[ -f "release-artifacts/$base.flatpak" ]]; then flatpak=included; fi
+            if [[ -f "release-artifacts/$base.AppImage.zsync" ]]; then zsync=included; fi
+            printf -- '- %s: executable, tarball and AppImage; Flatpak: %s; zsync: %s.\n' \
+              "$arch" "$flatpak" "$zsync" >> notes/release-notes.md
+          done
+      - name: Stage a new draft, read back every asset byte, then publish
         env:
-          OUTPUT: release-notes.md
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # No clobber/reuse: an existing draft or published release must fail.
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --target "$COMMIT" --draft --prerelease=false --latest=false --title "$GITHUB_REF_NAME" \
+            --notes-file notes/release-notes.md release-artifacts/*
+          readback="$(mktemp -d "$RUNNER_TEMP/release-readback.XXXXXX")"
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir "$readback"
+          python3 tools/verify-release.py verify --downloaded --directory "$readback" \
+            --version "$VERSION" --commit "$COMMIT" --arch amd64 --arch arm64
+          diff -qr release-artifacts "$readback"
+          python3 tools/verify-source.py --commit "$COMMIT" --tag "$GITHUB_REF_NAME" --remote
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft \
+            | python3 -c 'import json,os,sys; r=json.load(sys.stdin); assert r["tagName"] == os.environ["GITHUB_REF_NAME"] and r["isDraft"] is False'
 
-      - name: Validate release notes
-        run: test -s release-notes.md
-
-      - name: Download Linux artifacts
-        uses: actions/download-artifact@v4
+  promote-latest:
+    name: Promote highest published stable version without regressing latest
+    needs: [prepare, validate, publish-release]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: github-release
+    permissions:
+      contents: write
+    # Serialize only pointer reconciliation across ALL tags. Builds and verified
+    # publication remain independent; no latest=true write occurs outside here.
+    # Pending jobs may be replaced, so the helper scans every published version.
+    concurrency:
+      group: release-latest
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          pattern: scenedeck-linux-*-release
-          path: release-artifacts
-          merge-multiple: true
-
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: release-artifacts/*
-          body_path: release-notes.md
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - name: Compare numeric versions, promote and read back the latest pointer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/promote-latest.py --repository "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME"

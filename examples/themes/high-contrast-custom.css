@@ -1,15 +1,22 @@
-@define-color scenedeck_focus #ffffff;
-
+/* Inherit light/dark-aware colors; preserve Program, Preview and focus. */
 .scene-card,
 .audio-card {
-  border: 2px solid @window_fg_color;
+  border-width: 2px;
+  box-shadow: none;
 }
 
-.scene-card-active {
-  outline: 3px solid @scenedeck_focus;
+.scene-card-preview-enabled .scene-card-title {
+  background-color: @scenedeck_image_scrim;
+  color: @scenedeck_image_fg;
+  border-radius: 5px;
+  padding: 4px 6px;
+  text-shadow: none;
+}
+
+.scene-card:focus-visible {
+  outline-width: 4px;
 }
 
 .audio-card-controls button {
-  border: 1px solid @window_fg_color;
+  border: 1px solid @scenedeck_border;
 }
-

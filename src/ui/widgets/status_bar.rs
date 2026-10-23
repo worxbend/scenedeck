@@ -65,6 +65,7 @@ pub(crate) struct StatusBarHandle {
     bitrate_label: Label,
     cpu_label: Label,
     dropped_label: Label,
+    metrics: GtkBox,
 }
 
 /// Build the status bar and its initial "not connected yet" state.
@@ -97,6 +98,7 @@ pub(crate) fn build() -> StatusBarHandle {
     record_icon.add_css_class(RECORD_MARKER_CLASS);
     record_label.add_css_class(RECORD_MARKER_CLASS);
     record_label.set_text(&fl!(LANGUAGE_LOADER, "status-bar-record-inactive"));
+    record_label.set_tooltip_text(Some(&fl!(LANGUAGE_LOADER, "record-elapsed-tooltip")));
 
     let spacer = GtkBox::builder().hexpand(true).build();
 
@@ -109,23 +111,60 @@ pub(crate) fn build() -> StatusBarHandle {
     let (cpu_segment, _, cpu_label) = segment(CPU_ICON, "scenedeck-status-bar-metric");
     cpu_label.set_text(&fl!(LANGUAGE_LOADER, "status-bar-cpu-placeholder"));
 
-    // Dropped frames stay on screen at all times, including at zero: a counter
-    // that only appears once something is wrong cannot be checked at a glance
-    // mid-stream to confirm nothing is wrong.
+    // Keep zero in the health summary too; short windows expose that summary
+    // through the focusable status bar instead of taking another row.
     let (dropped_segment, _, dropped_label) = segment(DROPPED_ICON, "scenedeck-status-bar-dropped");
     dropped_label.set_text(&fl!(LANGUAGE_LOADER, "status-bar-dropped-placeholder"));
 
-    root.append(&connection_segment);
-    root.append(&separator());
-    root.append(&stream_segment);
-    root.append(&record_segment);
-    root.append(&spacer);
-    root.append(&dropped_segment);
-    root.append(&cpu_segment);
-    root.append(&bitrate_segment);
-    root.append(&fps_segment);
+    let outputs = GtkBox::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(10)
+        .hexpand(true)
+        .build();
+    outputs.append(&connection_segment);
+    outputs.append(&separator());
+    outputs.append(&stream_segment);
+    outputs.append(&record_segment);
+    outputs.append(&spacer);
+    let metrics = GtkBox::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(10)
+        .halign(gtk4::Align::End)
+        .build();
+    metrics.set_focusable(true);
+    metrics.append(&dropped_segment);
+    metrics.append(&cpu_segment);
+    metrics.append(&bitrate_segment);
+    metrics.append(&fps_segment);
+    root.append(&outputs);
+    root.append(&metrics);
+    let responsive_metrics = metrics.clone();
+    root.add_tick_callback(move |widget, _| {
+        // Use the window allocation: a wide child must not prevent its own
+        // compact layout from being selected at enlarged text sizes.
+        let window = widget.root().and_downcast::<gtk4::Window>();
+        let width = window
+            .as_ref()
+            .map_or(widget.width(), |window| window.width());
+        let (stacked, compact) = status_layout(width);
+        let hide_metrics = stacked && window.is_some_and(|window| window.height() < 700);
+        responsive_metrics.set_visible(!hide_metrics);
+        widget.set_focusable(hide_metrics);
+        let orientation = if stacked {
+            Orientation::Vertical
+        } else {
+            Orientation::Horizontal
+        };
+        if widget.orientation() != orientation {
+            widget.set_orientation(orientation);
+        }
+        widget.set_spacing(if stacked { 2 } else { 10 });
+        cpu_segment.set_visible(!compact);
+        bitrate_segment.set_visible(!compact);
+        glib::ControlFlow::Continue
+    });
 
-    StatusBarHandle {
+    let handle = StatusBarHandle {
         root,
         connection_icon,
         connection_label,
@@ -137,12 +176,26 @@ pub(crate) fn build() -> StatusBarHandle {
         bitrate_label,
         cpu_label,
         dropped_label,
-    }
+        metrics,
+    };
+    update_health_context(&handle);
+    handle
 }
 
 /// Reflect the current OBS connection lifecycle state.
 pub(crate) fn set_connection(handle: &StatusBarHandle, status: &ObsStatus) {
     handle.connection_label.set_text(&status.label());
+    let detail = match status {
+        ObsStatus::Connected { obs_version } => fl!(
+            LANGUAGE_LOADER,
+            "status-bar-connection-detail",
+            state = status.label(),
+            version = obs_version.clone()
+        ),
+        ObsStatus::Error(error) => error.clone(),
+        _ => status.label(),
+    };
+    handle.connection_label.set_tooltip_text(Some(&detail));
     handle
         .connection_icon
         .set_icon_name(Some(connection_icon(status)));
@@ -157,6 +210,7 @@ pub(crate) fn set_connection(handle: &StatusBarHandle, status: &ObsStatus) {
 /// Reflect the stream output state and elapsed-time text built by the caller.
 pub(crate) fn set_stream(handle: &StatusBarHandle, text: &str, active: bool) {
     handle.stream_label.set_text(text);
+    handle.stream_label.set_tooltip_text(Some(text));
     set_live_class(&handle.stream_label, active);
     set_live_class(&handle.stream_icon, active);
 }
@@ -164,6 +218,7 @@ pub(crate) fn set_stream(handle: &StatusBarHandle, text: &str, active: bool) {
 /// Reflect the record output state and elapsed-time text built by the caller.
 pub(crate) fn set_record(handle: &StatusBarHandle, text: &str, active: bool) {
     handle.record_label.set_text(text);
+    handle.record_label.set_tooltip_text(Some(text));
     set_live_class(&handle.record_label, active);
     set_live_class(&handle.record_icon, active);
 }
@@ -189,6 +244,7 @@ pub(crate) fn set_stats(
         .dropped_label
         .set_text(&format_dropped(dropped_frames));
     set_dropped_alert_class(&handle.dropped_label, dropped_frames > 0);
+    update_health_context(handle);
 }
 
 /// Reset performance segments to their placeholder state, e.g. on disconnect.
@@ -206,6 +262,30 @@ pub(crate) fn clear_stats(handle: &StatusBarHandle) {
         .dropped_label
         .set_text(&fl!(LANGUAGE_LOADER, "status-bar-dropped-placeholder"));
     set_dropped_alert_class(&handle.dropped_label, false);
+    update_health_context(handle);
+}
+
+/// Output state remains visible; only secondary metrics collapse on narrow views.
+fn status_layout(width: i32) -> (bool, bool) {
+    (width < 900, width < 520)
+}
+
+fn update_health_context(handle: &StatusBarHandle) {
+    let context = format!(
+        "{} · {} · {} · {}",
+        handle.dropped_label.text(),
+        handle.cpu_label.text(),
+        handle.bitrate_label.text(),
+        handle.fps_label.text()
+    );
+    handle.metrics.set_tooltip_text(Some(&context));
+    handle.root.set_tooltip_text(Some(&context));
+    handle
+        .root
+        .update_property(&[gtk4::accessible::Property::Label(&context)]);
+    handle
+        .metrics
+        .update_property(&[gtk4::accessible::Property::Label(&context)]);
 }
 
 // ── Formatting (pure, unit tested) ────────────────────────────────────────────
@@ -262,7 +342,11 @@ fn segment(icon_name: &str, extra_css_class: &str) -> (GtkBox, Image, Label) {
     icon.add_css_class("scenedeck-status-bar-icon");
     icon.add_css_class(extra_css_class);
 
-    let label = Label::builder().xalign(0.0).build();
+    let label = Label::builder()
+        .xalign(0.0)
+        .ellipsize(gtk4::pango::EllipsizeMode::End)
+        .max_width_chars(22)
+        .build();
     label.add_css_class("scenedeck-status-bar-item");
     label.add_css_class(extra_css_class);
 
@@ -300,6 +384,13 @@ fn set_live_class(widget: &impl IsA<gtk4::Widget>, active: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn narrow_status_keeps_outputs_and_primary_health_visible() {
+        assert_eq!(status_layout(1_100), (false, false));
+        assert_eq!(status_layout(800), (true, false));
+        assert_eq!(status_layout(480), (true, true));
+    }
 
     #[test]
     fn fps_is_formatted_with_one_decimal() {

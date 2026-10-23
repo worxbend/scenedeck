@@ -4,6 +4,50 @@ Record manual validation against a real OBS instance here. Use blocked entries
 when a prerequisite is unavailable; do not infer results from unit tests or
 source inspection.
 
+## 2026-10-19 · Scene-wall redesign — completed with recorded limits
+
+Final executable `f4c30ef96b17cca2b5387fd13eae02e25bd89c2727196c1d611f9c677541e8d9`.
+[Current evidence](verification/redesign-2026-10-19/README.md) maps all 31 tasks,
+real native actions, screenshot provenance and exact qualification limits.
+
+The suite passed 454 tests plus 9 separate native/locale tests; all format/check/
+build/Clippy/audit/dependency-policy gates passed. Native coverage includes
+Inventory widths/roles/order/icons/accents/YAML, Studio/cards/Take/transitions,
+Sources Save/conflict/visibility/filter/media/advanced audio, output recording/
+replay/camera, keyboard/focus, generated Orca speech and popup retention. The 69
+app-theme captures, 60 core locale frames, six corrected Sources locale frames,
+and later compiled-app supplements retain their actual binary hashes.
+
+Six/twenty-scene and 800ms delayed-image fixtures met the recorded preview targets;
+no new captures occurred while disabled, hidden, minimized or disconnected.
+No broadcast was started. Simple/MKV split/chapter rejection, playlist/mode/
+Escape limits, speech/editorial scope, startup incidents and the old site assets
+remain explicit. The disposable OBS settings/registry were restored, 14 exact
+load scenes removed and verified owned test processes stopped. Historical
+operating-workspace results below predate this redesign and contain retired features.
+
+## 2026-10-19 · OBS-only operating workspace
+
+Implementation baseline: `003d9ba1aa72cdbddb16884c9eb0a8b97704418b`, with
+uncommitted feature changes. OBS 32.2.2 / obs-websocket 5.7.4 at the isolated
+loopback endpoint `127.0.0.1:4457`, authentication disabled for this fixture.
+Both applications used disposable configuration directories and local test
+media. GTK interactions used AT-SPI and X11 keyboard/window control.
+
+Observed passes include Studio Stage/Take, recording pause/resume and stop
+confirmation cancellation, replay saving with observed saved event/path,
+explicit text Save and external-edit conflict protection, setup expectations,
+read-only rehearsal difference, watched-source persistence and repeated manual
+cues with independent local Next position. Wide/compact English and enlarged
+Ukrainian light layouts were captured. A tools-pane minimum-size issue and
+inspector focus lifecycle warning were fixed during this run.
+
+See the [detailed evidence, screenshots and limits](verification/2026-10-19/README.md).
+Direct protocol checks and GTK interaction claims are separated there. This
+entry does not claim a complete focused Mixer mode/Retry/echo/churn run, Orca
+speech, native-speaker review, remote-host/version qualification, virtual-camera
+operation or successful split/chapter recording formats. No broadcast occurred.
+
 ## Focused Mixer Refresh Contract Entry Template
 
 Use this structure for both blocked and passed focused Mixer runs. Mark a case
@@ -321,8 +365,7 @@ Environment:
 
 - SceneDeck build: `0.1.3`, git commit `a687f9f`.
 - Host: Linux `ubuntu` 7.0.0-22-generic x86_64.
-- Run context: non-interactive Codex session in
-  `/home/worxbend/Workspace/AI/scenedeck`.
+- Run context: non-interactive terminal session.
 - SceneDeck launch check: `cargo run --bin scenedeck` started successfully and
   was stopped through the GTK `quit` action.
 - OBS process: `pgrep -a obs` reported process `396269 obs`.
@@ -395,8 +438,7 @@ Environment:
 
 - SceneDeck build: `0.1.3`, git commit `73bb5bc`.
 - Host: Linux `ubuntu` 7.0.0-22-generic x86_64.
-- Run context: non-interactive Codex session in
-  `/home/worxbend/Workspace/AI/scenedeck`.
+- Run context: non-interactive terminal session.
 - OBS process: `pgrep -a obs` reported process `396269 obs`.
 - OBS version: not recorded; `obs --version` produced no output in this
   session.
@@ -462,8 +504,7 @@ Environment:
 - Desktop/session: GNOME on Wayland (`XDG_SESSION_TYPE=wayland`,
   `WAYLAND_DISPLAY=wayland-0`, `DISPLAY=:0`,
   `XDG_CURRENT_DESKTOP=ubuntu:GNOME`).
-- Run context: non-interactive Codex session in
-  `/home/worxbend/Workspace/AI/scenedeck`.
+- Run context: non-interactive terminal session.
 - OBS process: `pgrep -a obs` reported process `396269 obs`.
 - OBS CLI version: unavailable; `obs` was not in `PATH`.
 - OBS version from WebSocket `GetVersion`: OBS `32.1.2`.

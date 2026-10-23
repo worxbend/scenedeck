@@ -13,7 +13,6 @@ use crate::app_info::{APP_ID, APP_NAME};
 use crate::controller::command::AppCommand;
 use crate::controller::state::{AppState, ObsStatus, Page};
 use crate::domain::obs::ObsNamedList;
-use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::widgets::status_bar;
@@ -21,16 +20,17 @@ use crate::ui::widgets::status_bar;
 pub(super) const NAV_PAGES: [Page; 8] = [
     Page::Live,
     Page::Mixer,
-    Page::Graph,
+    Page::Stats,
     Page::Inventory,
+    Page::Graph,
     Page::Doctor,
     Page::Settings,
     Page::Help,
-    Page::Stats,
 ];
 
 #[derive(Clone)]
 pub(super) struct HeaderSelectors {
+    menu: gtk4::MenuButton,
     profiles: NamedSelector,
     scene_collections: NamedSelector,
 }
@@ -49,28 +49,75 @@ impl HeaderSelectors {
         );
         scene_collections.connect_selection(nav, AppCommand::SetCurrentSceneCollection);
 
+        let content = GtkBox::builder()
+            .orientation(Orientation::Vertical)
+            .spacing(12)
+            .margin_start(12)
+            .margin_end(12)
+            .margin_top(12)
+            .margin_bottom(12)
+            .build();
+        content.append(&scene_collections.root);
+        content.append(&profiles.root);
+        let popover = gtk4::Popover::builder().child(&content).build();
+        let menu = gtk4::MenuButton::builder()
+            .icon_name("preferences-system-symbolic")
+            .tooltip_text(fl!(LANGUAGE_LOADER, "header-obs-setup"))
+            .popover(&popover)
+            .sensitive(false)
+            .build();
         Self {
             profiles,
             scene_collections,
+            menu,
         }
     }
 
     pub(super) fn pack_into(&self, header: &adw::HeaderBar) {
-        header.pack_start(&self.scene_collections.root);
-        header.pack_start(&self.profiles.root);
+        header.pack_start(&self.menu);
+    }
+
+    fn update_context(&self) {
+        let profile = self
+            .profiles
+            .model
+            .string(self.profiles.dropdown.selected())
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| fl!(LANGUAGE_LOADER, "header-obs-unknown"));
+        let collection = self
+            .scene_collections
+            .model
+            .string(self.scene_collections.dropdown.selected())
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| fl!(LANGUAGE_LOADER, "header-obs-unknown"));
+        let context = fl!(
+            LANGUAGE_LOADER,
+            "header-obs-context",
+            profile = profile,
+            collection = collection
+        );
+        self.menu.set_tooltip_text(Some(&context));
+        self.menu
+            .update_property(&[gtk4::accessible::Property::Label(&context)]);
+        self.menu.set_sensitive(
+            self.profiles.model.n_items() > 0 || self.scene_collections.model.n_items() > 0,
+        );
     }
 
     pub(super) fn update_profiles(&self, profiles: &ObsNamedList) {
         self.profiles.update(profiles);
+        self.update_context();
     }
 
     pub(super) fn update_scene_collections(&self, collections: &ObsNamedList) {
         self.scene_collections.update(collections);
+        self.update_context();
     }
 
     pub(super) fn clear(&self) {
         self.profiles.update(&ObsNamedList::default());
         self.scene_collections.update(&ObsNamedList::default());
+        self.update_context();
     }
 }
 
@@ -85,7 +132,7 @@ struct NamedSelector {
 impl NamedSelector {
     fn build(label: &str, tooltip: &str) -> Self {
         let root = GtkBox::builder()
-            .orientation(Orientation::Horizontal)
+            .orientation(Orientation::Vertical)
             .spacing(6)
             .valign(gtk4::Align::Center)
             .build();
@@ -94,6 +141,7 @@ impl NamedSelector {
 
         let caption = Label::builder()
             .label(label)
+            .xalign(0.0)
             .valign(gtk4::Align::Center)
             .build();
         caption.add_css_class("caption");
@@ -107,7 +155,32 @@ impl NamedSelector {
         dropdown.add_css_class("scenedeck-dropdown");
         dropdown.set_tooltip_text(Some(tooltip));
         dropdown.set_enable_search(true);
-        dropdown.set_width_request(170);
+        let factory = gtk4::SignalListItemFactory::new();
+        factory.connect_setup(|_, item| {
+            if let Some(item) = item.downcast_ref::<gtk4::ListItem>() {
+                item.set_child(Some(
+                    &Label::builder()
+                        .xalign(0.0)
+                        .ellipsize(gtk4::pango::EllipsizeMode::End)
+                        .max_width_chars(30)
+                        .build(),
+                ));
+            }
+        });
+        factory.connect_bind(|_, item| {
+            if let Some(item) = item.downcast_ref::<gtk4::ListItem>() {
+                if let (Some(value), Some(label)) = (
+                    item.item().and_downcast::<gtk4::StringObject>(),
+                    item.child().and_downcast::<Label>(),
+                ) {
+                    label.set_label(&value.string());
+                    label.set_tooltip_text(Some(&value.string()));
+                }
+            }
+        });
+        dropdown.set_factory(Some(&factory));
+        dropdown.set_hexpand(true);
+        dropdown.set_width_request(230);
 
         root.append(&caption);
         root.append(&dropdown);
@@ -141,8 +214,14 @@ impl NamedSelector {
     fn update(&self, list: &ObsNamedList) {
         self.updating.set(true);
 
-        let additions: Vec<&str> = list.items.iter().map(String::as_str).collect();
-        self.model.splice(0, self.model.n_items(), &additions);
+        let same_items = self.model.n_items() as usize == list.items.len()
+            && list.items.iter().enumerate().all(|(index, item)| {
+                self.model.string(index as u32).as_deref() == Some(item.as_str())
+            });
+        if !same_items {
+            let additions: Vec<&str> = list.items.iter().map(String::as_str).collect();
+            self.model.splice(0, self.model.n_items(), &additions);
+        }
 
         let selected = list
             .current_index()
@@ -156,13 +235,10 @@ impl NamedSelector {
         self.updating.set(false);
     }
 }
-
 #[derive(Clone)]
 pub(super) struct SidebarControls {
     status_label: Label,
     live_icon: Image,
-    stream_btn: Button,
-    record_btn: Button,
     connect_btn: Button,
 }
 
@@ -175,25 +251,6 @@ impl SidebarControls {
     }
 
     pub(super) fn sync_output_buttons(&self, state: &AppState) {
-        let connected = matches!(state.obs_status, ObsStatus::Connected { .. });
-        apply_button_model(
-            &self.stream_btn,
-            sidebar_output_button_model(
-                &state.stream_status,
-                connected,
-                fl!(LANGUAGE_LOADER, "window-sidebar-start-stream"),
-                fl!(LANGUAGE_LOADER, "window-sidebar-stop-stream"),
-            ),
-        );
-        apply_button_model(
-            &self.record_btn,
-            sidebar_output_button_model(
-                &state.record_status,
-                connected,
-                fl!(LANGUAGE_LOADER, "window-sidebar-start-recording"),
-                fl!(LANGUAGE_LOADER, "window-sidebar-stop-recording"),
-            ),
-        );
         self.set_streaming(state.stream_status.active);
     }
 
@@ -253,39 +310,18 @@ pub(super) fn build(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, S
         true,
         {
             let nav = nav.clone();
-            move |_: &Button| {
+            move |button: &Button| {
                 let status = nav.state.borrow().obs_status.clone();
                 match status {
                     ObsStatus::Disconnected | ObsStatus::Error(_) => {
                         nav.dispatch(AppCommand::Connect);
                     }
-                    ObsStatus::Connected { .. } | ObsStatus::Connecting => {
-                        nav.dispatch(AppCommand::Disconnect);
+                    ObsStatus::Connected { .. } => {
+                        crate::ui::pages::live::handle_disconnect(button, &nav);
                     }
+                    ObsStatus::Connecting => nav.dispatch(AppCommand::Disconnect),
                 }
             }
-        },
-    );
-
-    let stream_btn = sidebar_button(
-        SIDEBAR_STREAM_ICON,
-        &fl!(LANGUAGE_LOADER, "window-sidebar-start-stream"),
-        "sidebar-output-button",
-        false,
-        {
-            let nav = nav.clone();
-            move |button: &Button| crate::ui::pages::live::handle_stream_output_toggle(button, &nav)
-        },
-    );
-
-    let record_btn = sidebar_button(
-        SIDEBAR_RECORD_ICON,
-        &fl!(LANGUAGE_LOADER, "window-sidebar-start-recording"),
-        "sidebar-output-button",
-        false,
-        {
-            let nav = nav.clone();
-            move |button: &Button| crate::ui::pages::live::handle_record_output_toggle(button, &nav)
         },
     );
 
@@ -299,8 +335,6 @@ pub(super) fn build(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, S
         .build();
     footer.add_css_class("sidebar-obs-footer");
     footer.append(&status_label);
-    footer.append(&stream_btn);
-    footer.append(&record_btn);
     footer.append(&connect_btn);
 
     let sidebar_content = GtkBox::builder()
@@ -309,7 +343,14 @@ pub(super) fn build(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, S
         .hexpand(true)
         .build();
     sidebar_content.add_css_class("scenedeck-sidebar");
-    sidebar_content.append(&list);
+    let navigation_scroll = gtk4::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk4::PolicyType::Never)
+        .vscrollbar_policy(gtk4::PolicyType::Automatic)
+        .min_content_height(48)
+        .vexpand(true)
+        .child(&list)
+        .build();
+    sidebar_content.append(&navigation_scroll);
     sidebar_content.append(&footer);
 
     let sidebar_header = adw::HeaderBar::builder().show_title(false).build();
@@ -331,8 +372,6 @@ pub(super) fn build(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, S
         SidebarControls {
             status_label,
             live_icon,
-            stream_btn,
-            record_btn,
             connect_btn,
         },
     )
@@ -344,45 +383,6 @@ struct SidebarButtonModel {
     sensitive: bool,
     suggested: bool,
     destructive: bool,
-}
-
-fn sidebar_output_button_model(
-    status: &OutputStatus,
-    connected: bool,
-    start_label: String,
-    stop_label: String,
-) -> SidebarButtonModel {
-    if status.state.is_transitioning() {
-        return SidebarButtonModel {
-            label: match status.state {
-                OutputRunState::Starting => fl!(LANGUAGE_LOADER, "window-sidebar-output-starting"),
-                OutputRunState::Stopping => fl!(LANGUAGE_LOADER, "window-sidebar-output-stopping"),
-                OutputRunState::Reconnecting => {
-                    fl!(LANGUAGE_LOADER, "window-sidebar-output-reconnecting")
-                }
-                _ => fl!(LANGUAGE_LOADER, "window-sidebar-output-working"),
-            },
-            sensitive: false,
-            suggested: false,
-            destructive: status.active,
-        };
-    }
-
-    if status.active {
-        SidebarButtonModel {
-            label: stop_label,
-            sensitive: connected,
-            suggested: false,
-            destructive: connected,
-        }
-    } else {
-        SidebarButtonModel {
-            label: start_label,
-            sensitive: connected,
-            suggested: connected,
-            destructive: false,
-        }
-    }
 }
 
 struct SidebarConnectionModel {
@@ -406,7 +406,7 @@ fn sidebar_connection_model(status: &ObsStatus) -> SidebarConnectionModel {
                 "window-status-connected",
                 version = obs_version.clone()
             ),
-            fl!(LANGUAGE_LOADER, "window-connect-btn-disconnect"),
+            fl!(LANGUAGE_LOADER, "window-stop-disconnect-label"),
             true,
             false,
             true,
@@ -465,8 +465,6 @@ fn set_status_class(label: &Label, new_class: &str) {
     label.add_css_class(new_class);
 }
 
-const SIDEBAR_STREAM_ICON: &str = "nf-md-broadcast-symbolic";
-const SIDEBAR_RECORD_ICON: &str = "nf-md-record-circle-symbolic";
 const SIDEBAR_CONNECT_ICON: &str = "nf-md-lan-connect-symbolic";
 
 fn button_content(icon_name: &str, label: &str) -> GtkBox {
@@ -477,6 +475,8 @@ fn button_content(icon_name: &str, label: &str) -> GtkBox {
         .build();
     content.append(&Image::from_icon_name(icon_name));
     let label = Label::new(Some(label));
+    label.set_wrap(true);
+    label.set_justify(gtk4::Justification::Center);
     label.add_css_class("scenedeck-button-label");
     content.append(&label);
     content
@@ -536,12 +536,157 @@ fn sidebar_button(
 mod tests {
     use super::*;
 
-    fn output_status(active: bool, state: OutputRunState) -> OutputStatus {
-        OutputStatus {
-            active,
-            state,
-            detail: None,
-        }
+    #[test]
+    #[ignore = "requires a disposable GTK display; no OBS or keyring access"]
+    fn native_selector_readbacks_retain_model_rows() {
+        crate::ui::test_support::native_test(
+            "ui::sidebar::tests::native_selector_readbacks_retain_model_rows",
+            || {
+                let selector = NamedSelector::build("Fixture", "Fixture");
+                let list = ObsNamedList {
+                    items: vec!["First".into(), "Other".into()],
+                    current: Some("First".into()),
+                };
+                selector.update(&list);
+                let first = selector.model.item(0).unwrap();
+                let changes = Rc::new(Cell::new(0));
+                selector.model.connect_items_changed({
+                    let changes = changes.clone();
+                    move |_, _, _, _| changes.set(changes.get() + 1)
+                });
+                selector.update(&list);
+                assert_eq!(
+                    changes.get(),
+                    0,
+                    "identical readback must not splice the model"
+                );
+                selector.dropdown.set_selected(1);
+                selector.update(&list);
+                assert_eq!(
+                    selector.dropdown.selected(),
+                    0,
+                    "readback must correct an optimistic selection"
+                );
+                assert_eq!(selector.model.item(0).unwrap(), first);
+                assert_eq!(changes.get(), 0);
+                selector.update(&ObsNamedList {
+                    current: Some("Other".into()),
+                    ..list
+                });
+                assert_eq!(selector.dropdown.selected(), 1);
+                assert_eq!(changes.get(), 0);
+                selector.update(&ObsNamedList {
+                    items: vec!["New".into()],
+                    current: Some("New".into()),
+                });
+                assert_eq!(changes.get(), 1);
+                assert_eq!(selector.model.string(0).as_deref(), Some("New"));
+                selector.update(&ObsNamedList::default());
+                assert_eq!(changes.get(), 2);
+                assert!(!selector.root.is_visible());
+            },
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a disposable native GTK display"]
+    fn native_obs_setup_popover_follows_the_selected_palette() {
+        crate::ui::test_support::native_test(
+            "ui::sidebar::tests::native_obs_setup_popover_follows_the_selected_palette",
+            || {
+                use crate::domain::appearance::{MotionLevel, ThemeId, ThemeMode, ThemePreference};
+                use crate::ui::theme::ThemeManager;
+
+                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+                let selectors = HeaderSelectors::build(&nav);
+                let names = ObsNamedList {
+                    items: vec!["Untitled".into(), "Other".into()],
+                    current: Some("Untitled".into()),
+                };
+                selectors.update_profiles(&names);
+                selectors.update_scene_collections(&names);
+                let header = adw::HeaderBar::new();
+                selectors.pack_into(&header);
+                let root = GtkBox::new(Orientation::Vertical, 0);
+                root.append(&header);
+                root.append(&Label::new(Some("Settings")));
+                let window = gtk4::Window::builder()
+                    .default_width(600)
+                    .default_height(400)
+                    .child(&root)
+                    .build();
+                window.add_css_class("scenedeck-root");
+                window.present();
+                let popover = selectors.menu.popover().unwrap();
+                for (mode, expected) in [
+                    (ThemeMode::Dark, [46_u8, 52, 64]),
+                    (ThemeMode::Light, [246, 248, 251]),
+                    (ThemeMode::Dark, [46, 52, 64]),
+                ] {
+                    let preference = ThemePreference {
+                        selected_theme: Some(ThemeId::new("nord")),
+                        mode,
+                        motion: MotionLevel::Off,
+                        ..Default::default()
+                    };
+                    assert!(ThemeManager::apply(&preference).is_ok());
+                    selectors.menu.popup();
+                    crate::ui::test_support::pump(std::time::Duration::from_millis(100));
+                    assert!(popover.is_mapped());
+                    let contents = popover.first_child().expect("native popover contents");
+                    assert_eq!(contents.css_name(), "contents");
+                    let point = contents
+                        .compute_point(
+                            &popover,
+                            &gtk4::graphene::Point::new(
+                                contents.width() as f32 / 2.0,
+                                (contents.height() - 8) as f32,
+                            ),
+                        )
+                        .unwrap();
+                    let snapshot = gtk4::Snapshot::new();
+                    gtk4::WidgetPaintable::new(Some(&popover)).snapshot(
+                        &snapshot,
+                        f64::from(popover.width()),
+                        f64::from(popover.height()),
+                    );
+                    let node = snapshot.to_node().expect("popover render node");
+                    let texture = popover
+                        .native()
+                        .unwrap()
+                        .renderer()
+                        .unwrap()
+                        .render_texture(
+                            &node,
+                            Some(&gtk4::graphene::Rect::new(
+                                0.0,
+                                0.0,
+                                popover.width() as f32,
+                                popover.height() as f32,
+                            )),
+                        );
+                    let mut downloader = gtk4::gdk::TextureDownloader::new(&texture);
+                    downloader.set_format(gtk4::gdk::MemoryFormat::R8g8b8a8);
+                    let (pixels, stride) = downloader.download_bytes();
+                    let x = (point.x() * texture.width() as f32 / popover.width() as f32) as usize;
+                    let y =
+                        (point.y() * texture.height() as f32 / popover.height() as f32) as usize;
+                    let offset = y * stride + x * 4;
+                    if let Some(directory) = std::env::var_os("SCENEDECK_THEME_CAPTURE_DIR") {
+                        let path = std::path::PathBuf::from(directory)
+                            .join(format!("obs-setup-{}.png", mode.as_str()));
+                        texture.save_to_png(path).unwrap();
+                    }
+                    let actual = &pixels[offset..offset + 3];
+                    assert!(
+                        actual.iter().zip(expected).all(|(a, e)| a.abs_diff(e) <= 1),
+                        "{mode:?} setup popover painted {actual:?}, expected theme card {expected:?}"
+                    );
+                }
+                popover.popdown();
+                window.close();
+            },
+        );
     }
 
     #[test]
@@ -591,65 +736,5 @@ mod tests {
                 status
             );
         }
-    }
-
-    #[test]
-    fn output_button_model_reflects_connection_and_output_state() {
-        assert_eq!(
-            sidebar_output_button_model(
-                &output_status(false, OutputRunState::Inactive),
-                false,
-                "Start Stream".to_string(),
-                "Stop Stream".to_string(),
-            ),
-            SidebarButtonModel {
-                label: "Start Stream".to_string(),
-                sensitive: false,
-                suggested: false,
-                destructive: false,
-            }
-        );
-        assert_eq!(
-            sidebar_output_button_model(
-                &output_status(false, OutputRunState::Inactive),
-                true,
-                "Start Stream".to_string(),
-                "Stop Stream".to_string(),
-            ),
-            SidebarButtonModel {
-                label: "Start Stream".to_string(),
-                sensitive: true,
-                suggested: true,
-                destructive: false,
-            }
-        );
-        assert_eq!(
-            sidebar_output_button_model(
-                &output_status(true, OutputRunState::Active),
-                true,
-                "Start Stream".to_string(),
-                "Stop Stream".to_string(),
-            ),
-            SidebarButtonModel {
-                label: "Stop Stream".to_string(),
-                sensitive: true,
-                suggested: false,
-                destructive: true,
-            }
-        );
-        assert_eq!(
-            sidebar_output_button_model(
-                &output_status(false, OutputRunState::Starting),
-                true,
-                "Start Stream".to_string(),
-                "Stop Stream".to_string(),
-            ),
-            SidebarButtonModel {
-                label: "Starting…".to_string(),
-                sensitive: false,
-                suggested: false,
-                destructive: false,
-            }
-        );
     }
 }

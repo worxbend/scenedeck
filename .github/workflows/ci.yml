@@ -3,78 +3,153 @@ name: ci
 on:
   pull_request:
   push:
-    branches:
-      - main
+    branches: [main]
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      commit:
+        description: Immutable commit validated by the caller
+        required: true
+        type: string
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  rust:
-    name: Rust validation
+  site:
+    name: Static site validation
     runs-on: ubuntu-24.04
-
+    timeout-minutes: 10
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout tested commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit || github.sha }}
+          persist-credentials: false
 
-      - name: Install Linux build dependencies
+      - name: Verify immutable checkout
+        env:
+          EXPECTED_COMMIT: ${{ inputs.commit || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Install locked site tools without lifecycle scripts
+        working-directory: site/tools
+        run: npm ci --ignore-scripts
+
+      - name: Test site behavior and deployment checker fixtures
+        working-directory: site/tools
+        run: npm test
+
+      - name: Check authored site and generated provenance
+        working-directory: site/tools
+        run: npm run check
+
+      - name: Audit locked site dependencies
+        working-directory: site/tools
+        run: npm audit
+
+  rust:
+    name: Rust validation (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - name: Checkout tested commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit || github.sha }}
+          persist-credentials: false
+
+      - name: Verify immutable checkout
+        env:
+          EXPECTED_COMMIT: ${{ inputs.commit || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+
+      - name: Install Linux build and native test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            libadwaita-1-dev \
-            libdbus-1-dev \
-            libglib2.0-dev \
-            libgtk-4-dev \
-            pkg-config
+          sudo apt-get install -y build-essential libadwaita-1-dev libdbus-1-dev \
+            libglib2.0-dev libgtk-4-dev pkg-config xvfb xauth dbus-x11 \
+            fonts-dejavu-core libegl1 libgl1 python3-yaml
 
-      # Pin the toolchain explicitly: rust-toolchain.toml would make rustup
-      # silently fetch 1.97.0 on top of whatever this action installed, and
-      # clippy/rustfmt would land on the wrong one.
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # reviewed 2026-10-19
         with:
-          toolchain: "1.97.0"
+          toolchain: '1.99.1'
           components: clippy, rustfmt
 
       - name: Cache Cargo build artifacts
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: validation
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+      - name: Test verification scripts (fixtures, no Cargo builds)
+        run: /usr/bin/python3 -m unittest discover -s tools -p 'test_*.py' -v
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      # clippy --all-targets typechecks everything a separate `cargo check`
-      # would, so no standalone check step.
-      - name: Run clippy
+      - name: Run clippy (also typechecks every target)
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
-      - name: Run tests
+      - name: Run default tests
         run: cargo test --workspace --all-features --locked
 
-      # The locale-parity tests mutate the global Fluent loader and are
-      # `#[ignore]`d out of the default suite; run them explicitly so the
-      # catalogs cannot silently drift apart.
-      - name: Run locale parity tests
-        run: cargo test --workspace --all-features --locked -- --ignored --test-threads=1
+      # Fluent mutates global state; select only this test, never all ignored tests.
+      - name: Run exact locale parity test
+        run: cargo test --workspace --all-features --locked infra::i18n::tests::every_shipped_locale_parses_and_loads -- --exact --ignored --test-threads=1
+
+      - name: Run isolated native tests (fresh process, display and session per test)
+        run: python3 tools/test-native.py
 
   dependencies:
     name: Dependency checks
     runs-on: ubuntu-24.04
-
+    timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # Keep the ignore list in sync with deny.toml's [advisories] section;
-      # the two gates must not disagree on the same advisory.
-      - name: Audit RustSec advisories
-        uses: rustsec/audit-check@v2
+      - name: Checkout tested commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          ignore: RUSTSEC-2026-0173
+          ref: ${{ inputs.commit || github.sha }}
+          persist-credentials: false
+
+      - name: Verify immutable checkout
+        env:
+          EXPECTED_COMMIT: ${{ inputs.commit || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+
+      - name: Enforce the approved advisory exception and UTC expiry
+        run: python3 tools/check-advisory-exceptions.py
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # reviewed 2026-10-19
+        with:
+          toolchain: '1.99.1'
+
+      # CLI tools do not create issues/checks or require a write-capable token.
+      - name: Install reviewed dependency scanners from locked crates.io packages
+        run: |
+          cargo install cargo-audit --version 0.22.2 --locked
+          cargo install cargo-deny --version 0.20.2 --locked
+
+      - name: Audit RustSec advisories (no stale exceptions)
+        run: cargo audit
 
       - name: Check dependency policy
-        uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check advisories bans licenses sources
+        run: cargo deny --locked --all-features check advisories bans licenses sources

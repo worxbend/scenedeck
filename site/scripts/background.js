@@ -23,7 +23,8 @@
    linear for anything representing data in transit.
    ========================================================================== */
 
-import { frameState, reducedMotion } from "./ui.js";
+import { frameState } from "./ui.js";
+import { reducedMotion, watchActivity } from "./activity.js";
 import { SPRING, Spring } from "./spring.js";
 import { mesh, layout, nodeAt, toClip } from "./mesh.js";
 
@@ -92,21 +93,7 @@ export async function initBackground() {
 
   bindAppearance(layers, shared);
 
-  // One frame, then stop: the full composition with none of the motion.
-  if (reducedMotion.matches) {
-    const paint = () => layers.forEach((layer) => layer.render(0));
-    paint();
-    layers.forEach((layer) => layer.canvas.setAttribute("data-live", ""));
-    window.addEventListener("appearance:repaint", paint);
-    observeResize(() => {
-      layout(window.innerWidth, window.innerHeight, config.nodes);
-      layers.forEach((layer) => layer.resize());
-      paint();
-    });
-    return;
-  }
-
-  drive(layers, shared);
+  driveBackground(layers, shared);
 }
 
 /** ResizeObserver on the document element rather than a window listener: it
@@ -136,7 +123,7 @@ function bindAppearance(layers, shared) {
 
 /* ---- The driver ---------------------------------------------------------- */
 
-function drive(layers, shared) {
+export function driveBackground(layers, shared) {
   let raf = 0;
   let last = 0;
   let running = false;
@@ -173,17 +160,25 @@ function drive(layers, shared) {
     cancelAnimationFrame(raf);
   };
 
-  document.addEventListener("visibilitychange", () => (document.hidden ? stop() : start()));
-  window.addEventListener("blur", stop);
-  window.addEventListener("focus", start);
+  const paint = () => {
+    if (!document.hidden) layers.forEach((layer) => layer.render(0));
+  };
+  watchActivity({ requireFocus: true, change: (active) => {
+    layers.forEach((layer) => layer.activity?.(active));
+    if (active) start();
+    else { stop(); paint(); }
+  } });
+  window.addEventListener("appearance:repaint", paint);
 
   observeResize(() => {
     layout(window.innerWidth, window.innerHeight, shared.config.nodes);
     for (const layer of layers) layer.resize();
+    paint();
   });
 
   // A program take pushes a burst of traffic across the network.
   window.addEventListener("scenedeck:take", () => {
+    if (document.hidden || reducedMotion.matches) return;
     shared.burst.velocity += 9;
     shared.burst.to(1);
     clearTimeout(shared.release);
@@ -191,7 +186,7 @@ function drive(layers, shared) {
     window.dispatchEvent(new CustomEvent("mesh:burst"));
   });
 
-  start();
+  paint();
   layers.forEach((layer) => layer.canvas.setAttribute("data-live", ""));
 }
 
@@ -488,7 +483,7 @@ async function buildTraffic(config, shared) {
   // Google blue, a lighter blue, and a healthy green — the packet colours
   // cycle so the network reads as carrying more than one kind of traffic.
   const palette = () => [
-    hexToInt(readVar("--mesh-edge") || "#8ab4f8"),
+    hexToInt(shared.accent || readVar("--mesh-edge") || "#8ab4f8"),
     hexToInt(readVar("--mesh-node") || "#c2d7ff"),
     hexToInt(readVar("--inst-ok") || "#57e19c"),
   ];
@@ -533,7 +528,6 @@ async function buildTraffic(config, shared) {
     const n = Math.max(1, mesh.edges.length);
     packets.forEach((p, i) => {
       p.edge = (i * 7 + 3) % n;
-      p.d = Math.random();
     });
   };
   assign();
@@ -595,7 +589,27 @@ async function buildTraffic(config, shared) {
         }
         packet.edge = next >= 0 ? next : Math.floor(Math.random() * mesh.edges.length);
       }
+    }
+  };
 
+  // Projection is independent of fixed-step simulation. Static reduced-motion
+  // repaints must follow the current mesh/palette without moving the packets.
+  const projectPackets = () => {
+    for (const packet of packets) {
+      const edge = mesh.edges[packet.edge];
+      if (!edge) {
+        packet.head.alpha = packet.trail.alpha = 0;
+        continue;
+      }
+      nodeAt(mesh.nodes[edge.a], pa);
+      nodeAt(mesh.nodes[edge.b], pb);
+      const dx = pb.x - pa.x;
+      const dy = pb.y - pa.y;
+      const len = Math.hypot(dx, dy);
+      if (len <= 0) {
+        packet.head.alpha = packet.trail.alpha = 0;
+        continue;
+      }
       const dim = mesh.layers[edge.layer].dim;
       const tintValue = packet.hot > 0.02 ? 0xffffff : colours[packet.colour];
       const x = pa.x + dx * packet.d;
@@ -618,8 +632,6 @@ async function buildTraffic(config, shared) {
     }
   };
 
-  stepLogic();
-
   window.addEventListener("mesh:burst", () => {
     let n = 0;
     for (const packet of packets) {
@@ -630,6 +642,12 @@ async function buildTraffic(config, shared) {
   return {
     canvas,
     resize,
+    activity(active) {
+      // This is the site's only Pixi renderer. Its scheduler owns a second rAF
+      // through Ticker.system; pausing only our driver leaves that loop alive.
+      if (active) PIXI.Ticker.system.start();
+      else PIXI.Ticker.system.stop();
+    },
     theme(dark) {
       colours = palette();
       alphaMax = parseFloat(readVar("--packet-alpha")) || 0.28;
@@ -641,10 +659,11 @@ async function buildTraffic(config, shared) {
     render(dt) {
       accumulator += dt;
       let guard = 0;
-      while (accumulator >= STEP && guard++ < 4) {
+      while (dt > 0 && accumulator >= STEP && guard++ < 4) {
         accumulator -= STEP;
         stepLogic();
       }
+      projectPackets();
       renderer.render(stage);
     },
   };

@@ -7,9 +7,9 @@ Tokio owns asynchronous OBS work; controller events bridge the two.
 
 Install:
 
-- Rust stable.
-- GTK4 development libraries.
-- libadwaita development libraries.
+- The Rust toolchain pinned in `rust-toolchain.toml`.
+- GTK4 4.10+ development libraries.
+- libadwaita 1.4+ and D-Bus development libraries.
 - GLib tools, including `glib-compile-resources`.
 - OBS Studio for manual integration testing.
 
@@ -33,12 +33,38 @@ Run these before committing:
 
 ```sh
 cargo fmt --all -- --check
-cargo check --workspace --all-features
-cargo test --workspace --all-features
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo check --workspace --all-features --locked
+cargo test --workspace --all-features --locked
+cargo test --workspace --all-features --locked --lib infra::i18n::tests::every_shipped_locale_parses_and_loads -- --exact --ignored --test-threads=1
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo build --locked
+python3 tools/check-advisory-exceptions.py &&
+  cargo audit &&
+  cargo deny --locked --all-features check advisories bans licenses sources
 ```
 
-Use `cargo fmt --all` to apply formatting.
+Run the locale test by exact name because Fluent loader state is global. Native
+GTK checks have separate display, D-Bus, and XDG requirements; run each in an
+isolated process with:
+
+```sh
+python3 tools/test-native.py
+```
+
+The dependency gate includes a single user-approved, expiring maintenance
+exception; see the [advisory policy](advisory-exceptions.md). Run its checker
+before the scanners so the UTC expiry is enforced locally as well as in CI.
+
+The native runner requires `xvfb`, `xauth`, `dbus-run-session`, and GNU `timeout`
+(or private equivalents on `PATH`). Run the publication/CI contract fixtures with
+`/usr/bin/python3 -m unittest discover -s tools -p 'test_*.py' -v` (PyYAML is
+required for workflow/Snap parsing). For the static site, run `npm ci --ignore-scripts`
+in `site/tools/`, then `npm test`, `npm run check`, and `npm audit`.
+
+Native visual verification is a separate gate: inspect actual screenshots and
+record gaps, rather than treating a passing build as layout evidence. See the
+[manual test plan](manual-test-plan.md) and
+[current redesign evidence](verification/redesign-2026-10-19/README.md).
 
 ## Development Workflow
 
@@ -78,7 +104,8 @@ Add a new OBS capability:
 Add a new page:
 
 1. Add a page variant in `src/controller/state.rs`.
-2. Add it to `NAV_PAGES` in `src/ui/window.rs`.
+2. Add it to `NAV_PAGES` in `src/ui/sidebar.rs`, or provide deliberate topbar
+   access as Sources does.
 3. Create a page module in `src/ui/pages/`.
 4. Add the module to `src/ui/pages/mod.rs`.
 5. Wire refresh behavior if the page depends on app state.
@@ -101,18 +128,25 @@ Add a built-in theme:
 
 ## Manual OBS Test Checklist
 
-- Connect with no password.
-- Connect with password.
-- Disconnect and reconnect.
-- Switch scenes from SceneDeck and from OBS.
-- Start and stop streaming if OBS is configured for a safe test target.
-- Start and stop recording.
-- Change mute and volume in SceneDeck and confirm OBS follows.
-- Change mute and volume in OBS and confirm SceneDeck follows.
-- Switch OBS profile and scene collection.
-- Rename, create, or remove an input and confirm audio refresh behavior.
-- Add or remove nested scene items and confirm Graph and active scene audio
-  refresh behavior.
+Use an isolated OBS instance with disposable configuration and local output
+paths. Preserve real OBS profiles/collections. Record test endpoint/version,
+request traces and screenshots in the current verification index.
+
+- Connect, disconnect, reconnect and change collection with reads pending.
+- Exercise direct/Studio card and shortcut behavior, external Studio changes,
+  adjustable/fixed transitions and Take.
+- Check preview off/on, pending cancellation, hidden/disconnected capture stops,
+  session/collection races and the six-/twenty-scene performance budgets.
+- Exercise compact audio and Active/Selected/Pinned Mixer behavior.
+- Run output confirmations and supported record/replay/camera actions; distinguish
+  configuration rejection from success and acknowledgement from file evidence.
+- Verify Sources visibility/media/filter/audio/text actions and conflict handling.
+- Check Inventory role readability, header/numeric resizing, persistence/reset,
+  ordering and registry YAML.
+- Inspect all theme variants, custom CSS/motion, compact/enlarged/localized
+  layouts, keyboard focus and accessibility. Record Orca speech separately.
+- Hash preserved workflow/config files; confirm retired features perform no
+  routine workflow I/O. Historical research/reports remain context only.
 
 ## Packaging
 

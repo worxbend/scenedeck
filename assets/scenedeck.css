@@ -11,6 +11,26 @@
 @define-color scenedeck_warning @warning_color;
 @define-color scenedeck_error @error_color;
 
+/* Semantic state colors stay independent of the interaction accent. */
+@define-color scenedeck_border alpha(@scenedeck_fg, 0.22);
+@define-color scenedeck_program #a92536;
+@define-color scenedeck_program_fg #ffffff;
+@define-color scenedeck_preview #176845;
+@define-color scenedeck_preview_fg #ffffff;
+@define-color scenedeck_focus @accent_bg_color;
+@define-color scenedeck_image_fg #ffffff;
+@define-color scenedeck_image_scrim #111820;
+@define-color scenedeck_image_fallback #28323e;
+@define-color scenedeck_shadow #000000;
+
+/* Informational captions use an opaque, contrast-checked semantic foreground. */
+.scenedeck-root .dim-label,
+.scenedeck-root .subtitle,
+.scenedeck-root label.dimmed {
+    color: @scenedeck_muted_fg;
+    opacity: 1;
+}
+
 /* ── Application shell ─────────────────────────────────────────────────────── */
 .scenedeck-root,
 .scenedeck-toast-overlay,
@@ -28,6 +48,7 @@
 
 .scenedeck-content-header {
     background-color: @scenedeck_header;
+    color: @scenedeck_fg;
 }
 
 .scenedeck-content-header-streaming {
@@ -72,6 +93,13 @@
 .scenedeck-root .card,
 .scenedeck-root preferencesgroup row {
     background-color: @scenedeck_card;
+}
+
+/* Native popup surfaces also need the family palette, not just their controls. */
+.scenedeck-root popover > contents,
+.scenedeck-root popover > arrow {
+    background-color: @scenedeck_card;
+    color: @scenedeck_fg;
 }
 
 .scenedeck-combo-row {
@@ -272,72 +300,203 @@ window.scenedeck-about-window preferencesgroup row {
 
 /* ── Live page scene cards ──────────────────────────────────────────────────── */
 .scene-card {
-    min-width: 132px;
-    min-height: 58px;
+    min-width: 160px;
+    min-height: 88px;
     padding: 0;
-    border-radius: 8px;
+    border-radius: 14px;
+    border: 2px solid @scenedeck_border;
+    background-color: @scenedeck_card;
+    background-image: none;
+    color: @scenedeck_fg;
+    box-shadow: 0 2px 5px alpha(@scenedeck_shadow, 0.10);
+    outline-offset: 3px;
 }
 
-.scene-card > box {
-    padding: 7px 9px;
+.scene-card:hover {
+    border-color: @scenedeck_fg;
+    box-shadow: 0 3px 8px alpha(@scenedeck_shadow, 0.16);
 }
 
-.scene-card-active {
-    background-image: linear-gradient(135deg, alpha(@scenedeck_accent, 0.32), alpha(@scenedeck_accent, 0.08));
-    outline: 2px solid @scenedeck_accent;
+.scene-card:focus-visible {
+    outline: 3px solid @scenedeck_focus;
 }
 
-.scene-card-previous {
-    background-color: alpha(@scenedeck_accent, 0.08);
-    outline: 1px solid alpha(@scenedeck_accent, 0.45);
+.scene-card-preview-enabled {
+    min-width: 240px;
+    min-height: 144px;
+    background-color: @scenedeck_image_fallback;
 }
 
-.scene-card-status-active,
-.scene-card-status-previous,
-.scene-card-status-ready {
-    border-radius: 4px;
-    padding: 1px 6px;
-    font-weight: 700;
-    font-size: 0.78em;
+.scene-card-preview-enabled.scene-card-short {
+    min-height: 100px;
 }
 
-.scene-card-status-active {
-    background-color: @scenedeck_accent;
-    color: @scenedeck_accent_fg;
+.scene-card-short .scene-card-content {
+    padding: 8px;
 }
 
-.scene-card-status-ready {
-    background-color: alpha(@scenedeck_fg, 0.10);
-    color: @scenedeck_muted_fg;
+/* GtkOverlay clips its image and scrim at the same radius as the Button. */
+.scene-card > overlay,
+.scene-card-preview-image,
+.scene-card-scrim {
+    border-radius: 12px;
 }
 
-.scene-card-status-previous {
-    background-color: alpha(@scenedeck_accent, 0.16);
-    color: @scenedeck_accent;
+.scene-card-scrim {
+    background-image: linear-gradient(to bottom,
+        alpha(@scenedeck_image_scrim, 0.26),
+        alpha(@scenedeck_image_scrim, 0.42) 35%,
+        alpha(@scenedeck_image_scrim, 0.70) 50%,
+        alpha(@scenedeck_image_scrim, 0.94));
+}
+
+.scene-card-content {
+    padding: 12px;
 }
 
 .scene-card-title {
-    font-size: 0.9em;
+    font-size: 1.05em;
+    font-weight: 700;
+}
+
+.scene-card-preview-enabled .scene-card-content {
+    color: @scenedeck_image_fg;
+    text-shadow: 0 1px 2px alpha(@scenedeck_shadow, 0.85);
+}
+
+.scene-card-active,
+.scene-card-active:hover {
+    border-color: @scenedeck_program;
+}
+
+.scene-card-preview,
+.scene-card-preview:hover {
+    border-color: @scenedeck_preview;
+    border-style: dashed;
+}
+
+.scene-card-active.scene-card-preview,
+.scene-card-active.scene-card-preview:hover {
+    border-color: @scenedeck_program;
+    border-style: solid;
+    box-shadow: inset 0 0 0 2px @scenedeck_preview,
+                0 2px 5px alpha(@scenedeck_shadow, 0.10);
+}
+
+.scene-card-status-active,
+.scene-card-status-preview {
+    border-radius: 5px;
+    padding: 2px 6px;
+    font-weight: 700;
+    font-size: 0.78em;
+    text-shadow: none;
+}
+
+.scene-card-status-active {
+    background-color: @scenedeck_program;
+    color: @scenedeck_program_fg;
+}
+
+.scene-card-status-preview {
+    background-color: @scenedeck_preview;
+    color: @scenedeck_preview_fg;
 }
 
 .scene-card-hotkey {
     min-width: 14px;
     border-radius: 4px;
-    padding: 1px 5px;
-    font-size: 0.72em;
+    padding: 2px 5px;
+    font-size: 0.75em;
     font-weight: 700;
     background-color: alpha(@scenedeck_fg, 0.10);
-    color: @scenedeck_muted_fg;
+    color: @scenedeck_fg;
 }
 
-.scene-card-active .scene-card-hotkey {
-    background-color: alpha(@scenedeck_accent, 0.30);
-    color: @scenedeck_fg;
+.scene-card-preview-enabled .scene-card-hotkey {
+    background-color: alpha(@scenedeck_image_scrim, 0.90);
+    color: @scenedeck_image_fg;
+}
+
+.scene-card-accent {
+    min-width: 4px;
+    min-height: 12px;
+    border-radius: 2px;
+    background-color: @scenedeck_accent;
 }
 
 .live-hotkey-hint {
     color: @scenedeck_muted_fg;
     font-size: 0.85em;
+}
+
+/* Compact Live components do not change full Mixer cards. */
+.live-audio-strip,
+.live-output-toolbar,
+.output-toolbar,
+.live-transition-toolbar {
+    background-color: @scenedeck_card;
+    border: 1px solid @scenedeck_border;
+    border-radius: 12px;
+    padding: 8px 12px;
+}
+
+.live-output-toolbar button,
+.output-toolbar button,
+.live-transition-toolbar button,
+.live-audio-strip button {
+    min-height: 28px;
+}
+
+.live-page-short .live-audio-strip {
+    padding-top: 4px;
+    padding-bottom: 4px;
+}
+
+/* Inventory is a native list. Text-relative libadwaita breakpoints stack each
+   row's existing identity and controls; never impose a horizontal minimum. */
+.inventory-list,
+.inventory-yaml-card {
+    background-color: @scenedeck_card;
+    color: @scenedeck_fg;
+    border: 1px solid @scenedeck_border;
+    border-radius: 12px;
+}
+
+.inventory-yaml-card > list {
+    background-color: transparent;
+}
+
+.inventory-scene-row {
+    padding: 12px;
+    background-color: @scenedeck_card;
+}
+
+.inventory-scene-row:focus-visible {
+    outline: 2px solid @scenedeck_focus;
+    outline-offset: -2px;
+}
+
+.sources-list {
+    background-color: @scenedeck_card;
+    border-radius: 12px;
+}
+
+.sources-detail {
+    padding: 16px;
+}
+
+.source-item {
+    padding: 8px 12px;
+    border-radius: 8px;
+}
+
+.source-detail-section {
+    padding: 8px 0;
+}
+
+.sources-page {
+    background-color: @scenedeck_surface;
+    color: @scenedeck_fg;
 }
 
 /* ── Live page audio cards ──────────────────────────────────────────────────── */
@@ -726,13 +885,11 @@ window.scenedeck-about-window preferencesgroup row {
    These stay on at Reduced motion and are switched off only at Off. */
 .scene-card,
 .scene-card-status-active,
-.scene-card-status-previous,
-.scene-card-status-ready,
+.scene-card-status-preview,
 .scene-card-hotkey {
-    transition: background-color 180ms ease-out,
-                background-image 180ms ease-out,
-                outline-color 180ms ease-out,
-                color 180ms ease-out;
+    transition: background-color 120ms ease-out,
+                border-color 120ms ease-out,
+                color 120ms ease-out;
 }
 
 .scenedeck-sidebar-list row {
@@ -742,4 +899,60 @@ window.scenedeck-about-window preferencesgroup row {
 .scenedeck-status-bar-item,
 .scenedeck-status-bar-icon {
     transition: color 200ms ease-out;
+}
+
+/* Status copy and icons remain the primary output indicators. */
+.output-toolbar .output-active {
+    border: 1px solid @scenedeck_program;
+    color: @scenedeck_program;
+    background-color: alpha(@scenedeck_program, 0.10);
+}
+
+.output-toolbar .output-pending {
+    border: 1px dashed @scenedeck_border;
+    color: @scenedeck_fg;
+}
+
+.live-audio-card {
+    background-color: @scenedeck_card;
+    border-radius: 8px;
+    padding: 4px 8px;
+    min-height: 32px;
+}
+
+.inventory-role-selector button {
+    min-height: 30px;
+    padding: 4px 8px;
+}
+
+.inventory-row-options {
+    padding: 8px;
+}
+
+.live-audio-card .audio-meter {
+    min-height: 16px;
+}
+
+/* A temporarily unavailable action must not fade its last-known scene state. */
+.scene-card:disabled {
+    opacity: 1;
+    color: @scenedeck_fg;
+    box-shadow: none;
+}
+
+.scene-card-preview-enabled:disabled .scene-card-title {
+    color: @scenedeck_image_fg;
+}
+
+.scene-card-status-active:disabled {
+    color: @scenedeck_program_fg;
+}
+
+.scene-card-status-preview:disabled {
+    color: @scenedeck_preview_fg;
+}
+
+.scene-card-image-placeholder {
+    color: @scenedeck_image_fg;
+    opacity: 0.6;
 }

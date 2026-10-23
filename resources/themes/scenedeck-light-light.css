@@ -1,3 +1,4 @@
+/* scenedeck-light: light. Geometry and semantic states are owned by the base CSS. */
 @define-color scenedeck_accent #1f6feb;
 @define-color scenedeck_fg #1d1d1f;
 @define-color scenedeck_muted_fg #555a60;
@@ -10,12 +11,13 @@
 @define-color scenedeck_header #e2e8f0;
 @define-color scenedeck_surface #ffffff;
 @define-color scenedeck_card #ffffff;
-
-.scene-card,
-.audio-card {
-  background-color: @scenedeck_card;
-}
-
-.scene-card-active {
-  outline-color: @scenedeck_accent;
-}
+@define-color scenedeck_border #626e7d;
+@define-color scenedeck_program #a92536;
+@define-color scenedeck_program_fg #ffffff;
+@define-color scenedeck_preview #176845;
+@define-color scenedeck_preview_fg #ffffff;
+@define-color scenedeck_focus #174fb5;
+@define-color scenedeck_image_fg #ffffff;
+@define-color scenedeck_image_scrim #111820;
+@define-color scenedeck_image_fallback #28323e;
+@define-color scenedeck_shadow #000000;

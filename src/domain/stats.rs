@@ -14,10 +14,15 @@ pub const STATS_HISTORY_CAPACITY: usize = 120;
 /// Snapshot of OBS-reported performance counters, refreshed on a timer.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ObsStats {
+    /// Free space on the OBS recording volume, in MiB; unknown is not zero.
+    pub disk_space_mb: Option<f64>,
     /// OBS process CPU usage in percent, as reported by OBS itself.
     pub cpu_usage_percent: f64,
     /// Memory currently used by OBS, in megabytes.
     pub memory_usage_mb: f64,
+    /// Configured video FPS from GetVideoSettings, independent of measured FPS.
+    /// None means the target could not be observed or the ratio was invalid.
+    pub configured_fps: Option<f64>,
     /// Current FPS being rendered by OBS.
     pub active_fps: f64,
     /// Average time in milliseconds OBS takes to render a frame.
@@ -91,6 +96,8 @@ impl StreamHealth {
 /// dropped right now" chart needs, and the cumulative totals cannot show.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StatsSample {
+    /// Local receive time, comparable with session activity timestamps.
+    pub timestamp_unix_ms: u64,
     /// Process counters at the time of this sample.
     pub stats: ObsStats,
     /// Rolling stream bitrate derived from consecutive byte counter reads.
@@ -163,8 +170,24 @@ impl StatsHistory {
         bitrate_kbps: Option<f64>,
         stream: Option<StreamHealth>,
     ) {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64;
+        self.push_at(timestamp, stats, bitrate_kbps, stream);
+    }
+
+    fn push_at(
+        &mut self,
+        timestamp_unix_ms: u64,
+        stats: ObsStats,
+        bitrate_kbps: Option<f64>,
+        stream: Option<StreamHealth>,
+    ) {
         let previous = self.samples.back().map(|sample| sample.stats);
         let sample = StatsSample {
+            timestamp_unix_ms,
             stats,
             bitrate_kbps,
             stream,
@@ -199,6 +222,54 @@ impl StatsHistory {
             .collect()
     }
 
+    /// Locate an event on the charts' sample-index axis. Never interpolate a
+    /// gap longer than five polls or a wall clock that moved backwards.
+    pub fn event_fraction(&self, timestamp_unix_ms: u64) -> Option<f64> {
+        let count = self.samples.len();
+        let first = self.samples.front()?.timestamp_unix_ms;
+        let last = self.samples.back()?.timestamp_unix_ms;
+        if timestamp_unix_ms < first || timestamp_unix_ms > last {
+            return None;
+        }
+        if self
+            .samples
+            .iter()
+            .zip(self.samples.iter().skip(1))
+            .any(|(a, b)| b.timestamp_unix_ms < a.timestamp_unix_ms)
+        {
+            return None;
+        }
+        if count > 1 && first == last {
+            return None;
+        }
+        if count == 1 {
+            return (timestamp_unix_ms == first).then_some(1.0);
+        }
+        if let Some(index) = self
+            .samples
+            .iter()
+            .position(|sample| sample.timestamp_unix_ms == timestamp_unix_ms)
+        {
+            return Some(index as f64 / (count - 1) as f64);
+        }
+        for (index, (a, b)) in self
+            .samples
+            .iter()
+            .zip(self.samples.iter().skip(1))
+            .enumerate()
+        {
+            if a.timestamp_unix_ms < timestamp_unix_ms && timestamp_unix_ms < b.timestamp_unix_ms {
+                let interval = b.timestamp_unix_ms - a.timestamp_unix_ms;
+                if interval > 5_000 {
+                    return None;
+                }
+                let part = (timestamp_unix_ms - a.timestamp_unix_ms) as f64 / interval as f64;
+                return Some((index as f64 + part) / (count - 1) as f64);
+            }
+        }
+        None
+    }
+
     /// Number of samples currently retained.
     #[cfg(test)]
     pub fn len(&self) -> usize {
@@ -223,6 +294,8 @@ mod tests {
 
     fn stats() -> ObsStats {
         ObsStats {
+            disk_space_mb: None,
+            configured_fps: None,
             cpu_usage_percent: 12.5,
             memory_usage_mb: 512.0,
             active_fps: 59.9,
@@ -364,6 +437,37 @@ mod tests {
             history.series(StatsMetric::OutputSkippedPerInterval),
             vec![0.0, 2.0]
         );
+    }
+
+    #[test]
+    fn event_markers_follow_sample_positions_and_reject_gaps() {
+        let mut history = StatsHistory::default();
+        assert_eq!(history.event_fraction(0), None);
+        history.push_at(1_000, stats(), None, None);
+        assert_eq!(history.event_fraction(1_000), Some(1.0));
+        history.push_at(2_000, stats(), None, None);
+        history.push_at(4_000, stats(), None, None);
+        assert_eq!(history.event_fraction(1_000), Some(0.0));
+        assert_eq!(history.event_fraction(2_000), Some(0.5));
+        assert_eq!(history.event_fraction(3_000), Some(0.75));
+        assert_eq!(history.event_fraction(4_000), Some(1.0));
+        assert_eq!(history.event_fraction(999), None);
+        assert_eq!(history.event_fraction(4_001), None);
+        history.push_at(20_000, stats(), None, None);
+        assert_eq!(history.event_fraction(10_000), None);
+        history.push_at(500, stats(), None, None);
+        assert_eq!(history.event_fraction(2_000), None);
+    }
+
+    #[test]
+    fn zero_timestamp_is_valid_but_duplicate_only_times_are_ambiguous() {
+        let mut history = StatsHistory::default();
+        history.push_at(0, stats(), None, None);
+        assert_eq!(history.event_fraction(0), Some(1.0));
+        history.push_at(0, stats(), None, None);
+        assert_eq!(history.event_fraction(0), None);
+        history.push_at(1_000, stats(), None, None);
+        assert_eq!(history.event_fraction(1_000), Some(1.0));
     }
 
     #[test]

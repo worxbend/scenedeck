@@ -1,6 +1,9 @@
 //! Audio input card for the Live page mixer.
 
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use adw::prelude::*;
 use glib::{source::SourceId, timeout_add_local_once};
@@ -8,7 +11,9 @@ use gtk4::{Align, Box as GtkBox, Button, Label, Orientation, Scale, ToggleButton
 use i18n_embed_fl::fl;
 
 use crate::controller::command::AppCommand;
+use crate::controller::state::ObsStatus;
 use crate::domain::audio::AudioInput;
+use crate::domain::workflow::ScopeBinding;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::audio_service::{AudioService, VolumeChangeDebouncer, VOLUME_SLIDER_DEBOUNCE};
 use crate::storage::registry as registry_storage;
@@ -45,6 +50,15 @@ pub(crate) struct AudioCardHandle {
     volume_debounce_source: Rc<RefCell<Option<SourceId>>>,
     mute_signal_id: glib::SignalHandlerId,
     vol_signal_id: Rc<glib::SignalHandlerId>,
+    observed_volume: Cell<(f64, f64)>,
+}
+
+impl Drop for AudioCardHandle {
+    fn drop(&mut self) {
+        if let Some(source) = self.volume_debounce_source.borrow_mut().take() {
+            source.remove();
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -53,7 +67,40 @@ enum VolumeDispatch {
     Immediate,
 }
 
+#[derive(Clone)]
+struct AudioTargetScope {
+    epoch: u64,
+    scope: ScopeBinding,
+}
+
+impl AudioTargetScope {
+    fn capture(nav: &NavigationContext) -> Self {
+        let state = nav.state.borrow();
+        Self {
+            epoch: state.workspace.epoch,
+            scope: state.workflow_scope(),
+        }
+    }
+
+    fn accepts(&self, epoch: u64, scope: &ScopeBinding, connected: bool) -> bool {
+        connected
+            && !self.scope.collection.is_empty()
+            && self.epoch == epoch
+            && &self.scope == scope
+    }
+
+    fn is_current(&self, nav: &NavigationContext) -> bool {
+        let state = nav.state.borrow();
+        self.accepts(
+            state.workspace.epoch,
+            &state.workflow_scope(),
+            matches!(state.obs_status, ObsStatus::Connected { .. }),
+        )
+    }
+}
+
 struct VolumeChangeContext<'a> {
+    scope: &'a AudioTargetScope,
     vol_scale: &'a Scale,
     db_label: &'a Label,
     vol_signal_id: Option<&'a glib::SignalHandlerId>,
@@ -72,21 +119,26 @@ impl AudioCardHandle {
 
     /// Update volume from an OBS event without triggering the dispatch signal.
     pub(crate) fn update_volume(&self, mul: f64, db: f64) {
+        let volume_mul = AudioService::sanitize_volume_mul(mul);
+        let volume_db = AudioService::sanitize_volume_db(db);
+        if self.observed_volume.replace((volume_mul, volume_db)) == (volume_mul, volume_db) {
+            return;
+        }
+        if !self
+            .volume_debouncer
+            .borrow_mut()
+            .reset_to_observed(volume_mul)
+        {
+            return;
+        }
         if let Some(source_id) = self.volume_debounce_source.borrow_mut().take() {
             source_id.remove();
         }
-        let volume_mul = AudioService::sanitize_volume_mul(mul);
-        self.volume_debouncer
-            .borrow_mut()
-            .reset_to_observed(volume_mul);
         self.vol_scale.block_signal(self.vol_signal_id.as_ref());
         self.vol_scale
             .set_value(AudioService::slider_db_from_mul(volume_mul));
         self.vol_scale.unblock_signal(self.vol_signal_id.as_ref());
-        self.db_label
-            .set_text(&AudioService::format_db(AudioService::sanitize_volume_db(
-                db,
-            )));
+        self.db_label.set_text(&AudioService::format_db(volume_db));
     }
 }
 
@@ -102,14 +154,25 @@ fn build_mute_button(
     nav: &NavigationContext,
 ) -> (ToggleButton, glib::SignalHandlerId) {
     let mute_btn = ToggleButton::builder().active(muted).build();
+    mute_btn.set_widget_name(&format!("audio-mute-{input_id}"));
     mute_btn.set_tooltip_text(Some(&fl!(LANGUAGE_LOADER, "audio-card-mute-tooltip")));
+    mute_btn.update_property(&[gtk4::accessible::Property::Label(&fl!(
+        LANGUAGE_LOADER,
+        "audio-source-mute",
+        source = input_id
+    ))]);
     apply_mute_style(&mute_btn, muted);
 
     let signal_id = {
+        let scope = AudioTargetScope::capture(nav);
         let nav = nav.clone();
         let input_id = input_id.to_string();
         mute_btn.connect_toggled(move |btn| {
+            if !scope.is_current(&nav) {
+                return;
+            }
             nav.dispatch(AppCommand::SetInputMute {
+                scope: scope.scope.clone(),
                 input: input_id.clone(),
                 muted: btn.is_active(),
             });
@@ -203,9 +266,8 @@ fn build_scope_bar(input: &AudioInput, input_id: &str, nav: &NavigationContext) 
 /// The local lock, which freezes this card's fader.
 ///
 /// It disables SceneDeck's own slider only; the source stays unlocked in OBS.
-/// The state lives in `MixerSelection::locked_inputs` — the card is rebuilt
-/// on every visible volume event, so anything held only by the card would be
-/// silently forgotten on the next one.
+/// The state lives in `MixerSelection::locked_inputs` so structural rebuilds
+/// and navigation preserve the operator's lock.
 fn build_lock_button(
     nav: &NavigationContext,
     input_id: &str,
@@ -217,6 +279,11 @@ fn build_lock_button(
         .active(locked)
         .build();
     lock_btn.set_tooltip_text(Some(&fl!(LANGUAGE_LOADER, "audio-card-lock-tooltip")));
+    lock_btn.update_property(&[gtk4::accessible::Property::Label(&fl!(
+        LANGUAGE_LOADER,
+        "audio-source-lock",
+        source = input_id
+    ))]);
     lock_btn.add_css_class("flat");
     lock_btn.add_css_class("circular");
     lock_btn.connect_toggled({
@@ -265,6 +332,7 @@ fn control_row(css_class: &str, children: &[gtk4::Widget]) -> GtkBox {
 /// controls both need to reach them.
 #[derive(Clone)]
 struct VolumeControls {
+    scope: AudioTargetScope,
     scale: Scale,
     db_label: Label,
     debouncer: Rc<RefCell<VolumeChangeDebouncer>>,
@@ -286,12 +354,19 @@ fn build_volume_controls(
     input_id: &str,
     nav: &NavigationContext,
 ) -> VolumeControls {
+    let scope = AudioTargetScope::capture(nav);
     let vol_scale = Scale::with_range(
         Orientation::Vertical,
         AudioService::min_volume_db(),
         AudioService::max_volume_db(),
         0.5,
     );
+    vol_scale.set_widget_name(&format!("audio-fader-{input_id}"));
+    vol_scale.update_property(&[gtk4::accessible::Property::Label(&fl!(
+        LANGUAGE_LOADER,
+        "audio-source-volume",
+        source = input_id
+    ))]);
     vol_scale.set_value(AudioService::slider_db_from_mul(input.volume_mul));
     vol_scale.set_inverted(OBS_FADER_INVERTED);
     vol_scale.set_draw_value(false);
@@ -315,16 +390,20 @@ fn build_volume_controls(
     let volume_debounce_source = Rc::new(RefCell::new(None));
 
     let vol_signal_id = {
+        let scope = scope.clone();
         let nav = nav.clone();
         let input_id = input_id.to_string();
-        let vol_scale_for_update = vol_scale.clone();
-        let db_label = db_label.clone();
+        let db_label = db_label.downgrade();
         let debouncer = volume_debouncer.clone();
         let debounce_source = volume_debounce_source.clone();
         vol_scale.connect_value_changed(move |scale| {
+            let Some(db_label) = db_label.upgrade() else {
+                return;
+            };
             let volume_mul = AudioService::volume_db_to_mul(scale.value());
             let context = VolumeChangeContext {
-                vol_scale: &vol_scale_for_update,
+                scope: &scope,
+                vol_scale: scale,
                 db_label: &db_label,
                 vol_signal_id: None,
                 debouncer: &debouncer,
@@ -341,6 +420,7 @@ fn build_volume_controls(
     };
 
     VolumeControls {
+        scope,
         scale: vol_scale,
         db_label,
         debouncer: volume_debouncer,
@@ -367,6 +447,7 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
 
     let controls = build_volume_controls(input, &input_id, &nav);
     let VolumeControls {
+        scope: _,
         scale: vol_scale,
         db_label,
         debouncer: volume_debouncer,
@@ -453,6 +534,68 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         volume_debounce_source,
         mute_signal_id,
         vol_signal_id,
+        observed_volume: Cell::new((
+            AudioService::sanitize_volume_mul(input.volume_mul),
+            AudioService::sanitize_volume_db(input.volume_db),
+        )),
+    }
+}
+
+/// Compact Live controls reuse the scoped mute/fader dispatch and debounce path.
+pub(crate) fn build_compact(
+    input: &AudioInput,
+    nav: NavigationContext,
+    expanded: bool,
+) -> AudioCardHandle {
+    let (mute_btn, mute_signal_id) = build_mute_button(&input.id, input.muted, &nav);
+    let controls = build_volume_controls(input, &input.id, &nav);
+    controls.scale.set_orientation(Orientation::Horizontal);
+    controls.scale.set_inverted(false);
+    controls.scale.set_height_request(-1);
+    controls.scale.set_width_request(110);
+    controls.scale.set_hexpand(true);
+    let root = GtkBox::new(Orientation::Vertical, 4);
+    root.add_css_class("live-audio-card");
+    root.set_width_request(180);
+    let header = GtkBox::new(Orientation::Horizontal, 6);
+    header.append(&build_name_label(input));
+    let meter = volume_meter::build_horizontal(&input.id, nav.clone());
+    header.append(&meter.root);
+    header.append(&mute_btn);
+    root.append(&header);
+    let gain = GtkBox::new(Orientation::Horizontal, 6);
+    gain.append(&controls.scale);
+    gain.append(&controls.db_label);
+    root.append(&gain);
+    let detail = GtkBox::new(Orientation::Horizontal, 6);
+    detail.set_widget_name("live-audio-detail");
+    detail.append(&build_fine_controls(input, &controls, &nav));
+    detail.set_visible(expanded);
+    root.append(&detail);
+    AudioCardHandle {
+        root,
+        input_id: input.id.clone(),
+        mute_btn,
+        mute_signal_id,
+        vol_scale: controls.scale,
+        db_label: controls.db_label,
+        volume_debouncer: controls.debouncer,
+        volume_debounce_source: controls.debounce_source,
+        vol_signal_id: controls.signal_id,
+        observed_volume: Cell::new((
+            AudioService::sanitize_volume_mul(input.volume_mul),
+            AudioService::sanitize_volume_db(input.volume_db),
+        )),
+    }
+}
+
+pub(crate) fn set_compact_expanded(root: &gtk4::Widget, expanded: bool) {
+    let mut child = root.first_child();
+    while let Some(widget) = child {
+        if widget.widget_name() == "live-audio-detail" {
+            widget.set_visible(expanded);
+        }
+        child = widget.next_sibling();
     }
 }
 
@@ -601,6 +744,7 @@ fn connect_volume_action(
         let controls = controls.clone();
         move |_| {
             let context = VolumeChangeContext {
+                scope: &controls.scope,
                 vol_scale: &controls.scale,
                 db_label: &controls.db_label,
                 vol_signal_id: Some(controls.signal_id.as_ref()),
@@ -636,6 +780,9 @@ fn apply_volume_change(
     dispatch: VolumeDispatch,
     context: VolumeChangeContext<'_>,
 ) {
+    if !context.scope.is_current(nav) {
+        return;
+    }
     let volume_mul = AudioService::sanitize_volume_mul(volume_mul);
     update_visible_volume(
         context.vol_scale,
@@ -651,6 +798,7 @@ fn apply_volume_change(
                 source_id.remove();
             }
 
+            let scope = context.scope.clone();
             let nav = nav.clone();
             let input_id = input_id.to_string();
             let debouncer = context.debouncer.clone();
@@ -658,11 +806,11 @@ fn apply_volume_change(
             let debounce_source_for_timeout = debounce_source.clone();
             let source_id = timeout_add_local_once(VOLUME_SLIDER_DEBOUNCE, move || {
                 debounce_source_for_timeout.borrow_mut().take();
+                if !scope.is_current(&nav) {
+                    return;
+                }
                 if let Some(volume_mul) = debouncer.borrow_mut().take_due() {
-                    nav.dispatch(AppCommand::SetInputVolume {
-                        input: input_id,
-                        volume_mul,
-                    });
+                    dispatch_volume(&nav, &scope, &input_id, volume_mul);
                 }
             });
             *debounce_source.borrow_mut() = Some(source_id);
@@ -672,12 +820,24 @@ fn apply_volume_change(
                 source_id.remove();
             }
             context.debouncer.borrow_mut().mark_sent(volume_mul);
-            nav.dispatch(AppCommand::SetInputVolume {
-                input: input_id.to_string(),
-                volume_mul,
-            });
+            dispatch_volume(nav, context.scope, input_id, volume_mul);
         }
     }
+}
+
+fn dispatch_volume(
+    nav: &NavigationContext,
+    scope: &AudioTargetScope,
+    input_id: &str,
+    volume_mul: f64,
+) {
+    nav.dispatch(AppCommand::SetInputVolume {
+        scope: scope.scope.clone(),
+        input: input_id.to_string(),
+        volume_mul,
+    });
+    #[cfg(test)]
+    tests::observe_gain_dispatch(&scope.scope, input_id, volume_mul);
 }
 
 fn update_visible_volume(
@@ -700,7 +860,218 @@ fn update_visible_volume(
 
 #[cfg(test)]
 mod tests {
-    use super::{OBS_FADER_INVERTED, OBS_FADER_MARKS_DB};
+    use super::{AudioTargetScope, OBS_FADER_INVERTED, OBS_FADER_MARKS_DB};
+    use crate::domain::workflow::ScopeBinding;
+
+    type GainDispatch = (ScopeBinding, String, f64);
+
+    thread_local! {
+        static GAIN_DISPATCHES: std::cell::RefCell<Option<Vec<GainDispatch>>> = const {
+            std::cell::RefCell::new(None)
+        };
+    }
+
+    // Observe calls at the actual NavigationContext dispatch boundary, not a
+    // cloned debouncer. No controller/OBS connection is replaced by this hook.
+    pub(super) fn observe_gain_dispatch(scope: &ScopeBinding, input: &str, gain: f64) {
+        GAIN_DISPATCHES.with_borrow_mut(|dispatches| {
+            if let Some(dispatches) = dispatches {
+                dispatches.push((scope.clone(), input.into(), gain));
+            }
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a native GTK display"]
+    fn native_multiple_outstanding_same_input_echoes_preserve_dispatched_gain() {
+        crate::ui::test_support::native_test(
+            "ui::widgets::audio_card::tests::native_multiple_outstanding_same_input_echoes_preserve_dispatched_gain",
+            || {
+                use super::*;
+                use crate::ui::test_support::{navigation, pump};
+                use std::time::Duration;
+
+                fn minus_button(widget: &gtk4::Widget) -> Option<Button> {
+                    if let Some(button) = widget.downcast_ref::<Button>() {
+                        if button.label().as_deref() == Some("-") {
+                            return Some(button.clone());
+                        }
+                    }
+                    let mut child = widget.first_child();
+                    while let Some(widget) = child {
+                        if let Some(button) = minus_button(&widget) {
+                            return Some(button);
+                        }
+                        child = widget.next_sibling();
+                    }
+                    None
+                }
+
+                let (nav, _stack, _runtime, _events) = navigation();
+                {
+                    let mut state = nav.state.borrow_mut();
+                    state.obs_status = ObsStatus::Connected { obs_version: "fixture".into() };
+                    state.scene_collections.current = Some("Fixture".into());
+                }
+                let input = AudioInput::new("Mic".into(), false, 1.0, 0.0);
+                for compact in [false, true] {
+                    for immediate_b in [false, true] {
+                        for reverse_echoes in [false, true] {
+                            GAIN_DISPATCHES.with_borrow_mut(|log| *log = Some(Vec::new()));
+                            let scope = nav.state.borrow().workflow_scope();
+                            let card = if compact {
+                                build_compact(&input, nav.clone(), true)
+                            } else {
+                                build(&input, nav.clone())
+                            };
+                            let a = AudioService::volume_db_to_mul(-6.0);
+                            card.vol_scale.set_value(-6.0);
+                            pump(VOLUME_SLIDER_DEBOUNCE + Duration::from_millis(30));
+                            let b_db = if immediate_b {
+                                minus_button(card.root.upcast_ref()).unwrap().emit_clicked();
+                                -7.0
+                            } else {
+                                card.vol_scale.set_value(-9.0);
+                                pump(VOLUME_SLIDER_DEBOUNCE + Duration::from_millis(30));
+                                -9.0
+                            };
+                            let b = AudioService::volume_db_to_mul(b_db);
+                            let assert_dispatched = |gains: &[f64]| {
+                                GAIN_DISPATCHES.with_borrow(|log| {
+                                    let log = log.as_ref().unwrap();
+                                    assert_eq!(log.len(), gains.len(), "unexpected volume dispatch count");
+                                    for ((sent_scope, input, gain), expected) in log.iter().zip(gains) {
+                                        assert_eq!(sent_scope, &scope);
+                                        assert_eq!(input, "Mic");
+                                        assert!((gain - expected).abs() < 1e-12, "wrong dispatched gain: {gain} != {expected}");
+                                    }
+                                });
+                            };
+                            assert_dispatched(&[a, b]);
+
+                            card.vol_scale.set_value(-12.0);
+                            for echo in if reverse_echoes { [b, a] } else { [a, b] } {
+                                let echo = f64::from(echo as f32);
+                                card.update_volume(echo, AudioService::volume_mul_to_db(echo));
+                                assert_eq!(card.vol_scale.value(), -12.0, "own echo moved the newer same-input fader");
+                                assert_eq!(card.db_label.text(), "-12.0 dB");
+                                assert!(card.volume_debounce_source.borrow().is_some(), "own echo cancelled C's timer");
+                            }
+                            pump(VOLUME_SLIDER_DEBOUNCE + Duration::from_millis(30));
+                            let c = AudioService::volume_db_to_mul(-12.0);
+                            assert_dispatched(&[a, b, c]);
+
+                            // Unmatched actual external observations still win.
+                            card.vol_scale.set_value(-15.0);
+                            card.update_volume(AudioService::volume_db_to_mul(-3.0), -3.0);
+                            assert!((card.vol_scale.value() + 3.0).abs() < 0.0001);
+                            assert!(card.volume_debounce_source.borrow().is_none());
+                            pump(VOLUME_SLIDER_DEBOUNCE + Duration::from_millis(30));
+                            assert_dispatched(&[a, b, c]);
+
+                            // Scope invalidation must not dispatch even with retained sends.
+                            card.vol_scale.set_value(-18.0);
+                            nav.state.borrow_mut().workspace.epoch += 1;
+                            pump(VOLUME_SLIDER_DEBOUNCE + Duration::from_millis(30));
+                            assert!(card.volume_debounce_source.borrow().is_none());
+                            assert_dispatched(&[a, b, c]);
+                            GAIN_DISPATCHES.with_borrow_mut(|log| *log = None);
+                        }
+                    }
+                }
+            },
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a native GTK display"]
+    fn native_same_input_delayed_echo_preserves_pending_gain_and_timer() {
+        crate::ui::test_support::native_test(
+            "ui::widgets::audio_card::tests::native_same_input_delayed_echo_preserves_pending_gain_and_timer",
+            || {
+                use super::*;
+                use crate::ui::test_support::{navigation, pump};
+                use std::time::Duration;
+
+                let (nav, _stack, _runtime, _events) = navigation();
+                {
+                    let mut state = nav.state.borrow_mut();
+                    state.obs_status = ObsStatus::Connected { obs_version: "fixture".into() };
+                    state.scene_collections.current = Some("Fixture".into());
+                }
+                let input = AudioInput::new("Mic".into(), false, 1.0, 0.0);
+                for compact in [false, true] {
+                    let card = if compact {
+                        build_compact(&input, nav.clone(), true)
+                    } else {
+                        build(&input, nav.clone())
+                    };
+                    card.vol_scale.set_value(-6.0);
+                    pump(VOLUME_SLIDER_DEBOUNCE + Duration::from_millis(30));
+                    assert!(card.volume_debounce_source.borrow().is_none());
+                    card.vol_scale.set_value(-9.0);
+                    let sent = f64::from(AudioService::volume_db_to_mul(-6.0) as f32);
+                    card.update_volume(sent, AudioService::volume_mul_to_db(sent));
+                    assert_eq!(card.vol_scale.value(), -9.0, "older same-input echo moved the fader");
+                    assert_eq!(card.db_label.text(), "-9.0 dB");
+                    assert!(card.volume_debounce_source.borrow().is_some(), "older echo cancelled the newer timer");
+                    pump(VOLUME_SLIDER_DEBOUNCE + Duration::from_millis(30));
+                    assert!(card.volume_debounce_source.borrow().is_none());
+                    let mut sent_state = card.volume_debouncer.borrow().clone();
+                    sent_state.queue(AudioService::volume_db_to_mul(-9.0));
+                    assert_eq!(sent_state.take_due(), None, "newer gain was not sent");
+
+                    card.vol_scale.set_value(-12.0);
+                    let external = AudioService::volume_db_to_mul(-3.0);
+                    card.update_volume(external, -3.0);
+                    assert!((card.vol_scale.value() + 3.0).abs() < 0.0001);
+                    assert!(card.volume_debounce_source.borrow().is_none());
+                    assert_eq!(card.volume_debouncer.borrow_mut().take_due(), None);
+
+                    card.vol_scale.set_value(-15.0);
+                    nav.state.borrow_mut().workspace.epoch += 1;
+                    pump(VOLUME_SLIDER_DEBOUNCE + Duration::from_millis(30));
+                    assert!(card.volume_debounce_source.borrow().is_none());
+                    assert_eq!(card.volume_debouncer.borrow_mut().take_due(), Some(AudioService::volume_db_to_mul(-15.0)), "stale scope consumed a send");
+                    let root = card.root.downgrade();
+                    drop(card);
+                    pump(Duration::from_millis(10));
+                    assert!(root.upgrade().is_none());
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn audio_callbacks_reject_another_session_collection_and_endpoint() {
+        let scope = ScopeBinding {
+            endpoint: "obs:4455".into(),
+            collection: "Show".into(),
+        };
+        let binding = AudioTargetScope {
+            epoch: 3,
+            scope: scope.clone(),
+        };
+        assert!(binding.accepts(3, &scope, true));
+        assert!(!binding.accepts(4, &scope, true));
+        assert!(!binding.accepts(3, &scope, false));
+        assert!(!binding.accepts(
+            3,
+            &ScopeBinding {
+                endpoint: "other:4455".into(),
+                ..scope.clone()
+            },
+            true
+        ));
+        assert!(!binding.accepts(
+            3,
+            &ScopeBinding {
+                collection: "Other".into(),
+                ..scope
+            },
+            true
+        ));
+    }
 
     #[test]
     fn obs_fader_marks_start_at_unity_and_descend() {

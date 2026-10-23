@@ -1,30 +1,9 @@
-//! Application controller — owns the async OBS session and routes commands.
+//! Application controller — routes commands into connection-owned tasks.
 //!
-//! Lives on the GTK main thread inside an `Rc<RefCell<AppController>>`.
-//! Spawns tokio tasks for all async OBS work; results come back through the
-//! `std::sync::mpsc` event channel and are processed by the GTK polling timer
-//! in `ui::window`.
-//!
-//! ## Client lifecycle
-//!
-//! `ObsClient::connect` is async so the client is built inside a tokio task.
-//! We share it back to the GTK-side controller via `Arc<Mutex<Option<ObsClient>>>`:
-//!
-//! ```text
-//! connect() called on GTK thread
-//!   → clears client_slot
-//!   → spawns tokio session task
-//!       → ObsClient::connect().await
-//!       → *client_slot.lock() = Some(client.clone())   ← task writes once
-//!       → run_event_loop(...)                           ← keeps running
-//!       → *client_slot.lock() = None                   ← task clears on exit
-//! switch_scene() / set_mute() etc. on GTK thread
-//!   → client_slot.lock() → clone ObsClient             ← GTK reads
-//!   → spawns new tokio task with cloned client
-//! ```
-//!
-//! `std::sync::Mutex` (not tokio) is intentional: the lock is never held
-//! across an `.await` point, so a synchronous mutex is both correct and cheaper.
+//! GTK owns this controller; Tokio owns protocol work. The shared client slot
+//! is installed and cleared only by its session generation. SessionScope owns
+//! command cancellation, and EventSender fences both session and collection
+//! identity before GTK applies a publication. No mutex guard crosses an await.
 
 #[cfg(test)]
 use futures_util::future::BoxFuture;
@@ -39,6 +18,8 @@ use tokio::runtime::Handle;
 use crate::controller::command::AppCommand;
 use crate::controller::dependencies::ControllerDependencies;
 use crate::controller::event::AppEvent;
+use crate::controller::event_sender::EventSender;
+use crate::controller::lifecycle::SessionScope;
 use crate::controller::output_controller::{refresh_output_statuses, OutputController};
 #[cfg(test)]
 use crate::controller::output_controller::{FakeOutputCommandClient, OutputCommandClient};
@@ -55,8 +36,20 @@ use crate::infra::error::AppError;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::obs::client::ObsClient;
 
+#[derive(Default)]
+struct RefreshQueue {
+    running: bool,
+    pending: bool,
+}
+
+#[derive(Default)]
+struct MixerQueue {
+    running: bool,
+    pending: Option<(crate::controller::state::MixerAudioRequest, EventSender)>,
+}
+
 pub struct AppController {
-    event_tx: SyncSender<AppEvent>,
+    event_tx: EventSender,
     runtime: Handle,
     dependencies: ControllerDependencies,
     /// Shared slot written by the session task once connected, read by
@@ -65,6 +58,11 @@ pub struct AppController {
     outputs: OutputController,
     session: SessionController,
     bitrate_sample: BitrateSample,
+    workspace: super::workspace::WorkspaceController,
+    thumbnails: super::thumbnails::ThumbnailController,
+    mixer_queue: Arc<Mutex<MixerQueue>>,
+    refresh_queue: Arc<Mutex<RefreshQueue>>,
+    refresh_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl AppController {
@@ -79,34 +77,79 @@ impl AppController {
     ) -> Self {
         let client_slot = Arc::new(Mutex::new(None));
         let bitrate_sample = Arc::new(Mutex::new(None));
-        let outputs =
+        let scope = SessionScope::initial(client_slot.clone());
+        let mut outputs =
             OutputController::new(runtime.clone(), event_tx.clone(), Arc::clone(&client_slot));
+        outputs.set_scope(scope.clone());
         let session = SessionController::new(
             runtime.clone(),
-            event_tx.clone(),
+            EventSender::new(event_tx.clone()),
             dependencies.clone(),
-            Arc::clone(&client_slot),
+            scope.clone(),
             Arc::clone(&bitrate_sample),
         );
+        let mut workspace = super::workspace::WorkspaceController::new(
+            runtime.clone(),
+            event_tx.clone(),
+            Arc::clone(&client_slot),
+        );
+        workspace.set_scope(scope);
+        let thumbnails = super::thumbnails::ThumbnailController::new(
+            runtime.clone(),
+            event_tx.clone(),
+            client_slot.clone(),
+        );
         Self {
-            event_tx,
+            thumbnails,
+            mixer_queue: Arc::new(Mutex::new(MixerQueue::default())),
+            refresh_queue: Arc::new(Mutex::new(RefreshQueue::default())),
+            refresh_task: None,
+            event_tx: EventSender::new(event_tx),
             runtime,
             dependencies,
             client_slot,
             outputs,
             session,
             bitrate_sample,
+            workspace,
         }
     }
 
     pub fn handle(&mut self, cmd: AppCommand) {
         match cmd {
-            AppCommand::Connect => self.session.connect(),
-            AppCommand::Disconnect => self.session.disconnect(&self.outputs),
+            AppCommand::CaptureThumbnail(request) => self.thumbnails.request(request),
+            AppCommand::CancelThumbnails => self.thumbnails.cancel(),
+            AppCommand::ReadWorkspace(request) => self.workspace.request(request, None, None),
+            AppCommand::WorkspaceAction {
+                request,
+                action,
+                expected_text,
+            } => self.workspace.request(request, Some(action), expected_text),
+            AppCommand::CancelWorkspace => self.workspace.cancel(),
+            AppCommand::RefreshWorkspaceMedia(request) => self.workspace.media(request),
+            AppCommand::Connect => {
+                self.thumbnails.cancel();
+                self.workspace.cancel();
+                if let Some(client) = self.connected_client() {
+                    client.retire();
+                }
+                self.session.connect();
+                self.sync_session_scope();
+            }
+            AppCommand::Disconnect => {
+                self.thumbnails.cancel();
+                self.workspace.cancel();
+                self.session.disconnect(&self.outputs);
+                self.sync_session_scope();
+            }
 
             AppCommand::SwitchPrimaryScene(id) => {
                 self.spawn_with_client(|c, tx| async move {
-                    report_err(c.set_current_program_scene(&id).await, &tx);
+                    let action = crate::domain::control::ControlAction::SetProgram(id);
+                    let result = c
+                        .execute_control_if(&action, &|| tx.accepts_current_scope())
+                        .await;
+                    report_err(result, &tx).await;
                     // OBS emits CurrentProgramSceneChanged via the event loop;
                     // no manual refresh needed.
                 });
@@ -120,24 +163,44 @@ impl AppController {
             }
 
             AppCommand::SetCurrentSceneCollection(name) => {
+                self.thumbnails.cancel();
+                self.workspace.cancel();
                 let dependencies = self.dependencies.clone();
                 self.spawn_with_client(|c, tx| async move {
-                    let audio_filter = load_config_blocking(dependencies).await.live.audio_inputs;
                     let result = c.set_current_scene_collection(&name).await;
+                    let audio_filter = load_config_blocking(dependencies).await.live.audio_inputs;
                     refresh_after_collection_change(result, &c, &tx, &audio_filter).await;
                 });
             }
 
-            AppCommand::SetInputMute { input, muted } => {
-                self.spawn_with_client(|c, tx| async move {
-                    report_err(c.set_input_mute(&input, muted).await, &tx);
-                });
+            AppCommand::SetInputMute {
+                scope,
+                input,
+                muted,
+            } => {
+                self.workspace.audio(
+                    scope,
+                    crate::domain::control::ControlAction::SetInputMuted { input, muted },
+                );
             }
 
-            AppCommand::SetInputVolume { input, volume_mul } => {
-                self.spawn_with_client(|c, tx| async move {
-                    report_err(c.set_input_volume(&input, volume_mul).await, &tx);
-                });
+            AppCommand::SetInputVolume {
+                scope,
+                input,
+                volume_mul,
+            } => {
+                let db = if volume_mul > 0.0 {
+                    20.0 * volume_mul.log10()
+                } else {
+                    -100.0
+                };
+                self.workspace.audio(
+                    scope,
+                    crate::domain::control::ControlAction::SetInputVolumeDb {
+                        input,
+                        db: db.clamp(-100.0, 0.0),
+                    },
+                );
             }
             AppCommand::RefreshMixerSceneAudio(scene) => self.refresh_mixer_scene_audio(scene),
 
@@ -154,14 +217,71 @@ impl AppController {
 
     // ── Private ───────────────────────────────────────────────────────────────
 
-    fn refresh_data(&self) {
+    fn refresh_data(&mut self) {
+        {
+            let mut queue = self.refresh_queue.lock().expect("refresh queue");
+            queue.pending = true;
+            if queue.running {
+                return;
+            }
+            queue.running = true;
+        }
+        let queue = self.refresh_queue.clone();
         let dependencies = self.dependencies.clone();
-        self.spawn_with_client(|c, tx| async move {
-            let config = load_config_blocking(dependencies).await;
-            refresh_profile_and_collection_lists(&c, &tx).await;
-            refresh_output_statuses(&c, &tx).await;
-            refresh_live_data(&c, &tx, &config.live.audio_inputs).await;
-        });
+        let client = self.connected_client();
+        let scope = self.session.scope();
+        let tx = self.event_tx.scoped(&scope);
+        // This is one controller-owned worker, not optional command admission.
+        // Even a disconnected/retired scope must finish Doctor's loading state.
+        let worker_scope = scope.clone();
+        let worker = async move {
+            let scope = worker_scope;
+            loop {
+                {
+                    let mut queue = queue.lock().expect("refresh queue");
+                    if !std::mem::take(&mut queue.pending) {
+                        queue.running = false;
+                        return;
+                    }
+                }
+                let Some(client) = client.as_ref().filter(|_| scope.is_active()) else {
+                    let _ = tx
+                        .send(AppEvent::GraphRefreshRejected(AppError::Connection(fl!(
+                            LANGUAGE_LOADER,
+                            "controller-not-connected"
+                        ))))
+                        .await;
+                    queue.lock().expect("refresh queue").running = false;
+                    return;
+                };
+                let scan = async {
+                    let config = load_config_blocking(dependencies.clone()).await;
+                    let tx = tx.fresh();
+                    refresh_profile_and_collection_lists(client, &tx).await;
+                    refresh_output_statuses(client, &tx).await;
+                    refresh_live_data(client, &tx, &config.live.audio_inputs).await;
+                };
+                tokio::select! {
+                    biased;
+                    () = scope.cancelled() => {
+                        let _ = tx.send(AppEvent::GraphRefreshRejected(AppError::Connection(fl!(LANGUAGE_LOADER, "controller-not-connected")))).await;
+                        let mut queue = queue.lock().expect("refresh queue");
+                        queue.running = false;
+                        queue.pending = false;
+                        return;
+                    },
+                    () = scan => {}
+                }
+            }
+        };
+        self.refresh_task = if scope.is_active() {
+            // A reserved single worker is retained by the session until after
+            // disconnect drainage. Scope retirement then cancels and joins it.
+            scope.spawn_reserved(&self.runtime, worker)
+        } else {
+            // No request can be admitted here; still finish Doctor's loading.
+            Some(self.runtime.spawn(worker))
+        };
     }
 
     fn refresh_stats(&self) {
@@ -171,39 +291,101 @@ impl AppController {
         });
     }
 
-    fn refresh_mixer_scene_audio(&self, scene: String) {
-        let dependencies = self.dependencies.clone();
-        let tx = self.event_tx.clone();
-        let _ = tx.send(AppEvent::MixerAudioInputsLoading {
-            scene: scene.clone(),
-        });
-
-        let Some(client) = self.connected_client() else {
-            tracing::warn!("mixer scene audio refresh ignored — not connected to OBS");
-            let _ = tx.send(AppEvent::MixerAudioInputsFailed {
-                scene,
-                message: fl!(LANGUAGE_LOADER, "controller-not-connected"),
-            });
-            return;
-        };
-
-        self.runtime.spawn(async move {
-            let config = load_config_blocking(dependencies).await;
-            match client
-                .get_scene_audio_inputs(&scene, &config.live.audio_inputs)
-                .await
-            {
-                Ok(inputs) => {
-                    let _ = tx.send(AppEvent::MixerAudioInputsUpdated { scene, inputs });
-                }
-                Err(e) => {
-                    let _ = tx.send(AppEvent::MixerAudioInputsFailed {
-                        scene,
-                        message: e.to_string(),
-                    });
-                }
+    fn refresh_mixer_scene_audio(&self, request: crate::controller::state::MixerAudioRequest) {
+        let tx = self.event_tx.scoped(&self.session.scope());
+        {
+            let mut queued = self.mixer_queue.lock().expect("mixer queue");
+            queued.pending = Some((request, tx));
+            if queued.running {
+                return;
             }
-        });
+            queued.running = true;
+        }
+        let dependencies = self.dependencies.clone();
+        let client = self.connected_client();
+        let queued = self.mixer_queue.clone();
+        self.session
+            .scope()
+            .spawn_reserved(&self.runtime, async move {
+                loop {
+                    let job = {
+                        let mut queued = queued.lock().expect("mixer queue");
+                        let job = queued.pending.take();
+                        if job.is_none() {
+                            queued.running = false;
+                        }
+                        job
+                    };
+                    let Some((request, tx)) = job else {
+                        break;
+                    };
+                    let Some(client) = &client else {
+                        let _ = tx
+                            .send(AppEvent::MixerAudioInputsFailed {
+                                request,
+                                message: fl!(LANGUAGE_LOADER, "controller-not-connected"),
+                            })
+                            .await;
+                        continue;
+                    };
+                    let config = load_config_blocking(dependencies.clone()).await;
+                    let revision = client.next_observation();
+                    match client
+                        .get_scene_audio_inputs(request.scene(), &config.live.audio_inputs)
+                        .await
+                    {
+                        Ok(inputs) => {
+                            let _ = tx
+                                .send(AppEvent::Observation {
+                                    revision,
+                                    event: Box::new(AppEvent::MixerAudioInputsUpdated {
+                                        request,
+                                        inputs,
+                                    }),
+                                })
+                                .await;
+                        }
+                        Err(error) => {
+                            let _ = tx
+                                .send(AppEvent::MixerAudioInputsFailed {
+                                    request,
+                                    message: error.user_message(),
+                                })
+                                .await;
+                        }
+                    }
+                }
+            });
+    }
+
+    fn sync_session_scope(&mut self) {
+        // Active refresh workers belong to their SessionScope. Disconnect must
+        // retain admitted reads until drainage, not abort them while rebinding
+        // controller queues. Connect already retires the old scope first.
+        self.refresh_task.take();
+        self.refresh_queue = Arc::new(Mutex::new(RefreshQueue::default()));
+        self.mixer_queue = Arc::new(Mutex::new(MixerQueue::default()));
+        let scope = self.session.scope();
+        self.outputs.set_scope(scope.clone());
+        self.workspace.set_scope(scope);
+    }
+
+    pub(crate) fn accepts_scope(&self, generation: u64, collection: Option<u64>) -> bool {
+        let scope = self.session.scope();
+        scope.owns_generation(generation)
+            && collection.is_none_or(|epoch| scope.is_active() && scope.collection() == epoch)
+    }
+
+    pub(crate) fn shutdown(&mut self) -> tokio::task::JoinHandle<()> {
+        if let Some(task) = self.refresh_task.take() {
+            task.abort();
+        }
+        self.thumbnails.cancel();
+        self.workspace.cancel();
+        if let Some(client) = self.connected_client() {
+            client.retire();
+        }
+        self.session.shutdown()
     }
 
     /// Clone the current client if connected, then call `f` with it.
@@ -223,12 +405,13 @@ impl AppController {
     /// are dropped with a warning.
     fn spawn_with_client<F, Fut>(&self, f: F)
     where
-        F: FnOnce(ObsClient, SyncSender<AppEvent>) -> Fut,
+        F: FnOnce(ObsClient, EventSender) -> Fut,
         Fut: Future<Output = ()> + Send + 'static,
     {
         match self.connected_client() {
             Some(client) => {
-                self.runtime.spawn(f(client, self.event_tx.clone()));
+                let scope = self.session.scope();
+                scope.spawn(&self.runtime, f(client, self.event_tx.scoped(&scope)));
             }
             None => tracing::warn!("command ignored — not connected to OBS"),
         }
@@ -240,14 +423,27 @@ impl AppController {
     }
 }
 
+impl Drop for AppController {
+    fn drop(&mut self) {
+        if let Some(task) = self.refresh_task.take() {
+            task.abort();
+        }
+    }
+}
+
 /// Forward a failed OBS call to the UI as an error event.
 ///
 /// Generic over the success type on purpose: some of these calls return a
 /// value the caller does not need (`toggle_input_mute` reports the resulting
 /// mute state), and a `Result<(), _>` signature would not accept them.
-fn report_err<T>(result: Result<T, AppError>, tx: &SyncSender<AppEvent>) {
+async fn report_err<T>(result: Result<T, AppError>, tx: &EventSender) {
     if let Err(error) = result {
-        let _ = tx.send(AppEvent::Error(error));
+        let _ = tx
+            .send(AppEvent::CommandFailed {
+                operation: "scene",
+                error,
+            })
+            .await;
     }
 }
 
@@ -261,6 +457,10 @@ async fn load_config_blocking(
             Default::default()
         })
 }
+
+#[cfg(test)]
+#[path = "final_regression_tests.rs"]
+mod final_regression_tests;
 
 #[cfg(test)]
 mod tests {
@@ -580,7 +780,9 @@ mod tests {
 
         controller.handle(AppCommand::StartStreaming);
 
-        let event = rx.try_recv().expect("stream failure event");
+        let event = rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("stream failure event");
         let AppEvent::StreamCommandFailed(failure) = event else {
             panic!("expected stream command failure event");
         };
@@ -595,7 +797,9 @@ mod tests {
 
         controller.handle(AppCommand::StartRecording);
 
-        let event = rx.try_recv().expect("record failure event");
+        let event = rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("record failure event");
         let AppEvent::RecordCommandFailed(failure) = event else {
             panic!("expected record command failure event");
         };
@@ -615,7 +819,9 @@ mod tests {
         let event = rx
             .recv_timeout(Duration::from_secs(2))
             .expect("disconnected event");
-        assert!(matches!(event, AppEvent::Disconnected));
+        assert!(
+            matches!(event, AppEvent::SessionEvent { event, .. } if matches!(*event, AppEvent::Disconnected))
+        );
         assert_eq!(fake.stream_status_call_count(), 1);
         assert_eq!(fake.record_status_call_count(), 1);
         assert_eq!(fake.stream_commands(), vec![false]);

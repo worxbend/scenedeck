@@ -5,8 +5,11 @@
 //! between "the last setting did not stick" and "the file no longer parses and
 //! every setting is gone".
 
-use std::fs::{create_dir_all, remove_file, rename, File, OpenOptions};
+#[cfg(test)]
+use std::fs::create_dir_all;
+use std::fs::{remove_file, rename, DirBuilder, File, OpenOptions};
 use std::io::{self, Write};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -29,7 +32,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// empty file — precisely the failure this is here to prevent.
 pub(crate) fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
     if let Some(dir) = path.parent() {
-        create_dir_all(dir)?;
+        DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
     }
 
     let (temp, mut file) = create_temp_file(path)?;
@@ -56,7 +59,11 @@ pub(crate) fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
     // this point, and a failed directory sync is no reason to tell the caller
     // the write did not happen.
     if let Some(dir) = path.parent() {
-        if let Ok(dir_handle) = File::open(dir) {
+        if let Ok(dir_handle) = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NONBLOCK | libc::O_NOFOLLOW)
+            .open(dir)
+        {
             let _ = dir_handle.sync_all();
         }
     }
@@ -88,7 +95,12 @@ fn temp_path(path: &Path) -> std::path::PathBuf {
 fn create_temp_file(path: &Path) -> io::Result<(std::path::PathBuf, File)> {
     loop {
         let temp = temp_path(path);
-        match OpenOptions::new().write(true).create_new(true).open(&temp) {
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temp)
+        {
             Ok(file) => return Ok((temp, file)),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error),
@@ -113,6 +125,70 @@ mod tests {
         ));
         create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn atomic_files_and_new_directories_are_always_private() {
+        use std::os::unix::fs::PermissionsExt;
+        const CHILD: &str = "SCENEDECK_ATOMIC_MODE_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let status = std::process::Command::new("sh")
+                .args(["-c", "umask 000; exec \"$@\"", "scenedeck-mode-test"])
+                .arg(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "storage::atomic::tests::atomic_files_and_new_directories_are_always_private",
+                    "--test-threads=1",
+                ])
+                .env(CHILD, "1")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        let dir = temp_dir("private");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let path = dir.join("private.yaml");
+        for mode in [0o600, 0o640] {
+            std::fs::write(&path, b"old").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+            write(&path, b"new").unwrap();
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        let new = dir.join("created/settings.json");
+        write(&new, b"{}").unwrap();
+        assert_eq!(
+            std::fs::metadata(&new).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            std::fs::metadata(new.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o777,
+            "never chmod arbitrary export parents"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn failed_atomic_rename_keeps_original_and_cleans_temporary() {
+        let dir = temp_dir("failure");
+        let target = dir.join("target");
+        std::fs::create_dir(&target).unwrap();
+        assert!(write(&target, b"new").is_err());
+        assert!(target.is_dir());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

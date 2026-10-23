@@ -110,13 +110,29 @@ apps:
 parts:
   rust-deps:
     plugin: nil
-    build-snaps: [rustup]
     build-packages:
+      - ca-certificates
       - curl
     override-pull: |
-      # Match the channel pinned in rust-toolchain.toml instead of installing
-      # stable and having rustup fetch 1.97.0 on top of it at first use.
-      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile default --default-toolchain 1.97.0
+      set -eu
+      # Official immutable rustup 1.29.1 bootstrap, verified before execution.
+      # https://rust-lang.github.io/rustup/installation/other.html
+      case "${CRAFT_ARCH_BUILD_ON}" in
+        amd64)
+          host=x86_64-unknown-linux-gnu
+          checksum=dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71
+          ;;
+        arm64)
+          host=aarch64-unknown-linux-gnu
+          checksum=15f6e4ce9f583b929c996c91562bad6d4454f3281de858b02cdfdef615fac433
+          ;;
+        *) echo "unsupported build architecture" >&2; exit 1 ;;
+      esac
+      curl --proto '=https' --tlsv1.2 --fail --show-error --location --retry 3 \
+        "https://static.rust-lang.org/rustup/archive/1.29.1/${host}/rustup-init" -o rustup-init
+      printf '%s  rustup-init\n' "$checksum" | sha256sum --check --strict
+      chmod 755 rustup-init
+      ./rustup-init -y --profile minimal --default-toolchain 1.99.1 --no-modify-path
       . "$HOME/.cargo/env"
       ln -sf "$HOME/.cargo/bin/cargo" /usr/local/bin/cargo
       ln -sf "$HOME/.cargo/bin/rustc" /usr/local/bin/rustc
@@ -126,6 +142,7 @@ parts:
     plugin: rust
     source: .
     rust-channel: none
+    rust-cargo-parameters: [--locked, --all-features]
     after:
       - rust-deps
     build-packages:

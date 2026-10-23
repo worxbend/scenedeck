@@ -1,7 +1,4 @@
-/* OBS Studio's default dark look, read through libadwaita.
-   Surfaces come from OBS's Yami palette. The accent is OBS's selection blue,
-   darkened just enough that white text on it clears 4.5:1 — OBS's own #3a7ebf
-   reaches only 4.27:1, and this accent carries button and scope-tag labels. */
+/* obs: dark. Geometry and semantic states are owned by the base CSS. */
 @define-color scenedeck_accent #35729f;
 @define-color scenedeck_accent_fg #ffffff;
 @define-color scenedeck_fg #eff0f1;
@@ -14,22 +11,15 @@
 @define-color scenedeck_header #2b2e33;
 @define-color scenedeck_surface #232629;
 @define-color scenedeck_card #31363b;
+@define-color scenedeck_border #8391a3;
+@define-color scenedeck_program #ff9eac;
+@define-color scenedeck_program_fg #251017;
+@define-color scenedeck_preview #8cddb6;
+@define-color scenedeck_preview_fg #08281b;
+@define-color scenedeck_focus #a9cbff;
+@define-color scenedeck_image_fg #ffffff;
+@define-color scenedeck_image_scrim #111820;
+@define-color scenedeck_image_fallback #28323e;
+@define-color scenedeck_shadow #000000;
 
-.scene-card,
-.audio-card {
-  background-color: @scenedeck_card;
-}
-
-.scene-card-active {
-  outline-color: @scenedeck_accent;
-}
-
-/* OBS draws the scope tag as a solid blue plate with white text. */
-.audio-card-scope-bar {
-  background-color: @scenedeck_accent;
-}
-
-/* The mixer sits on the darkest surface OBS uses, so the meters stand out. */
-.audio-meter {
-  background-color: #1a1c1f;
-}
+.audio-meter { background-color: #1a1c1f; }

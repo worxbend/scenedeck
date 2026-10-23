@@ -9,7 +9,7 @@
 //! rebuild-per-update would churn the whole widget tree for numbers that mostly
 //! stay the same shape.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -71,13 +71,14 @@ struct StatsCards {
     cpu: Label,
     memory: Label,
     bitrate: Label,
+    disk: Label,
 }
 
 /// Slot the embedded page's refresh callback shares with its pop-out window.
 ///
-/// `None` while no pop-out is open. `PageRefreshers` in `ui/window.rs` calls
-/// through this alongside the embedded page's own refresh so a detached stats
-/// window stays live even while the sidebar shows a different page.
+/// `None` while no pop-out is open. The application event pump owns this slot
+/// independently of shell page handles; `PageRefreshers` calls it while the shell
+/// exists, and the pump calls it directly after shell removal.
 pub(crate) type PopoutSlot = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
 
 pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>, PopoutSlot) {
@@ -134,6 +135,8 @@ fn build_content(
 
     let (cards_widget, cards) = build_cards();
     page.append(&cards_widget);
+    let (activity, refresh_activity) = build_activity(nav, charts.all.clone());
+    page.append(&activity);
 
     let refresh: Rc<dyn Fn()> = Rc::new({
         let nav = nav.clone();
@@ -145,6 +148,7 @@ fn build_content(
                 chart.redraw();
             }
             update_cards(&cards, &nav.state.borrow());
+            refresh_activity();
         }
     });
 
@@ -219,14 +223,32 @@ fn open_popout(
         .and_then(|w| w.application())
     {
         window.set_application(Some(&app));
+        window.connect_notify_local(Some("application"), {
+            let popout_window = Rc::downgrade(popout_window);
+            let popout_slot = Rc::downgrade(popout_slot);
+            move |window, _| {
+                if window.application().is_none() {
+                    if let Some(slot) = popout_window.upgrade() {
+                        slot.borrow_mut().take();
+                    }
+                    if let Some(slot) = popout_slot.upgrade() {
+                        slot.borrow_mut().take();
+                    }
+                }
+            }
+        });
     }
 
     window.connect_close_request({
-        let popout_window = popout_window.clone();
-        let popout_slot = popout_slot.clone();
+        let popout_window = Rc::downgrade(popout_window);
+        let popout_slot = Rc::downgrade(popout_slot);
         move |_| {
-            *popout_window.borrow_mut() = None;
-            *popout_slot.borrow_mut() = None;
+            if let Some(popout_window) = popout_window.upgrade() {
+                *popout_window.borrow_mut() = None;
+            }
+            if let Some(popout_slot) = popout_slot.upgrade() {
+                *popout_slot.borrow_mut() = None;
+            }
             glib::Propagation::Proceed
         }
     });
@@ -320,7 +342,10 @@ fn build_gauges(nav: &NavigationContext) -> GaugeRow {
             read_sample(&state).map_or_else(
                 || empty_reading(fl!(LANGUAGE_LOADER, "stats-gauge-fps")),
                 |sample| GaugeReading {
-                    fraction: chart::clamp_fraction(sample.stats.active_fps, target),
+                    fraction: chart::clamp_fraction(
+                        sample.stats.active_fps,
+                        target.unwrap_or(FPS_BASELINE),
+                    ),
                     value: format!("{:.0}", sample.stats.active_fps),
                     caption: fl!(LANGUAGE_LOADER, "stats-gauge-fps"),
                     severity: fps_severity(sample.stats.active_fps, target),
@@ -339,7 +364,10 @@ fn build_gauges(nav: &NavigationContext) -> GaugeRow {
                 |sample| {
                     let value = sample.stats.average_frame_render_time_ms;
                     GaugeReading {
-                        fraction: chart::clamp_fraction(value, budget),
+                        fraction: chart::clamp_fraction(
+                            value,
+                            budget.unwrap_or(FRAME_TIME_BASELINE_MS),
+                        ),
                         value: format!("{value:.1}"),
                         caption: fl!(LANGUAGE_LOADER, "stats-gauge-frame-time"),
                         severity: frame_time_severity(value, budget),
@@ -410,7 +438,7 @@ fn empty_reading(caption: String) -> GaugeReading {
         fraction: 0.0,
         value: fl!(LANGUAGE_LOADER, "stats-value-placeholder"),
         caption,
-        severity: Severity::Good,
+        severity: Severity::Unknown,
     }
 }
 
@@ -427,8 +455,7 @@ fn build_charts(nav: &NavigationContext) -> ChartGrid {
         StatsMetric::Fps,
         fl!(LANGUAGE_LOADER, "stats-chart-fps"),
         ChartOptions::new(ChartKind::Area, FPS_BASELINE, |value| format!("{value:.0}"))
-            // Classified against the same observed target as the gauge, so a 30 FPS
-            // profile is not permanently drawn as failing.
+            // Chart scaling must not become a health target.
             .with_severity({
                 let nav = nav.clone();
                 move |value| fps_severity(value, fps_target(&nav.state.borrow()))
@@ -521,6 +548,9 @@ fn series_chart(
         .build();
     frame.add_css_class("stats-chart-frame");
 
+    chart
+        .widget()
+        .update_property(&[gtk4::accessible::Property::Label(&title)]);
     let label = Label::builder().label(title).xalign(0.0).build();
     label.add_css_class("stats-chart-title");
 
@@ -545,6 +575,7 @@ fn build_cards() -> (FlowBox, StatsCards) {
     let cpu = card(&grid, fl!(LANGUAGE_LOADER, "stats-card-cpu"));
     let memory = card(&grid, fl!(LANGUAGE_LOADER, "stats-card-memory"));
     let bitrate = card(&grid, fl!(LANGUAGE_LOADER, "stats-card-bitrate"));
+    let disk = card(&grid, fl!(LANGUAGE_LOADER, "stats-recording-disk"));
 
     (
         grid,
@@ -556,6 +587,7 @@ fn build_cards() -> (FlowBox, StatsCards) {
             cpu,
             memory,
             bitrate,
+            disk,
         },
     )
 }
@@ -601,6 +633,7 @@ fn update_cards(cards: &StatsCards, state: &AppState) {
             &cards.cpu,
             &cards.memory,
             &cards.bitrate,
+            &cards.disk,
         ] {
             label.set_text(&fl!(LANGUAGE_LOADER, "stats-value-placeholder"));
         }
@@ -640,6 +673,18 @@ fn update_cards(cards: &StatsCards, state: &AppState) {
         "stats-value-mb",
         value = format!("{:.0}", sample.stats.memory_usage_mb)
     ));
+    cards.disk.set_text(&match sample
+        .stats
+        .disk_space_mb
+        .filter(|value| value.is_finite() && *value >= 0.0)
+    {
+        Some(value) => fl!(
+            LANGUAGE_LOADER,
+            "stats-recording-disk-value",
+            value = format!("{value:.0}")
+        ),
+        None => fl!(LANGUAGE_LOADER, "stats-value-placeholder"),
+    });
     cards.bitrate.set_text(&match sample.bitrate_kbps {
         Some(kbps) => fl!(
             LANGUAGE_LOADER,
@@ -650,48 +695,173 @@ fn update_cards(cards: &StatsCards, state: &AppState) {
     });
 }
 
+/// Activity is bounded independently of the chart window. A retained activity
+/// entry can legitimately have no corresponding statistics sample.
+fn build_activity(nav: &NavigationContext, charts: Vec<Chart>) -> (GtkBox, Rc<dyn Fn()>) {
+    use crate::domain::workflow::{ActivityOrigin, ActivityRecord};
+    let section = GtkBox::new(Orientation::Vertical, 8);
+    let heading = Label::builder()
+        .label(fl!(LANGUAGE_LOADER, "stats-activity-title"))
+        .xalign(0.0)
+        .build();
+    heading.add_css_class("heading");
+    section.append(&heading);
+    let detail = Label::builder()
+        .label(fl!(LANGUAGE_LOADER, "stats-activity-detail"))
+        .xalign(0.0)
+        .wrap(true)
+        .build();
+    section.append(&detail);
+    let selected = Rc::new(Cell::new(None::<u64>));
+    let marker_status = Label::builder().xalign(0.0).wrap(true).build();
+    section.append(&marker_status);
+    let clear = Button::with_label(&fl!(LANGUAGE_LOADER, "stats-activity-clear-marker"));
+    clear.set_halign(Align::Start);
+    section.append(&clear);
+    {
+        let selected = selected.clone();
+        let charts = charts.clone();
+        let status = marker_status.clone();
+        clear.connect_clicked(move |_| {
+            selected.set(None);
+            for chart in &charts {
+                chart.set_marker(None);
+            }
+            status.set_label("");
+        });
+    }
+    let entries = GtkBox::new(Orientation::Vertical, 4);
+    section.append(&entries);
+    let cached = RefCell::new(None::<Vec<ActivityRecord>>);
+    let nav = nav.clone();
+    let refresh: Rc<dyn Fn()> = Rc::new(move || {
+        let state = nav.state.borrow();
+        let fraction = selected
+            .get()
+            .and_then(|timestamp| state.stats_history.event_fraction(timestamp));
+        for chart in &charts {
+            chart.set_marker(fraction);
+        }
+        if selected.get().is_some() {
+            marker_status.set_label(&if fraction.is_some() {
+                fl!(LANGUAGE_LOADER, "stats-activity-marker-visible")
+            } else {
+                fl!(LANGUAGE_LOADER, "stats-activity-marker-unavailable")
+            });
+        }
+        let records: Vec<_> = state
+            .workspace
+            .activity
+            .entries
+            .iter()
+            .rev()
+            .take(15)
+            .cloned()
+            .collect();
+        if cached.borrow().as_ref() == Some(&records) {
+            return;
+        }
+        crate::ui::clear_children(&entries);
+        if records.is_empty() {
+            entries.append(
+                &Label::builder()
+                    .label(fl!(LANGUAGE_LOADER, "stats-activity-empty"))
+                    .xalign(0.0)
+                    .build(),
+            );
+        }
+        for record in &records {
+            let origin = match record.origin {
+                ActivityOrigin::Requested => fl!(LANGUAGE_LOADER, "stats-activity-requested"),
+                ActivityOrigin::Observed => fl!(LANGUAGE_LOADER, "stats-activity-observed"),
+                ActivityOrigin::Failed => fl!(LANGUAGE_LOADER, "stats-activity-failed"),
+                ActivityOrigin::Connection => fl!(LANGUAGE_LOADER, "stats-activity-connection"),
+            };
+            let time = i64::try_from(record.timestamp_unix_ms / 1000)
+                .ok()
+                .and_then(|seconds| glib::DateTime::from_unix_local(seconds).ok())
+                .and_then(|date| date.format("%H:%M:%S").ok())
+                .map(|time| time.to_string())
+                .unwrap_or_else(|| fl!(LANGUAGE_LOADER, "stats-value-placeholder"));
+            let text = fl!(
+                LANGUAGE_LOADER,
+                "stats-activity-entry",
+                time = time,
+                origin = origin,
+                description = record.description.clone()
+            );
+            let button = Button::new();
+            button.set_child(Some(
+                &Label::builder().label(text).xalign(0.0).wrap(true).build(),
+            ));
+            button.add_css_class("flat");
+            let nav = nav.clone();
+            let selected = selected.clone();
+            let charts = charts.clone();
+            let status = marker_status.clone();
+            let timestamp = record.timestamp_unix_ms;
+            button.connect_clicked(move |_| {
+                selected.set(Some(timestamp));
+                let fraction = nav.state.borrow().stats_history.event_fraction(timestamp);
+                for chart in &charts {
+                    chart.set_marker(fraction);
+                }
+                status.set_label(&if fraction.is_some() {
+                    fl!(LANGUAGE_LOADER, "stats-activity-marker-visible")
+                } else {
+                    fl!(LANGUAGE_LOADER, "stats-activity-marker-unavailable")
+                });
+            });
+            entries.append(&button);
+        }
+        *cached.borrow_mut() = Some(records);
+    });
+    (section, refresh)
+}
+
 // ── Presentation helpers (pure, unit tested) ──────────────────────────────────
 
 fn read_sample(state: &AppState) -> Option<StatsSample> {
     state.stats_history.latest().copied()
 }
 
-/// Scale for the FPS gauge and its severity. OBS does not report the profile's
-/// configured FPS, so the highest rate seen this session is used as the target,
-/// floored at [`FPS_BASELINE`] so a fresh history is not scaled off one sample.
-fn fps_target(state: &AppState) -> f64 {
-    chart::nice_upper_bound(
-        chart::series_max(&state.stats_history.series(StatsMetric::Fps)),
-        FPS_BASELINE,
-    )
+/// Only OBS's configured video rate defines health; the chart ceiling is visual.
+fn fps_target(state: &AppState) -> Option<f64> {
+    read_sample(state)
+        .and_then(|sample| sample.stats.configured_fps)
+        .filter(|target| target.is_finite() && *target > 0.0)
 }
 
 /// Milliseconds available to render one frame at `target` FPS.
-fn frame_budget_ms(target: f64) -> f64 {
-    if target <= 0.0 {
-        return FRAME_TIME_BASELINE_MS;
-    }
-    1_000.0 / target
+fn frame_budget_ms(target: Option<f64>) -> Option<f64> {
+    target
+        .filter(|target| target.is_finite() && *target > 0.0)
+        .map(|target| 1_000.0 / target)
 }
 
 /// FPS is inverted relative to the other metrics: falling behind is the failure.
-fn fps_severity(fps: f64, target: f64) -> Severity {
-    if target <= 0.0 {
-        return Severity::Good;
+fn fps_severity(fps: f64, target: Option<f64>) -> Severity {
+    let Some(target) = target.filter(|target| target.is_finite() && *target > 0.0) else {
+        return Severity::Unknown;
+    };
+    if !fps.is_finite() {
+        return Severity::Unknown;
     }
-    let ratio = fps / target;
-    if ratio < FPS_CRITICAL_RATIO {
+    if fps < target * FPS_CRITICAL_RATIO {
         Severity::Critical
-    } else if ratio < FPS_WARNING_RATIO {
+    } else if fps < target * FPS_WARNING_RATIO {
         Severity::Warning
     } else {
         Severity::Good
     }
 }
 
-fn frame_time_severity(value_ms: f64, budget_ms: f64) -> Severity {
-    if budget_ms <= 0.0 {
-        return Severity::Good;
+fn frame_time_severity(value_ms: f64, budget_ms: Option<f64>) -> Severity {
+    let Some(budget_ms) = budget_ms.filter(|budget| budget.is_finite() && *budget > 0.0) else {
+        return Severity::Unknown;
+    };
+    if !value_ms.is_finite() {
+        return Severity::Unknown;
     }
     Severity::from_thresholds(
         value_ms / budget_ms,
@@ -721,33 +891,230 @@ mod tests {
     use super::*;
 
     #[test]
-    fn frame_budget_follows_the_target_frame_rate() {
-        assert!((frame_budget_ms(60.0) - 16.666).abs() < 0.01);
-        assert!((frame_budget_ms(30.0) - 33.333).abs() < 0.01);
+    #[ignore = "requires a native GTK display"]
+    fn native_popout_window_does_not_own_its_strong_window_slot() {
+        crate::ui::test_support::native_test(
+            "ui::pages::stats::tests::native_popout_window_does_not_own_its_strong_window_slot",
+            || {
+                let (nav, stack, _runtime, _events) = crate::ui::test_support::navigation();
+                let weak_state = Rc::downgrade(&nav.state);
+                nav.state.borrow_mut().workspace.log(
+                    crate::domain::workflow::ActivityOrigin::Observed,
+                    "Stats lifetime fixture".into(),
+                );
+                let window_slot = Rc::new(RefCell::new(None));
+                let refresh_slot = Rc::new(RefCell::new(None));
+                let button = build_popout_button(&nav, &window_slot, &refresh_slot);
+                for _ in 0..3 {
+                    button.emit_clicked();
+                    let window = window_slot.borrow().as_ref().unwrap().clone();
+                    let weak_window = window.downgrade();
+                    let weak_content = window.content().unwrap().downgrade();
+                    refresh_slot.borrow().as_ref().unwrap()();
+                    button.emit_clicked();
+                    assert_eq!(window_slot.borrow().as_ref(), Some(&window));
+                    window.close();
+                    assert!(window_slot.borrow().is_none());
+                    assert!(refresh_slot.borrow().is_none());
+                    drop(window);
+                    crate::ui::test_support::pump(std::time::Duration::from_millis(50));
+                    assert!(
+                        weak_window.upgrade().is_none(),
+                        "closed Stats window retained"
+                    );
+                    assert!(
+                        weak_content.upgrade().is_none(),
+                        "Stats activity/chart callbacks retained content"
+                    );
+                }
+                // Also cover destruction without a close-request, with the
+                // embedded page's slot/button released afterwards.
+                button.emit_clicked();
+                let window = window_slot.borrow().as_ref().unwrap().clone();
+                let weak_window = window.downgrade();
+                let weak_slot = Rc::downgrade(&window_slot);
+                window.destroy();
+                drop(window);
+                drop(button);
+                drop(window_slot);
+                drop(refresh_slot);
+                drop((nav, stack));
+                crate::ui::test_support::pump(std::time::Duration::from_millis(50));
+                assert!(weak_slot.upgrade().is_none());
+                assert!(weak_window.upgrade().is_none());
+                assert!(
+                    weak_state.upgrade().is_none(),
+                    "Stats callbacks retained navigation after teardown"
+                );
+            },
+        );
     }
 
     #[test]
-    fn frame_budget_falls_back_when_the_target_is_unusable() {
-        assert_eq!(frame_budget_ms(0.0), FRAME_TIME_BASELINE_MS);
-        assert_eq!(frame_budget_ms(-30.0), FRAME_TIME_BASELINE_MS);
+    #[ignore = "requires a disposable GTK display"]
+    fn native_popout_application_removal_releases_refresh_subscription() {
+        crate::ui::test_support::native_test(
+            "ui::pages::stats::tests::native_popout_application_removal_releases_refresh_subscription",
+            || {
+                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+                let app = adw::Application::builder()
+                    .application_id("io.github.worxbend.scenedeck.StatsRemovalFixture")
+                    .flags(gio::ApplicationFlags::NON_UNIQUE).build();
+                app.register(None::<&gio::Cancellable>).unwrap();
+                let window_slot = Rc::new(RefCell::new(None));
+                let refresh_slot = Rc::new(RefCell::new(None));
+                let button = build_popout_button(&nav, &window_slot, &refresh_slot);
+                let host = adw::ApplicationWindow::builder().application(&app).content(&button).build();
+                host.present();
+                button.emit_clicked();
+                let popout = window_slot.borrow().as_ref().unwrap().clone();
+                assert!(refresh_slot.borrow().is_some());
+                app.remove_window(&popout);
+                assert!(window_slot.borrow().is_none());
+                assert!(refresh_slot.borrow().is_none(), "removed Stats still subscribed to application telemetry");
+                let weak_content = popout.content().unwrap().downgrade();
+                popout.destroy();
+                drop(popout);
+                assert!(weak_content.upgrade().is_none());
+                host.close();
+            },
+        );
+    }
+
+    fn stats_sample(configured_fps: Option<f64>) -> crate::domain::stats::ObsStats {
+        crate::domain::stats::ObsStats {
+            configured_fps,
+            active_fps: 120.0,
+            disk_space_mb: None,
+            cpu_usage_percent: 1.0,
+            memory_usage_mb: 100.0,
+            average_frame_render_time_ms: 1.0,
+            render_skipped_frames: 0,
+            render_total_frames: 100,
+            output_skipped_frames: 0,
+            output_total_frames: 100,
+        }
+    }
+
+    #[test]
+    fn configured_target_comes_from_latest_sample_not_the_history_ceiling() {
+        let mut state = AppState::new(Default::default(), Default::default(), None, None);
+        assert_eq!(fps_target(&state), None);
+        for target in [
+            Some(30.0),
+            Some(59.94),
+            Some(60.0),
+            Some(120.0),
+            Some(144.0),
+            None,
+            Some(0.0),
+            Some(f64::NAN),
+        ] {
+            state.stats_history.push(stats_sample(target), None, None);
+            let expected = target.filter(|target| target.is_finite() && *target > 0.0);
+            assert_eq!(fps_target(&state), expected);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a native GTK display"]
+    fn native_stats_fixture_exposes_congestion_and_configured_fps_health() {
+        crate::ui::test_support::native_test("ui::pages::stats::tests::native_stats_fixture_exposes_congestion_and_configured_fps_health", || {
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            let gauges = build_gauges(&nav);
+            assert!(gauges.all.iter().all(|gauge| gauge.widget().tooltip_text().unwrap().contains(&fl!(LANGUAGE_LOADER, "output-state-unknown"))));
+            let stream = crate::domain::stats::StreamHealth {
+                active: true, reconnecting: false, congestion: 0.8, skipped_frames: 0,
+                total_frames: 100, bytes: 1000,
+            };
+            nav.state.borrow_mut().stats_history.push(stats_sample(Some(120.0)), None, Some(stream));
+            for gauge in &gauges.all { gauge.redraw(); }
+            assert!(gauges.all[0].widget().tooltip_text().unwrap().contains("120"));
+            assert!(gauges.all[0].widget().tooltip_text().unwrap().contains(&fl!(LANGUAGE_LOADER, "edge-status-ok-label")));
+            let congestion = gauges.all[3].widget();
+            assert!(congestion.tooltip_text().unwrap().contains(&fl!(LANGUAGE_LOADER, "stats-gauge-congestion")));
+            assert!(congestion.tooltip_text().unwrap().contains("80%"));
+            assert!(congestion.tooltip_text().unwrap().contains(&fl!(LANGUAGE_LOADER, "diag-label-error")));
+            for property in [gtk4::AccessibleProperty::Label, gtk4::AccessibleProperty::Description,
+                gtk4::AccessibleProperty::ValueNow, gtk4::AccessibleProperty::ValueText] {
+                assert!(gtk4::test_accessible_has_property(congestion, property));
+            }
+            nav.state.borrow_mut().stats_history.push(stats_sample(None), None, Some(crate::domain::stats::StreamHealth { congestion: 0.1, ..stream }));
+            for gauge in &gauges.all { gauge.redraw(); }
+            assert!(gauges.all[0].widget().tooltip_text().unwrap().contains(&fl!(LANGUAGE_LOADER, "output-state-unknown")));
+            assert!(gauges.all[3].widget().tooltip_text().unwrap().contains("10%"));
+        });
+    }
+
+    #[test]
+    fn frame_budget_follows_the_target_frame_rate() {
+        assert!((frame_budget_ms(Some(60.0)).unwrap() - 16.666).abs() < 0.01);
+        assert!((frame_budget_ms(Some(30.0)).unwrap() - 33.333).abs() < 0.01);
+    }
+
+    #[test]
+    fn frame_budget_is_unknown_when_the_target_is_unusable() {
+        for target in [
+            None,
+            Some(0.0),
+            Some(-30.0),
+            Some(f64::NAN),
+            Some(f64::INFINITY),
+        ] {
+            assert_eq!(frame_budget_ms(target), None);
+            assert_eq!(fps_severity(30.0, target), Severity::Unknown);
+            assert_eq!(
+                frame_time_severity(10.0, frame_budget_ms(target)),
+                Severity::Unknown
+            );
+        }
     }
 
     #[test]
     fn fps_severity_escalates_as_the_render_falls_behind_target() {
-        assert_eq!(fps_severity(60.0, 60.0), Severity::Good);
-        assert_eq!(fps_severity(58.0, 60.0), Severity::Good);
-        assert_eq!(fps_severity(55.0, 60.0), Severity::Warning);
-        assert_eq!(fps_severity(40.0, 60.0), Severity::Critical);
+        assert_eq!(fps_severity(60.0, Some(60.0)), Severity::Good);
+        assert_eq!(fps_severity(58.0, Some(60.0)), Severity::Good);
+        assert_eq!(fps_severity(55.0, Some(60.0)), Severity::Warning);
+        assert_eq!(fps_severity(40.0, Some(60.0)), Severity::Critical);
     }
 
     #[test]
-    fn fps_severity_is_neutral_without_a_usable_target() {
-        assert_eq!(fps_severity(0.0, 0.0), Severity::Good);
+    fn fps_severity_is_unknown_without_a_usable_target() {
+        assert_eq!(fps_severity(0.0, None), Severity::Unknown);
+        assert_eq!(fps_severity(f64::NAN, Some(60.0)), Severity::Unknown);
+    }
+
+    #[test]
+    fn configured_fps_health_is_independent_of_rounded_chart_scale() {
+        for target in [30.0, 59.94, 60.0, 120.0, 144.0] {
+            for jitter in [-0.01, 0.0, 0.01] {
+                assert_eq!(fps_severity(target + jitter, Some(target)), Severity::Good);
+            }
+            assert_eq!(fps_severity(target * 0.90, Some(target)), Severity::Warning);
+            assert_eq!(
+                fps_severity(target * 0.70, Some(target)),
+                Severity::Critical
+            );
+            assert_eq!(
+                fps_severity(target * FPS_WARNING_RATIO, Some(target)),
+                Severity::Good
+            );
+            assert_eq!(
+                fps_severity(target * FPS_CRITICAL_RATIO, Some(target)),
+                Severity::Warning
+            );
+            assert_eq!(
+                frame_time_severity(0.25 * 1000.0 / target, frame_budget_ms(Some(target))),
+                Severity::Good
+            );
+        }
+        assert_eq!(chart::nice_upper_bound(60.01, FPS_BASELINE), 100.0);
+        assert_eq!(fps_severity(60.01, Some(60.0)), Severity::Good);
     }
 
     #[test]
     fn frame_time_severity_is_measured_against_the_frame_budget() {
-        let budget = frame_budget_ms(60.0);
+        let budget = frame_budget_ms(Some(60.0));
 
         assert_eq!(frame_time_severity(4.0, budget), Severity::Good);
         assert_eq!(frame_time_severity(10.0, budget), Severity::Warning);

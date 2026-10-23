@@ -3,7 +3,7 @@
    ============================================================================
    Order matters here. Everything that affects what the visitor sees and can
    operate runs immediately; the two renderers are deferred until after the
-   load event and an idle slot, so ~266 KB of WebGL never competes with the
+   load event and an idle slot, so WebGL code never competes with the
    hero for bandwidth or main thread.
    ========================================================================== */
 

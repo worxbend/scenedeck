@@ -1,3 +1,4 @@
+/* stream-red: light. Geometry and semantic states are owned by the base CSS. */
 @define-color scenedeck_accent #d72638;
 @define-color scenedeck_fg #1d1d1f;
 @define-color scenedeck_muted_fg #555a60;
@@ -10,18 +11,13 @@
 @define-color scenedeck_header #ffd9de;
 @define-color scenedeck_surface #ffffff;
 @define-color scenedeck_card #fff8f8;
-
-.scene-card,
-.audio-card {
-  background-color: @scenedeck_card;
-}
-
-.scene-card-active,
-.scene-card-status-active {
-  outline-color: @scenedeck_accent;
-}
-
-.status-pill-live,
-.scene-card-status-active {
-  background-color: @scenedeck_accent;
-}
+@define-color scenedeck_border #626e7d;
+@define-color scenedeck_program #a92536;
+@define-color scenedeck_program_fg #ffffff;
+@define-color scenedeck_preview #176845;
+@define-color scenedeck_preview_fg #ffffff;
+@define-color scenedeck_focus #174fb5;
+@define-color scenedeck_image_fg #ffffff;
+@define-color scenedeck_image_scrim #111820;
+@define-color scenedeck_image_fallback #28323e;
+@define-color scenedeck_shadow #000000;

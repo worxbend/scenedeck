@@ -5,7 +5,14 @@
 //! [`Gauge::redraw`] when new samples land. The scaling and threshold maths is
 //! kept as free functions so it can be unit tested without a GTK display.
 
-use std::f64::consts::PI;
+use std::{
+    cell::{Cell, RefCell},
+    f64::consts::PI,
+    rc::Rc,
+};
+
+use crate::infra::i18n::LANGUAGE_LOADER;
+use i18n_embed_fl::fl;
 
 use gtk4::cairo::{Context, FontSlant, FontWeight};
 use gtk4::prelude::*;
@@ -35,6 +42,8 @@ impl Color {
 /// How healthy a reading is, which selects the accent colour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Severity {
+    /// No authoritative target or observation is available.
+    Unknown,
     /// Within the expected operating range.
     Good,
     /// Worth watching, but not yet failing.
@@ -55,8 +64,18 @@ impl Severity {
         }
     }
 
+    fn label(self) -> String {
+        match self {
+            Self::Unknown => fl!(LANGUAGE_LOADER, "output-state-unknown"),
+            Self::Good => fl!(LANGUAGE_LOADER, "edge-status-ok-label"),
+            Self::Warning => fl!(LANGUAGE_LOADER, "edge-status-warning-label"),
+            Self::Critical => fl!(LANGUAGE_LOADER, "diag-label-error"),
+        }
+    }
+
     fn color(self) -> Color {
         match self {
+            Self::Unknown => Color(0.50, 0.52, 0.56),
             Self::Good => Color(0.20, 0.60, 0.95),
             Self::Warning => Color(0.91, 0.62, 0.09),
             Self::Critical => Color(0.87, 0.25, 0.25),
@@ -143,8 +162,12 @@ impl ChartOptions {
 }
 
 /// A time-series chart bound to a value source.
+#[derive(Clone)]
 pub(crate) struct Chart {
+    marker: Rc<Cell<Option<f64>>>,
     widget: DrawingArea,
+    source: Rc<dyn Fn() -> Vec<f64>>,
+    options: Rc<ChartOptions>,
 }
 
 impl Chart {
@@ -153,8 +176,26 @@ impl Chart {
         &self.widget
     }
 
+    pub(crate) fn set_marker(&self, fraction: Option<f64>) {
+        self.marker
+            .set(fraction.filter(|value| value.is_finite() && (0.0..=1.0).contains(value)));
+        self.redraw();
+    }
+
     /// Re-read the source and repaint.
     pub(crate) fn redraw(&self) {
+        let description = (self.source)().last().map_or_else(
+            || fl!(LANGUAGE_LOADER, "output-state-unknown"),
+            |latest| {
+                format!(
+                    "{} · {}",
+                    (self.options.format_axis)(*latest),
+                    (self.options.severity)(*latest).label()
+                )
+            },
+        );
+        self.widget
+            .update_property(&[gtk4::accessible::Property::Description(&description)]);
         self.widget.queue_draw();
     }
 }
@@ -166,20 +207,50 @@ pub(crate) fn chart(options: ChartOptions, source: impl Fn() -> Vec<f64> + 'stat
         .content_height(CHART_HEIGHT)
         .content_width(CHART_MIN_WIDTH)
         .hexpand(true)
+        .accessible_role(gtk4::AccessibleRole::Img)
+        .focusable(true)
         .build();
     widget.add_css_class("scenedeck-chart");
 
-    widget.set_draw_func(move |_, ctx, width, height| {
-        draw_chart(
-            ctx,
-            f64::from(width),
-            f64::from(height),
-            &options,
-            &source(),
-        );
+    let marker = Rc::new(Cell::new(None::<f64>));
+    let drawn_marker = marker.clone();
+    let source: Rc<dyn Fn() -> Vec<f64>> = Rc::new(source);
+    let options = Rc::new(options);
+    widget.set_draw_func({
+        let source = source.clone();
+        let options = options.clone();
+        move |_, ctx, width, height| {
+            let values = source();
+            draw_chart(ctx, f64::from(width), f64::from(height), &options, &values);
+            if let Some(fraction) = drawn_marker.get().filter(|_| !values.is_empty()) {
+                let plot = PlotArea::new(f64::from(width), f64::from(height));
+                let fraction = match options.kind {
+                    ChartKind::Area => fraction,
+                    ChartKind::Bars => {
+                        (0.5 + fraction * values.len().saturating_sub(1) as f64)
+                            / values.len() as f64
+                    }
+                };
+                Palette::for_current_theme().value_text.apply(ctx);
+                ctx.set_line_width(1.5);
+                ctx.set_dash(&[4.0, 3.0], 0.0);
+                let x = plot.left + plot.width * fraction;
+                ctx.move_to(x, plot.top);
+                ctx.line_to(x, plot.bottom());
+                let _ = ctx.stroke();
+                ctx.set_dash(&[], 0.0);
+            }
+        }
     });
 
-    Chart { widget }
+    let chart = Chart {
+        widget,
+        marker,
+        source,
+        options,
+    };
+    chart.redraw();
+    chart
 }
 
 fn draw_chart(ctx: &Context, width: f64, height: f64, options: &ChartOptions, values: &[f64]) {
@@ -330,7 +401,7 @@ fn draw_bar_series(ctx: &Context, plot: &PlotArea, accent: Color, values: &[f64]
 
 // ── Radial gauge ──────────────────────────────────────────────────────────────
 
-/// A single gauge reading resolved at draw time.
+/// A gauge reading resolved on refresh, including before its first draw.
 pub(crate) struct GaugeReading {
     /// Sweep of the arc, clamped to `0.0..=1.0`.
     pub(crate) fraction: f64,
@@ -345,6 +416,8 @@ pub(crate) struct GaugeReading {
 /// A radial gauge bound to a reading source.
 pub(crate) struct Gauge {
     widget: DrawingArea,
+    source: Rc<dyn Fn() -> GaugeReading>,
+    reading: Rc<RefCell<GaugeReading>>,
 }
 
 impl Gauge {
@@ -355,23 +428,50 @@ impl Gauge {
 
     /// Re-read the source and repaint.
     pub(crate) fn redraw(&self) {
+        let reading = (self.source)();
+        let description = format!("{} · {}", reading.value, reading.severity.label());
+        let fraction = clamp_fraction(reading.fraction, 1.0);
+        self.widget.update_property(&[
+            gtk4::accessible::Property::Label(&reading.caption),
+            gtk4::accessible::Property::Description(&description),
+            gtk4::accessible::Property::ValueMin(0.0),
+            gtk4::accessible::Property::ValueMax(1.0),
+            gtk4::accessible::Property::ValueNow(fraction),
+            gtk4::accessible::Property::ValueText(&description),
+        ]);
+        self.widget
+            .set_tooltip_text(Some(&format!("{}: {description}", reading.caption)));
+        self.reading.replace(reading);
         self.widget.queue_draw();
     }
 }
 
-/// Build a gauge that pulls its reading from `source` on every draw.
+/// Build a gauge whose semantic and visual readings update together on refresh.
 pub(crate) fn gauge(source: impl Fn() -> GaugeReading + 'static) -> Gauge {
     let widget = DrawingArea::builder()
         .content_width(GAUGE_SIZE)
         .content_height(GAUGE_SIZE)
+        .accessible_role(gtk4::AccessibleRole::Meter)
+        .focusable(true)
         .build();
     widget.add_css_class("scenedeck-gauge");
 
-    widget.set_draw_func(move |_, ctx, width, height| {
-        draw_gauge(ctx, f64::from(width), f64::from(height), &source());
+    let source: Rc<dyn Fn() -> GaugeReading> = Rc::new(source);
+    let reading = Rc::new(RefCell::new(source()));
+    widget.set_draw_func({
+        let reading = reading.clone();
+        move |_, ctx, width, height| {
+            draw_gauge(ctx, f64::from(width), f64::from(height), &reading.borrow());
+        }
     });
 
-    Gauge { widget }
+    let gauge = Gauge {
+        widget,
+        source,
+        reading,
+    };
+    gauge.redraw();
+    gauge
 }
 
 fn draw_gauge(ctx: &Context, width: f64, height: f64, reading: &GaugeReading) {
@@ -470,6 +570,53 @@ pub(crate) fn clamp_fraction(value: f64, max: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires a native GTK display"]
+    fn native_gauge_semantics_refresh_without_a_cairo_draw() {
+        crate::ui::test_support::native_test(
+            "ui::widgets::chart::tests::native_gauge_semantics_refresh_without_a_cairo_draw",
+            || {
+                let congestion = Rc::new(Cell::new(0.1));
+                let gauge = gauge({
+                    let congestion = congestion.clone();
+                    move || GaugeReading {
+                        fraction: congestion.get(),
+                        value: format!("{:.0}%", congestion.get() * 100.0),
+                        caption: fl!(LANGUAGE_LOADER, "stats-gauge-congestion"),
+                        severity: Severity::from_thresholds(congestion.get(), 0.3, 0.6),
+                    }
+                });
+                assert_eq!(
+                    gauge.widget().accessible_role(),
+                    gtk4::AccessibleRole::Meter
+                );
+                for property in [
+                    gtk4::AccessibleProperty::Label,
+                    gtk4::AccessibleProperty::Description,
+                    gtk4::AccessibleProperty::ValueMin,
+                    gtk4::AccessibleProperty::ValueMax,
+                    gtk4::AccessibleProperty::ValueNow,
+                    gtk4::AccessibleProperty::ValueText,
+                ] {
+                    assert!(gtk4::test_accessible_has_property(gauge.widget(), property));
+                }
+                assert!(gauge.widget().tooltip_text().unwrap().contains("10%"));
+                congestion.set(0.8);
+                gauge.redraw();
+                assert_eq!(gauge.reading.borrow().severity, Severity::Critical);
+                assert!(gauge.widget().tooltip_text().unwrap().contains("80%"));
+                assert!(gauge
+                    .widget()
+                    .tooltip_text()
+                    .unwrap()
+                    .contains(&Severity::Critical.label()));
+                let weak = gauge.widget().downgrade();
+                drop(gauge);
+                assert!(weak.upgrade().is_none());
+            },
+        );
+    }
 
     #[test]
     fn series_max_ignores_empty_and_non_finite_samples() {

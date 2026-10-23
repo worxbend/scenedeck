@@ -34,11 +34,15 @@ source of truth for:
 - OBS profiles and scene collections.
 - Stream and record status.
 - Active audio inputs.
+- Scoped operating observations, selected source details and freshness.
+- Session activity, bounded output evidence and session-scoped scene thumbnails.
 - One-shot startup notice text.
 
 GTK widgets are updated from events in `src/ui/window.rs`. Doctor diagnostics
 are derived from the current inventory, registry snapshot, and graph whenever
-the Doctor page is rebuilt.
+the Doctor page is rebuilt. Doctor contains structural diagnostics; retired
+setup-expectation checks are not part of the current page. See
+[OBS operating workspace](obs-operating-workspace.md).
 
 ## Command Flow
 
@@ -79,12 +83,20 @@ sequence number tells a widget whether it has already consumed what it is
 looking at, which is what lets an input that stopped reporting decay to silence
 instead of freezing.
 
-The GTK side polls the event receiver every 50 ms. This keeps all widget
-mutation on the GTK main thread. The widgets needed by event application are
-grouped in an `EventUiContext`, keeping the event adapter's dependency boundary
-explicit as the window grows. Connection and output event families are applied
+The application-owned GTK event pump polls the receiver every 50 ms, so state
+reconciliation and widget mutation stay on the main thread. Closing the shell
+removes its widget subscribers but leaves telemetry and disconnect observations
+live for a surviving Stats pop-out. Last-window removal or shutdown releases the
+pump. The widgets needed by event application are grouped in an `EventUiContext`,
+keeping the event adapter's dependency boundary explicit as the window grows. Connection and output event families are applied
 by focused handlers; the general handler owns scene, audio, graph, diagnostic,
-and statistics updates.
+and statistics updates. Transport ingress advances mutation/topology fences
+before GTK publication, using a 64-item handoff plus one selected publication;
+overflow retires the connection and reports incomplete evidence instead of
+stalling safety invalidation or growing the queue. Workspace state reconciliation lives separately in
+`ui::event_reconciliation`; shell effects follow accepted state publication.
+Doctor similarly separates pure typed findings from localized presentation,
+while preserving the existing `DoctorService::run` contract.
 
 ## OBS Session Lifecycle
 
@@ -151,8 +163,8 @@ checks, graph edge classification, live-switch validation, scene-hotkey
 resolution, and volume-meter ballistics. Services consume
 domain-facing snapshots and policies instead of storage adapter structs.
 
-`src/storage/` owns local persistence: config JSON, scene registry JSON, XDG
-paths, and keyring integration. The scene registry storage type remains the
+`src/storage/` owns local persistence: config JSON, scene registry JSON,
+XDG paths, and keyring integration. The scene registry storage type remains the
 serde representation for JSON/YAML, and converts to `SceneRegistrySnapshot`
 before application services use it.
 
@@ -166,7 +178,15 @@ from running in GTK callbacks. Config and registry writes use separate FIFO
 worker lanes, so a slow older snapshot cannot finish after and overwrite a
 newer snapshot. Each atomic replacement also uses a unique, exclusively
 created sibling temporary file, allowing concurrent writers without temp-file
-collisions.
+collisions. Replaceable Config snapshots coalesce within each FIFO segment to
+one executing write and one pending snapshot; explicit jobs and completion
+callbacks remain ordering barriers. Admission is synchronous, so Close/Quit
+includes accepted edits even before a worker starts. Registry writes retain
+failed intent for explicit retry without rolling back newer edits. Config
+completion retires the matching replaceable tail before its pending ticket, so
+a worker-held handle cannot revive an unaccounted batch. Returned Config errors,
+like worker panics, remain close-barrier failure evidence until an explicit
+informed decision; Config snapshots are not automatically retried.
 
 Configuration should prefer domain types over raw strings where the value has a
 closed set of valid states. For example, `theme_mode` is stored as the same
@@ -214,16 +234,109 @@ Audio refresh for the current scene includes:
 - Enabled inputs inside nested scenes and groups.
 
 Input mute and volume events update the matching audio card without rebuilding
-the whole mixer.
+the whole mixer. A bounded history of the last 32 actual gain sends recognizes
+delayed own-value echoes while a newer unsent edit is pending, including OBS f32
+rounding; an unmatched observation clears that history and remains authoritative.
+OBS events carry no command ID, so matching values are an arbitration policy,
+not proof of who changed the gain.
 
 ## Error Handling
 
-Operational errors are converted into `AppError` and sent as `AppEvent::Error`.
-The UI updates sidebar status and output controls, shows the
-disconnected Live view, and displays a toast.
+Connection failures can use the connection error/disconnected path. Scoped
+workspace and output-command failures retain their own result/error state; a
+failed source setting or unsupported request must not falsely mark the OBS
+connection as disconnected. Domain-facing errors and warnings reach GTK through
+the corresponding controller events.
 
 Warnings that do not need user interruption use `tracing`.
 
 Storage adapters should keep source errors typed until the UI boundary. For
 example, registry loading distinguishes read failures from parse failures and
 logs the concrete path before falling back to defaults for the desktop UX.
+
+## Scene wall and Sources
+
+Live uses one scrolling scene grid with a separate expandable audio strip and
+one compact output toolbar. Topbar Studio controls synchronize with OBS. Scene
+activation resolves against fresh Studio state before choosing Program or
+Preview; the conditional transition row owns the only Take action. Sources is
+a separate topbar destination with adaptive list/detail navigation.
+
+`domain::control` holds protocol-free scene items, Studio state, source details
+and native actions. `domain::workflow` retains shared scope and bounded session
+activity; retired expectations, baselines and cues are gone. Existing
+`workflows.json` files are preserved without routine reads/writes.
+`domain::output_result` keeps command acknowledgements distinct from observed
+file evidence. Local config/registry edits remain on ordered background lanes.
+
+`controller::workspace` owns scoped aggregate reads, actions and selected-media
+refresh. `WorkspaceState` holds epoch/sequence, dirty/loading/pending state and
+observations on GTK. The controller checks endpoint/collection before executing
+and collection again after reads; GTK rejects obsolete epoch/sequence results.
+Scope loss cancels owned work, clears selections and marks pending output
+evidence unconfirmed. Read age starts at the first request.
+
+Common workspace reads obtain operating/output/audio observations; scene-item,
+selected-source detail and usage scans are included for Sources rather than
+routine Live visits. Actions use authoritative rereads. Selected-media polling
+runs only while the chosen media detail is visible. UI source callbacks retain
+scope/freshness protection and explicit text Save/Cancel/conflict state. Media
+polling pauses while a native popover is open; an already-in-flight media-only
+reply preserves that popup when its binding is unchanged. Scope, full-read,
+pending, error and freshness changes still invalidate it immediately. Structural
+path expansion and named path focus survive ordinary detail refreshes.
+
+## Scene thumbnails
+
+`controller::thumbnails` owns an independent capture worker and a two-second UI
+response deadline; it never uses the workspace mutation pending flag. Timeout
+reports failure without dropping an unanswered protocol future: the single
+worker drains it, rejecting additional image work on that connection. This
+bounds `obws`'s retained pending requests. A replacement connection can retire
+the old worker without resetting the active controls socket. `ui::previews`
+selects visible Live cards, rate-limits requests, bounds its texture cache and applies images in
+place. Session epoch, endpoint/collection scope, generation and scene identity
+prevent obsolete captures from being attached to current cards. Disabling the
+preference, leaving visible Live or disconnecting suppresses thumbnail delivery
+and follow-up requests. Cancellation is checked after delayed canvas settings
+before sending a screenshot. An already sent request drains silently.
+Control results take priority over stills in the bounded event channel. Each
+capture checks collection before/after the screenshot and reads video settings
+for aspect-fit dimensions. Failed scenes back off for 15 seconds independently;
+an unanswered transaction temporarily blocks other images while controls remain
+independent.
+
+The current limits and implementation are described in
+[OBS integration](obs-websocket.md). Performance targets are qualification
+criteria in [PLAN.md](../PLAN.md), not inferred from these static bounds.
+
+## Inventory and themes
+
+Inventory uses responsive native list rows with wrapped scene names and role
+descriptions. Role controls reflow below scene details at compact widths;
+secondary scene actions remain in a popover. Layout is allocation-driven, with
+no column configuration or layout writes. Legacy width preferences are
+accepted as unknown keys for config compatibility, ignored, and omitted on save.
+Inventory refreshes compare presentation data, retaining unchanged rows, menus
+and layout widgets; membership, order and metadata changes reconcile locally.
+
+Refresh requests do not redraw old page contents before readbacks arrive.
+Same-scope inventory observations retain Live preview paintables and header
+selector models. Live audio observations update existing cards in place;
+a same-scene refresh temporarily disables retained controls, while an owner
+change discards them. Sources separates editor content from loading/result/
+freshness metadata: status-only publications retain editor widgets and drafts,
+while changed targets, observed content or scope take the rebind path. These
+optimizations do not bypass scope fences or permit stale mutation controls.
+
+The common CSS owns geometry, typography, semantic card states and motion.
+Twelve built-in families provide light/dark palettes; optional custom CSS loads
+for the effective side. Existing `.scene-card`, `.scene-card-active` and
+`.scene-card-hotkey` selectors remain supported alongside the documented image,
+scrim, Preview, audio/output and Inventory classes. See
+[theme CSS reference](theme-css-reference.md).
+
+Stats samples and activity records use local Unix-millisecond times. Charts
+remain sample-spaced; event interpolation rejects long gaps, backwards clocks
+and out-of-window events. An activity marker is contextual evidence. Stats and
+its popout keep independent local marker selections.

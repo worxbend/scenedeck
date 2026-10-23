@@ -1,7 +1,6 @@
 //! Theme loading for built-in light/dark theme families and user CSS files.
 
-use std::cell::RefCell;
-use std::fs;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -15,6 +14,13 @@ const BASE_CSS: &str = include_str!("../../assets/scenedeck.css");
 
 thread_local! {
     static ACTIVE_PROVIDERS: RefCell<Vec<CssProvider>> = const { RefCell::new(Vec::new()) };
+    static ACTIVE_PREFERENCE: RefCell<Option<ThemePreference>> = const { RefCell::new(None) };
+    static REQUEST_GENERATION: Cell<u64> = const { Cell::new(0) };
+    static DESKTOP_SIGNALS_INSTALLED: Cell<bool> = const { Cell::new(false) };
+    static NATIVE_MOTION_OFF: Cell<bool> = const { Cell::new(false) };
+    static UPDATING_NATIVE_MOTION: Cell<bool> = const { Cell::new(false) };
+    static NATIVE_COLOR_SCHEME_OVERRIDDEN: Cell<bool> = const { Cell::new(false) };
+    static UPDATING_NATIVE_COLOR_SCHEME: Cell<bool> = const { Cell::new(false) };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,7 +44,6 @@ pub(crate) struct BuiltInTheme {
     pub(crate) id: &'static str,
     pub(crate) name: &'static str,
     pub(crate) description: &'static str,
-    pub(crate) swatches: &'static [&'static str],
     light_css: &'static str,
     dark_css: &'static str,
 }
@@ -143,30 +148,62 @@ impl ThemeManager {
         preference: ThemePreference,
         complete: impl FnOnce(ThemeApplyReport) + 'static,
     ) {
+        install_desktop_signals();
+        ACTIVE_PREFERENCE.with(|active| *active.borrow_mut() = Some(preference.clone()));
+        apply_native_color_scheme(preference.mode);
+        let generation = REQUEST_GENERATION.with(|current| {
+            let next = current.get().wrapping_add(1);
+            current.set(next);
+            next
+        });
         if !preference.custom_css_enabled() {
             complete(Self::apply(&preference));
             return;
         }
+        // Resolve System on GTK's thread, before file I/O moves to a worker.
+        let variant = effective_variant(preference.mode);
         let worker_preference = preference.clone();
         crate::ui::background_io::run(
-            move || Self::load_custom_css(&worker_preference),
-            move |custom_css| complete(Self::apply_with_custom_css(&preference, custom_css)),
+            move || Self::load_custom_css(&worker_preference, variant),
+            move |custom_css| {
+                if let Some(report) = finish_css_read(generation, &preference, custom_css) {
+                    complete(report);
+                }
+            },
         );
     }
 
     /// Read the effective custom stylesheet. This is blocking and must be
     /// called through `ui::background_io` in production.
-    pub(crate) fn load_custom_css(preference: &ThemePreference) -> CustomCssLoad {
+    pub(crate) fn load_custom_css(
+        preference: &ThemePreference,
+        variant: ThemeVariant,
+    ) -> CustomCssLoad {
         if !preference.custom_css_enabled() {
             return CustomCssLoad::Disabled;
         }
         let Some(path) = preference
-            .custom_css_path_for_mode(preference.mode)
+            .custom_css_path_for_mode(match variant {
+                ThemeVariant::Light => ThemeMode::Light,
+                ThemeVariant::Dark => ThemeMode::Dark,
+            })
             .cloned()
         else {
             return CustomCssLoad::MissingPath;
         };
-        match fs::read_to_string(&path) {
+        match crate::storage::small_file::read_to_string(
+            &path,
+            crate::storage::small_file::CSS_LIMIT,
+        )
+        .and_then(|css| {
+            validate_custom_css(&css).map_err(|()| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    fl!(LANGUAGE_LOADER, "theme-custom-css-dependencies-forbidden"),
+                )
+            })?;
+            Ok(css)
+        }) {
             Ok(css) => CustomCssLoad::Loaded { path, css },
             Err(error) => CustomCssLoad::Failed {
                 path,
@@ -179,6 +216,7 @@ impl ThemeManager {
         preference: &ThemePreference,
         custom_css: CustomCssLoad,
     ) -> ThemeApplyReport {
+        apply_native_color_scheme(preference.mode);
         let variant = effective_variant(preference.mode);
         let theme = Self::find_theme(preference.selected_theme_id());
 
@@ -191,6 +229,7 @@ impl ThemeManager {
         // Installed after the theme so that no built-in theme can reintroduce
         // motion the user has switched off, but before any user stylesheet, so
         // that someone writing their own CSS still has the last word.
+        apply_native_motion(preference.motion);
         let motion = preference.motion.resolve(desktop_allows_animation());
         if let Some(css) = motion_css(motion) {
             install_css_provider(&css, "motion overrides", &mut warnings);
@@ -203,7 +242,16 @@ impl ThemeManager {
                 None
             }
             CustomCssLoad::Loaded { path, css } => {
-                install_css_provider(&css, &path.display().to_string(), &mut warnings);
+                // Keep the boundary at installation too: preloaded callers must
+                // not bypass the off-thread file loader's dependency policy.
+                if validate_custom_css(&css).is_ok() {
+                    install_css_provider(&css, &path.display().to_string(), &mut warnings);
+                } else {
+                    warnings.push(fl!(
+                        LANGUAGE_LOADER,
+                        "theme-custom-css-dependencies-forbidden"
+                    ));
+                }
                 Some(path)
             }
             CustomCssLoad::Failed { path, error } => {
@@ -222,6 +270,129 @@ impl ThemeManager {
             variant,
             custom_css_path,
             warnings,
+        }
+    }
+}
+
+/// Tokenization decodes CSS escapes and skips comments. Scan nested blocks too,
+/// failing closed on malformed at-signs and excessive nesting before GTK sees it.
+fn validate_custom_css(css: &str) -> Result<(), ()> {
+    if css.len() > crate::storage::small_file::CSS_LIMIT {
+        return Err(());
+    }
+    fn tokens(input: &mut cssparser::Parser<'_>) -> Result<(), cssparser::ParseError<()>> {
+        use cssparser::Token;
+        while !input.is_exhausted() {
+            match input.next()?.clone() {
+                Token::AtKeyword(name) if name.eq_ignore_ascii_case("import") => {
+                    return Err(cssparser::ParseError::custom(()))
+                }
+                Token::Delim('@') | Token::UnquotedUrl(_) => {
+                    return Err(cssparser::ParseError::custom(()))
+                }
+                Token::Function(name) if name.eq_ignore_ascii_case("url") => {
+                    return Err(cssparser::ParseError::custom(()))
+                }
+                token if token.is_parse_error() => return Err(cssparser::ParseError::custom(())),
+                Token::Function(_)
+                | Token::ParenthesisBlock
+                | Token::SquareBracketBlock
+                | Token::CurlyBracketBlock => input.parse_nested_block(tokens)?,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    tokens(&mut cssparser::Parser::new(css)).map_err(|_| ())
+}
+
+fn finish_css_read(
+    generation: u64,
+    preference: &ThemePreference,
+    css: CustomCssLoad,
+) -> Option<ThemeApplyReport> {
+    // A slower read must not reinstall a theme the user has already replaced.
+    REQUEST_GENERATION
+        .with(|current| current.get() == generation)
+        .then(|| ThemeManager::apply_with_custom_css(preference, css))
+}
+
+fn install_desktop_signals() {
+    if DESKTOP_SIGNALS_INSTALLED.with(|installed| installed.replace(true)) {
+        return;
+    }
+    adw::StyleManager::default().connect_dark_notify(|_| {
+        if !UPDATING_NATIVE_COLOR_SCHEME.with(Cell::get) {
+            refresh_desktop_theme(true);
+        }
+    });
+    if let Some(settings) = gtk4::Settings::default() {
+        settings.connect_gtk_enable_animations_notify(|_| {
+            if !UPDATING_NATIVE_MOTION.with(Cell::get) {
+                refresh_desktop_theme(false);
+            }
+        });
+    }
+}
+
+/// Keep native controls in the same mode as the app palette. Release only our
+/// own override for System, leaving desktop-driven notifications authoritative.
+fn apply_native_color_scheme(mode: ThemeMode) {
+    let scheme = match mode {
+        ThemeMode::Light => {
+            NATIVE_COLOR_SCHEME_OVERRIDDEN.with(|active| active.set(true));
+            adw::ColorScheme::ForceLight
+        }
+        ThemeMode::Dark => {
+            NATIVE_COLOR_SCHEME_OVERRIDDEN.with(|active| active.set(true));
+            adw::ColorScheme::ForceDark
+        }
+        ThemeMode::System => {
+            if !NATIVE_COLOR_SCHEME_OVERRIDDEN.with(|active| active.replace(false)) {
+                return;
+            }
+            adw::ColorScheme::Default
+        }
+    };
+    let style = adw::StyleManager::default();
+    if style.color_scheme() != scheme {
+        // The resulting dark notification is part of this application, not a
+        // second desktop preference change requiring another asynchronous read.
+        UPDATING_NATIVE_COLOR_SCHEME.with(|updating| updating.set(true));
+        style.set_color_scheme(scheme);
+        UPDATING_NATIVE_COLOR_SCHEME.with(|updating| updating.set(false));
+    }
+}
+
+/// GTK/libadwaita transitions are not CSS animations. Override the setting only
+/// inside this process while Off is selected; releasing it lets GTK read the
+/// current desktop preference again, including changes made while Off was set.
+fn apply_native_motion(motion: MotionLevel) {
+    let Some(settings) = gtk4::Settings::default() else {
+        return;
+    };
+    let off = motion == MotionLevel::Off;
+    if NATIVE_MOTION_OFF.with(|active| active.replace(off)) == off {
+        return;
+    }
+    UPDATING_NATIVE_MOTION.with(|updating| updating.set(true));
+    if off {
+        settings.set_gtk_enable_animations(false);
+    } else {
+        settings.reset_property("gtk-enable-animations");
+    }
+    UPDATING_NATIVE_MOTION.with(|updating| updating.set(false));
+}
+
+fn refresh_desktop_theme(color_changed: bool) {
+    let preference = ACTIVE_PREFERENCE.with(|active| active.borrow().clone());
+    if let Some(preference) = preference {
+        if !color_changed || preference.mode == ThemeMode::System {
+            ThemeManager::apply_async(preference, |report| {
+                for warning in report.warnings {
+                    tracing::warn!(%warning, "desktop theme change");
+                }
+            });
         }
     }
 }
@@ -247,8 +418,7 @@ const MOTION_ANIMATED_SELECTORS: &[&str] = &[
 const MOTION_TRANSITION_SELECTORS: &[&str] = &[
     ".scene-card",
     ".scene-card-status-active",
-    ".scene-card-status-previous",
-    ".scene-card-status-ready",
+    ".scene-card-status-preview",
     ".scene-card-hotkey",
     ".scenedeck-sidebar-list row",
     ".scenedeck-status-bar-item",
@@ -344,6 +514,9 @@ fn install_css_provider(css: &str, label: &str, warnings: &mut Vec<String>) {
 
     provider.load_from_data(css);
     warnings.extend(parse_errors.borrow().iter().cloned());
+    if !parse_errors.borrow().is_empty() {
+        return;
+    }
 
     gtk4::style_context_add_provider_for_display(
         &display,
@@ -358,7 +531,6 @@ const BUILT_IN_THEMES: [BuiltInTheme; 12] = [
         id: "adwaita-default",
         name: "Adwaita Default",
         description: "Neutral styling that follows GNOME defaults.",
-        swatches: &["#3584e4", "#ffffff", "#241f31"],
         light_css: include_str!("../../resources/themes/adwaita-default-light.css"),
         dark_css: include_str!("../../resources/themes/adwaita-default-dark.css"),
     },
@@ -366,7 +538,6 @@ const BUILT_IN_THEMES: [BuiltInTheme; 12] = [
         id: "scenedeck-dark",
         name: "SceneDeck Dark",
         description: "A reserved dark console theme for live operation.",
-        swatches: &["#4f8cff", "#15171c", "#e8eaf0"],
         light_css: include_str!("../../resources/themes/scenedeck-dark-light.css"),
         dark_css: include_str!("../../resources/themes/scenedeck-dark-dark.css"),
     },
@@ -374,7 +545,6 @@ const BUILT_IN_THEMES: [BuiltInTheme; 12] = [
         id: "scenedeck-light",
         name: "SceneDeck Light",
         description: "A crisp light console theme with restrained contrast.",
-        swatches: &["#1f6feb", "#f8fafc", "#17202a"],
         light_css: include_str!("../../resources/themes/scenedeck-light-light.css"),
         dark_css: include_str!("../../resources/themes/scenedeck-light-dark.css"),
     },
@@ -382,7 +552,6 @@ const BUILT_IN_THEMES: [BuiltInTheme; 12] = [
         id: "obs",
         name: "OBS",
         description: "OBS Studio's default look, read through libadwaita.",
-        swatches: &["#3a7ebf", "#232629", "#eff0f1"],
         light_css: include_str!("../../resources/themes/obs-light.css"),
         dark_css: include_str!("../../resources/themes/obs-dark.css"),
     },
@@ -390,7 +559,6 @@ const BUILT_IN_THEMES: [BuiltInTheme; 12] = [
         id: "obsidian",
         name: "Obsidian",
         description: "High-legibility graphite surfaces with cool accents.",
-        swatches: &["#8ab4f8", "#111318", "#f1f3f4"],
         light_css: include_str!("../../resources/themes/obsidian-light.css"),
         dark_css: include_str!("../../resources/themes/obsidian-dark.css"),
     },
@@ -398,7 +566,6 @@ const BUILT_IN_THEMES: [BuiltInTheme; 12] = [
         id: "nord",
         name: "Nord",
         description: "Cool blue-gray surfaces with frost-toned accents.",
-        swatches: &["#5e81ac", "#eceff4", "#2e3440"],
         light_css: include_str!("../../resources/themes/nord-light.css"),
         dark_css: include_str!("../../resources/themes/nord-dark.css"),
     },
@@ -406,7 +573,6 @@ const BUILT_IN_THEMES: [BuiltInTheme; 12] = [
         id: "dracula-inspired",
         name: "Dracula Inspired",
         description: "A dark expressive palette using original CSS.",
-        swatches: &["#bd93f9", "#282a36", "#f8f8f2"],
         light_css: include_str!("../../resources/themes/dracula-inspired-light.css"),
         dark_css: include_str!("../../resources/themes/dracula-inspired-dark.css"),
     },
@@ -414,7 +580,6 @@ const BUILT_IN_THEMES: [BuiltInTheme; 12] = [
         id: "solarized-dark",
         name: "Solarized Dark",
         description: "Low-glare contrast with teal and amber accents.",
-        swatches: &["#268bd2", "#002b36", "#eee8d5"],
         light_css: include_str!("../../resources/themes/solarized-dark-light.css"),
         dark_css: include_str!("../../resources/themes/solarized-dark-dark.css"),
     },
@@ -422,7 +587,6 @@ const BUILT_IN_THEMES: [BuiltInTheme; 12] = [
         id: "high-contrast",
         name: "High Contrast",
         description: "Stronger outlines and contrast for critical controls.",
-        swatches: &["#ffffff", "#000000", "#ffcc00"],
         light_css: include_str!("../../resources/themes/high-contrast-light.css"),
         dark_css: include_str!("../../resources/themes/high-contrast-dark.css"),
     },
@@ -430,7 +594,6 @@ const BUILT_IN_THEMES: [BuiltInTheme; 12] = [
         id: "stream-red",
         name: "Stream Red",
         description: "Broadcast-oriented red accents for live states.",
-        swatches: &["#d72638", "#fff7f7", "#1f1416"],
         light_css: include_str!("../../resources/themes/stream-red-light.css"),
         dark_css: include_str!("../../resources/themes/stream-red-dark.css"),
     },
@@ -438,7 +601,6 @@ const BUILT_IN_THEMES: [BuiltInTheme; 12] = [
         id: "studio-purple",
         name: "Studio Purple",
         description: "Controlled purple accents without overpowering surfaces.",
-        swatches: &["#7c5cff", "#f7f5ff", "#1c1828"],
         light_css: include_str!("../../resources/themes/studio-purple-light.css"),
         dark_css: include_str!("../../resources/themes/studio-purple-dark.css"),
     },
@@ -446,7 +608,6 @@ const BUILT_IN_THEMES: [BuiltInTheme; 12] = [
         id: "ubuntu-violet",
         name: "Ubuntu Violet",
         description: "Ubuntu-inspired violet surfaces with a warm live accent.",
-        swatches: &["#77216f", "#e95420", "#2c1830"],
         light_css: include_str!("../../resources/themes/ubuntu-violet-light.css"),
         dark_css: include_str!("../../resources/themes/ubuntu-violet-dark.css"),
     },
@@ -475,6 +636,42 @@ mod tests {
         "scenedeck_surface",
         "scenedeck_card",
     ];
+
+    #[test]
+    #[ignore = "requires a disposable native GTK display"]
+    fn native_explicit_theme_modes_style_controls_and_release_the_system_override() {
+        crate::ui::test_support::native_test(
+            "ui::theme::tests::native_explicit_theme_modes_style_controls_and_release_the_system_override",
+            || {
+                use crate::domain::appearance::{ThemeMode, ThemePreference};
+
+                let style = adw::StyleManager::default();
+                style.set_color_scheme(adw::ColorScheme::ForceLight);
+                for mode in [ThemeMode::Dark, ThemeMode::Light, ThemeMode::System] {
+                    let generation = super::REQUEST_GENERATION.with(std::cell::Cell::get);
+                    ThemeManager::apply_async(
+                        ThemePreference {
+                            selected_theme: Some(crate::domain::appearance::ThemeId::new("nord")),
+                            mode,
+                            motion: MotionLevel::Off,
+                            ..Default::default()
+                        },
+                        |report| assert!(report.is_ok(), "{:?}", report.warnings),
+                    );
+                    assert_eq!(
+                        super::REQUEST_GENERATION.with(std::cell::Cell::get),
+                        generation.wrapping_add(1),
+                        "applying native mode must not recursively reapply the palette"
+                    );
+                    match mode {
+                        ThemeMode::Dark => assert!(style.is_dark(), "native controls stayed light"),
+                        ThemeMode::Light => assert!(!style.is_dark(), "native controls stayed dark"),
+                        ThemeMode::System => assert_eq!(style.color_scheme(), adw::ColorScheme::Default),
+                    }
+                }
+            },
+        );
+    }
 
     #[test]
     fn mixer_empty_state_uses_themed_surface() {
@@ -664,7 +861,7 @@ mod tests {
     }
 
     #[test]
-    fn scene_cards_and_live_sidebar_icon_use_compact_live_styling() {
+    fn live_indicators_keep_their_streaming_state() {
         // Both live icons share one rule; the point of the assertion is that
         // they are red, not which selector they happen to be grouped under.
         assert!(BASE_CSS.contains(
@@ -673,9 +870,563 @@ mod tests {
         assert!(BASE_CSS.contains(".scenedeck-content-header-streaming {"));
         assert!(BASE_CSS.contains("border-top: 3px solid alpha(@scenedeck_error, 0.78);"));
         assert!(BASE_CSS.contains("animation-name: scenedeck-live-breathe;"));
-        assert!(BASE_CSS.contains(".scene-card {\n    min-width: 132px;"));
-        assert!(BASE_CSS.contains("background-image: linear-gradient"));
-        assert!(BASE_CSS.contains(".scene-card-previous {"));
+    }
+
+    #[test]
+    fn custom_css_rejects_import_tokens_escapes_comments_and_nesting() {
+        for css in [
+            r#"@import url("file:///blocked.css");"#,
+            r#"/*before*/ @IMPORT/*between*/ "blocked.css";"#,
+            r#"@\69mport "blocked.css";"#,
+            r#"@i\6d port "blocked.css";"#,
+            r#"@\000069mport url("blocked.css");"#,
+            r#"button { @import "blocked.css"; }"#,
+            r#"@/**/import "blocked.css";"#,
+        ] {
+            assert!(super::validate_custom_css(css).is_err(), "accepted {css}");
+        }
+        for css in [
+            "/* @import 'ignored.css'; */ button { color: @theme_fg_color; }",
+            r#"button { font-family: "@import"; }"#,
+            "@define-color custom #ff0000; @keyframes pulse { to { opacity: 1; } }",
+            include_str!("../../examples/themes/my-custom-theme.css"),
+            include_str!("../../examples/themes/high-contrast-custom.css"),
+            include_str!("../../examples/themes/streaming-red.css"),
+        ] {
+            assert!(super::validate_custom_css(css).is_ok(), "rejected {css}");
+        }
+        let nested = format!("{}{}", "{".repeat(100), "}".repeat(100));
+        assert!(super::validate_custom_css(&nested).is_err());
+        assert!(super::validate_custom_css("}").is_err());
+        assert!(
+            super::validate_custom_css(&" ".repeat(crate::storage::small_file::CSS_LIMIT + 1))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn custom_css_rejects_image_urls_before_they_can_read_external_files_on_gtk() {
+        for css in [
+            r#"button { background-image: url("file:///blocked.pipe"); }"#,
+            "button { background-image: url(file:///blocked.pipe); }",
+            r#"button { background-image: URL("https://example.invalid/image.png"); }"#,
+            r#"button { background-image: u\72l("file:///blocked.pipe"); }"#,
+            r#"button { background-image: cross-fade(50%, url("blocked.pipe"), none); }"#,
+        ] {
+            assert!(
+                super::validate_custom_css(css).is_err(),
+                "accepted dependency {css}"
+            );
+        }
+        for css in [
+            r#"button { font-family: "url(file:///literal-name)"; }"#,
+            "/* url(file:///comment) */ button { background-image: linear-gradient(red, blue); }",
+        ] {
+            assert!(
+                super::validate_custom_css(css).is_ok(),
+                "rejected literal/inline image {css}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a native GTK display; run alone with --test-threads=1"]
+    fn native_custom_css_fifo_import_is_rejected_before_gtk_load() {
+        if !crate::ui::background_io::isolated_test_child(
+            "ui::theme::tests::native_custom_css_fifo_import_is_rejected_before_gtk_load",
+        ) {
+            return;
+        }
+        adw::init().expect("native GTK display");
+        let dir = std::env::temp_dir().join(format!("scenedeck-css-import-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("blocked.css");
+        assert!(std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success());
+        for css in [
+            format!("@\\69mport/**/url(\"file://{}\");", fifo.display()),
+            format!(
+                "button {{ background-image: url(\"file://{}\"); }}",
+                fifo.display()
+            ),
+        ] {
+            let report = ThemeManager::apply_with_custom_css(
+                &crate::domain::appearance::ThemePreference::default(),
+                super::CustomCssLoad::Loaded {
+                    path: dir.join("custom.css"),
+                    css,
+                },
+            );
+            assert!(
+                !report.is_ok(),
+                "CSS dependencies must be rejected without opening the FIFO"
+            );
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn system_custom_css_uses_the_resolved_variant_path() {
+        use super::CustomCssLoad;
+        use crate::domain::appearance::ThemePreference;
+        let mut preference = ThemePreference::default();
+        preference.custom_css.enabled = true;
+        preference.custom_css.light_path = Some("/scenedeck-test-light.css".into());
+        preference.custom_css.dark_path = Some("/scenedeck-test-dark.css".into());
+        for (variant, expected) in [
+            (ThemeVariant::Light, "/scenedeck-test-light.css"),
+            (ThemeVariant::Dark, "/scenedeck-test-dark.css"),
+        ] {
+            let loaded = ThemeManager::load_custom_css(&preference, variant);
+            match loaded {
+                CustomCssLoad::Loaded { path, .. } | CustomCssLoad::Failed { path, .. } => {
+                    assert_eq!(path, std::path::Path::new(expected));
+                }
+                other => panic!("expected resolved custom path: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn stale_custom_css_read_cannot_replace_a_newer_request() {
+        super::REQUEST_GENERATION.with(|current| current.set(2));
+        let report = super::finish_css_read(
+            1,
+            &crate::domain::appearance::ThemePreference::default(),
+            super::CustomCssLoad::Disabled,
+        );
+        assert!(report.is_none());
+    }
+
+    #[test]
+    fn built_in_scene_states_contrast_in_both_modes() {
+        for theme in ThemeManager::built_in_themes() {
+            for variant in [ThemeVariant::Light, ThemeVariant::Dark] {
+                let colors = parse_theme_colors(theme.css_for(variant));
+                for state in ["program", "preview"] {
+                    let background = format!("scenedeck_{state}");
+                    let foreground = format!("{background}_fg");
+                    assert_contrast(
+                        theme.id,
+                        variant,
+                        &foreground,
+                        &background,
+                        color_value(&colors, &foreground),
+                        color_value(&colors, &background),
+                    );
+                }
+                for state in ["program", "preview", "focus", "border"] {
+                    let foreground = format!("scenedeck_{state}");
+                    for background in ["scenedeck_card", "scenedeck_window"] {
+                        let ratio = contrast_ratio(
+                            color_value(&colors, &foreground),
+                            color_value(&colors, background),
+                        );
+                        assert!(ratio >= 3.0, "{} {variant:?} {state}: {ratio:.2}", theme.id);
+                    }
+                }
+                assert_ne!(
+                    color_value(&colors, "scenedeck_program"),
+                    color_value(&colors, "scenedeck_preview"),
+                    "{} must preserve independent tally colors",
+                    theme.id
+                );
+                for background in ["scenedeck_image_fallback", "scenedeck_image_scrim"] {
+                    assert_contrast(
+                        theme.id,
+                        variant,
+                        "scenedeck_image_fg",
+                        background,
+                        color_value(&colors, "scenedeck_image_fg"),
+                        color_value(&colors, background),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Run separately: GTK initialization is bound to one thread and display.
+    #[test]
+    #[ignore = "requires a native GTK display; run alone with --test-threads=1"]
+    fn native_theme_and_custom_overlay_parser_smoke() {
+        // GTK binds to one OS thread; isolate it from other display tests.
+        const CHILD: &str = "SCENEDECK_THEME_SMOKE_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().expect("test binary"))
+                .args([
+                    "--exact",
+                    "ui::theme::tests::native_theme_and_custom_overlay_parser_smoke",
+                    "--ignored",
+                    "--test-threads=1",
+                ])
+                .env(CHILD, "1")
+                .status()
+                .expect("isolated GTK test");
+            assert!(status.success(), "isolated GTK theme test failed");
+            return;
+        }
+        adw::init().expect("GTK/libadwaita display");
+        let provider = gtk4::CssProvider::new();
+        let errors = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        provider.connect_parsing_error({
+            let errors = std::rc::Rc::clone(&errors);
+            move |_, _, error| errors.borrow_mut().push(error.message().to_string())
+        });
+        provider.load_from_data(BASE_CSS);
+        for theme in ThemeManager::built_in_themes() {
+            for variant in [ThemeVariant::Light, ThemeVariant::Dark] {
+                provider.load_from_data(theme.css_for(variant));
+            }
+        }
+        for css in [
+            include_str!("../../examples/themes/my-custom-theme.css"),
+            include_str!("../../examples/themes/high-contrast-custom.css"),
+            include_str!("../../examples/themes/streaming-red.css"),
+        ] {
+            provider.load_from_data(css);
+        }
+        for level in [MotionLevel::Reduced, MotionLevel::Off] {
+            provider.load_from_data(&motion_css(level).expect("motion override"));
+        }
+        assert!(
+            errors.borrow().is_empty(),
+            "GTK CSS errors: {:?}",
+            errors.borrow()
+        );
+
+        assert_native_caption_contrast();
+
+        let style = adw::StyleManager::default();
+        let settings = gtk4::Settings::default().expect("GTK settings");
+        settings.set_gtk_enable_animations(true);
+        let preference = crate::domain::appearance::ThemePreference {
+            selected_theme: Some(crate::domain::appearance::ThemeId::new("scenedeck-dark")),
+            ..Default::default()
+        };
+        ThemeManager::apply_async(preference, |report| assert!(report.is_ok()));
+        // Enter System first: it must release the explicit modes exercised by
+        // the caption fixture before simulating desktop color notifications.
+        style.set_color_scheme(adw::ColorScheme::ForceDark);
+        let installed_theme =
+            || super::ACTIVE_PROVIDERS.with(|active| active.borrow()[1].to_string());
+        let dark_css = installed_theme();
+        style.set_color_scheme(adw::ColorScheme::ForceLight);
+        assert_ne!(
+            installed_theme(),
+            dark_css,
+            "System must follow desktop color changes"
+        );
+        style.set_color_scheme(adw::ColorScheme::ForceDark);
+        assert_eq!(installed_theme(), dark_css);
+        settings.set_gtk_enable_animations(false);
+        super::ACTIVE_PROVIDERS.with(|active| {
+            assert_eq!(
+                active.borrow().len(),
+                3,
+                "desktop reduce motion installs an override"
+            );
+        });
+        let preference = super::ACTIVE_PREFERENCE.with(|active| active.borrow().clone().unwrap());
+        let report = ThemeManager::apply_with_custom_css(
+            &preference,
+            super::CustomCssLoad::Loaded {
+                path: "invalid-theme.css".into(),
+                css: "button { color: ; }".to_string(),
+            },
+        );
+        assert!(!report.is_ok());
+        super::ACTIVE_PROVIDERS.with(|active| {
+            assert_eq!(
+                active.borrow().len(),
+                3,
+                "invalid custom CSS must not replace the fallback"
+            );
+        });
+    }
+
+    /// Resolve native label alpha/foreground and sample the backgrounds that GTK
+    /// actually paints. Token-only checks cannot detect native subtitle dimming.
+    fn assert_native_caption_contrast() {
+        use adw::prelude::*;
+        let caption = gtk4::Label::new(Some("Enabled Sources observation caption"));
+        caption.add_css_class("caption");
+        caption.add_css_class("dim-label");
+        let row = adw::ActionRow::builder()
+            .title("Settings")
+            .subtitle("Enabled Settings description")
+            .build();
+        let group = adw::PreferencesGroup::builder()
+            .description("Enabled preferences group description")
+            .build();
+        group.add(&row);
+        let content = gtk4::Box::new(gtk4::Orientation::Vertical, 16);
+        content.set_margin_top(24);
+        content.set_margin_bottom(24);
+        content.set_margin_start(24);
+        content.set_margin_end(24);
+        content.append(&caption);
+        content.append(&group);
+        let window = gtk4::Window::builder()
+            .default_width(600)
+            .default_height(240)
+            .child(&content)
+            .build();
+        window.add_css_class("scenedeck-root");
+        window.present();
+        fn label_by_class(widget: &gtk4::Widget, class: &str, text: &str) -> Option<gtk4::Label> {
+            if let Some(label) = widget.downcast_ref::<gtk4::Label>() {
+                if label.has_css_class(class) && label.text() == text {
+                    return Some(label.clone());
+                }
+            }
+            let mut child = widget.first_child();
+            while let Some(widget) = child {
+                if let Some(label) = label_by_class(&widget, class, text) {
+                    return Some(label);
+                }
+                child = widget.next_sibling();
+            }
+            None
+        }
+        let subtitle = label_by_class(row.upcast_ref(), "subtitle", "Enabled Settings description")
+            .expect("native ActionRow subtitle");
+        let description = label_by_class(
+            group.upcast_ref(),
+            "dimmed",
+            "Enabled preferences group description",
+        )
+        .expect("native PreferencesGroup description");
+        let context = gtk4::glib::MainContext::default();
+        for theme in ThemeManager::built_in_themes() {
+            for variant in [ThemeVariant::Light, ThemeVariant::Dark] {
+                let mode = match variant {
+                    ThemeVariant::Light => crate::domain::appearance::ThemeMode::Light,
+                    ThemeVariant::Dark => crate::domain::appearance::ThemeMode::Dark,
+                };
+                adw::StyleManager::default().set_color_scheme(match variant {
+                    ThemeVariant::Light => adw::ColorScheme::ForceLight,
+                    ThemeVariant::Dark => adw::ColorScheme::ForceDark,
+                });
+                let preference = crate::domain::appearance::ThemePreference {
+                    selected_theme: Some(crate::domain::appearance::ThemeId::new(theme.id)),
+                    mode,
+                    motion: MotionLevel::Off,
+                    ..Default::default()
+                };
+                assert!(ThemeManager::apply(&preference).is_ok());
+                let until = std::time::Instant::now() + std::time::Duration::from_millis(75);
+                while std::time::Instant::now() < until {
+                    while context.pending() {
+                        context.iteration(false);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                let snapshot = gtk4::Snapshot::new();
+                gtk4::WidgetPaintable::new(Some(&window)).snapshot(
+                    &snapshot,
+                    f64::from(window.width()),
+                    f64::from(window.height()),
+                );
+                let node = snapshot.to_node().expect("native caption render node");
+                let viewport = gtk4::graphene::Rect::new(
+                    0.0,
+                    0.0,
+                    window.width() as f32,
+                    window.height() as f32,
+                );
+                let texture = window
+                    .renderer()
+                    .expect("native renderer")
+                    .render_texture(&node, Some(&viewport));
+                let mut downloader = gtk4::gdk::TextureDownloader::new(&texture);
+                downloader.set_format(gtk4::gdk::MemoryFormat::R8g8b8a8);
+                let (pixels, stride) = downloader.download_bytes();
+                let pixel = |x: f32, y: f32| {
+                    let x = (f64::from(x) * f64::from(texture.width()) / f64::from(window.width()))
+                        as usize;
+                    let y = (f64::from(y) * f64::from(texture.height())
+                        / f64::from(window.height())) as usize;
+                    let offset = y * stride + x * 4;
+                    assert_eq!(
+                        pixels[offset + 3],
+                        255,
+                        "native caption background must be opaque"
+                    );
+                    [
+                        f64::from(pixels[offset]) / 255.0,
+                        f64::from(pixels[offset + 1]) / 255.0,
+                        f64::from(pixels[offset + 2]) / 255.0,
+                    ]
+                };
+                let window_background =
+                    pixel((window.width() - 20) as f32, (window.height() - 20) as f32);
+                let card_point = row
+                    .compute_point(
+                        &window,
+                        &gtk4::graphene::Point::new(
+                            (row.width() - 20) as f32,
+                            row.height() as f32 / 2.0,
+                        ),
+                    )
+                    .expect("native card coordinates");
+                let card_background = pixel(card_point.x(), card_point.y());
+                let colors = parse_theme_colors(theme.css_for(variant));
+                let expected = color_value(&colors, "scenedeck_muted_fg");
+                for (label, background) in [
+                    (&caption, window_background),
+                    (&subtitle, card_background),
+                    (&description, window_background),
+                ] {
+                    assert!(
+                        label.is_sensitive(),
+                        "this regression covers enabled informational text"
+                    );
+                    let color = label.color();
+                    assert!(
+                        color.alpha() >= 0.999,
+                        "{} {variant:?} native label alpha {}",
+                        theme.id,
+                        color.alpha()
+                    );
+                    assert!(
+                        label.opacity() >= 0.999,
+                        "native caption widget must not be dimmed"
+                    );
+                    let foreground = [
+                        f64::from(color.red()),
+                        f64::from(color.green()),
+                        f64::from(color.blue()),
+                    ];
+                    for channel in 0..3 {
+                        assert!(
+                            (foreground[channel] - expected[channel]).abs() < 0.001,
+                            "{} {variant:?} native caption must use semantic foreground",
+                            theme.id
+                        );
+                    }
+                    assert_contrast(
+                        theme.id,
+                        variant,
+                        "native enabled caption",
+                        "rendered background",
+                        foreground,
+                        background,
+                    );
+                    // Widget color/opacity properties do not include CSS group
+                    // opacity. Inspect actual glyph pixels so native dimming is
+                    // caught even when the semantic foreground remains correct.
+                    let bounds = label.compute_bounds(&window).expect("native label bounds");
+                    let mut rendered_contrast = 1.0_f64;
+                    for y in bounds.y().floor() as i32..(bounds.y() + bounds.height()).ceil() as i32
+                    {
+                        for x in
+                            bounds.x().floor() as i32..(bounds.x() + bounds.width()).ceil() as i32
+                        {
+                            rendered_contrast = rendered_contrast
+                                .max(contrast_ratio(pixel(x as f32, y as f32), background));
+                        }
+                    }
+                    assert!(
+                        rendered_contrast >= 4.5,
+                        "{} {variant:?} rendered enabled caption contrast {rendered_contrast:.2}",
+                        theme.id
+                    );
+                }
+            }
+        }
+        window.close();
+    }
+
+    /// Uses a disposable GTK settings file and child process for each desktop
+    /// preference. Run on an isolated X display without an XSettings manager.
+    #[test]
+    #[ignore = "requires an isolated native GTK display; run with --test-threads=1"]
+    fn native_motion_off_stops_stack_and_restores_desktop_preference() {
+        use gtk4::prelude::*;
+        const CHILD: &str = "SCENEDECK_NATIVE_MOTION_DESKTOP";
+        let Ok(desktop) = std::env::var(CHILD) else {
+            for enabled in [false, true] {
+                let dir = std::env::temp_dir().join(format!(
+                    "scenedeck-native-motion-{}-{enabled}",
+                    std::process::id()
+                ));
+                std::fs::create_dir_all(dir.join("gtk-4.0")).expect("GTK settings directory");
+                std::fs::write(
+                    dir.join("gtk-4.0/settings.ini"),
+                    format!("[Settings]\ngtk-enable-animations={enabled}\n"),
+                )
+                .expect("disposable desktop settings");
+                let status = std::process::Command::new(std::env::current_exe().expect("test binary"))
+                    .args([
+                        "--exact",
+                        "ui::theme::tests::native_motion_off_stops_stack_and_restores_desktop_preference",
+                        "--ignored",
+                        "--test-threads=1",
+                    ])
+                    .env(CHILD, enabled.to_string())
+                    .env("XDG_CONFIG_HOME", &dir)
+                    .status()
+                    .expect("isolated motion test");
+                std::fs::remove_dir_all(dir).expect("remove disposable settings");
+                assert!(
+                    status.success(),
+                    "native motion test failed for desktop={enabled}"
+                );
+            }
+            return;
+        };
+        adw::init().expect("GTK/libadwaita display");
+        let expected = desktop == "true";
+        let settings = gtk4::Settings::default().expect("GTK settings");
+        assert_eq!(
+            settings.is_gtk_enable_animations(),
+            expected,
+            "isolated desktop preference"
+        );
+        let stack = gtk4::Stack::builder()
+            .transition_type(gtk4::StackTransitionType::Crossfade)
+            .transition_duration(600)
+            .build();
+        stack.add_named(&gtk4::Label::new(Some("First")), Some("first"));
+        stack.add_named(&gtk4::Label::new(Some("Second")), Some("second"));
+        let window = gtk4::Window::builder().child(&stack).build();
+        window.present();
+        let context = gtk4::glib::MainContext::default();
+        let end = std::time::Instant::now() + std::time::Duration::from_millis(80);
+        while std::time::Instant::now() < end {
+            while context.pending() {
+                context.iteration(false);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let mut preference = crate::domain::appearance::ThemePreference {
+            motion: MotionLevel::Off,
+            ..Default::default()
+        };
+        ThemeManager::apply_async(preference.clone(), |report| assert!(report.is_ok()));
+        assert!(!settings.is_gtk_enable_animations());
+        stack.set_visible_child_name("second");
+        assert!(
+            !stack.is_transition_running(),
+            "Off must stop native Stack transitions"
+        );
+        preference.motion = MotionLevel::Full;
+        ThemeManager::apply_async(preference, |report| assert!(report.is_ok()));
+        assert_eq!(
+            settings.is_gtk_enable_animations(),
+            expected,
+            "Full must restore, never force, desktop animations"
+        );
+        stack.set_visible_child_name("first");
+        assert_eq!(
+            stack.is_transition_running(),
+            expected,
+            "native transitions follow restored desktop setting"
+        );
+        window.close();
     }
 
     #[test]

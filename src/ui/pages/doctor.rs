@@ -1,15 +1,17 @@
 //! Doctor page — structural diagnostics.
 //!
-//! Runs `DoctorService` over the current inventory, registry, and graph, then
-//! lists the results grouped by severity (Errors, Warnings, Info).  Self-
-//! refreshes whenever the page is shown, and offers a manual "Re-run" button.
+//! Runs `DoctorService` over a complete inventory, registry, and graph, then
+//! lists the results grouped by severity (Errors, Warnings, Info).
+//! Re-analyzes cached observations when shown; manual refresh reads OBS again.
 
 use std::rc::Rc;
 
-use adw::{prelude::*, ActionRow, PreferencesGroup, PreferencesPage, StatusPage};
+use adw::{prelude::*, ActionRow, PreferencesGroup, PreferencesPage};
 use gtk4::{Box as GtkBox, Image};
 use i18n_embed_fl::fl;
 
+use crate::controller::command::AppCommand;
+use crate::controller::state::{AppState, ObsStatus, TopologyStatus};
 use crate::domain::diagnostic::{Diagnostic, DiagnosticSeverity};
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::doctor_service::DoctorService;
@@ -36,29 +38,18 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
 /// itself — where the refresh callback that `rebuildable_page` returns is not
 /// reachable.
 fn rebuild(container: &GtkBox, nav: &NavigationContext) {
-    crate::ui::clear_children(container);
-    populate(container, nav);
+    crate::ui::rebuild_page(container, |container| populate(container, nav));
 }
 
 fn populate(container: &GtkBox, nav: &NavigationContext) {
-    let (inventory, graph) = {
+    let (inventory, graph, topology_status) = {
         let state = nav.state.borrow();
-        (state.scene_inventory.clone(), state.scene_graph.clone())
+        (
+            state.scene_inventory.clone(),
+            state.scene_graph.clone(),
+            state.topology_status.clone(),
+        )
     };
-
-    if inventory.scenes.is_empty() {
-        let empty = StatusPage::builder()
-            .icon_name("emblem-default-symbolic")
-            .title(fl!(LANGUAGE_LOADER, "doctor-empty-state-title"))
-            .description(fl!(LANGUAGE_LOADER, "doctor-empty-state-description"))
-            .build();
-        container.append(&empty);
-        return;
-    }
-
-    let registry = nav.state.borrow().registry.clone();
-    let registry_snapshot = registry.snapshot();
-    let diagnostics = DoctorService::run(&inventory, &registry_snapshot, &graph);
 
     let page = PreferencesPage::builder()
         .title(fl!(LANGUAGE_LOADER, "doctor-page-title"))
@@ -67,31 +58,65 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
     page.add_css_class("app-preferences-page");
 
     // ── Summary / re-run ──────────────────────────────────────────────────────
-    let summary_group = PreferencesGroup::new();
+    let summary_group = PreferencesGroup::builder()
+        .title(fl!(LANGUAGE_LOADER, "doctor-structural-title"))
+        .build();
     let summary_row = ActionRow::builder()
+        .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "doctor-summary-row-title"))
-        .subtitle(diagnostic_summary(&diagnostics))
         .build();
 
     let rerun_btn = gtk4::Button::builder()
         .icon_name("view-refresh-symbolic")
-        .tooltip_text(fl!(LANGUAGE_LOADER, "doctor-rerun-tooltip"))
+        .tooltip_text(fl!(LANGUAGE_LOADER, "doctor-refresh-topology-tooltip"))
         .valign(gtk4::Align::Center)
         .build();
     rerun_btn.add_css_class("flat");
+    rerun_btn.set_sensitive(
+        matches!(nav.state.borrow().obs_status, ObsStatus::Connected { .. })
+            && topology_status != TopologyStatus::Loading,
+    );
     rerun_btn.connect_clicked({
         let nav = nav.clone();
-        let container = container.clone();
-        move |_| rebuild(&container, &nav)
+        let container = container.downgrade();
+        move |_| {
+            if let Some(container) = container.upgrade() {
+                let command = begin_topology_refresh(&mut nav.state.borrow_mut());
+                if let Some(command) = command {
+                    rebuild(&container, &nav);
+                    nav.dispatch(command);
+                }
+            }
+        }
     });
     summary_row.add_suffix(&rerun_btn);
     summary_group.add(&summary_row);
     page.add(&summary_group);
 
+    let notice = topology_status.notice().or_else(|| {
+        inventory.scenes.is_empty().then(|| {
+            (
+                fl!(LANGUAGE_LOADER, "topology-empty-title"),
+                fl!(LANGUAGE_LOADER, "topology-empty-description"),
+            )
+        })
+    });
+    if let Some((title, description)) = notice {
+        summary_row.set_title(&title);
+        summary_row.set_subtitle(&description);
+        container.append(&page);
+        return;
+    }
+
+    let registry_snapshot = nav.state.borrow().registry.snapshot();
+    let diagnostics = DoctorService::run(&inventory, &registry_snapshot, &graph);
+    summary_row.set_subtitle(&diagnostic_summary(&diagnostics));
+
     // ── All clear ─────────────────────────────────────────────────────────────
     if diagnostics.is_empty() {
         let ok_group = PreferencesGroup::new();
         let ok_row = ActionRow::builder()
+            .use_markup(false)
             .title(no_diagnostics_summary())
             .subtitle(no_diagnostics_detail())
             .build();
@@ -117,7 +142,8 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
         let group = PreferencesGroup::builder().title(severity.label()).build();
         for diag in group_diags {
             let title = diag.title();
-            let row = ActionRow::builder().title(&title).build();
+            let row = ActionRow::builder().use_markup(false).build();
+            row.set_title(&title);
             if let Some(suggestion) = &diag.suggestion {
                 row.set_subtitle(suggestion);
             }
@@ -130,6 +156,16 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
     }
 
     container.append(&page);
+}
+
+fn begin_topology_refresh(state: &mut AppState) -> Option<AppCommand> {
+    if !matches!(state.obs_status, ObsStatus::Connected { .. })
+        || state.topology_status == TopologyStatus::Loading
+    {
+        return None;
+    }
+    state.set_topology_loading();
+    Some(AppCommand::RefreshData)
 }
 
 fn diagnostic_summary(diagnostics: &[Diagnostic]) -> String {
@@ -147,6 +183,119 @@ fn diagnostic_summary(diagnostics: &[Diagnostic]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::{graph::SceneGraph, role::SceneRole, scene::Scene};
+
+    #[test]
+    fn doctor_rerun_requests_fresh_obs_data_and_immediately_retires_ready_verdict() {
+        let mut state = AppState::new(Default::default(), Default::default(), None, None);
+        state.obs_status = ObsStatus::Connected {
+            obs_version: "fixture".into(),
+        };
+        for status in [
+            TopologyStatus::Missing,
+            TopologyStatus::Ready,
+            TopologyStatus::Failed("old".into()),
+        ] {
+            state.topology_status = status;
+            assert!(matches!(
+                begin_topology_refresh(&mut state),
+                Some(AppCommand::RefreshData)
+            ));
+            assert_eq!(state.topology_status, TopologyStatus::Loading);
+            assert!(begin_topology_refresh(&mut state).is_none());
+        }
+        state.set_topology_ready(SceneGraph::default());
+        state.obs_status = ObsStatus::Disconnected;
+        assert!(begin_topology_refresh(&mut state).is_none());
+        assert_eq!(state.topology_status, TopologyStatus::Ready);
+    }
+
+    #[test]
+    #[ignore = "requires a native GTK display"]
+    fn native_doctor_requires_ready_topology_and_rerun_shows_loading_immediately() {
+        crate::ui::test_support::native_test(
+            "ui::pages::doctor::tests::native_doctor_requires_ready_topology_and_rerun_shows_loading_immediately",
+            || {
+                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+                let container = GtkBox::new(gtk4::Orientation::Vertical, 0);
+                {
+                    let mut state = nav.state.borrow_mut();
+                    state.scene_inventory.scenes = vec![Scene { id: "Main".into() }];
+                    state.registry.set_scene_role("Main", Some(SceneRole::Primary));
+                }
+                populate(&container, &nav);
+                assert!(page_text(container.upcast_ref()).contains("Scene topology not observed"));
+                assert!(!page_text(container.upcast_ref()).contains("No problems found"));
+                nav.state.borrow_mut().scene_inventory.scenes.clear();
+                nav.state.borrow_mut().set_topology_ready(SceneGraph::default());
+                rebuild(&container, &nav);
+                assert!(page_text(container.upcast_ref()).contains("No scenes observed"));
+                {
+                    let mut state = nav.state.borrow_mut();
+                    state.obs_status = ObsStatus::Connected { obs_version: "fixture".into() };
+                    state.scene_inventory.scenes = vec![Scene { id: "Main".into() }];
+                    state.registry.set_scene_role("Main", Some(SceneRole::Primary));
+                    state.set_topology_ready(SceneGraph::default());
+                }
+                rebuild(&container, &nav);
+                assert!(page_text(container.upcast_ref()).contains("No problems found"));
+                let button = refresh_button(container.upcast_ref()).expect("refresh button");
+                assert!(button.is_sensitive());
+                button.emit_clicked();
+                assert_eq!(nav.state.borrow().topology_status, TopologyStatus::Loading);
+                let text = page_text(container.upcast_ref());
+                assert!(text.contains("Reading scene topology"));
+                assert!(!text.contains("No problems found"));
+                assert!(!refresh_button(container.upcast_ref()).unwrap().is_sensitive());
+                nav.state.borrow_mut().set_topology_failed("Group <b>& read failed".into());
+                rebuild(&container, &nav);
+                let text = page_text(container.upcast_ref());
+                assert!(text.contains("Scene topology could not be read"));
+                assert!(text.contains("Group <b>& read failed"));
+                assert!(!text.contains("No problems found"));
+                refresh_button(container.upcast_ref()).unwrap().emit_clicked();
+                assert_eq!(nav.state.borrow().topology_status, TopologyStatus::Loading);
+                nav.state.borrow_mut().set_topology_ready(SceneGraph::default());
+                rebuild(&container, &nav);
+                assert!(page_text(container.upcast_ref()).contains("No problems found"));
+                nav.state.borrow_mut().invalidate_collection_runtime();
+                rebuild(&container, &nav);
+                assert!(page_text(container.upcast_ref()).contains("Scene topology not observed"));
+                nav.state.borrow_mut().reset_obs_session(ObsStatus::Disconnected);
+                rebuild(&container, &nav);
+                assert!(page_text(container.upcast_ref()).contains("Scene topology not observed"));
+            },
+        );
+    }
+
+    fn page_text(widget: &gtk4::Widget) -> String {
+        let mut text = widget
+            .downcast_ref::<gtk4::Label>()
+            .map(|label| label.text().to_string())
+            .unwrap_or_default();
+        let mut child = widget.first_child();
+        while let Some(widget) = child {
+            text.push_str(&page_text(&widget));
+            child = widget.next_sibling();
+        }
+        text
+    }
+
+    fn refresh_button(widget: &gtk4::Widget) -> Option<gtk4::Button> {
+        if let Some(button) = widget.downcast_ref::<gtk4::Button>() {
+            if button.icon_name().as_deref() == Some("view-refresh-symbolic") {
+                return Some(button.clone());
+            }
+        }
+        let mut child = widget.first_child();
+        while let Some(widget) = child {
+            if let Some(button) = refresh_button(&widget) {
+                return Some(button);
+            }
+            child = widget.next_sibling();
+        }
+        None
+    }
 
     #[test]
     fn diagnostic_summary_uses_all_clear_text_when_empty() {

@@ -2,6 +2,40 @@ use i18n_embed_fl::fl;
 
 use crate::infra::i18n::LANGUAGE_LOADER;
 
+/// Minimum fader gain; this position denotes exact digital silence.
+pub const MIN_VOLUME_DB: f64 = -100.0;
+/// Maximum gain allowed by SceneDeck's audio controls.
+pub const MAX_VOLUME_DB: f64 = 0.0;
+
+/// Convert an observed gain to decibels; invalid/nonpositive gain is silence.
+pub fn volume_mul_to_db(mul: f64) -> f64 {
+    if !mul.is_finite() || mul <= 0.0 {
+        f64::NEG_INFINITY
+    } else {
+        20.0 * mul.log10()
+    }
+}
+
+/// Convert a fader position to linear gain, preserving exact silence.
+/// Command boundaries must validate finiteness/range before calling this.
+pub fn volume_db_to_mul(db: f64) -> f64 {
+    let db = sanitize_volume_db(db);
+    if db <= MIN_VOLUME_DB {
+        0.0
+    } else {
+        10.0_f64.powf(db / 20.0)
+    }
+}
+
+/// Clamp an observed gain to the finite fader range.
+pub fn sanitize_volume_db(db: f64) -> f64 {
+    if db.is_finite() {
+        db.clamp(MIN_VOLUME_DB, MAX_VOLUME_DB)
+    } else {
+        MIN_VOLUME_DB
+    }
+}
+
 /// Stable identifier for an OBS audio input.  Matches `inputName` in the
 /// WebSocket protocol; OBS guarantees uniqueness within a scene collection.
 pub type InputId = String;

@@ -432,14 +432,7 @@ hotkey-hint-empty-slot = Немає сцени на позиції { $slot }
 scene-card-tooltip = { $status } ({ $role })
 scene-card-tooltip-with-hotkey = { $status } ({ $role }) · { $hotkey }
 scene-card-role-suffix = { $role } сцена
-scene-card-tooltip-active = Поточна програмна сцена
-scene-card-tooltip-previous = Попередня активна сцена
 scene-card-tooltip-ready = Перемкнутися на цю сцену
-scene-card-status-active = Активна
-scene-card-status-previous = Попередня
-scene-card-status-ready = Готова
-scene-card-marker-active = Ефір
-scene-card-marker-previous = Остання
 
 ## status_bar.rs
 status-bar-stream-inactive = Трансляція: Неактивно
@@ -524,7 +517,6 @@ settings-obs-not-connected = Немає підключення до OBS.
 settings-obs-connecting = Підключення до OBS…
 settings-obs-connected = Підключено — OBS { $version }
 settings-obs-error = Помилка: { $err }
-settings-theme-subtitle = { $description } Зразки кольорів: { $swatches }
 settings-theme-loaded = Завантажено { $theme } ({ $variant }).
 settings-theme-loaded-with-warnings = Тему завантажено з попередженнями.
 theme-variant-light = Світла
@@ -695,12 +687,13 @@ help-group-operate-title = Проведення ефіру
 help-group-operate-description = Сторінки, якими ви користуєтеся під час трансляції.
 
 help-live-title = Сторінка «Наживо»
-help-live-subtitle = Картки сцен, звук і програмна сцена
+help-live-subtitle = Стіна сцен, Studio, аудіо та виходи
 help-live-body =
-    «Наживо» — це операторське подання: поточна програмна сцена вгорі, картки сцен з одного боку й компактні картки звуку з іншого. Перетягніть розділювач, щоб надати більше місця потрібній частині.
-    Натискання картки сцени перемикає OBS на цю сцену. Поточну позначено як Активна, решту — як Готові.
-    Після підключення немає карток? Жодна сцена ще не має ролі Основна — дивіться вище «Приховування сцен, на які ви ніколи не перемикаєтеся».
-    Рядок стану внизу видно на кожній сторінці; він показує стан з'єднання, стан трансляції та запису з тривалістю, а також поточні FPS, втрачені кадри, використання процесора й бітрейт.
+    Live — це стіна сцен. Мініатюри сцен у Налаштуваннях додають затемнені зображення та більші картки; після вимкнення повертаються компактні плитки.
+    У прямому режимі картки та клавіатурні скорочення перемикають Ефір. Перемикач Studio у верхній панелі синхронізується з OBS: картки вибирають Перегляд, а Перехід надсилає його в Ефір. Вибір переходу й підтримувана тривалість з’являються лише в режимі Studio.
+    Розгорніть аудіосмугу під сценами для додаткових регуляторів або відкрийте Мікшер. Трансляція, запис, буфер повтору та віртуальна камера мають спільну панель виходів.
+    Джерела у верхній панелі відкривають видимість та детальні налаштування. Перегляд сцени там ніколи не перемикає Ефір.
+    Після з’єднання немає карток? Призначте потрібним сценам роль Основна в Інвентарі.
 
 help-hotkeys-title = Перемикання сцен із клавіатури
 help-hotkeys-subtitle = Типово Ctrl+1 … Ctrl+0, із можливістю налаштування
@@ -713,19 +706,19 @@ help-hotkeys-body =
 help-audio-title = Звук: сторінка «Мікшер» та індикатори
 help-audio-subtitle = Що показують кольорові смуги
 help-audio-body =
-    Картки звуку з'являються на сторінці «Наживо» та — з більшим простором і більшою кількістю елементів керування — на сторінці «Мікшер». Спочатку йдуть глобальні аудіопристрої OBS, потім джерела з підтримкою звуку в поточній сцені, включно з джерелами у вкладених сценах і групах.
+    Компактна аудіосмуга Live розгортається для швидких змін, а Мікшер надає повні фейдери. Спочатку показано глобальні аудіопристрої OBS, потім джерела поточної сцени, зокрема вкладені сцени та групи.
     Режими Мікшера визначають, звук якої сцени ви переглядаєте. Активний стежить за програмною сценою OBS. Вибраний завантажує одну сцену й залишається на ній. Закріплений утримує вибрану сцену як постійну ціль, поки OBS перемикається далі.
     Індикатор поруч із кожним фейдером має шкалу від -60 дБ унизу до 0 дБ угорі й використовує пороги OBS: зелений нижче -20 дБ для музики та фону, жовтий від -20 до -9 дБ для мовлення, червоний вище -9 дБ, де починається кліпінг. Жоден сигнал не має постійно залишатися в червоній зоні.
     Один стовпчик означає монофонічне джерело; два — стерео, спочатку лівий, потім правий канал. Якщо рухається лише лівий стовпчик, половина глядачів нічого не почує з цього джерела.
     Лінія над заповненням показує найвищий пік за останні двадцять секунд — так найшвидше можна помітити пропущений кліпінг. Квадрат унизу показує рівень, що надходить із пристрою до фейдера; якщо він завеликий, рух фейдера цього не виправить.
     Кнопка блокування на картці лише заморожує повзунок SceneDeck. Вона нічого не блокує в OBS.
 
-help-outputs-title = Початок і зупинка трансляції та запису
+help-outputs-title = Трансляція, запис, повтор і віртуальна камера
 help-outputs-subtitle = І підтвердження, що запобігають випадковим діям
 help-outputs-body =
-    Кнопки Почати/Зупинити трансляцію та Почати/Зупинити запис розташовані внизу бічної панелі й доступні з кожної сторінки. Рядок стану показує стан і тривалість роботи.
-    Налаштування → Безпека виходів визначають, які з чотирьох дій спочатку просять підтвердження. Типово зупинка будь-якого виходу потребує підтвердження, а початок — ні: ранній початок зазвичай не шкодить, тоді як рання зупинка завершує ефір.
-    Зміни стану, виконані безпосередньо в OBS, також з'являються тут: SceneDeck стежить за подіями OBS, а не припускає, що натискання власної кнопки спрацювало.
+    Панель виходів у Live містить трансляцію, запис, буфер повтору та віртуальну камеру. Інші елементи керування виходами відкривають паузу/відновлення запису, поділ файлу/розділи та останні результати.
+    Налаштування → Безпека виходів керує підтвердженнями запуску та зупинки трансляції й запису. За замовчуванням зупинку потрібно підтвердити.
+    Події та оновлені спостереження OBS визначають показаний стан. Саме підтвердження запиту не доводить, що вихід запущено або файл збережено. Шляхи належать комп’ютеру з OBS.
 
 help-group-inspect-title = Перевірка налаштування
 help-group-inspect-description = Знайдіть несподіванку, перш ніж вона потрапить в ефір.
@@ -786,3 +779,195 @@ welcome-dialog-body = Схоже, це перший запуск. Сторінк
 welcome-dialog-later = Не зараз
 welcome-dialog-open = Прочитати посібник
 window-help-tooltip = Допомога й посібник із початку роботи
+
+# OBS controls and accessible alternatives
+window-stop-disconnect-label = Зупинити трансляцію/запис і від’єднатися
+disconnect-confirm-heading = Зупинити трансляцію та запис перед від’єднанням?
+disconnect-confirm-body = Трансляція: { $stream }. Запис: { $recording }. Активні трансляцію та запис буде зупинено перед від’єднанням SceneDeck. Ця дія не зупиняє буфер повторів і віртуальну камеру.
+live-scenes-obs-empty = У цій колекції OBS немає сцен. Створіть сцену в OBS, а потім оновіть SceneDeck.
+live-organize-scenes = Упорядкувати сцени
+mixer-secondary-options = Групування та пошук
+inventory-move-up = Перемістити { $scene } вгору
+inventory-move-down = Перемістити { $scene } вниз
+graph-relationship-list = Зв’язки сцен — текстовий список
+graph-no-dependencies = Немає залежностей від вкладених сцен
+audio-source-mute = Вимкнути звук { $source }
+audio-source-lock = Заблокувати локальний повзунок { $source }
+audio-source-volume = Гучність { $source }
+audio-source-meter = Індикатор пікового рівня звуку { $source }
+audio-meter-no-level = Немає видимого рівня
+audio-meter-no-observation = Немає вимірювання рівня звуку
+
+# Session activity
+
+workflow-activity-title = Останні дії
+workflow-activity-detail = Лише поточний сеанс, останні 30 записів. Запити, спостереження та помилки розділено. Від’єднання залишають прогалини; збіг у часі не доводить причинного зв’язку.
+workflow-check-item = Видимість джерела
+workflow-activity-requested = Запитано
+workflow-activity-observed = Спостережено
+workflow-activity-failed = Помилка
+workflow-activity-connection = З’єднання
+
+
+# Native OBS inspector
+control-refresh = Оновити спостереження OBS
+control-inspection-note = Переглядайте будь-яку сцену без зміни Програми. Зміни видимості впливають на сцену або групу, що містить елемент.
+control-disconnected = Під’єднайтеся до OBS, щоб переглядати джерела.
+control-loading = Зчитування стану OBS…
+control-observed = Останнє спостереження: { $seconds } с тому. Оновіть дані, перш ніж покладатися на цей стан.
+control-scene-selector = Сцена для перегляду — не змінює Програму
+control-request-hint = Оновіть дані, щоб завантажити власні засоби керування OBS і видимість джерел.
+control-resume = Продовжити запис
+control-pause = Призупинити запис
+control-split = Розділити файл запису
+control-replay-stop = Зупинити буфер повторів
+control-replay-start = Запустити буфер повторів
+control-replay-save = Зберегти повтор
+control-camera-stop = Зупинити віртуальну камеру
+control-camera-start = Запустити віртуальну камеру
+control-chapter-name = Назва розділу запису
+control-chapter = Створити розділ
+control-host-path = Шлях останнього повтору на комп’ютері OBS: { $path }
+control-output-controls = Запис, повтори та віртуальна камера
+control-source-search = Пошук джерел або шляхів контейнерів
+control-inspect-source = Переглянути налаштування й використання джерела
+control-hidden-parent = Батьківський елемент прихований. Увімкнення лише цього елемента може не зробити його видимим.
+control-sources-empty = У цьому спостереженні немає елементів сцени.
+control-shared-source = Звук, фільтри, медіа й текст впливають на це джерело всюди, де воно використовується. Видимість стосується контейнера елемента.
+control-used-in = Використовується в — структурні шляхи
+control-image-refresh = Зробити знімок
+control-image-alt = Знімок сцени OBS, зроблений на запит
+control-image-error = Не вдалося декодувати зображення OBS.
+control-image-note = Знімок з останнього захоплення. Це не відео наживо.
+control-studio-enable = Увімкнути режим студії
+control-program = Програма: { $scene }
+control-preview = Перегляд: { $scene }
+control-stage = Підготувати сцену, що переглядається
+control-take = Перехід
+control-transition = Поточний перехід сцени
+control-duration = Тривалість переходу в мілісекундах
+control-apply = Застосувати
+control-studio = Студія та перехід
+control-scene-mode-changed = Режим студії змінено. Оновіть дані перед активацією сцени. Дію не було повторено.
+control-filters = Фільтри джерела
+control-text-file = Це текстове джерело читає файл. Відредагуйте файл на комп’ютері OBS.
+control-text-save = Зберегти текст в OBS
+control-text = Вбудоване текстове джерело
+control-media-play = Відтворити
+control-media-pause = Пауза
+control-media-stop = Зупинити
+control-media-restart = Відтворити спочатку
+control-media-previous = Попереднє
+control-media-next = Наступне
+control-media-seconds = Позиція медіа в секундах
+control-media-seek = Перейти до позиції
+control-media = Керування медіа
+control-monitor-host = Моніторинг звуку відтворюється на комп’ютері OBS, а не через SceneDeck.
+control-monitor-off = Моніторинг вимкнено
+control-monitor-only = Лише моніторинг — вимкнути звук на виході
+control-monitor-output = Моніторинг і вихід
+control-audio-sync = Зсув синхронізації звуку (мілісекунди)
+control-audio-balance = Баланс (0 = ліворуч, 0,5 = центр, 1 = праворуч)
+control-audio-track = Звукова доріжка { $track }
+control-audio-tracks = Маршрутизація звукових доріжок
+control-advanced-audio = Розширені налаштування звуку джерела
+
+
+# Operating workspace
+workspace-action-acknowledged = Запит підтверджено; стан оновлено з OBS
+workspace-replay-observed = OBS повідомив про збережений повтор: { $path }
+workspace-disk-space = Вільний простір для запису OBS: { $value } МіБ
+control-stale = Останній відомий стан. Оновіть спостереження OBS, щоб увімкнути зміни.
+control-no-matches = Жодне джерело не відповідає пошуку. Очистьте пошук, щоб показати всі елементи.
+
+
+# OBS recording volume and session activity
+stats-recording-disk = Вільний простір на диску запису OBS
+stats-recording-disk-value = { $value } МіБ
+stats-activity-title = Останні дії та контекст графіків
+stats-activity-detail = Останні 15 записів сеансу. Виберіть запис, щоб позначити його час на графіках. Розриви з’єднання, відсутні вимірювання та скидання лічильників обмежують тлумачення. Збіг у часі не доводить причинного зв’язку.
+stats-activity-clear-marker = Прибрати позначку з графіка
+stats-activity-marker-visible = Пунктирні лінії позначають вибрану подію між вимірюваннями. Графіки використовують інтервали між вимірюваннями.
+stats-activity-marker-unavailable = Немає позначки: подія поза збереженими вимірюваннями, у прогалині вимірювань або на неї вплинула зміна годинника.
+stats-activity-empty = У цьому сеансі ще не спостерігалося жодних операцій.
+stats-activity-requested = Запитано
+stats-activity-observed = Спостережено
+stats-activity-failed = Помилка
+stats-activity-connection = З’єднання
+stats-activity-entry = { $time } · { $origin } · { $description }
+scene-card-stage-hint = Підготуйте цю сцену в Перегляді. Виконайте перехід, щоб змінити Програму.
+scene-card-preview-label = Перегляд
+hotkey-hint-stage-take = { $binding } · Підготувати в Перегляді; виконайте перехід, щоб змінити Програму.
+
+
+header-obs-setup = Налаштування OBS
+header-obs-unknown = Невідомо
+header-obs-context = Профіль: { $profile } · Колекція сцен: { $collection }
+
+status-bar-connection-detail = { $state } · OBS { $version }
+
+
+doctor-structural-title = Структура та ролі сцен
+
+
+control-image-caption = Знімок сцени { $scene }, зроблений { $seconds } с тому. Оновіть зображення, щоб зробити новий знімок.
+
+output-results-acknowledged = Підтверджено
+
+output-results-copy-path = Копіювати шлях на комп’ютері OBS
+
+output-results-host-path = Шлях на комп’ютері OBS: { $path }
+
+output-results-record-stop = Зупинити запис
+
+output-results-unconfirmed = Не підтверджено
+
+output-results-title = Результати виходів
+
+output-results-detail = Запити та спостереження OBS розділено. Подія збереження може походити від іншого контролера. Шляхи стосуються комп’ютера OBS. У цьому сеансі зберігаються останні 24 результати.
+
+record-elapsed-tooltip = Час від повідомленого OBS початку запису, включно з паузами. Це не тривалість записаного файлу.
+
+window-open-navigation = Відкрити навігацію
+sources-title = Джерела
+sources-back = Назад до джерел
+sources-select-hint = Виберіть джерело, щоб переглянути його налаштування.
+sources-text-conflict = Цей текст змінено в OBS. Скасуйте редагування, щоб завантажити поточний текст перед збереженням.
+inventory-name-column = Сцена
+inventory-role-column = Роль
+inventory-actions-column = Параметри
+inventory-scene-options = Параметри сцени { $scene }
+inventory-columns-button = Ширина стовпців
+inventory-name-width = Ширина сцени
+inventory-role-width = Ширина ролі
+inventory-reset-widths = Скинути ширину стовпців
+settings-scene-previews = Мініатюри сцен
+settings-scene-previews-description = Показувати затемнені мініатюри на більших картках Live.
+live-audio-expand = Розгорнути аудіо
+live-audio-collapse = Згорнути аудіо
+studio-mode-label = Studio
+scene-card-image-pending = Мініатюра недоступна
+scene-card-program-label = Ефір
+output-options = Інші елементи керування виходами
+output-replay-label = Replay · { $state }
+output-camera-label = Віртуальна камера · { $state }
+
+output-camera-name = Вірт. камера
+output-replay-name = Replay
+
+# Hardening: save completion and safe custom-theme dependencies.
+app-persistence-drain-timeout = Pending saves have not finished. Retry waits again; Cancel keeps the application open.
+app-persistence-drain-worker-failed = A background operation failed. Changes may not have reached disk. Cancel keeps the application open so you can check and save again. Retry waits for later saves but cannot recover the failed operation. Close Anyway acknowledges that its changes may be lost; other pending saves will still be completed.
+app-persistence-close-anyway = Close Anyway (Changes May Be Lost)
+theme-custom-css-dependencies-forbidden = Custom CSS must be self-contained: @import, image url() dependencies, and malformed or excessively nested rules are not allowed. Inline the styles and use gradients or colors instead of external images.
+
+# Topology readiness: no structural verdict before a complete observation.
+topology-missing-title = Scene topology not observed
+topology-missing-description = Connect to OBS and refresh observations before relying on scene relationships or structural checks.
+topology-loading-title = Reading scene topology…
+topology-loading-description = Waiting for a complete observation from OBS. Structural checks are not available yet.
+topology-failed-title = Scene topology could not be read
+topology-failed-description = Structural checks are unavailable. Refresh to retry. OBS reported: { $error }
+topology-empty-title = No scenes observed
+topology-empty-description = OBS successfully reported no scenes in this collection. Create a scene in OBS, then refresh.
+doctor-refresh-topology-tooltip = Refresh scene topology from OBS and run structural checks again.

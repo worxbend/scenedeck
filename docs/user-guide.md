@@ -35,24 +35,51 @@ disconnected view until OBS is connected.
 
 ## Live Page
 
-The Live page is the main operating view.
+Live puts scene switching first: one scrolling scene grid, a compact expandable
+audio strip beneath it, and one output bar at the bottom. Detailed source
+editing is available through **Sources** in the topbar.
 
-When disconnected, it shows a placeholder message. After connection, it shows:
+**Scene previews** in Settings switches between compact tiles and larger cards
+with shaded scene stills. It defaults to off conservatively. Images refresh
+periodically and are not live video. A missing image leaves a usable scene tile. Images time out after two
+seconds and failed scenes retry less often. A slow unanswered image can pause
+other image refreshes while scene and output controls remain usable. Disabling
+previews stops new capture work and discards late images; an already sent request
+may finish silently. Names, Program/Preview badges and keyboard focus remain
+visible over the image.
 
-- Stream and record controls.
-- Current program scene.
-- Resizeable scene and audio panes.
-- Scrollable scene cards.
-- Scrollable compact audio cards.
+Short windows reduce card height and use a single-line scene name with the full
+name available to accessibility tools and in its tooltip. Images stay contained
+on the card background. Larger windows retain two-line names and 16:9 cards.
 
-The bottom status bar shows OBS connection state, stream and record state, and
-performance counters — FPS, dropped frames, CPU, and bitrate — on every page.
-FPS and dropped frames are always shown while connected; the dropped-frame
-counter is highlighted only once frames are actually being lost.
+The topbar **Studio** switch is synchronized with OBS. Activating a card or its
+shortcut switches Program in direct mode and stages Preview in Studio mode.
+Studio mode reveals transition selection, supported duration editing and one
+**Take** action above the grid. Unknown or stale mode state disables affected
+actions until OBS state refreshes. Toggling mode does not itself switch scenes.
+
+The status bar shows connection/output state on every page. In short, narrow
+windows its extra performance row folds away; focus or hover the status bar to
+read the same health summary. Unknown readings remain placeholders.
+
+## Sources Page
+
+Open **Sources** in the topbar to inspect a scene without switching Program.
+Search its items, change an owned item's visibility, and open contextual input
+details. Wide windows show the list and details together; compact windows offer
+a Back action. Shared-source usage and partial-read warnings help identify the
+scope of a change. Expand **Used in — structural paths** when you need the
+shared-input paths; the section starts collapsed and long paths wrap.
+
+Supported input details include built-in text with Save/Cancel and external-edit
+conflict protection, media transport/seek, existing filters, and audio
+monitoring/sync/balance/tracks. These settings affect the shared OBS input,
+wherever it appears. Selecting a source is separate from switching a scene.
+See the [operating guide](obs-operating-workspace.md) for scope and result rules.
 
 ## Stats Page
 
-The Stats page is the last entry in the sidebar and is always available.
+The Stats page is available from the sidebar.
 Process metrics such as FPS, frame render time, and CPU are reported by OBS
 whether or not you are streaming; the stream-only values — congestion, stream
 frame drops, and bitrate — stay blank until the stream output is running. While
@@ -112,9 +139,9 @@ preference in the local config file. The search field is session-only.
 ### Scene Cards
 
 SceneDeck shows scene cards for OBS scenes that are marked as `Primary` in the
-Inventory page. Selecting a card switches the OBS program scene.
-
-The current program scene is marked as Active. Other switchable scenes are marked as Ready.
+Inventory page. Card activation switches Program in direct mode or stages
+Preview in Studio mode. Named Program and Preview badges show observed state;
+both can appear on one card.
 
 If no scene cards appear after connecting, open Inventory and assign the
 `Primary` role to the scenes you want to switch from Live.
@@ -123,9 +150,8 @@ If no scene cards appear after connecting, open Inventory and assign the
 
 Each of the first ten scene cards carries a small badge with its digit: the
 first card is `1`, the ninth is `9`, and the tenth is `0`. Pressing that digit
-switches to the card, so the keyboard order is exactly the order you see. The
-caption to the right of the Scenes heading names the binding in full, for
-example `Press Ctrl+1 … 0`.
+activates that card using the current direct/Studio mode, so keyboard order
+matches the visible order. The scene shortcut hint names the configured binding.
 
 Slot numbers follow the scene order saved in Inventory, so reordering cards
 there also reorders the shortcuts. Cards past the tenth have no shortcut.
@@ -146,6 +172,9 @@ down while a text field has focus. Pressing a digit with no scene behind it
 says so in the caption for a couple of seconds instead of switching anything.
 
 ### Audio Cards
+
+Live starts with a compact audio strip; expand it for larger controls. Mixer
+keeps the detailed faders and scope controls described below.
 
 The audio section shows global OBS audio sources first, followed by
 audio-capable inputs from the active scene. SceneDeck also follows enabled
@@ -226,7 +255,7 @@ Scene icons are chosen in Inventory, from the picker at the left of each scene
 row. The icon then appears beside the scene name on its Live card.
 
 Audio source icons are chosen from the overflow button at the bottom of any
-audio card, on Live or on the Mixer page. The icon appears in the card's scope
+detailed audio card on the Mixer page. The icon appears in the card's scope
 bar, next to the scope name.
 
 Both pickers offer the same thirty icons and a "no icon" entry that clears the
@@ -235,23 +264,22 @@ so they survive restarts and travel with an exported registry.
 
 ### Stream and Record
 
-Use the Start/Stop Stream and Start/Stop Recording buttons at the bottom of the
-sidebar to control OBS outputs. The status bar shows output state and elapsed
-time. When OBS reports a state change, SceneDeck updates both surfaces.
+Use Live's output bar for streaming, recording, replay buffer and virtual camera.
+The contextual output menu holds pause/resume, save replay, split/chapter and
+output-result details. OBS may reject a supported request when its output or
+recording format is incompatible. The status bar reports stream/record state
+and elapsed wall-clock time on every page.
 
-The sidebar buttons ask for confirmation when their Output Safety toggles are
-enabled in Settings. By default, SceneDeck confirms Stop Stream and Stop
-Recording, while starting either output runs immediately.
+Output Safety preferences control start/stop confirmations. Stop Stream and
+Stop Recording are confirmed by default; starting either runs immediately.
+Output evidence distinguishes a request or acknowledgement from a separate
+observed file event. Reported paths belong to the OBS host; Copy copies text.
 
 ## Header Selectors
 
-After connecting to OBS, the header shows:
-
-- Collection: switch the current OBS scene collection.
-- Profile: switch the current OBS profile.
-
-These controls are hidden while disconnected because SceneDeck does not have the
-OBS lists yet.
+After connecting, the **OBS setup** header menu offers profile and scene
+collection selection. It is available once OBS has supplied those lists.
+The topbar also provides the OBS Studio mode switch and Sources access.
 
 ## Inventory Page
 
@@ -259,20 +287,23 @@ Inventory lists OBS scenes and lets you assign local roles. Roles are stored in
 SceneDeck's local registry and do not rename or modify scenes in OBS.
 Drag a scene by its handle to set the display order. The same persisted order is
 used for scene cards on the Live page.
-Assigned scenes also have an optional accent-color picker and clear button.
-SceneDeck uses that accent to highlight the scene's Live card with a fixed 50%
-alpha; picker alpha values are not stored.
-If the registry file cannot be loaded, Inventory shows a warning row and falls
-back to unassigned roles until the file is fixed and the page is refreshed.
+Scenes use a responsive list rather than a table. Names and role descriptions
+wrap, and role controls move below the scene details in narrow windows. There
+are no column dividers or width settings to adjust.
+
+Choose an icon beside the scene name. Open the row options menu for accent
+color, clearing the accent and keyboard move-up/move-down actions. Accents are
+small secondary markers on Live cards. YAML export/import includes these local
+choices. No scene is renamed or reordered in OBS by changing the registry.
 
 Roles:
 
 - Primary: live-switchable scene shown on the Live page by default.
-- Secondary: valid scene hidden from Live by default unless Live config includes it.
+- Secondary: valid scene hidden from the curated Live wall.
 - Module: reusable nested scene, not directly switchable.
 - Raw: hardware or source wrapper scene.
 - Debug: temporary test scene.
-- Archive: preserved but excluded from workflows.
+- Archive: preserved scene excluded from active use.
 
 Inventory also shows stale registry entries when a locally remembered scene no
 longer exists in OBS. You can remove stale entries from this page.
@@ -282,8 +313,7 @@ file. This includes scene roles, accent colors, scene order, tags, protection
 flags, and graph rule fields.
 Use export to back up a scene setup or move it to another machine; use import to
 replace the local registry from a YAML file.
-If the local registry file is invalid, export reports the parse error instead
-of producing a default registry backup.
+Import reports malformed YAML without replacing the saved registry.
 
 ## Graph Page
 
@@ -326,7 +356,12 @@ shows it.
 
 ## Settings Page
 
-Settings controls appearance and OBS connection settings.
+Settings controls appearance, scene previews, shortcuts, output safety and OBS
+connection settings. The Scene previews switch changes Live card sizing and
+thumbnail work without restarting; it currently defaults to off.
+
+There are 12 built-in theme families, each with light and dark variants. Motion
+preferences honor the desktop animation setting as well as the app preference.
 
 Color Scheme can follow the system preference or force light/dark mode. Themes
 are light/dark-aware families, so the selected theme applies its light or dark
@@ -369,7 +404,8 @@ time the Live page is shown. See [Scene Hotkeys](#scene-hotkeys) above.
 - `Ctrl+R`: reconnect to OBS.
 - `Ctrl+,`: open Settings.
 - `Ctrl+Q`: quit SceneDeck.
-- `Ctrl+1` … `Ctrl+0` on the Live page: switch to the first ten scene cards.
+- `Ctrl+1` … `Ctrl+0` on Live: activate one of the first ten cards using the
+  current direct/Studio mode.
   The combination is configurable — see [Scene Hotkeys](#scene-hotkeys).
 
 ## Troubleshooting

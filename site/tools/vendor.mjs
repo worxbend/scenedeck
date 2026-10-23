@@ -1,89 +1,84 @@
-// Vendor three.js and pixi.js into site/vendor/ as tree-shaken ES modules.
-//
-// The site itself has no build step — it ships plain HTML, CSS and ES modules
-// that GitHub Pages serves as-is. But shipping the full stock builds of both
-// renderers would cost ~405 KB gzipped, and the background only touches a small
-// slice of each library. So the two bundles below are produced once, committed,
-// and then served directly. Re-run this only when bumping a renderer version:
-//
-//     node site/tools/vendor.mjs
-//
-// It needs network access and npx. The generated files are the only thing the
-// site depends on at runtime.
-
-import { execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, mkdirSync, copyFileSync, statSync } from 'node:fs'
-import { gzipSync } from 'node:zlib'
-import { readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join, dirname } from 'node:path'
+// Run npm ci --ignore-scripts in site/tools first. Generation is offline and
+// never installs packages or invokes lifecycle scripts. Do not edit vendor/.
+import { build, version as esbuildVersion } from 'esbuild'
+import { readFile, writeFile, readdir, mkdir } from 'node:fs/promises'
+import { join, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { gzipSync } from 'node:zlib'
+import { replaceDirectory, sha256 } from './generation.mjs'
 
-const SITE = join(dirname(fileURLToPath(import.meta.url)), '..')
-const OUT = join(SITE, 'vendor')
+const TOOLS = fileURLToPath(new URL('.', import.meta.url))
+const OUT = fileURLToPath(new URL('../vendor', import.meta.url))
+const lockBytes = await readFile(join(TOOLS, 'package-lock.json'))
+const lock = JSON.parse(lockBytes)
+if (esbuildVersion !== lock.packages['node_modules/esbuild'].version) throw new Error('esbuild differs from the lock; run npm ci --ignore-scripts')
 
-// Pinned so the committed bundles are reproducible.
-const THREE = 'three@0.185.1'
-const PIXI = 'pixi.js@8.19.0'
-
-// The exact public surface the background uses. Keeping this list minimal is
-// what makes the bundles small: three draws one full-screen shader, so it
-// needs no lights, no materials, no geometry beyond a quad and no loaders, and
-// pixi is driven through its raw WebGLRenderer rather than the much heavier
-// Application/Assets front door.
-//
-// Anything the background imports that is missing here fails at runtime with
-// "X is not a constructor", so add it and regenerate before using it.
+// Extend this exact surface before importing a new renderer symbol.
 const ENTRIES = {
-  'three.min.js': {
-    pkg: THREE,
-    source: `export {
-      WebGLRenderer, Scene, OrthographicCamera,
-      PlaneGeometry, InstancedBufferGeometry, InstancedBufferAttribute,
-      ShaderMaterial, Mesh, Color, SRGBColorSpace
-    } from 'three'`,
-  },
-  'pixi.min.js': {
-    pkg: PIXI,
-    source: `export {
-      WebGLRenderer, Container, Texture, ParticleContainer, Particle, Rectangle
-    } from 'pixi.js'`,
-  },
+  'three.min.js': { pkg: 'three', exports: [
+    'WebGLRenderer', 'Scene', 'OrthographicCamera', 'PlaneGeometry',
+    'InstancedBufferGeometry', 'InstancedBufferAttribute', 'ShaderMaterial',
+    'Mesh', 'Color', 'SRGBColorSpace',
+  ] },
+  'pixi.min.js': { pkg: 'pixi.js', exports: [
+    'WebGLRenderer', 'Container', 'Texture', 'ParticleContainer', 'Particle', 'Rectangle', 'Ticker',
+  ] },
 }
 
-const work = mkdtempSync(join(tmpdir(), 'scenedeck-vendor-'))
-console.log(`working in ${work}`)
-
-execFileSync('npm', ['init', '-y'], { cwd: work, stdio: 'ignore' })
-execFileSync('npm', ['install', '--silent', 'esbuild', THREE, PIXI], { cwd: work, stdio: 'inherit' })
-
-mkdirSync(OUT, { recursive: true })
-
-for (const [outName, { source }] of Object.entries(ENTRIES)) {
-  const entry = join(work, `entry-${outName}`)
-  writeFileSync(entry, source)
-  const built = join(work, outName)
-  execFileSync(join(work, 'node_modules/.bin/esbuild'), [
-    entry,
-    '--bundle',
-    '--format=esm',
-    '--minify',
-    '--tree-shaking=true',
-    '--legal-comments=none',
-    `--outfile=${built}`,
-  ], { stdio: 'inherit' })
-
-  const banner = outName.startsWith('three')
-    ? '/*! three.js r185 — MIT — https://threejs.org (tree-shaken subset, see site/tools/vendor.mjs) */\n'
-    : '/*! PixiJS v8 — MIT — https://pixijs.com (tree-shaken subset, see site/tools/vendor.mjs) */\n'
-
-  const code = banner + readFileSync(built, 'utf8')
-  const dest = join(OUT, outName)
-  writeFileSync(dest, code)
-
-  const raw = statSync(dest).size
-  const gz = gzipSync(code).length
-  console.log(`${outName}: ${(raw / 1024).toFixed(0)} KB raw / ${(gz / 1024).toFixed(0)} KB gzip`)
+async function packageNotice(name) {
+  const root = join(TOOLS, 'node_modules', name)
+  const files = await readdir(root)
+  const notices = files.filter(file => /^(license|copying|notice)(\.|$)/i.test(file)).sort()
+  if (notices.length) return (await Promise.all(notices.map(file => readFile(join(root, file), 'utf8')))).join('\n\n')
+  // @pixi/colord's npm tarball omits LICENSE.md. The checked-in notice is
+  // upstream's exact gitHead notice, not a reconstructed MIT template.
+  if (name === '@pixi/colord') {
+    const notice = await readFile(join(TOOLS, 'licenses/pixi-colord-LICENSE.md'))
+    if (sha256(notice) !== '7613d4594ee8b6163926af3435dae61c9e3d5a27cd137bd76a543ba40002d8fc') throw new Error('colord license mismatch')
+    return notice.toString()
+  }
+  throw new Error(`Missing license notice for ${name}`)
 }
 
-console.log('done')
+await replaceDirectory(OUT, async staged => {
+  const provenance = {
+    generator: 'site/tools/vendor.mjs', lockSHA256: sha256(lockBytes),
+    esbuild: lock.packages['node_modules/esbuild'].version,
+    target: 'es2022', installScripts: false, bundles: {}, packages: {},
+    supplementalNotices: {
+      '@pixi/colord': 'https://raw.githubusercontent.com/omgovich/colord/5344fbf77b736f81cd33c21050021bc09bc9dd1d/LICENSE.md',
+    },
+  }
+  await mkdir(join(staged, 'licenses'))
+  for (const [filename, entry] of Object.entries(ENTRIES)) {
+    const version = lock.packages[`node_modules/${entry.pkg}`].version
+    const built = await build({
+      absWorkingDir: TOOLS,
+      stdin: { contents: `export { ${entry.exports.join(', ')} } from '${entry.pkg}'`, resolveDir: TOOLS, sourcefile: `entry-${filename}` },
+      outfile: filename, write: false, bundle: true, format: 'esm',
+      minify: true, treeShaking: true, legalComments: 'linked', metafile: true,
+      charset: 'utf8', target: 'es2022',
+      banner: { js: `/*! ${entry.pkg}@${version}; generated by site/tools/vendor.mjs; notices in licenses/ */` },
+    })
+    for (const file of built.outputFiles) await writeFile(join(staged, basename(file.path)), file.contents)
+    await writeFile(join(staged, `${filename}.meta.json`), JSON.stringify(built.metafile, null, 2) + '\n')
+    const code = built.outputFiles.find(file => file.path.endsWith(filename)).contents
+    provenance.bundles[filename] = { package: entry.pkg, version, exports: entry.exports, sha256: sha256(code), bytes: code.length, gzipBytes: gzipSync(code).length }
+    const inputs = Object.values(built.metafile.outputs).flatMap(output => Object.entries(output.inputs).filter(([, input]) => input.bytesInOutput > 0).map(([path]) => path))
+    const names = [...new Set(inputs.map(path => path.match(/^node_modules\/((?:@[^/]+\/)?[^/]+)/)?.[1]).filter(Boolean))].sort()
+    for (const name of names) {
+      if (provenance.packages[name]) continue
+      const locked = lock.packages[`node_modules/${name}`]
+      const notice = await packageNotice(name)
+      const file = `${name.replaceAll('/', '-').replace('@', '')}.txt`
+      await writeFile(join(staged, 'licenses', file), notice)
+      provenance.packages[name] = { version: locked.version, resolved: locked.resolved, integrity: locked.integrity, license: locked.license, notice: `licenses/${file}`, noticeSHA256: sha256(notice) }
+    }
+    for (const [name, metadata] of Object.entries(provenance.packages)) {
+      const installed = JSON.parse(await readFile(join(TOOLS, 'node_modules', name, 'package.json'), 'utf8'))
+      if (installed.version !== metadata.version) throw new Error(`Installed ${name} differs from the lock; run npm ci --ignore-scripts`)
+    }
+    console.log(`${entry.pkg}@${version}: ${code.length} bytes / ${gzipSync(code).length} gzip`)
+  }
+  await writeFile(join(staged, 'provenance.json'), JSON.stringify(provenance, null, 2) + '\n')
+})

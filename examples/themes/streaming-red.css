@@ -1,14 +1,8 @@
-@define-color scenedeck_live #d72638;
+/* Broadcast accent; Program and Preview keep their independent tallies. */
+@define-color scenedeck_accent #b51e35;
+@define-color scenedeck_accent_fg #ffffff;
 
-.scene-card-active {
-  outline: 2px solid @scenedeck_live;
-}
-
-.scene-card-status-active {
-  background-color: @scenedeck_live;
-  color: white;
-}
-
-.output-control button.destructive-action {
-  background-color: @scenedeck_live;
+.output-toolbar .output-active {
+  background-color: #b51e35;
+  color: #ffffff;
 }

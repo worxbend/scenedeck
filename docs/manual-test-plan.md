@@ -6,7 +6,9 @@ mixer behavior.
 
 ## Prerequisites
 
-- OBS Studio is installed and running.
+- Use an isolated OBS instance with disposable profile, collection, config and
+  local outputs. Record paths/ports and hash any real config that must stay
+  untouched; never attach this test run to an active broadcast.
 - OBS WebSocket is enabled.
 - SceneDeck can connect to the configured OBS host, port, and password.
 - OBS has at least two scenes, at least one audio source, and one scene-specific
@@ -16,6 +18,132 @@ mixer behavior.
   is configured.
 
 ## Checklist
+
+The OBS-only operating workspace has a separate [guide](obs-operating-workspace.md).
+Current redesign results belong in the
+[redesign evidence](verification/redesign-2026-10-19/README.md). The earlier
+[implementation run](verification/2026-10-19/README.md) is historical context.
+This checklist alone is not evidence of a pass.
+
+### Owned Scene Items and Shared Sources
+
+1. In a disposable collection, create two instances of one input, a nested
+   scene and a group reused by several scenes.
+2. Open Sources from the topbar and inspect a scene without switching Program.
+   Search for an
+   input and a container name; clear the search.
+3. Toggle one item and compare its owner/item ID and enabled state with OBS.
+4. Open the input details and follow a Used in link.
+5. Rename/remove fixture items externally and refresh. Exercise a failed read,
+   then reconnect or change collection while a read is outstanding.
+
+Expected result: inspection does not switch Program; repeated items remain
+distinct; shared-input controls explain their scope; missing/partial reads stay
+unknown. Old callbacks/results cannot modify or repopulate a new session or
+collection. Failed or stale observations disable mutations until refreshed.
+
+### Scene Wall, Studio and Source Details
+
+1. At 1280 × 800 with six scenes, compare previews disabled/enabled. Inspect
+   bright, dark, detailed and unusual-aspect images, long names, registry accents,
+   Program, Preview, both tallies, hover and keyboard focus. Capture screenshots.
+2. In direct mode, activate a card and shortcut; verify Program changes. Toggle
+   Studio in the topbar and externally in OBS; verify the switch follows without
+   switching a scene. In Studio mode cards/shortcuts change only Preview. Check
+   the conditional transition/duration/Take row and fixed-duration transitions.
+3. Disable previews with a capture pending, leave Live, hide the window and
+   disconnect. Verify capture scheduling/cancellation with request traces; return
+   and reconnect/change collection while replies are delayed. Reject old images.
+4. Inspect supported media transport/seek, filters and advanced audio on Sources.
+   Leave the chosen media detail or Sources; verify selected-media polling stops.
+5. Edit built-in text, Cancel, then explicitly Save. Make an external OBS edit
+   while a draft is open and confirm conflict protection. Change source/scope
+   with a draft and check the displayed context. Type scene digits into inputs.
+6. With selected media playing, hold its monitor dropdown open across media
+   ticks; it must remain open. Verify a read failure or scope loss invalidates it.
+   Expand long structural usage paths and refresh; retain expansion and the
+   same focused path Button without forcing horizontal overflow.
+7. Expand/collapse Live audio; verify mute/gain/meters and detailed Mixer modes.
+   Keep grid scrolling separate from audio/output controls.
+
+Expected result: scene switching dominates Live. Rounded images retain readable
+opaque titles and independent state/focus cues. Missing images do not disable
+fresh controls. Unknown/stale mode blocks affected actions. Source inspection
+never switches Program; unsupported/error states do not enable stale writes.
+
+### Thumbnail Performance
+
+1. Run isolated six- and twenty-scene fixtures with a moving source. Record
+   resolution, capture p50/p95, response bytes/second, in-flight/queued requests,
+   cache size, app input responsiveness and mean OBS render time with previews
+   off/on. Include a remote-delay fixture and rapid page/reconnect races.
+2. Confirm one capture at a time, request/rate/cache bounds and independent
+   two-second transaction timeout and independent 15-second failed-scene
+   backoff. Include the four native calls per successful capture (collection,
+   video settings, image, collection) in latency/traffic counts, and verify
+   portrait/wide-canvas dimension fitting and matte presentation.
+   Trace zero further capture work while disabled,
+   hidden or disconnected. Exercise an unavailable screenshot capability.
+3. Investigate any preview-caused input stall above 100 ms or sustained mean
+   OBS render-time increase above 1 ms. Reduce capture size/rate if needed and
+   repeat affected measurements. Keep defaults conservative until qualified.
+
+Expected result: measured budgets and exact gaps are recorded separately from
+code bounds. OBS controls/results remain responsive when captures fail or lag.
+
+### Recording, Replay and Output Evidence
+
+1. Use a safe local recording directory. Start, pause, resume and stop a test
+   recording. Cancel a stop confirmation once before confirming it.
+2. Start replay buffering, save a replay, wait for OBS's saved event, then stop.
+3. Compare the result tray's request, acknowledgement and observed entries.
+   Copy a reported path and verify it is labeled as an OBS-host path.
+4. With a compatible recording configuration, exercise split-file and chapter
+   requests. Separately verify rejection from an incompatible configuration.
+5. Exercise virtual-camera start/stop on a machine with its output available.
+6. Check unsupported requests, delayed output events and disconnect while an
+   operation is pending. Check explicit stop-and-disconnect cancellation.
+
+Expected result: pause preserves an active recording; transitions guard duplicate
+requests; acknowledgement alone never claims a saved file. Late or unrelated
+observations remain separate evidence. Failed/aged/scope-lost requests remain
+failed or unconfirmed. Never substitute a real broadcast for a local test.
+
+### Removed Features and Retained Activity
+
+1. Navigate every page and Settings. Confirm no rehearsal, setup-expectation,
+   show-cue, Show page or replacement watch-configuration surface remains.
+2. Put an existing `workflows.json` in disposable config, record its hash, run
+   connected Live/Sources/output scenarios and restart. Confirm no routine
+   workflow reads/writes and identical file bytes afterward.
+3. Inspect Stats activity/markers, including an event outside retained history.
+   Confirm activity remains bounded session context and output evidence remains
+   available through the output menu.
+
+### Responsive, Themes and Accessibility
+
+1. Capture Live in both card modes at 640, 800, 1280 and 1600 logical pixels;
+   repeat at 125% and 200% text size with German and Ukrainian long labels.
+   Inspect Sources list/detail/Back, Inventory, Mixer, Doctor and Stats.
+2. Inspect all 12 theme families in both light/dark variants with both card
+   modes. Include Program, Preview, both tallies, focus, registry accent, pending,
+   unavailable images and active outputs. Index all 24 variants explicitly.
+3. Check custom light/dark examples, previous custom selectors, System switching,
+   desktop/App Motion preferences and high contrast. Record GTK CSS warnings and
+   measured contrast: normal text 4.5:1, large text and key boundaries/focus 3:1.
+4. Resize Inventory Scene/Role headers; select every role. Test numeric width
+   controls/reset by keyboard, refresh/restart persistence, invalid widths, drag
+   and keyboard ordering, icons/accents and YAML metadata roundtrip. Check role
+   values remain readable in compact/enlarged layouts.
+5. Traverse cards, topbar Studio, transition/Take, audio, outputs and contextual
+   source editing by keyboard. Refresh images/state during focus and drafts.
+   Inspect AT-SPI names/state and run Orca separately where available.
+
+Expected result: essential actions remain reachable without horizontal clipping;
+role labels wrap; focus survives image updates; text entry never switches scenes.
+Named badges/focus treatment supplement color. Record actual screen-reader
+speech separately from accessible-tree inspection and do not infer visual
+success from compilation.
 
 ### OBS Connect and Disconnect
 
@@ -89,7 +217,7 @@ disabled during transitions, and disabled confirmations run immediately.
 
 ### Recording Path Copy
 
-1. Start a recording from the sidebar.
+1. Start a recording from Live's output bar.
 2. Stop the recording and wait for OBS to report the final output path.
 3. Use the recording path copy button.
 4. Paste into a text field outside SceneDeck.

@@ -57,9 +57,15 @@ In Settings:
 5. Set Custom Dark CSS Path.
 6. Use Reload Custom CSS after editing a file.
 
+A custom stylesheet must be a regular UTF-8 file no larger than 1 MiB. It must
+be self-contained: `@import` and image `url(...)` dependencies are rejected,
+including CSS-escaped forms. GTK otherwise opens those files synchronously,
+including when a widget first maps. Inline the rules; use CSS colors, gradients,
+and built-in icon names rather than external images.
+
 If a custom file cannot be read or contains CSS parse errors, SceneDeck keeps the
 base and built-in theme providers loaded and reports the problem in Settings and
-logs. Disable Custom CSS to fall back to the selected built-in theme.
+logs. A malformed custom stylesheet is skipped as a whole. Disable Custom CSS to fall back to the selected built-in theme.
 
 ## Resetting a Broken Theme
 
@@ -91,3 +97,20 @@ Starter files live in `examples/themes/`:
 
 For a complete theme, copy an example into separate light and dark files and
 adjust colors for each side.
+
+## Scene wall compatibility
+
+The scene wall uses a native overlay so preview images, shading and fully opaque
+text remain independent. Existing theme IDs and custom paths are preserved.
+The base stylesheet supplies defaults for new semantic colors; existing overlays
+can be reloaded without migration or automatic file changes.
+
+For the supported colors, card-layer selectors, focus rules and migration from
+`.scene-card > box`, see [Theme CSS Reference](theme-css-reference.md). Prefer
+palette changes over replacing card backgrounds or state outlines. Keep Program
+and Preview separate from your interaction accent, and preserve the image scrim
+in both light and dark modes. The updated examples work with previews on/off.
+
+Motion follows the app preference and the desktop animation setting. Avoid adding
+custom animations that override those preferences. A theme reload does not change
+OBS state or discard loaded previews.

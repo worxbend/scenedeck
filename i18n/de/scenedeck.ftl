@@ -426,14 +426,7 @@ hotkey-hint-empty-slot = Keine Szene auf Platz { $slot }
 scene-card-tooltip = { $status } ({ $role })
 scene-card-tooltip-with-hotkey = { $status } ({ $role }) · { $hotkey }
 scene-card-role-suffix = { $role }-Szene
-scene-card-tooltip-active = Aktuelle Programmszene
-scene-card-tooltip-previous = Zuvor aktive Szene
 scene-card-tooltip-ready = Zu dieser Szene wechseln
-scene-card-status-active = Aktiv
-scene-card-status-previous = Vorherige
-scene-card-status-ready = Bereit
-scene-card-marker-active = An
-scene-card-marker-previous = Zuletzt
 
 ## status_bar.rs
 status-bar-stream-inactive = Stream: Inaktiv
@@ -518,7 +511,6 @@ settings-obs-not-connected = Nicht mit OBS verbunden.
 settings-obs-connecting = Verbindung zu OBS wird hergestellt …
 settings-obs-connected = Verbunden — OBS { $version }
 settings-obs-error = Fehler: { $err }
-settings-theme-subtitle = { $description } Farbmuster: { $swatches }
 settings-theme-loaded = { $theme } geladen ({ $variant }).
 settings-theme-loaded-with-warnings = Thema mit Warnungen geladen.
 theme-variant-light = Hell
@@ -684,12 +676,13 @@ help-scenes-registry-body =
 help-group-operate-title = Eine Sendung durchführen
 help-group-operate-description = Die Seiten, die Sie während eines Streams tatsächlich verwenden.
 help-live-title = Die Live-Seite
-help-live-subtitle = Szenenkarten, Audio und die Programmszene
+help-live-subtitle = Szenenwand, Studio, Audio und Ausgaben
 help-live-body =
-    Live ist die Bedienansicht: oben die aktuelle Programmszene, auf einer Seite die Szenenkarten und auf der anderen kompakte Audiokarten. Ziehen Sie die Trennlinie, um der benötigten Hälfte mehr Platz zu geben.
-    Ein Klick auf eine Szenenkarte schaltet OBS auf diese Szene. Die aktuelle Szene ist als Aktiv markiert, die übrigen als Bereit.
-    Nach dem Verbinden sind keine Karten zu sehen? Dann hat noch keine Szene die Rolle Primär — siehe oben „Szenen ausblenden, auf die Sie nie schalten“.
-    Die Statusleiste am unteren Rand bleibt auf jeder Seite sichtbar. Sie zeigt Verbindung, Stream- und Aufnahmestatus mit Laufzeit sowie aktuelle Werte für FPS, verworfene Frames, CPU und Bitrate.
+    Live ist eine Szenenwand. Szenenvorschaubilder in den Einstellungen ergänzt abgedunkelte Bilder und größere Karten; ohne Vorschaubilder erscheinen kompakte Kacheln.
+    Im Direktmodus wechseln Karten und Tastenkürzel das Programm. Der Studio-Schalter in der Titelleiste folgt OBS: Karten wählen dann die Vorschau, und Übernehmen schaltet sie ins Programm. Übergang und unterstützte Dauer erscheinen nur im Studio-Modus.
+    Erweitern Sie die Audioleiste unter den Szenen für weitere Regler oder öffnen Sie Mixer. Stream, Aufnahme, Replay-Puffer und virtuelle Kamera teilen sich eine Ausgabeleiste.
+    Quellen in der Titelleiste öffnet Sichtbarkeit und detaillierte Quelleinstellungen. Das Prüfen einer Szene dort wechselt nie das Programm.
+    Keine Karten nach dem Verbinden? Weisen Sie den gewünschten Szenen in Inventar die Rolle Primär zu.
 
 help-hotkeys-title = Szenen über die Tastatur wechseln
 help-hotkeys-subtitle = Standardmäßig Strg+1 … Strg+0, frei konfigurierbar
@@ -702,19 +695,19 @@ help-hotkeys-body =
 help-audio-title = Audio: Mixer-Seite und Pegelanzeigen
 help-audio-subtitle = Was die farbigen Balken bedeuten
 help-audio-body =
-    Audiokarten erscheinen auf Live und mit mehr Platz und Bedienelementen auf der Mixer-Seite. Globale OBS-Audiogeräte stehen zuerst, danach audiofähige Quellen der aktuellen Szene — einschließlich Quellen in verschachtelten Szenen und Gruppen.
+    Die kompakte Audioleiste auf Live lässt sich für schnelle Anpassungen erweitern; Mixer bietet vollständige Fader. Globale OBS-Audiogeräte kommen zuerst, danach Audioquellen der aktuellen Szene einschließlich verschachtelter Szenen und Gruppen.
     Der Mixer-Modus bestimmt, welche Szene Sie hören und sehen. Aktiv folgt der OBS-Programmszene. Ausgewählt lädt eine Szene und bleibt dort. Angeheftet hält eine gewählte Szene als festes Ziel, während OBS weiterschaltet.
     Die Anzeige neben jedem Regler reicht von −60 dB unten bis 0 dB oben und verwendet die OBS-Grenzwerte: Grün unter −20 dB für Musik und Hintergrund, Gelb von −20 bis −9 dB für Sprache, Rot über −9 dB, wo Übersteuerung beginnt. Nichts sollte dauerhaft im roten Bereich liegen.
     Eine Spalte steht für eine Monoquelle, zwei für Stereo — links, dann rechts. Bewegt sich nur die linke Spalte, hört die Hälfte Ihres Publikums von dieser Quelle nichts.
     Die Linie über der Füllung zeigt den lautesten Spitzenwert der letzten zwanzig Sekunden und macht eine übersehene Übersteuerung schnell sichtbar. Das Quadrat ganz unten zeigt den Pegel, der vor dem Regler vom Gerät eintrifft — ist er zu hoch, hilft keine Reglerbewegung.
     Die Sperrtaste einer Karte sperrt nur den SceneDeck-Regler. In OBS selbst wird nichts gesperrt.
 
-help-outputs-title = Stream und Aufnahme starten und stoppen
+help-outputs-title = Stream, Aufnahme, Replay und virtuelle Kamera
 help-outputs-subtitle = Und Bestätigungen gegen versehentliche Aktionen
 help-outputs-body =
-    Die Schaltflächen zum Starten und Stoppen von Stream und Aufnahme befinden sich unten in der Seitenleiste und sind von jeder Seite erreichbar. Die Statusleiste zeigt Zustand und Laufzeit.
-    Unter Einstellungen → Ausgabesicherheit legen Sie fest, welche der vier Aktionen zuerst nachfragt. Standardmäßig muss das Stoppen bestätigt werden, das Starten nicht — früh zu starten kostet wenig, früh zu stoppen beendet die Sendung.
-    Direkt in OBS vorgenommene Änderungen erscheinen ebenfalls hier: SceneDeck folgt den OBS-Ereignissen, statt anzunehmen, dass der eigene Tastendruck erfolgreich war.
+    Die Ausgabeleiste auf Live enthält Stream, Aufnahme, Replay-Puffer und virtuelle Kamera. Weitere Ausgabesteuerung öffnet Pause/Fortsetzen, Dateiteilung/Kapitel und letzte Ergebnisse.
+    Einstellungen → Ausgabesicherheit steuert Bestätigungen beim Starten und Stoppen von Stream und Aufnahme. Stoppen erfordert standardmäßig eine Bestätigung.
+    OBS-Ereignisse und aktualisierte Beobachtungen bestimmen den angezeigten Zustand. Eine bestätigte Anfrage allein belegt weder den Start einer Ausgabe noch eine gespeicherte Datei. Pfade gehören zum OBS-Rechner.
 
 help-group-inspect-title = Einrichtung prüfen
 help-group-inspect-description = Finden Sie die Überraschung, bevor sie auf Sendung passiert.
@@ -773,3 +766,195 @@ welcome-dialog-body = Dies scheint Ihr erster Start zu sein. Die Hilfeseite erkl
 welcome-dialog-later = Nicht jetzt
 welcome-dialog-open = Leitfaden lesen
 window-help-tooltip = Hilfe und Einführungsleitfaden
+
+# OBS controls and accessible alternatives
+window-stop-disconnect-label = Stream/Aufnahme stoppen und trennen
+disconnect-confirm-heading = Stream und Aufnahme vor dem Trennen stoppen?
+disconnect-confirm-body = Stream: { $stream }. Aufnahme: { $recording }. Laufende Streams und Aufnahmen werden beendet, bevor SceneDeck die Verbindung trennt. Replay-Puffer und virtuelle Kamera werden dabei nicht gestoppt.
+live-scenes-obs-empty = Diese OBS-Szenensammlung enthält keine Szenen. Erstellen Sie eine Szene in OBS und aktualisieren Sie dann SceneDeck.
+live-organize-scenes = Szenen organisieren
+mixer-secondary-options = Gruppierung und Suche
+inventory-move-up = { $scene } nach oben verschieben
+inventory-move-down = { $scene } nach unten verschieben
+graph-relationship-list = Szenenbeziehungen — lesbare Liste
+graph-no-dependencies = Keine Abhängigkeiten durch verschachtelte Szenen
+audio-source-mute = { $source } stummschalten
+audio-source-lock = Lokalen Regler für { $source } sperren
+audio-source-volume = Lautstärke von { $source }
+audio-source-meter = Spitzenpegelanzeige für { $source }
+audio-meter-no-level = Kein sichtbarer Pegel
+audio-meter-no-observation = Kein Audiopegel erfasst
+
+# Session activity
+
+workflow-activity-title = Letzte Aktivitäten
+workflow-activity-detail = Nur die aktuelle Sitzung; die neuesten 30 Einträge werden angezeigt. Anfragen, Beobachtungen und Fehler bleiben getrennt. Verbindungsabbrüche hinterlassen Lücken; zeitliche Nähe beweist keine Ursache.
+workflow-check-item = Quellensichtbarkeit
+workflow-activity-requested = Angefordert
+workflow-activity-observed = Beobachtet
+workflow-activity-failed = Fehlgeschlagen
+workflow-activity-connection = Verbindung
+
+
+# Native OBS inspector
+control-refresh = OBS-Zustand aktualisieren
+control-inspection-note = Prüfen Sie jede Szene, ohne das Programm zu ändern. Sichtbarkeitsänderungen betreffen die übergeordnete Szene oder Gruppe.
+control-disconnected = Verbinden Sie sich mit OBS, um Quellen zu prüfen.
+control-loading = OBS-Zustand wird abgefragt…
+control-observed = Letzte Erfassung: vor { $seconds } Sekunden. Aktualisieren Sie, bevor Sie sich auf diesen Zustand verlassen.
+control-scene-selector = Zu prüfende Szene — ändert das Programm nicht
+control-request-hint = Aktualisieren Sie, um die native OBS-Steuerung und Quellensichtbarkeit zu laden.
+control-resume = Aufnahme fortsetzen
+control-pause = Aufnahme pausieren
+control-split = Aufnahmedatei teilen
+control-replay-stop = Replay-Puffer stoppen
+control-replay-start = Replay-Puffer starten
+control-replay-save = Replay speichern
+control-camera-stop = Virtuelle Kamera stoppen
+control-camera-start = Virtuelle Kamera starten
+control-chapter-name = Kapitelname der Aufnahme
+control-chapter = Kapitel erstellen
+control-host-path = Letzter Replay-Pfad auf dem OBS-Rechner: { $path }
+control-output-controls = Aufnahme, Replay und virtuelle Kamera
+control-source-search = Quellen oder übergeordnete Pfade suchen
+control-inspect-source = Quelleneinstellungen und Verwendung prüfen
+control-hidden-parent = Ein übergeordnetes Element ist ausgeblendet. Dieses Element allein zu aktivieren macht es möglicherweise nicht sichtbar.
+control-sources-empty = Bei dieser Erfassung wurden keine Szenenelemente gefunden.
+control-shared-source = Audio, Filter, Medien und Text wirken überall, wo diese Quelle verwendet wird. Die Sichtbarkeit gilt für die übergeordnete Szene oder Gruppe.
+control-used-in = Verwendet in — strukturelle Pfade
+control-image-refresh = Standbild aufnehmen
+control-image-alt = Auf Anforderung aufgenommenes Standbild einer OBS-Szene
+control-image-error = Das OBS-Bild konnte nicht dekodiert werden.
+control-image-note = Standbild der letzten Aufnahme. Dies ist kein Live-Video.
+control-studio-enable = Studiomodus aktivieren
+control-program = Programm: { $scene }
+control-preview = Vorschau: { $scene }
+control-stage = Geprüfte Szene vorbereiten
+control-take = Übernehmen
+control-transition = Aktueller Szenenübergang
+control-duration = Übergangsdauer in Millisekunden
+control-apply = Anwenden
+control-studio = Studio und Übergang
+control-scene-mode-changed = Der Studiomodus wurde geändert. Aktualisiere vor dem Aktivieren der Szene. Die Aktion wurde nicht wiederholt.
+control-filters = Quellenfilter
+control-text-file = Diese Textquelle liest eine Datei. Bearbeiten Sie die Datei auf dem OBS-Rechner.
+control-text-save = Text in OBS speichern
+control-text = Integrierte Textquelle
+control-media-play = Wiedergeben
+control-media-pause = Pausieren
+control-media-stop = Stoppen
+control-media-restart = Neu starten
+control-media-previous = Zurück
+control-media-next = Weiter
+control-media-seconds = Medienposition in Sekunden
+control-media-seek = Position setzen
+control-media = Mediensteuerung
+control-monitor-host = Das Abhören erfolgt auf dem OBS-Rechner, nicht über SceneDeck.
+control-monitor-off = Abhören aus
+control-monitor-only = Nur abhören — Ausgabe stummschalten
+control-monitor-output = Abhören und ausgeben
+control-audio-sync = Audio-Synchronisationsversatz (Millisekunden)
+control-audio-balance = Balance (0 = links, 0,5 = Mitte, 1 = rechts)
+control-audio-track = Audiospur { $track }
+control-audio-tracks = Audiospurzuordnung
+control-advanced-audio = Erweiterte Audioeinstellungen der Quelle
+
+
+# Operating workspace
+workspace-action-acknowledged = Anfrage bestätigt; Zustand von OBS neu abgefragt
+workspace-replay-observed = OBS hat ein gespeichertes Replay gemeldet: { $path }
+workspace-disk-space = Speicherplatz für OBS-Aufnahmen: { $value } MiB
+control-stale = Zuletzt bekannter Zustand. Aktualisieren Sie die OBS-Erfassung, um Änderungen zu ermöglichen.
+control-no-matches = Keine Quellen passen zu dieser Suche. Leeren Sie die Suche, um alle Elemente anzuzeigen.
+
+
+# OBS recording volume and session activity
+stats-recording-disk = Freier Speicherplatz auf dem OBS-Aufnahmelaufwerk
+stats-recording-disk-value = { $value } MiB
+stats-activity-title = Letzte Aktivitäten und Diagrammkontext
+stats-activity-detail = Die neuesten 15 Sitzungseinträge. Wählen Sie einen Eintrag, um seinen Zeitpunkt in den Messdiagrammen zu markieren. Verbindungslücken, fehlende Messwerte und zurückgesetzte Zähler schränken die Auswertung ein. Zeitliche Nähe beweist keine Ursache.
+stats-activity-clear-marker = Diagrammmarkierung löschen
+stats-activity-marker-visible = Gestrichelte Linien markieren das ausgewählte Ereignis zwischen erfassten Messpunkten. Die Diagramme verwenden den Abstand der Messpunkte.
+stats-activity-marker-unavailable = Keine Diagrammmarkierung: Dieses Ereignis liegt außerhalb der gespeicherten Messwerte, in einer Messlücke oder ist von einer Änderung der Systemzeit betroffen.
+stats-activity-empty = In dieser Sitzung wurden noch keine Vorgänge erfasst.
+stats-activity-requested = Angefordert
+stats-activity-observed = Beobachtet
+stats-activity-failed = Fehlgeschlagen
+stats-activity-connection = Verbindung
+stats-activity-entry = { $time } · { $origin } · { $description }
+scene-card-stage-hint = Diese Szene in der Vorschau vorbereiten. Mit „Übernehmen“ ändern Sie das Programm.
+scene-card-preview-label = Vorschau
+hotkey-hint-stage-take = { $binding } · In der Vorschau vorbereiten; mit „Übernehmen“ das Programm ändern.
+
+
+header-obs-setup = OBS-Konfiguration
+header-obs-unknown = Unbekannt
+header-obs-context = Profil: { $profile } · Szenensammlung: { $collection }
+
+status-bar-connection-detail = { $state } · OBS { $version }
+
+
+doctor-structural-title = Szenenstruktur und Rollen
+
+
+output-results-title = Ausgabeergebnisse
+
+output-results-detail = Anfragen und OBS-Beobachtungen bleiben getrennt. Ein Speicherereignis kann von einer anderen Steuerung stammen. Pfade gehören zum OBS-Rechner. Die neuesten 24 Ergebnisse bleiben für diese Sitzung erhalten.
+
+output-results-copy-path = Pfad auf dem OBS-Rechner kopieren
+
+output-results-record-stop = Aufnahme stoppen
+
+output-results-acknowledged = Bestätigt
+
+output-results-unconfirmed = Unbestätigt
+
+output-results-host-path = Pfad auf dem OBS-Rechner: { $path }
+
+control-image-caption = Standbild von { $scene }, vor { $seconds } Sekunden aufgenommen. Aktualisieren Sie das Bild, um es erneut aufzunehmen.
+
+record-elapsed-tooltip = Verstrichene Zeit seit dem von OBS gemeldeten Aufnahmestart, einschließlich Pausen. Dies ist nicht die Dauer der Aufnahmedatei.
+
+window-open-navigation = Navigation öffnen
+sources-title = Quellen
+sources-back = Zurück zu Quellen
+sources-select-hint = Wählen Sie eine Quelle, um ihre Einstellungen zu prüfen.
+sources-text-conflict = Dieser Text wurde in OBS geändert. Brechen Sie ab, um vor dem Speichern den aktuellen Text zu laden.
+inventory-name-column = Szene
+inventory-role-column = Rolle
+inventory-actions-column = Optionen
+inventory-scene-options = Optionen für { $scene }
+inventory-columns-button = Spaltenbreiten
+inventory-name-width = Szenenbreite
+inventory-role-width = Rollenbreite
+inventory-reset-widths = Spaltenbreiten zurücksetzen
+settings-scene-previews = Szenenvorschaubilder
+settings-scene-previews-description = Abgedunkelte Szenenbilder auf größeren Live-Karten anzeigen.
+live-audio-expand = Audio erweitern
+live-audio-collapse = Audio einklappen
+studio-mode-label = Studio
+scene-card-image-pending = Vorschaubild nicht verfügbar
+scene-card-program-label = Programm
+output-options = Weitere Ausgabesteuerung
+output-replay-label = Replay · { $state }
+output-camera-label = Virtuelle Kamera · { $state }
+
+output-camera-name = Virt. Kamera
+output-replay-name = Replay
+
+# Hardening: save completion and safe custom-theme dependencies.
+app-persistence-drain-timeout = Pending saves have not finished. Retry waits again; Cancel keeps the application open.
+app-persistence-drain-worker-failed = A background operation failed. Changes may not have reached disk. Cancel keeps the application open so you can check and save again. Retry waits for later saves but cannot recover the failed operation. Close Anyway acknowledges that its changes may be lost; other pending saves will still be completed.
+app-persistence-close-anyway = Close Anyway (Changes May Be Lost)
+theme-custom-css-dependencies-forbidden = Custom CSS must be self-contained: @import, image url() dependencies, and malformed or excessively nested rules are not allowed. Inline the styles and use gradients or colors instead of external images.
+
+# Topology readiness: no structural verdict before a complete observation.
+topology-missing-title = Scene topology not observed
+topology-missing-description = Connect to OBS and refresh observations before relying on scene relationships or structural checks.
+topology-loading-title = Reading scene topology…
+topology-loading-description = Waiting for a complete observation from OBS. Structural checks are not available yet.
+topology-failed-title = Scene topology could not be read
+topology-failed-description = Structural checks are unavailable. Refresh to retry. OBS reported: { $error }
+topology-empty-title = No scenes observed
+topology-empty-description = OBS successfully reported no scenes in this collection. Create a scene in OBS, then refresh.
+doctor-refresh-topology-tooltip = Refresh scene topology from OBS and run structural checks again.
