@@ -3,6 +3,8 @@
 use crate::controller::event_sender::EventSender;
 use crate::controller::output_controller::refresh_output_statuses;
 use crate::controller::session_controller::REQUEST_BUDGET;
+use crate::infra::i18n::LANGUAGE_LOADER;
+use i18n_embed_fl::fl;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -393,7 +395,7 @@ fn enqueue_transport_publication(
     if pending.try_send((tx.fresh(), event)).is_ok() {
         return true;
     }
-    tx.terminal_reason("OBS notification publication backlog exceeded its bound; reconnect and refresh; output evidence may be incomplete".into());
+    tx.terminal_reason(fl!(LANGUAGE_LOADER, "controller-publication-backlog"));
     client.retire();
     false
 }
@@ -553,7 +555,7 @@ pub(crate) async fn run_event_loop(
     tx.terminal_reason(
         client
             .retirement_reason()
-            .unwrap_or_else(|| "OBS event connection ended; refresh required".into()),
+            .unwrap_or_else(|| fl!(LANGUAGE_LOADER, "controller-event-connection-ended")),
     );
     client.retire();
 }

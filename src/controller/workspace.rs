@@ -6,8 +6,10 @@ use crate::domain::control::{
     ControlAction, ControlSnapshot, SourceDetail, SourceItem, WorkspaceWarning,
 };
 use crate::domain::workflow::ScopeBinding;
+use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::obs::client::ObsClient;
 use futures_util::FutureExt;
+use i18n_embed_fl::fl;
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -276,11 +278,14 @@ impl WorkspaceController {
                                 || current_revision.load(std::sync::atomic::Ordering::Acquire)
                                     != revision
                             {
-                                return Err("Workspace request superseded before mutation".into());
+                                return Err(fl!(
+                                    LANGUAGE_LOADER,
+                                    "controller-workspace-superseded"
+                                ));
                             }
                             if let Some(action) = &action {
                                 let evidence = evidence.as_ref().ok_or_else(|| {
-                                    "Workspace operation admission full or retired".to_owned()
+                                    fl!(LANGUAGE_LOADER, "controller-workspace-admission-full")
                                 })?;
                                 if let ControlAction::SetText { input, .. } = action {
                                     let detail = client
@@ -288,15 +293,19 @@ impl WorkspaceController {
                                         .await
                                         .map_err(|error| error.user_message())?;
                                     if detail.text != expected_text {
-                                        return Err(
-                                            "Text changed in OBS. Refresh before saving".into()
-                                        );
+                                        return Err(fl!(
+                                            LANGUAGE_LOADER,
+                                            "controller-workspace-text-changed"
+                                        ));
                                     }
                                 }
                                 if cancellation.load(std::sync::atomic::Ordering::Acquire) != ticket
                                     || !tx.accepts_current_scope()
                                 {
-                                    return Err("Workspace action cancelled before mutation".into());
+                                    return Err(fl!(
+                                        LANGUAGE_LOADER,
+                                        "controller-workspace-action-cancelled"
+                                    ));
                                 }
                                 client
                                     .execute_control_if(action, &|| {
@@ -379,7 +388,7 @@ impl WorkspaceController {
 
 async fn validate_scope(client: &ObsClient, scope: &ScopeBinding) -> Result<(), String> {
     if client.endpoint() != scope.endpoint {
-        return Err("The OBS endpoint changed; reconnect and refresh".into());
+        return Err(fl!(LANGUAGE_LOADER, "controller-endpoint-changed"));
     }
     let collection = client
         .get_scene_collections()
@@ -387,7 +396,7 @@ async fn validate_scope(client: &ObsClient, scope: &ScopeBinding) -> Result<(), 
         .map_err(|error| error.user_message())?
         .current;
     if collection.as_deref() != Some(scope.collection.as_str()) {
-        return Err("The OBS collection changed; refresh before continuing".into());
+        return Err(fl!(LANGUAGE_LOADER, "controller-collection-changed"));
     }
     Ok(())
 }
@@ -492,7 +501,10 @@ async fn read_observation(
         .map_err(|e| e.to_string())?
         .current;
     if collection.as_deref() != Some(request.scope.collection.as_str()) {
-        return Err("The OBS collection changed during the read; results discarded".into());
+        return Err(fl!(
+            LANGUAGE_LOADER,
+            "controller-collection-changed-during-read"
+        ));
     }
     warnings.append(&mut snapshot.warnings);
     Ok(WorkspaceObservation {

@@ -1,6 +1,8 @@
 //! OBS connection-session lifecycle orchestration.
 
+use crate::infra::i18n::LANGUAGE_LOADER;
 use futures_util::future::BoxFuture;
+use i18n_embed_fl::fl;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Handle;
@@ -167,11 +169,17 @@ impl SessionController {
                 match teardown.client.as_ref().map(|client| &client.0) {
                     Some(OutputCommandClient::Obs(client)) => {
                         let shutdown = client.disconnect_client().await?;
-                        stop_active_outputs_before_disconnect(&OutputCommandClient::Obs(shutdown.clone())).await;
+                        stop_active_outputs_before_disconnect(&OutputCommandClient::Obs(
+                            shutdown.clone(),
+                        ))
+                        .await;
                         let stream = shutdown.get_stream_status().await?;
                         let record = shutdown.get_record_status().await?;
                         if stream.active || record.active {
-                            return Err(AppError::request("OBS outputs remain active after stop"));
+                            return Err(AppError::request(fl!(
+                                LANGUAGE_LOADER,
+                                "controller-outputs-still-active"
+                            )));
                         }
                         Ok(())
                     }
@@ -182,23 +190,35 @@ impl SessionController {
                     }
                     None => Ok(()),
                 }
-            }).await;
+            })
+            .await;
             let failure = match stopped {
                 Ok(Ok(())) => None,
-                Ok(Err(error)) => Some(format!("Disconnected; output shutdown unconfirmed: {error}; commands were not retried")),
-                Err(_) => Some("Disconnected; output shutdown unconfirmed: graceful stop deadline exceeded; commands were not retried".into()),
-            };
+                Ok(Err(error)) => Some(error.to_string()),
+                Err(_) => Some(fl!(LANGUAGE_LOADER, "controller-stop-deadline")),
+            }
+            .map(|detail| {
+                fl!(
+                    LANGUAGE_LOADER,
+                    "controller-shutdown-unconfirmed",
+                    detail = detail
+                )
+            });
             if let Some(reason) = &failure {
                 teardown.scope.set_terminal_reason(reason.clone());
             }
-            if let Some(client) = &teardown.client { client.0.retire(); }
+            if let Some(client) = &teardown.client {
+                client.0.retire();
+            }
             teardown.scope.retire();
             if let Some(previous) = teardown.previous.take() {
                 previous.abort();
                 let _ = previous.await;
             }
             teardown.scope.quiesce().await;
-            let event = failure.map_or(AppEvent::Disconnected, |reason| AppEvent::Error(AppError::Connection(reason)));
+            let event = failure.map_or(AppEvent::Disconnected, |reason| {
+                AppEvent::Error(AppError::Connection(reason))
+            });
             let _ = tx.send(event).await;
         }));
     }
@@ -277,9 +297,10 @@ impl SessionRunner for ObsSessionRunner {
                 }
                 Err(_) => {
                     let _ = tx
-                        .send(AppEvent::Error(AppError::Connection(
-                            "OBS connection deadline exceeded".into(),
-                        )))
+                        .send(AppEvent::Error(AppError::Connection(fl!(
+                            LANGUAGE_LOADER,
+                            "controller-connection-deadline"
+                        ))))
                         .await;
                     return;
                 }

@@ -983,3 +983,17 @@ workspace-warning-omitted = { $count ->
     [one] 1 more source scan warning omitted
    *[other] { $count } more source scan warnings omitted
 }
+controller-workspace-superseded = Workspace request superseded before mutation
+controller-workspace-admission-full = Workspace operation admission full or retired
+controller-workspace-text-changed = Text changed in OBS. Refresh before saving
+controller-workspace-action-cancelled = Workspace action cancelled before mutation
+controller-endpoint-changed = The OBS endpoint changed; reconnect and refresh
+controller-collection-changed = The OBS collection changed; refresh before continuing
+controller-collection-changed-during-read = The OBS collection changed during the read; results discarded
+controller-audio-changed = Audio changed during observation; refresh required
+controller-outputs-still-active = OBS outputs remain active after stop
+controller-shutdown-unconfirmed = Disconnected; output shutdown unconfirmed: { $detail }; commands were not retried
+controller-stop-deadline = graceful stop deadline exceeded
+controller-connection-deadline = OBS connection deadline exceeded
+controller-publication-backlog = OBS notification publication backlog exceeded its bound; reconnect and refresh; output evidence may be incomplete
+controller-event-connection-ended = OBS event connection ended; refresh required

@@ -990,3 +990,17 @@ workspace-warning-omitted = { $count ->
     [one] 1 altro avviso sulle fonti omesso
    *[other] { $count } altri avvisi sulle fonti omessi
 }
+controller-workspace-superseded = Richiesta dell'area di lavoro superata prima della modifica
+controller-workspace-admission-full = Operazione dell'area di lavoro rifiutata: coda piena o terminata
+controller-workspace-text-changed = Il testo è cambiato in OBS. Aggiorna prima di salvare
+controller-workspace-action-cancelled = Azione dell'area di lavoro annullata prima della modifica
+controller-endpoint-changed = L'endpoint OBS è cambiato; riconnetti e aggiorna
+controller-collection-changed = La raccolta OBS è cambiata; aggiorna prima di continuare
+controller-collection-changed-during-read = La raccolta OBS è cambiata durante la lettura; risultati scartati
+controller-audio-changed = L'audio è cambiato durante l'osservazione; aggiornamento necessario
+controller-outputs-still-active = Le uscite di OBS restano attive dopo l'arresto
+controller-shutdown-unconfirmed = Disconnesso; arresto delle uscite non confermato: { $detail }; i comandi non sono stati ripetuti
+controller-stop-deadline = scadenza dell'arresto ordinato superata
+controller-connection-deadline = Scadenza della connessione a OBS superata
+controller-publication-backlog = Il backlog delle notifiche di OBS ha superato il limite; riconnetti e aggiorna; la cronologia delle uscite potrebbe essere incompleta
+controller-event-connection-ended = Connessione agli eventi di OBS terminata; aggiornamento necessario

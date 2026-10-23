@@ -1,5 +1,7 @@
 //! Merge transport echoes over reads started before them, including bootstrap.
 use crate::domain::output::OutputKind;
+use crate::infra::i18n::LANGUAGE_LOADER;
+use i18n_embed_fl::fl;
 use std::collections::BTreeMap;
 
 use super::event::AppEvent;
@@ -66,16 +68,13 @@ impl Observations {
                         AppEvent::ActiveAudioObserved { scene, .. } => {
                             AppEvent::ActiveAudioObserved {
                                 scene,
-                                result: Err(
-                                    "Audio changed during observation; refresh required".into()
-                                ),
+                                result: Err(fl!(LANGUAGE_LOADER, "controller-audio-changed")),
                             }
                         }
                         AppEvent::MixerAudioInputsUpdated { request, .. } => {
                             AppEvent::MixerAudioInputsFailed {
                                 request,
-                                message: "Audio changed during observation; refresh required"
-                                    .into(),
+                                message: fl!(LANGUAGE_LOADER, "controller-audio-changed"),
                             }
                         }
                         _ => unreachable!(),
