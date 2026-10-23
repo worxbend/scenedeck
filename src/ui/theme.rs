@@ -1195,12 +1195,17 @@ mod tests {
         }
         let subtitle = label_by_class(row.upcast_ref(), "subtitle", "Enabled Settings description")
             .expect("native ActionRow subtitle");
-        let description = label_by_class(
-            group.upcast_ref(),
-            "dimmed",
-            "Enabled preferences group description",
-        )
-        .expect("native PreferencesGroup description");
+        // libadwaita 1.7 renamed `dim-label` to `dimmed`; CI ships 1.5.
+        let description = ["dimmed", "dim-label"]
+            .into_iter()
+            .find_map(|class| {
+                label_by_class(
+                    group.upcast_ref(),
+                    class,
+                    "Enabled preferences group description",
+                )
+            })
+            .expect("native PreferencesGroup description");
         let context = gtk4::glib::MainContext::default();
         for theme in ThemeManager::built_in_themes() {
             for variant in [ThemeVariant::Light, ThemeVariant::Dark] {
