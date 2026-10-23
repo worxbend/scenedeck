@@ -659,3 +659,23 @@ fn pages_reach_the_controller_only_through_navigation() {
         offenders.join("\n")
     );
 }
+
+/// Background layers stay off GTK.
+///
+/// Controller, storage and OBS code run on Tokio or the blocking pool. GTK
+/// objects are main-thread only, so a widget or `glib` handle here is a
+/// threading bug waiting for a caller. Results cross back as `AppEvent`.
+#[test]
+fn background_layers_hold_no_gtk_or_ui() {
+    let forbidden = ["gtk4", "adw::", "glib::", "gio::", "crate::ui"];
+    let mut offenders = violations("controller", &forbidden, &[]);
+    offenders.extend(violations("storage", &forbidden, &[]));
+    offenders.extend(violations("obs", &forbidden, &[]));
+
+    assert!(
+        offenders.is_empty(),
+        "src/controller/, src/storage/ and src/obs/ must not depend on GTK \
+         or src/ui/. Send an `AppEvent` and let the GTK thread apply it:\n{}",
+        offenders.join("\n")
+    );
+}
