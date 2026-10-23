@@ -83,6 +83,8 @@ struct MeterWidgetState {
     consumed_sequence: u64,
     last_frame_us: Option<i64>,
     last_accessible_us: Option<i64>,
+    /// Skips AT-SPI traffic when the once-a-second text is unchanged.
+    last_description: Option<String>,
     drawn: Vec<MeterChannelDisplay>,
 }
 
@@ -93,6 +95,7 @@ impl MeterWidgetState {
             consumed_sequence: 0,
             last_frame_us: None,
             last_accessible_us: None,
+            last_description: None,
             drawn: Vec::new(),
         }
     }
@@ -208,7 +211,9 @@ fn advance_frame(
         } else {
             levels
         };
-        area.update_property(&[gtk4::accessible::Property::Description(&description)]);
+        if let Some(description) = replace_if_changed(&mut state.last_description, description) {
+            area.update_property(&[gtk4::accessible::Property::Description(description)]);
+        }
         state.last_accessible_us = Some(frame_us);
     }
     if display == state.drawn {
@@ -435,10 +440,33 @@ fn set_meter_tooltip(area: &DrawingArea, channel_count: usize) {
     area.set_tooltip_text(Some(&tooltip));
 }
 
+/// Stores `next` and returns it only when it differs from the cached value.
+fn replace_if_changed(slot: &mut Option<String>, next: String) -> Option<&str> {
+    if slot.as_deref() == Some(next.as_str()) {
+        return None;
+    }
+    slot.replace(next);
+    slot.as_deref()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::meter::{METER_CEILING_DB, METER_FLOOR_DB};
+
+    #[test]
+    fn accessible_description_is_republished_only_when_it_changes() {
+        let mut slot = None;
+        assert_eq!(
+            replace_if_changed(&mut slot, "L: -6 dB".into()),
+            Some("L: -6 dB")
+        );
+        assert_eq!(replace_if_changed(&mut slot, "L: -6 dB".into()), None);
+        assert_eq!(
+            replace_if_changed(&mut slot, "L: -7 dB".into()),
+            Some("L: -7 dB")
+        );
+    }
 
     #[test]
     fn the_bar_runs_from_the_floor_at_the_bottom_to_unity_at_the_top() {
