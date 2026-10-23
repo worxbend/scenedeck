@@ -105,9 +105,7 @@ scene backs off for 15 seconds from its prior attempt. An unanswered native
 request pauses further image captures until it drains, while OBS controls remain
 independent. Sources does not have a standalone still monitor.
 An image failure does not invalidate control freshness. See
-[OBS integration](obs-websocket.md) for current bounds and
-[redesign evidence](verification/redesign-2026-10-19/README.md) for measured
-results and remaining gaps.
+[OBS integration](obs-websocket.md) for current bounds.
 
 The retired rehearsal, setup-expectation and cue interfaces have no replacement
 page. Existing `workflows.json` files are left on disk and are not read or

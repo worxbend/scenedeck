@@ -1,3 +1,5 @@
 /target
 snapcraft-login.txt
 __pycache__/
+docs/verification/
+tasks/

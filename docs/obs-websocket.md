@@ -226,7 +226,7 @@ Images update existing card widgets. Image failures leave honest fallbacks and
 do not invalidate otherwise fresh OBS controls. None of these limits establish
 real input latency or OBS render cost. Record six-/twenty-scene capture p50/p95,
 bytes/second, pending/cache bounds, interaction stalls and OBS render-time delta
-in the [redesign evidence](verification/redesign-2026-10-19/README.md).
+in [manual test runs](manual-test-runs.md).
 
 ## Output evidence
 

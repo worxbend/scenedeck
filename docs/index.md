@@ -17,13 +17,6 @@ This directory contains the detailed SceneDeck documentation.
 
 ## For Developers
 
-- [UI/UX development plan](../PLAN.md): current scene-wall redesign, optional
-  card previews, Inventory resizing, theme migration, feature removals and
-  visual/implementation acceptance criteria.
-- [Live design brief](ideas/live-scene-wall.md): confirmed user decisions and
-  card/Inventory visual references.
-- [Current redesign verification](verification/redesign-2026-10-19/README.md):
-  actual screenshots, checks, measurements and remaining limitations.
 - [Developer guide](developer-guide.md): local setup, build commands,
   validation, logging, and contribution workflow.
 - [Architecture overview](architecture.md): runtime model, controller flow,
@@ -32,15 +25,6 @@ This directory contains the detailed SceneDeck documentation.
   repository and where common changes belong.
 - [OBS WebSocket integration](obs-websocket.md): what SceneDeck currently reads,
   writes, and listens to over the OBS WebSocket protocol.
-- [OBS-only feature and UI/UX research](obs-only-feature-research.md): SceneDeck
-  inventory, OBS Blade comparison, proposed desktop interactions and priorities.
-- [Execution checklist](../tasks/todo.md): completed 31-task redesign and visual
-  acceptance evidence; earlier implementation/research checklists remain archived.
-- [Research review](obs-only-research-review.md): operational risks and scope
-  review; proposals are not implemented changes.
-- [OBS controller feature opportunities](obs-controller-feature-opportunities.md):
-  second-pass research with pinned competitor sources, seven feature directions,
-  differentiated workflow recommendations and a proposed delivery sequence.
 
 ## Packaging
 

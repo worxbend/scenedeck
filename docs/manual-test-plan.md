@@ -20,10 +20,8 @@ mixer behavior.
 ## Checklist
 
 The OBS-only operating workspace has a separate [guide](obs-operating-workspace.md).
-Current redesign results belong in the
-[redesign evidence](verification/redesign-2026-10-19/README.md). The earlier
-[implementation run](verification/2026-10-19/README.md) is historical context.
-This checklist alone is not evidence of a pass.
+Record results in [manual test runs](manual-test-runs.md); this checklist alone
+is not evidence of a pass.
 
 ### Owned Scene Items and Shared Sources
 

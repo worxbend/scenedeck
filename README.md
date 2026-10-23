@@ -34,8 +34,7 @@ keep local metadata about how scenes are used.
   preferences, eight Fluent catalogs, XDG settings and Secret Service passwords.
 
 Scene previews are controlled in Settings and default to off conservatively.
-They are periodically refreshed still images, not live video. Current validation and screenshots are tracked in the
-[redesign evidence](docs/verification/redesign-2026-10-19/README.md).
+They are periodically refreshed still images, not live video.
 
 All remote control uses native OBS WebSocket. There are no chat or third-party
 service integrations. See the [operating workspace guide](docs/obs-operating-workspace.md)

@@ -7,8 +7,7 @@ source inspection.
 ## 2026-10-19 · Scene-wall redesign — completed with recorded limits
 
 Final executable `f4c30ef96b17cca2b5387fd13eae02e25bd89c2727196c1d611f9c677541e8d9`.
-[Current evidence](verification/redesign-2026-10-19/README.md) maps all 31 tasks,
-real native actions, screenshot provenance and exact qualification limits.
+Screenshots and raw evidence for this run are kept locally, not in git.
 
 The suite passed 454 tests plus 9 separate native/locale tests; all format/check/
 build/Clippy/audit/dependency-policy gates passed. Native coverage includes
@@ -42,10 +41,8 @@ cues with independent local Next position. Wide/compact English and enlarged
 Ukrainian light layouts were captured. A tools-pane minimum-size issue and
 inspector focus lifecycle warning were fixed during this run.
 
-See the [detailed evidence, screenshots and limits](verification/2026-10-19/README.md).
-Direct protocol checks and GTK interaction claims are separated there. This
-entry does not claim a complete focused Mixer mode/Retry/echo/churn run, Orca
-speech, native-speaker review, remote-host/version qualification, virtual-camera
+This entry does not claim a complete focused Mixer mode/Retry/echo/churn run,
+Orca speech, native-speaker review, remote-host/version qualification, virtual-camera
 operation or successful split/chapter recording formats. No broadcast occurred.
 
 ## Focused Mixer Refresh Contract Entry Template

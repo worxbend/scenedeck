@@ -32,7 +32,10 @@ Application orchestration.
 
 - `command.rs`: user and UI commands.
 - `event.rs`: events sent back to GTK.
-- `state.rs`: UI-facing app state.
+- `state.rs`: UI-facing app state and its pure transitions (output events,
+  command intent, connection and scene-inventory updates).
+- `state/mixer.rs`: Mixer audio view model — request fencing, visibility and
+  inspection snapshots.
 - `app_controller.rs`: top-level command routing and small per-command task
   dispatch. It delegates session, refresh, and output lifecycles to focused
   controller components.
@@ -78,6 +81,8 @@ OBS WebSocket integration.
 
 - `client.rs`: thin async wrapper around `obws::Client`.
 - `mapper.rs`: conversion from OBS response types into domain types.
+- `obs_fixture.rs` (tests only): loopback OBS WebSocket handshake and
+  `GetVersion` payload shared by protocol tests.
 
 No other module should import `obws` directly.
 

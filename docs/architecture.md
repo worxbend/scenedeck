@@ -307,8 +307,8 @@ an unanswered transaction temporarily blocks other images while controls remain
 independent.
 
 The current limits and implementation are described in
-[OBS integration](obs-websocket.md). Performance targets are qualification
-criteria in [PLAN.md](../PLAN.md), not inferred from these static bounds.
+[OBS integration](obs-websocket.md). These are static bounds, not measured
+performance.
 
 ## Inventory and themes
 

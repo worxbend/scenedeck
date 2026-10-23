@@ -63,8 +63,7 @@ in `site/tools/`, then `npm test`, `npm run check`, and `npm audit`.
 
 Native visual verification is a separate gate: inspect actual screenshots and
 record gaps, rather than treating a passing build as layout evidence. See the
-[manual test plan](manual-test-plan.md) and
-[current redesign evidence](verification/redesign-2026-10-19/README.md).
+[manual test plan](manual-test-plan.md).
 
 ## Development Workflow
 
