@@ -1,5 +1,9 @@
 //! Native OBS operating controls. These values contain no protocol or GTK types.
 
+use i18n_embed_fl::fl;
+
+use crate::infra::i18n::LANGUAGE_LOADER;
+
 /// Controls whose state is independent of the currently inspected scene/source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GlobalToggle {
@@ -75,10 +79,40 @@ pub struct SourceFilter {
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct MediaStatus {
-    pub state: String,
+    pub state: MediaState,
     pub duration_ms: Option<i64>,
     pub cursor_ms: Option<i64>,
 }
+/// OBS media-source playback state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaState {
+    None,
+    Playing,
+    Opening,
+    Buffering,
+    Paused,
+    Stopped,
+    Ended,
+    Error,
+    Unknown,
+}
+
+impl MediaState {
+    pub fn label(self) -> String {
+        match self {
+            Self::None => fl!(LANGUAGE_LOADER, "media-state-none"),
+            Self::Playing => fl!(LANGUAGE_LOADER, "media-state-playing"),
+            Self::Opening => fl!(LANGUAGE_LOADER, "media-state-opening"),
+            Self::Buffering => fl!(LANGUAGE_LOADER, "media-state-buffering"),
+            Self::Paused => fl!(LANGUAGE_LOADER, "media-state-paused"),
+            Self::Stopped => fl!(LANGUAGE_LOADER, "media-state-stopped"),
+            Self::Ended => fl!(LANGUAGE_LOADER, "media-state-ended"),
+            Self::Error => fl!(LANGUAGE_LOADER, "media-state-error"),
+            Self::Unknown => fl!(LANGUAGE_LOADER, "media-state-unknown"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct AudioSettings {
     pub balance: f32,

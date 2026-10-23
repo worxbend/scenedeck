@@ -680,7 +680,7 @@ impl ObsClient {
             {
                 Ok(media) => {
                     detail.media = Some(MediaStatus {
-                        state: format!("{:?}", media.state),
+                        state: mapper::map_media_state(media.state),
                         duration_ms: media.duration.map(|d| d.whole_milliseconds() as i64),
                         cursor_ms: media.cursor.map(|d| d.whole_milliseconds() as i64),
                     })

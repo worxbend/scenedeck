@@ -269,7 +269,7 @@ fn update_media_values(root: &GtkBox, detail: &SourceDetail, local: &Rc<RefCell<
     visit(root.upcast_ref(), &mut |widget| {
         if widget.widget_name() == "sources-media-state" {
             if let Some(label) = widget.downcast_ref::<Label>() {
-                label.set_text(&media.state);
+                label.set_text(&media.state.label());
             }
         }
         if widget.widget_name() == format!("control-focus-seek-position-{}", detail.input) {
@@ -345,7 +345,7 @@ impl SourcesContent {
                 filter.enabled = old.enabled;
             }
             if let (Some(media), Some(old)) = (&mut detail.media, &old.media) {
-                media.state = old.state.clone();
+                media.state = old.state;
                 media.cursor_ms = old.cursor_ms;
             }
         }
@@ -1227,7 +1227,7 @@ fn build_source_detail(
     }
     if let Some(media) = &detail.media {
         let content = column(6);
-        let status = text(&media.state);
+        let status = text(&media.state.label());
         status.set_widget_name("sources-media-state");
         content.append(&status);
         let buttons = gtk4::FlowBox::builder()
@@ -2153,7 +2153,7 @@ mod tests {
             state.workspace.detail = Some(SourceDetail {
                 input: "Media".into(),
                 media: Some(crate::domain::control::MediaStatus {
-                    state: "OBS_MEDIA_STATE_PLAYING".into(),
+                    state: crate::domain::control::MediaState::Playing,
                     duration_ms: Some(4000),
                     cursor_ms: Some(0),
                 }),

@@ -4,11 +4,13 @@
 
 use obws::events::{Event, OutputState};
 use obws::responses::general::{Stats, Version};
+use obws::responses::media_inputs::MediaState as ObsMediaState;
 use obws::responses::recording::RecordStatus;
 use obws::responses::scenes::Scenes;
 use obws::responses::streaming::StreamStatus;
 
 use crate::controller::event::ConnectionInfo;
+use crate::domain::control::MediaState;
 use crate::domain::meter::InputLevels;
 use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::domain::scene::{Scene, SceneInventory};
@@ -223,8 +225,41 @@ pub(super) fn map_event(event: Event) -> ObsEvent {
     }
 }
 
+pub(crate) fn map_media_state(state: ObsMediaState) -> MediaState {
+    match state {
+        ObsMediaState::None => MediaState::None,
+        ObsMediaState::Playing => MediaState::Playing,
+        ObsMediaState::Opening => MediaState::Opening,
+        ObsMediaState::Buffering => MediaState::Buffering,
+        ObsMediaState::Paused => MediaState::Paused,
+        ObsMediaState::Stopped => MediaState::Stopped,
+        ObsMediaState::Ended => MediaState::Ended,
+        ObsMediaState::Error => MediaState::Error,
+        _ => MediaState::Unknown,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_obs_media_state_maps_to_a_domain_state() {
+        use super::{map_media_state, MediaState, ObsMediaState};
+        for (wire, expected) in [
+            ("OBS_MEDIA_STATE_NONE", MediaState::None),
+            ("OBS_MEDIA_STATE_PLAYING", MediaState::Playing),
+            ("OBS_MEDIA_STATE_OPENING", MediaState::Opening),
+            ("OBS_MEDIA_STATE_BUFFERING", MediaState::Buffering),
+            ("OBS_MEDIA_STATE_PAUSED", MediaState::Paused),
+            ("OBS_MEDIA_STATE_STOPPED", MediaState::Stopped),
+            ("OBS_MEDIA_STATE_ENDED", MediaState::Ended),
+            ("OBS_MEDIA_STATE_ERROR", MediaState::Error),
+            ("OBS_MEDIA_STATE_FUTURE", MediaState::Unknown),
+        ] {
+            let state: ObsMediaState = serde_json::from_value(serde_json::json!(wire)).unwrap();
+            assert_eq!(map_media_state(state), expected, "{wire}");
+        }
+    }
+
     #[test]
     fn value_events_do_not_invalidate_topology_or_scene_mode() {
         use crate::obs::event::ObsEvent;
