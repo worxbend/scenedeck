@@ -761,20 +761,16 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
             state.workspace.mark_dirty();
         }
         AppEvent::StudioModeChanged(enabled) => {
-            let mut state = nav.state.borrow_mut();
-            state.workspace.scene_control_observation = Some((enabled, Instant::now()));
-            if let Some(snapshot) = &mut state.workspace.snapshot {
-                snapshot.studio.enabled = Some(enabled);
-            }
-            state.workspace.mark_dirty();
+            nav.state
+                .borrow_mut()
+                .workspace
+                .observe_studio_mode(enabled, Instant::now());
         }
         AppEvent::VirtualCameraChanged(active) => {
-            let mut state = nav.state.borrow_mut();
-            state.workspace.virtual_camera_observation = Some((active, Instant::now()));
-            if let Some(snapshot) = &mut state.workspace.snapshot {
-                snapshot.virtual_camera_active = active;
-            }
-            state.workspace.mark_dirty();
+            nav.state
+                .borrow_mut()
+                .workspace
+                .observe_virtual_camera(active, Instant::now());
         }
         AppEvent::WorkspaceScopeChanging => {
             if let Some(ui) = ui {
@@ -826,29 +822,12 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
         ),
 
         AppEvent::Connected(info) => {
-            {
-                let mut state = nav.state.borrow_mut();
-                state.available_requests = info.available_requests.clone();
-                state.supported_image_formats = info.supported_image_formats.clone();
-                state.connected_endpoint = Some(info.endpoint.clone());
-                state.workspace.mark_dirty();
-            }
             tracing::info!(
                 obs_version = %info.obs_version,
                 websocket_version = %info.websocket_version,
                 "connected to OBS"
             );
-            let obs_status = ObsStatus::Connected {
-                obs_version: info.obs_version,
-            };
-            nav.state.borrow_mut().set_obs_status(obs_status.clone());
-            {
-                let mut state = nav.state.borrow_mut();
-                state.stream_status =
-                    OutputStatus::new(false, crate::domain::output::OutputRunState::Unknown);
-                state.record_status =
-                    OutputStatus::new(false, crate::domain::output::OutputRunState::Unknown);
-            }
+            let obs_status = nav.state.borrow_mut().apply_connected(info);
             if let Some(ui) = ui {
                 sync_output_indicators(nav, &ui.sidebar_controls, &ui.streaming_chrome);
                 status_bar::set_connection(&ui.status_bar, &obs_status);
@@ -897,21 +876,9 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
             if let Some(ui) = ui {
                 show_live_view(&ui.live);
             }
-            let inventory = {
-                let mut state = nav.state.borrow_mut();
-                let mut inventory = inventory.clone();
-                inventory.previous_id = previous_scene_for_inventory_update(
-                    state.scene_inventory.current_id.as_deref(),
-                    state.scene_inventory.previous_id.as_deref(),
-                    inventory.current_id.as_deref(),
-                );
-                if state.scene_inventory.current_id != inventory.current_id {
-                    state.invalidate_active_audio();
-                }
-                state.scene_inventory = inventory.clone();
-                inventory
-            };
+            nav.state.borrow_mut().apply_scene_inventory(inventory);
             if let Some(ui) = ui {
+                let inventory = nav.state.borrow().scene_inventory.clone();
                 rebuild_scene_cards(&ui.live, &inventory, nav);
                 let inputs = nav.state.borrow().audio_inputs.clone();
                 rebuild_audio_cards(&ui.live, &inputs, nav);
@@ -1326,17 +1293,6 @@ fn sync_streaming_chrome(streaming_chrome: &StreamingChromeRef, streaming: bool)
         chrome
             .top_icon
             .remove_css_class("scenedeck-top-streaming-icon-active");
-    }
-}
-
-fn previous_scene_for_inventory_update(
-    old_current: Option<&str>,
-    old_previous: Option<&str>,
-    new_current: Option<&str>,
-) -> Option<String> {
-    match (old_current, new_current) {
-        (Some(old), Some(new)) if old != new => Some(old.to_string()),
-        _ => old_previous.map(str::to_string),
     }
 }
 
@@ -1941,22 +1897,6 @@ mod tests {
         state.mixer.mode = MixerMode::SelectedScene;
         state.mixer.selected_scene = Some("Scene A".to_string());
         state
-    }
-
-    #[test]
-    fn inventory_refresh_tracks_previous_scene_only_when_current_changes() {
-        assert_eq!(
-            previous_scene_for_inventory_update(Some("A"), None, Some("B")),
-            Some("A".to_string())
-        );
-        assert_eq!(
-            previous_scene_for_inventory_update(Some("A"), Some("Prev"), Some("A")),
-            Some("Prev".to_string())
-        );
-        assert_eq!(
-            previous_scene_for_inventory_update(None, Some("Prev"), Some("A")),
-            Some("Prev".to_string())
-        );
     }
 
     #[test]

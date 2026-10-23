@@ -352,6 +352,17 @@ pub enum ActiveAudioStatus {
     Failed(MixerAudioError),
 }
 
+fn previous_scene_for_inventory_update(
+    old_current: Option<&str>,
+    old_previous: Option<&str>,
+    new_current: Option<&str>,
+) -> Option<String> {
+    match (old_current, new_current) {
+        (Some(old), Some(new)) if old != new => Some(old.to_string()),
+        _ => old_previous.map(str::to_string),
+    }
+}
+
 /// Start the output clock on the first active observation; clear it on stop.
 pub(crate) fn update_active_since(active: bool, active_since: &mut Option<Instant>) {
     match (active, active_since.is_some()) {
@@ -565,6 +576,21 @@ impl WorkspaceState {
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
         self.touch();
+    }
+    /// A transport echo outranks the last readback until the next read lands.
+    pub fn observe_studio_mode(&mut self, enabled: bool, at: Instant) {
+        self.scene_control_observation = Some((enabled, at));
+        if let Some(snapshot) = &mut self.snapshot {
+            snapshot.studio.enabled = Some(enabled);
+        }
+        self.mark_dirty();
+    }
+    pub fn observe_virtual_camera(&mut self, active: Option<bool>, at: Instant) {
+        self.virtual_camera_observation = Some((active, at));
+        if let Some(snapshot) = &mut self.snapshot {
+            snapshot.virtual_camera_active = active;
+        }
+        self.mark_dirty();
     }
     pub fn accepts(&self, epoch: u64, sequence: u64) -> bool {
         self.epoch == epoch && self.sequence == sequence
@@ -810,6 +836,35 @@ impl AppState {
             _ => return None,
         };
         Some(kind)
+    }
+
+    /// A new session starts with unknown outputs until readback arrives.
+    pub fn apply_connected(&mut self, info: crate::controller::event::ConnectionInfo) -> ObsStatus {
+        use crate::domain::output::OutputRunState;
+        self.available_requests = info.available_requests;
+        self.supported_image_formats = info.supported_image_formats;
+        self.connected_endpoint = Some(info.endpoint);
+        self.workspace.mark_dirty();
+        self.obs_status = ObsStatus::Connected {
+            obs_version: info.obs_version,
+        };
+        self.stream_status = OutputStatus::new(false, OutputRunState::Unknown);
+        self.record_status = OutputStatus::new(false, OutputRunState::Unknown);
+        self.obs_status.clone()
+    }
+
+    /// Keep Previous across same-scene readbacks; a Program change also
+    /// invalidates the active-scene audio list.
+    pub fn apply_scene_inventory(&mut self, mut inventory: SceneInventory) {
+        inventory.previous_id = previous_scene_for_inventory_update(
+            self.scene_inventory.current_id.as_deref(),
+            self.scene_inventory.previous_id.as_deref(),
+            inventory.current_id.as_deref(),
+        );
+        if self.scene_inventory.current_id != inventory.current_id {
+            self.invalidate_active_audio();
+        }
+        self.scene_inventory = inventory;
     }
 
     pub fn workflow_scope(&self) -> crate::domain::workflow::ScopeBinding {
@@ -1618,6 +1673,89 @@ mod tests {
             .any(|entry| entry.id == ticket && entry.status == OutputResultStatus::Failed));
 
         assert_eq!(state.apply_output_event(&AppEvent::Disconnected, 11), None);
+    }
+
+    #[test]
+    fn inventory_refresh_tracks_previous_scene_only_when_current_changes() {
+        assert_eq!(
+            previous_scene_for_inventory_update(Some("A"), None, Some("B")),
+            Some("A".to_string())
+        );
+        assert_eq!(
+            previous_scene_for_inventory_update(Some("A"), Some("Prev"), Some("A")),
+            Some("Prev".to_string())
+        );
+        assert_eq!(
+            previous_scene_for_inventory_update(None, Some("Prev"), Some("A")),
+            Some("Prev".to_string())
+        );
+    }
+
+    #[test]
+    fn connecting_resets_outputs_to_unknown_and_records_the_session() {
+        use crate::domain::output::OutputRunState;
+        let mut state = app_state();
+        state.stream_status = OutputStatus::new(true, OutputRunState::Active);
+        let status = state.apply_connected(crate::controller::event::ConnectionInfo {
+            endpoint: "ws://obs:4455".into(),
+            obs_version: "32.2.2".into(),
+            websocket_version: "5.6".into(),
+            available_requests: vec!["GetVersion".into()],
+            supported_image_formats: vec!["png".into()],
+        });
+        assert_eq!(status, state.obs_status);
+        assert!(matches!(status, ObsStatus::Connected { obs_version } if obs_version == "32.2.2"));
+        assert_eq!(state.stream_status.state, OutputRunState::Unknown);
+        assert_eq!(state.record_status.state, OutputRunState::Unknown);
+        assert_eq!(state.connected_endpoint.as_deref(), Some("ws://obs:4455"));
+        assert_eq!(state.available_requests, ["GetVersion"]);
+        assert!(state.workspace.dirty);
+    }
+
+    #[test]
+    fn program_change_moves_previous_and_invalidates_scene_audio() {
+        let mut state = app_state();
+        let inventory = |current: &str| SceneInventory {
+            current_id: Some(current.into()),
+            ..SceneInventory::default()
+        };
+        state.apply_scene_inventory(inventory("A"));
+        state.audio_inputs = vec![input("Mic")];
+        state.apply_scene_inventory(inventory("A"));
+        assert_eq!(state.audio_inputs.len(), 1, "same scene keeps audio");
+        state.apply_scene_inventory(inventory("B"));
+        assert_eq!(state.scene_inventory.previous_id.as_deref(), Some("A"));
+        assert!(state.audio_inputs.is_empty());
+        assert!(matches!(
+            state.active_audio_status,
+            ActiveAudioStatus::Loading
+        ));
+    }
+
+    #[test]
+    fn studio_and_virtual_camera_echoes_patch_the_snapshot_and_mark_dirty() {
+        let mut workspace = WorkspaceState {
+            snapshot: Some(Default::default()),
+            ..Default::default()
+        };
+        let at = Instant::now();
+        workspace.observe_studio_mode(true, at);
+        assert_eq!(workspace.scene_control_observation, Some((true, at)));
+        assert_eq!(
+            workspace.snapshot.as_ref().unwrap().studio.enabled,
+            Some(true)
+        );
+        workspace.dirty = false;
+        workspace.observe_virtual_camera(Some(false), at);
+        assert_eq!(
+            workspace.virtual_camera_observation,
+            Some((Some(false), at))
+        );
+        assert_eq!(
+            workspace.snapshot.as_ref().unwrap().virtual_camera_active,
+            Some(false)
+        );
+        assert!(workspace.dirty);
     }
 
     #[test]
