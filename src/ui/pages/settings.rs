@@ -1032,6 +1032,7 @@ mod tests {
             state::{AppState, ObsStatus},
         };
         use adw::prelude::*;
+        crate::ui::test_support::require_native_runner();
         adw::init().expect("native GTK display");
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)

@@ -1769,6 +1769,7 @@ mod tests {
             });
             found.expect(name)
         }
+        crate::ui::test_support::require_native_runner();
         adw::init().expect("native GTK display");
         crate::ui::theme::ThemeManager::apply(&Default::default());
         let runtime = tokio::runtime::Builder::new_multi_thread()

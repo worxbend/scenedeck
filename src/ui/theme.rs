@@ -937,6 +937,7 @@ mod tests {
         ) {
             return;
         }
+        crate::ui::test_support::require_native_runner();
         adw::init().expect("native GTK display");
         let dir = std::env::temp_dir().join(format!("scenedeck-css-import-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -1068,6 +1069,7 @@ mod tests {
             assert!(status.success(), "isolated GTK theme test failed");
             return;
         }
+        crate::ui::test_support::require_native_runner();
         adw::init().expect("GTK/libadwaita display");
         let provider = gtk4::CssProvider::new();
         let errors = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
@@ -1346,6 +1348,7 @@ mod tests {
     #[ignore = "requires an isolated native GTK display; run with --test-threads=1"]
     fn native_motion_off_stops_stack_and_restores_desktop_preference() {
         use gtk4::prelude::*;
+        crate::ui::test_support::require_native_runner();
         const CHILD: &str = "SCENEDECK_NATIVE_MOTION_DESKTOP";
         let Ok(desktop) = std::env::var(CHILD) else {
             for enabled in [false, true] {

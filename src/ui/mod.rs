@@ -233,8 +233,18 @@ pub(crate) mod test_support {
     use crate::controller::{app_controller::AppController, event::AppEvent, state::AppState};
     use std::{cell::RefCell, rc::Rc, sync::mpsc, time::Duration};
 
+    /// Native tests need the isolated display and session bus that
+    /// `tools/test-native.py` sets up; on a live desktop they fail confusingly.
+    pub(crate) fn require_native_runner() {
+        assert!(
+            std::env::var_os("SCENEDECK_NATIVE_RUNNER").is_some(),
+            "native GTK tests must run via `python3 tools/test-native.py`"
+        );
+    }
+
     /// GTK tests run in separate processes, not separate Rust test threads.
     pub(crate) fn native_test(name: &str, test: impl FnOnce()) {
+        require_native_runner();
         if std::env::var("SCENEDECK_NATIVE_TEST_CHILD").as_deref() != Ok(name) {
             let mut child = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", name, "--ignored", "--test-threads=1"])

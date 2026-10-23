@@ -34,7 +34,8 @@ def main():
         # persistence, displays and session buses. Never reuse GTK across tests.
         with tempfile.TemporaryDirectory(prefix="scenedeck-native-") as tmp:
             env = dict(os.environ, GDK_BACKEND="x11", GSK_RENDERER="gl",
-                       LIBGL_ALWAYS_SOFTWARE="1", GTK_A11Y="none", GIO_USE_VFS="local")
+                       LIBGL_ALWAYS_SOFTWARE="1", GTK_A11Y="none", GIO_USE_VFS="local",
+                       SCENEDECK_NATIVE_RUNNER="1")
             env.pop("WAYLAND_DISPLAY", None)
             for key, directory in [("XDG_CONFIG_HOME", "config"), ("XDG_DATA_HOME", "data"),
                                    ("XDG_CACHE_HOME", "cache"), ("XDG_STATE_HOME", "state"),

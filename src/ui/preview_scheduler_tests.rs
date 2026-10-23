@@ -48,6 +48,7 @@ fn native_preview_scheduler_bounds_scope_and_visibility() {
         );
         return;
     }
+    crate::ui::test_support::require_native_runner();
     adw::init().expect("native GTK display");
     let provider = gtk4::CssProvider::new();
     provider.load_from_data(include_str!("../../assets/scenedeck.css"));

@@ -260,6 +260,7 @@ mod tests {
             );
             return;
         }
+        crate::ui::test_support::require_native_runner();
         gtk4::init().expect("native GTK display");
         let settings = gtk4::Settings::default().expect("GTK settings");
         let animations = settings.property::<bool>("gtk-enable-animations");

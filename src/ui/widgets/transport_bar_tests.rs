@@ -62,6 +62,7 @@ fn native_compact_large_text_outputs_and_hidden_pages_fit() {
         );
         return;
     }
+    crate::ui::test_support::require_native_runner();
     adw::init().expect("native GTK display");
     // Labels may contain translated punctuation or user-visible literal markup.
     // The visual markup must not change the text or become executable styling.
