@@ -52,6 +52,10 @@ pub(crate) struct SceneCardHandle {
     pub(crate) root: Button,
     pub(crate) scene_id: String,
     pub(crate) picture: Picture,
+    image_placeholder: Image,
+    scrim: GtkBox,
+    /// The user turned previews on; a too-short viewport may still show a tile.
+    images: bool,
     program: Label,
     preview: Label,
     title: Label,
@@ -69,7 +73,20 @@ impl SceneCardHandle {
             self.root.remove_css_class("scene-card-short");
         }
         self.title.set_lines(if short { 1 } else { 2 });
-        if self.root.has_css_class("scene-card-preview-enabled") && self.root.width() > 0 {
+        let show_image = self.images && preview_fits(viewport_height);
+        if show_image != self.root.has_css_class("scene-card-preview-enabled") {
+            if show_image {
+                self.root.add_css_class("scene-card-preview-enabled");
+            } else {
+                self.root.remove_css_class("scene-card-preview-enabled");
+                self.root.set_height_request(-1);
+            }
+            self.picture.set_visible(show_image);
+            self.scrim.set_visible(show_image);
+            self.image_placeholder
+                .set_visible(show_image && self.picture.paintable().is_none());
+        }
+        if show_image && self.root.width() > 0 {
             let height = preview_card_height(self.root.width(), viewport_height);
             if self.root.height_request() != height {
                 self.root.set_height_request(height);
@@ -174,8 +191,11 @@ pub(crate) fn build(model: SceneCardModel<'_>, nav: NavigationContext) -> SceneC
     fallback.set_tooltip_text(Some(&fl!(LANGUAGE_LOADER, "scene-card-image-pending")));
     fallback.set_visible(images);
     overlay.add_overlay(&fallback);
-    picture.connect_paintable_notify(move |picture| {
-        fallback.set_visible(images && picture.paintable().is_none())
+    picture.connect_paintable_notify({
+        let fallback = fallback.clone();
+        move |picture| {
+            fallback.set_visible(images && picture.is_visible() && picture.paintable().is_none())
+        }
     });
     let scrim = GtkBox::new(Orientation::Vertical, 0);
     scrim.add_css_class("scene-card-scrim");
@@ -249,6 +269,9 @@ pub(crate) fn build(model: SceneCardModel<'_>, nav: NavigationContext) -> SceneC
         root: card,
         scene_id,
         picture,
+        image_placeholder: fallback,
+        scrim,
+        images,
         program,
         preview: preview_label,
         title,
@@ -266,10 +289,22 @@ fn scene_action_hint(studio: bool) -> String {
     }
 }
 
+/// Smallest preview card that still shows a readable image and title.
+const SHORT_PREVIEW_MIN_HEIGHT: i32 = 104;
+
+/// Below this, a preview card would overflow its viewport; show a tile instead.
+fn preview_fits(viewport_height: i32) -> bool {
+    viewport_height - 12 >= SHORT_PREVIEW_MIN_HEIGHT
+}
+
 fn preview_card_height(width: i32, viewport_height: i32) -> i32 {
     // Keep the title in view in short windows; Picture contains the image on its matte.
     let natural = (((width - 4).max(1) as f64 * 9.0 / 16.0).round() as i32 + 4).max(148);
-    let minimum = if viewport_height < 180 { 104 } else { 148 };
+    let minimum = if viewport_height < 180 {
+        SHORT_PREVIEW_MIN_HEIGHT
+    } else {
+        148
+    };
     natural.min((viewport_height - 12).max(minimum))
 }
 
@@ -402,6 +437,12 @@ mod tests {
         assert_eq!(preview_card_height(576, 190), 178);
         assert_eq!(preview_card_height(576, 150), 138);
         assert_eq!(preview_card_height(576, 110), 104);
+    }
+    #[test]
+    fn too_short_viewports_fall_back_to_tiles() {
+        assert!(preview_fits(116));
+        assert!(!preview_fits(115));
+        assert!(!preview_fits(54));
     }
     #[test]
     fn accessible_tallies_name_both_observed_states() {

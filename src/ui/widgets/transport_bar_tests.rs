@@ -225,15 +225,19 @@ fn native_compact_large_text_outputs_and_hidden_pages_fit() {
                 .unwrap();
             pump();
         }
-        // A rebuilt card is allocated on a later frame; wait for it rather
-        // than trusting a fixed pump.
+        // Rebuilt cards are allocated, then fitted to the viewport, on later
+        // frames; wait for that to settle rather than trusting a fixed pump.
+        let settled = || {
+            let scroller = find(live.upcast_ref(), &|w| {
+                w.is::<gtk4::ScrolledWindow>() && w.is_mapped()
+            })?;
+            let card = find(live.upcast_ref(), &|w| w.has_css_class("scene-card"))?;
+            let bounds = card.compute_bounds(&scroller)?;
+            (card.width() > 4 && bounds.y() + bounds.height() <= scroller.height() as f32)
+                .then_some(())
+        };
         let deadline = Instant::now() + Duration::from_secs(5);
-        while find(live.upcast_ref(), &|w| {
-            w.has_css_class("scene-card") && w.width() > 4 && w.height() > 4
-        })
-        .is_none()
-            && Instant::now() < deadline
-        {
+        while settled().is_none() && Instant::now() < deadline {
             pump();
         }
         let scroller = find(live.upcast_ref(), &|w| {
