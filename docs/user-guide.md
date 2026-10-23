@@ -173,8 +173,10 @@ says so in the caption for a couple of seconds instead of switching anything.
 
 ### Audio Cards
 
-Live starts with a compact audio strip; expand it for larger controls. Mixer
-keeps the detailed faders and scope controls described below.
+Live starts with a compact audio strip; expand it for larger controls. In a
+short window (under 700 px) the strip shows only its heading until you expand
+it, so the scene grid keeps its room. Mixer keeps the detailed faders and scope
+controls described below.
 
 The audio section shows global OBS audio sources first, followed by
 audio-capable inputs from the active scene. SceneDeck also follows enabled

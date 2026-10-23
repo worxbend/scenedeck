@@ -236,6 +236,23 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
         }
     });
     page.append(&audio_strip);
+    // Short windows keep the scene grid usable: audio collapses to one header
+    // row until expanded. Mixer keeps the full controls.
+    page.add_tick_callback({
+        let audio_box = audio_box.clone();
+        let expand = expand.clone();
+        move |page, _| {
+            let collapsed =
+                audio_collapsed(page.has_css_class("live-page-short"), expand.is_active());
+            audio_box.set_visible(!collapsed);
+            header.set_orientation(if collapsed {
+                Orientation::Horizontal
+            } else {
+                Orientation::Vertical
+            });
+            glib::ControlFlow::Continue
+        }
+    });
     LivePageHandle {
         root,
         scenes_box,
@@ -304,6 +321,11 @@ fn requires_disconnect_confirmation(
         .any(|status| status.state == OutputRunState::Unknown || status.state.is_transitioning())
         || (stream.active && config.confirm_stop_stream)
         || (record.active && config.confirm_stop_recording)
+}
+
+/// Short windows hide the audio cards unless the user expanded them.
+fn audio_collapsed(short: bool, expanded: bool) -> bool {
+    short && !expanded
 }
 
 fn output_running(status: &OutputStatus) -> bool {
@@ -855,6 +877,13 @@ fn clear_audio_cards(handle: &LivePageHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_windows_collapse_audio_until_expanded() {
+        assert!(audio_collapsed(true, false));
+        assert!(!audio_collapsed(true, true));
+        assert!(!audio_collapsed(false, false));
+    }
     use crate::domain::hotkey::SceneHotkeyStyle;
     use crate::domain::output::OutputRunState;
     use crate::domain::role::SceneRole;

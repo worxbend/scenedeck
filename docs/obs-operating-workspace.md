@@ -20,7 +20,8 @@ OBS state arrives.
 
 The grid has one scrolling region. A compact audio strip sits below it; expand
 it for larger controls, or use Mixer for detailed Active, Selected and Pinned
-scene audio. The bottom output bar contains streaming, recording, replay buffer
+scene audio. Short windows collapse the strip to its heading until expanded,
+and show scenes as tiles when there is no room for a preview card. The bottom output bar contains streaming, recording, replay buffer
 and virtual camera. Its menu holds pause/resume, save replay, split/chapter
 requests and output results. Controls remain in the same surface as the window
 narrows. Start/stop confirmation preferences apply to streaming and recording.
