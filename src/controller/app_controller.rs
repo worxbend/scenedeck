@@ -731,28 +731,6 @@ mod tests {
         );
     }
 
-    fn apply_output_event(state: &mut crate::controller::state::AppState, event: &AppEvent) {
-        match event {
-            AppEvent::StreamStatusUpdated(status) => state.set_stream_status(status.clone()),
-            AppEvent::RecordStatusUpdated(status) => state.set_record_status(status.clone()),
-            AppEvent::StreamCommandPending(status) => {
-                state.set_stream_command_pending(status.clone());
-            }
-            AppEvent::RecordCommandPending(status) => {
-                state.set_record_command_pending(status.clone());
-            }
-            AppEvent::StreamCommandFailed(failure) => {
-                state.set_stream_command_failure_with_recovery(failure.clone());
-            }
-            AppEvent::RecordCommandFailed(failure) => {
-                state.set_record_command_failure_with_recovery(failure.clone());
-            }
-            AppEvent::StreamCommandSucceeded => state.set_stream_command_success(),
-            AppEvent::RecordCommandSucceeded => state.set_record_command_success(),
-            _ => {}
-        }
-    }
-
     fn assert_non_transitioning(status: &OutputStatus) {
         assert!(
             !status.state.is_transitioning(),
@@ -996,7 +974,7 @@ mod tests {
         mark_obs_connected(&mut state);
         state.set_record_command_failure("existing record error".to_string());
         for event in &events {
-            apply_output_event(&mut state, event);
+            state.apply_output_event(event, 0);
         }
         assert_obs_connected(&state);
         assert_eq!(state.stream_status, inactive_status());
@@ -1053,7 +1031,7 @@ mod tests {
         mark_obs_connected(&mut state);
         state.set_stream_command_failure("existing stream error".to_string());
         for event in &events {
-            apply_output_event(&mut state, event);
+            state.apply_output_event(event, 0);
         }
         assert_obs_connected(&state);
         assert_eq!(state.record_status, inactive_status());
@@ -1116,7 +1094,7 @@ mod tests {
         mark_obs_connected(&mut state);
         state.set_record_command_failure("existing record error".to_string());
         for event in &events {
-            apply_output_event(&mut state, event);
+            state.apply_output_event(event, 0);
         }
         assert_obs_connected(&state);
         assert_eq!(
@@ -1182,7 +1160,7 @@ mod tests {
         mark_obs_connected(&mut state);
         state.set_stream_command_failure("existing stream error".to_string());
         for event in &events {
-            apply_output_event(&mut state, event);
+            state.apply_output_event(event, 0);
         }
         assert_obs_connected(&state);
         assert_eq!(

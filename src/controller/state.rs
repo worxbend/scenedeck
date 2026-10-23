@@ -352,6 +352,15 @@ pub enum ActiveAudioStatus {
     Failed(MixerAudioError),
 }
 
+/// Start the output clock on the first active observation; clear it on stop.
+pub(crate) fn update_active_since(active: bool, active_since: &mut Option<Instant>) {
+    match (active, active_since.is_some()) {
+        (true, false) => *active_since = Some(Instant::now()),
+        (false, true) => *active_since = None,
+        _ => {}
+    }
+}
+
 // ── App state ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default)]
@@ -697,6 +706,112 @@ impl AppState {
             );
             self.workspace.recording_stop_result = Some(id);
         }
+    }
+
+    /// Apply one output event. Returns its kind, or `None` for any other event.
+    pub fn apply_output_event(
+        &mut self,
+        event: &crate::controller::event::AppEvent,
+        now_ms: u64,
+    ) -> Option<crate::domain::output::OutputKind> {
+        use crate::controller::event::AppEvent;
+        use crate::domain::output::OutputKind;
+        use crate::domain::output_result::OutputResultKind;
+        use crate::domain::workflow::ActivityOrigin;
+
+        let observation = match event {
+            AppEvent::StreamStatusUpdated(status) => Some((OutputKind::Stream, status)),
+            AppEvent::RecordStatusUpdated(status) => Some((OutputKind::Record, status)),
+            _ => None,
+        };
+        if let Some((kind, status)) = observation {
+            let previous = match kind {
+                OutputKind::Stream => &self.stream_status,
+                OutputKind::Record => &self.record_status,
+            };
+            if previous != status {
+                if kind == OutputKind::Record && !status.active {
+                    if let Some(path) = status.detail.as_ref().filter(|path| !path.is_empty()) {
+                        let scope = self.workflow_scope();
+                        self.workspace.output_results.observe(
+                            OutputResultKind::RecordingStop,
+                            scope,
+                            Some(path.clone()),
+                            now_ms,
+                        );
+                    }
+                }
+                self.workspace.log(
+                    ActivityOrigin::Observed,
+                    format!("{}: {}", kind.label(), status.state.label()),
+                );
+                self.workspace.mark_dirty();
+            }
+        }
+
+        let kind = match event {
+            AppEvent::StreamStatusUpdated(status) => {
+                update_active_since(status.active, &mut self.stream_active_since);
+                self.set_stream_status(status.clone());
+                OutputKind::Stream
+            }
+            AppEvent::RecordStatusUpdated(status) => {
+                update_active_since(status.active, &mut self.record_active_since);
+                // OBS sends an empty path when there is no new file, not "no recording".
+                if let Some(path) = status.detail.as_ref().filter(|path| !path.is_empty()) {
+                    self.last_recording_path = Some(path.clone());
+                }
+                self.set_record_status(status.clone());
+                OutputKind::Record
+            }
+            AppEvent::StreamCommandPending(status) => {
+                update_active_since(status.active, &mut self.stream_active_since);
+                self.set_stream_command_pending(status.clone());
+                OutputKind::Stream
+            }
+            AppEvent::RecordCommandPending(status) => {
+                update_active_since(status.active, &mut self.record_active_since);
+                self.set_record_command_pending(status.clone());
+                OutputKind::Record
+            }
+            AppEvent::StreamCommandSucceeded => {
+                self.set_stream_command_success();
+                OutputKind::Stream
+            }
+            AppEvent::RecordCommandSucceeded => {
+                if let Some(id) = self.workspace.recording_stop_result.take() {
+                    self.workspace.output_results.acknowledge(id, now_ms);
+                }
+                self.workspace.touch();
+                self.set_record_command_success();
+                OutputKind::Record
+            }
+            AppEvent::StreamCommandFailed(failure) => {
+                self.workspace
+                    .log(ActivityOrigin::Failed, failure.message().to_owned());
+                self.set_stream_command_failure_with_recovery(failure.clone());
+                OutputKind::Stream
+            }
+            AppEvent::RecordCommandFailed(failure) => {
+                if let Some(id) = self.workspace.recording_stop_result.take() {
+                    if failure.uncertain() {
+                        self.workspace.output_results.invalidate(now_ms);
+                    } else {
+                        self.workspace.output_results.fail(
+                            id,
+                            failure.message().to_string(),
+                            now_ms,
+                        );
+                    }
+                }
+                self.workspace
+                    .log(ActivityOrigin::Failed, failure.message().to_string());
+                self.set_record_command_failure_with_recovery(failure.clone());
+                OutputKind::Record
+            }
+            _ => return None,
+        };
+        Some(kind)
     }
 
     pub fn workflow_scope(&self) -> crate::domain::workflow::ScopeBinding {
@@ -1383,6 +1498,71 @@ mod tests {
             "one ticket per stop"
         );
         assert_eq!(state.workspace.activity.entries.len(), 7);
+    }
+
+    #[test]
+    fn output_events_track_clocks_paths_and_the_recording_stop_ticket() {
+        use crate::controller::command::AppCommand;
+        use crate::controller::event::{AppEvent, OutputCommandFailureRecovery};
+        use crate::domain::output::OutputKind;
+        use crate::domain::output_result::OutputResultStatus;
+        let mut state = app_state();
+        let active = OutputStatus::new(true, OutputRunState::Active);
+
+        let event = AppEvent::StreamStatusUpdated(active.clone());
+        assert_eq!(
+            state.apply_output_event(&event, 1),
+            Some(OutputKind::Stream)
+        );
+        assert!(state.stream_active_since.is_some());
+        assert_eq!(
+            state.workspace.activity.entries.len(),
+            1,
+            "changes are logged"
+        );
+        assert!(state.workspace.dirty);
+        state.apply_output_event(&event, 2);
+        assert_eq!(state.workspace.activity.entries.len(), 1, "repeats are not");
+        state.apply_output_event(&AppEvent::StreamStatusUpdated(OutputStatus::inactive()), 3);
+        assert!(state.stream_active_since.is_none());
+
+        // A settled stop opens a ticket; success acknowledges it.
+        state.apply_output_event(&AppEvent::RecordStatusUpdated(active.clone()), 4);
+        state.note_command_intent(&AppCommand::StopRecording, 5);
+        assert!(state.workspace.recording_stop_result.is_some());
+        state.apply_output_event(&AppEvent::RecordCommandSucceeded, 6);
+        assert_eq!(state.workspace.recording_stop_result, None);
+
+        let stopped = OutputStatus {
+            detail: Some("/tmp/take.mkv".into()),
+            ..OutputStatus::inactive()
+        };
+        state.apply_output_event(&AppEvent::RecordStatusUpdated(stopped), 7);
+        assert_eq!(state.last_recording_path.as_deref(), Some("/tmp/take.mkv"));
+        assert!(state.record_active_since.is_none());
+        let empty = OutputStatus {
+            detail: Some(String::new()),
+            ..OutputStatus::new(true, OutputRunState::Active)
+        };
+        state.apply_output_event(&AppEvent::RecordStatusUpdated(empty), 8);
+        assert_eq!(state.last_recording_path.as_deref(), Some("/tmp/take.mkv"));
+
+        // A rejected stop fails its ticket instead.
+        state.note_command_intent(&AppCommand::StopRecording, 9);
+        let ticket = state.workspace.recording_stop_result.expect("ticket");
+        let failure = OutputCommandFailureRecovery::with_failed_command_fallback_status(
+            "refused".into(),
+            OutputStatus::inactive(),
+        );
+        state.apply_output_event(&AppEvent::RecordCommandFailed(failure), 10);
+        assert_eq!(state.workspace.recording_stop_result, None);
+        assert!(state
+            .workspace
+            .output_results
+            .entries()
+            .any(|entry| entry.id == ticket && entry.status == OutputResultStatus::Failed));
+
+        assert_eq!(state.apply_output_event(&AppEvent::Disconnected, 11), None);
     }
 
     #[test]

@@ -16,7 +16,6 @@ use adw::prelude::*;
 use gtk4::{Button, Image, Stack, StackTransitionType};
 use i18n_embed_fl::fl;
 
-use super::event_reconciliation::update_active_since;
 use crate::app_info::APP_NAME;
 use crate::controller::app_controller::AppController;
 use crate::controller::command::AppCommand;
@@ -1183,151 +1182,24 @@ fn refresh_output_status_bar(nav: &NavigationContext, ui: &EventUiContext, kind:
 }
 
 fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiContext>) {
-    let observation = match &event {
-        AppEvent::StreamStatusUpdated(status) => Some((OutputKind::Stream, status.clone())),
-        AppEvent::RecordStatusUpdated(status) => Some((OutputKind::Record, status.clone())),
-        _ => None,
-    };
-    if let Some((kind, status)) = observation {
-        let mut state = nav.state.borrow_mut();
-        let previous = match kind {
-            OutputKind::Stream => &state.stream_status,
-            OutputKind::Record => &state.record_status,
-        };
-        if previous != &status {
-            if kind == OutputKind::Record && !status.active {
-                if let Some(path) = status.detail.as_ref().filter(|path| !path.is_empty()) {
-                    let scope = state.workflow_scope();
-                    state.workspace.output_results.observe(
-                        crate::domain::output_result::OutputResultKind::RecordingStop,
-                        scope,
-                        Some(path.clone()),
-                        crate::controller::workspace::unix_ms(),
-                    );
-                }
-            }
-            state.workspace.log(
-                crate::domain::workflow::ActivityOrigin::Observed,
-                format!("{}: {}", kind.label(), status.state.label()),
-            );
-            state.workspace.mark_dirty();
-        }
+    if let (
+        Some(ui),
+        AppEvent::StreamCommandFailed(failure) | AppEvent::RecordCommandFailed(failure),
+    ) = (ui, &event)
+    {
+        ui.toast.add_toast(adw::Toast::new(failure.message()));
     }
-    // Each arm makes its one state change; rendering is the shared step that
-    // follows it.
-    let kind = match event {
-        AppEvent::StreamStatusUpdated(status) => {
-            let mut state = nav.state.borrow_mut();
-            update_active_since(status.active, &mut state.stream_active_since);
-            state.set_stream_status(status);
-            OutputKind::Stream
-        }
-
-        AppEvent::RecordStatusUpdated(status) => {
-            let mut state = nav.state.borrow_mut();
-            update_active_since(status.active, &mut state.record_active_since);
-            remember_recording_path(&mut state, &status);
-            state.set_record_status(status);
-            OutputKind::Record
-        }
-
-        AppEvent::StreamCommandPending(status) => {
-            let mut state = nav.state.borrow_mut();
-            update_active_since(status.active, &mut state.stream_active_since);
-            state.set_stream_command_pending(status);
-            OutputKind::Stream
-        }
-
-        AppEvent::RecordCommandPending(status) => {
-            let mut state = nav.state.borrow_mut();
-            update_active_since(status.active, &mut state.record_active_since);
-            state.set_record_command_pending(status);
-            OutputKind::Record
-        }
-
-        AppEvent::StreamCommandSucceeded => {
-            nav.state.borrow_mut().set_stream_command_success();
-            OutputKind::Stream
-        }
-
-        AppEvent::RecordCommandSucceeded => {
-            let mut state = nav.state.borrow_mut();
-            if let Some(id) = state.workspace.recording_stop_result.take() {
-                state
-                    .workspace
-                    .output_results
-                    .acknowledge(id, crate::controller::workspace::unix_ms());
-            }
-            state.workspace.touch();
-            state.set_record_command_success();
-            OutputKind::Record
-        }
-
-        AppEvent::StreamCommandFailed(failure) => {
-            if let Some(ui) = ui {
-                ui.toast.add_toast(adw::Toast::new(failure.message()));
-            }
-            nav.state.borrow_mut().workspace.log(
-                crate::domain::workflow::ActivityOrigin::Failed,
-                failure.message().to_owned(),
-            );
-            nav.state
-                .borrow_mut()
-                .set_stream_command_failure_with_recovery(failure);
-            OutputKind::Stream
-        }
-
-        AppEvent::RecordCommandFailed(failure) => {
-            if let Some(ui) = ui {
-                ui.toast.add_toast(adw::Toast::new(failure.message()));
-            }
-            {
-                let mut state = nav.state.borrow_mut();
-                if let Some(id) = state.workspace.recording_stop_result.take() {
-                    if failure.uncertain() {
-                        state
-                            .workspace
-                            .output_results
-                            .invalidate(crate::controller::workspace::unix_ms());
-                    } else {
-                        state.workspace.output_results.fail(
-                            id,
-                            failure.message().to_string(),
-                            crate::controller::workspace::unix_ms(),
-                        );
-                    }
-                }
-                state.workspace.log(
-                    crate::domain::workflow::ActivityOrigin::Failed,
-                    failure.message().to_string(),
-                );
-            }
-            nav.state
-                .borrow_mut()
-                .set_record_command_failure_with_recovery(failure);
-            OutputKind::Record
-        }
-
-        // Unreachable: `apply_event` matches exhaustively and only forwards the
-        // eight output variants here.
-        _ => {
-            debug_assert!(false, "non-output event routed to output handler");
-            return;
-        }
+    let kind = nav
+        .state
+        .borrow_mut()
+        .apply_output_event(&event, crate::controller::workspace::unix_ms());
+    // `apply_event` forwards only the eight output variants here.
+    let Some(kind) = kind else {
+        debug_assert!(false, "non-output event routed to output handler");
+        return;
     };
-
     if let Some(ui) = ui {
         refresh_output_status_bar(nav, ui, kind);
-    }
-}
-
-/// Keep the last non-empty recording path OBS reported.
-///
-/// OBS sends the path when a recording stops and an empty string at other
-/// times; an empty value means "no new path", not "there was no recording".
-fn remember_recording_path(state: &mut AppState, status: &OutputStatus) {
-    if let Some(path) = status.detail.as_ref().filter(|path| !path.is_empty()) {
-        state.last_recording_path = Some(path.clone());
     }
 }
 

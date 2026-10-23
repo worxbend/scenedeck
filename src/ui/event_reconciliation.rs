@@ -1,11 +1,11 @@
 //! Workspace reconciliation without widget ownership. Shell effects follow state publication.
 
+use crate::controller::state::update_active_since;
 use crate::controller::state::AppState;
 use crate::controller::workspace::{unix_ms, WorkspaceObservation};
 use crate::domain::control::SourceDetail;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use i18n_embed_fl::fl;
-use std::time::Instant;
 
 pub(super) struct WorkspaceCompletion {
     pub epoch: u64,
@@ -172,19 +172,12 @@ pub(super) fn replay_saved(state: &mut AppState, path: String) {
     state.workspace.mark_dirty();
 }
 
-pub(super) fn update_active_since(active: bool, active_since: &mut Option<Instant>) {
-    match (active, active_since.is_some()) {
-        (true, false) => *active_since = Some(Instant::now()),
-        (false, true) => *active_since = None,
-        _ => {}
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::output::OutputStatus;
     use crate::domain::output_result::{OutputResultKind, OutputResultStatus};
+    use std::time::Instant;
 
     fn state() -> AppState {
         AppState::new(Default::default(), Default::default(), None, None)
