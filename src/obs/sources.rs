@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use obws::requests::scenes::SceneId;
 use obws::responses::scene_items::{SceneItem, SourceType};
 
-use crate::domain::control::SourceItem;
+use crate::domain::control::{SourceItem, WorkspaceWarning};
 use crate::domain::graph::SceneGraph;
 use crate::infra::error::AppError;
 
@@ -48,23 +48,20 @@ impl ScanBudget {
 
 #[derive(Default)]
 struct ScanWarnings {
-    samples: Vec<String>,
+    samples: Vec<WorkspaceWarning>,
     omitted: usize,
 }
 impl ScanWarnings {
-    fn push(&mut self, warning: String) {
+    fn push(&mut self, warning: WorkspaceWarning) {
         if self.samples.len() < MAX_WARNING_SAMPLES {
             self.samples.push(warning);
         } else {
             self.omitted += 1;
         }
     }
-    fn finish(mut self) -> Vec<String> {
+    fn finish(mut self) -> Vec<WorkspaceWarning> {
         if self.omitted > 0 {
-            self.samples.push(format!(
-                "{} additional source scan warnings omitted",
-                self.omitted
-            ));
+            self.samples.push(WorkspaceWarning::Omitted(self.omitted));
         }
         self.samples
     }
@@ -125,7 +122,7 @@ impl ObsClient {
         &self,
         scene: &str,
         limit: usize,
-    ) -> (Vec<SourceItem>, Vec<String>) {
+    ) -> (Vec<SourceItem>, Vec<WorkspaceWarning>) {
         let mut budget = ScanBudget::new(limit);
         let mut warnings = ScanWarnings::default();
         let identities = self.input_identities(&mut warnings).await;
@@ -142,7 +139,9 @@ impl ObsClient {
                 .map(|input| (input.id.name, input.id.uuid.to_string()))
                 .collect(),
             Err(error) => {
-                warnings.push(format!("Input identity lookup: {error}"));
+                warnings.push(WorkspaceWarning::IdentityLookup {
+                    detail: error.to_string(),
+                });
                 HashMap::new()
             }
         }
@@ -160,19 +159,22 @@ impl ObsClient {
         let mut pending = vec![(scene.to_owned(), false, vec![scene.to_owned()], true)];
         while let Some((owner, group, path, ancestor_enabled)) = pending.pop() {
             if budget.remaining == 0 || budget.container().is_err() {
-                warnings.push("Source inventory truncated: inspection budget exhausted".into());
+                warnings.push(WorkspaceWarning::InventoryTruncated);
                 break;
             }
             let items = match self.list_container(&owner, group).await {
                 Ok(items) => items,
                 Err(error) => {
-                    warnings.push(format!("{}: {error}", path.join(" / ")));
+                    warnings.push(WorkspaceWarning::ContainerUnavailable {
+                        path: path.join(" / "),
+                        detail: error.to_string(),
+                    });
                     continue;
                 }
             };
             let count = items.len().min(budget.remaining);
             if count < items.len() {
-                warnings.push("Source inventory truncated: inspection budget exhausted".into());
+                warnings.push(WorkspaceWarning::InventoryTruncated);
             }
             budget
                 .inspect(count)
@@ -197,10 +199,11 @@ impl ObsClient {
                 let enabled = match enabled {
                     Ok(enabled) => enabled,
                     Err(error) => {
-                        warnings.push(format!(
-                            "{owner} / {} visibility unavailable: {error}",
-                            item.source_name
-                        ));
+                        warnings.push(WorkspaceWarning::VisibilityUnavailable {
+                            owner: owner.clone(),
+                            item: item.source_name.clone(),
+                            detail: error.to_string(),
+                        });
                         continue;
                     }
                 };
@@ -223,11 +226,9 @@ impl ObsClient {
                 });
                 if is_scene {
                     if path.contains(&item.source_name) || path.len() >= MAX_PATH_DEPTH {
-                        warnings.push(format!(
-                            "Recursion stopped at {} / {}",
-                            path.join(" / "),
-                            item.source_name
-                        ));
+                        warnings.push(WorkspaceWarning::RecursionStopped {
+                            path: format!("{} / {}", path.join(" / "), item.source_name),
+                        });
                     } else {
                         let mut child_path = path.clone();
                         child_path.push(item.source_name.clone());
@@ -249,7 +250,7 @@ impl ObsClient {
     pub async fn get_source_usage(
         &self,
         input: &str,
-    ) -> Result<(Vec<SourceItem>, Vec<String>), AppError> {
+    ) -> Result<(Vec<SourceItem>, Vec<WorkspaceWarning>), AppError> {
         self.source_usage_with_limit(input, MAX_INSPECTED_ITEMS)
             .await
     }
@@ -258,7 +259,7 @@ impl ObsClient {
         &self,
         input: &str,
         limit: usize,
-    ) -> Result<(Vec<SourceItem>, Vec<String>), AppError> {
+    ) -> Result<(Vec<SourceItem>, Vec<WorkspaceWarning>), AppError> {
         let scenes = self
             .request(self.inner.scenes().list())
             .await
@@ -269,7 +270,10 @@ impl ObsClient {
         let mut budget = ScanBudget::new(limit);
         for (index, scene) in scenes.scenes.into_iter().enumerate() {
             if index >= MAX_ROOT_SCENES || budget.remaining == 0 {
-                warnings.push(format!("Usage search is partial: limited to {MAX_ROOT_SCENES} scenes and {limit} inspected items"));
+                warnings.push(WorkspaceWarning::UsagePartial {
+                    scenes: MAX_ROOT_SCENES,
+                    items: limit,
+                });
                 break;
             }
             let items = self
@@ -278,5 +282,33 @@ impl ObsClient {
             result.extend(items.into_iter().filter(|item| item.input == input));
         }
         Ok((result, warnings.finish()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn warnings_keep_a_bounded_sample_and_count_the_rest() {
+        let mut warnings = ScanWarnings::default();
+        for _ in 0..MAX_WARNING_SAMPLES + 3 {
+            warnings.push(WorkspaceWarning::InventoryTruncated);
+        }
+        let finished = warnings.finish();
+        assert_eq!(finished.len(), MAX_WARNING_SAMPLES + 1);
+        assert_eq!(finished.last(), Some(&WorkspaceWarning::Omitted(3)));
+        assert!(ScanWarnings::default().finish().is_empty());
+    }
+
+    #[test]
+    fn budget_charges_items_and_containers_separately() {
+        let mut budget = ScanBudget::new(2);
+        assert!(budget.inspect(2).is_ok());
+        assert!(budget.inspect(1).is_err());
+        for _ in 0..2 + MAX_ROOT_SCENES {
+            assert!(budget.container().is_ok());
+        }
+        assert!(budget.container().is_err());
     }
 }

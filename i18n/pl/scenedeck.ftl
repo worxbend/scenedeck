@@ -983,3 +983,13 @@ media-state-stopped = Zatrzymano
 media-state-ended = Zakończono
 media-state-error = Błąd
 media-state-unknown = Nieznany
+workspace-warning-identity = Nie udało się ustalić tożsamości wejść: { $detail }
+workspace-warning-truncated = Lista źródeł skrócona: wyczerpano limit sprawdzania
+workspace-warning-container = { $path }: { $detail }
+workspace-warning-visibility = Widoczność { $owner } / { $item } niedostępna: { $detail }
+workspace-warning-recursion = Skanowanie zagnieżdżonych scen zatrzymano na { $path }
+workspace-warning-usage-partial = Wyszukiwanie użyć niepełne: ograniczone do { $scenes } scen i { $items } sprawdzonych elementów
+workspace-warning-omitted = { $count ->
+    [one] Pominięto 1 dodatkowe ostrzeżenie o źródłach
+   *[other] Pominięto { $count } dodatkowych ostrzeżeń o źródłach
+}

@@ -205,7 +205,7 @@ mod tests {
                 crate::domain::output::OutputRunState::Active,
             )),
             screenshot: None,
-            warnings: vec!["read warning".into()],
+            warnings: vec![crate::domain::control::WorkspaceWarning::InventoryTruncated],
             observed_at: Instant::now(),
         })
     }
@@ -281,7 +281,10 @@ mod tests {
         assert!(!state.stream_status.active && !state.record_status.active);
         assert!(state.stream_active_since.is_none() && state.record_active_since.is_none());
         assert!(state.workspace.snapshot.is_some());
-        assert_eq!(state.workspace.warnings, ["read warning"]);
+        assert_eq!(
+            state.workspace.warnings,
+            [crate::domain::control::WorkspaceWarning::InventoryTruncated]
+        );
         assert!(!state.workspace.loading && !state.workspace.pending);
         assert!(state.workspace.dirty);
         assert_eq!(state.workspace.revision(), 1);

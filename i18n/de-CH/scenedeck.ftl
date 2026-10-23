@@ -969,3 +969,13 @@ media-state-stopped = Gestoppt
 media-state-ended = Beendet
 media-state-error = Fehler
 media-state-unknown = Unbekannt
+workspace-warning-identity = Eingabe-Identitäten konnten nicht abgefragt werden: { $detail }
+workspace-warning-truncated = Quellenliste gekürzt: Prüfbudget erschöpft
+workspace-warning-container = { $path }: { $detail }
+workspace-warning-visibility = Sichtbarkeit von { $owner } / { $item } nicht verfügbar: { $detail }
+workspace-warning-recursion = Prüfung verschachtelter Szenen bei { $path } beendet
+workspace-warning-usage-partial = Verwendungssuche unvollständig: begrenzt auf { $scenes } Szenen und { $items } geprüfte Elemente
+workspace-warning-omitted = { $count ->
+    [one] 1 weitere Quellenwarnung ausgelassen
+   *[other] { $count } weitere Quellenwarnungen ausgelassen
+}

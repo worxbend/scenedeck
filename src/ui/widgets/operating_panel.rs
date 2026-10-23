@@ -317,10 +317,13 @@ struct SourcesContent {
     scene: Option<String>,
     input: Option<String>,
     scenes: Vec<String>,
-    sources: Option<(Vec<crate::domain::control::SourceItem>, Vec<String>)>,
+    sources: Option<(
+        Vec<crate::domain::control::SourceItem>,
+        Vec<crate::domain::control::WorkspaceWarning>,
+    )>,
     detail: Option<SourceDetail>,
     usage: Vec<crate::domain::control::SourceItem>,
-    warnings: Vec<String>,
+    warnings: Vec<crate::domain::control::WorkspaceWarning>,
     capabilities: Vec<String>,
 }
 
@@ -929,7 +932,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, local: &Rc<RefCell<LocalStat
     source_browser.append(&scroll);
 
     for warning in warnings.iter().chain(snapshot.warnings.iter()) {
-        source_browser.append(&text(warning));
+        source_browser.append(&text(&warning.label()));
     }
     let detail_page = column(16);
     detail_page.add_css_class("sources-detail");
@@ -1723,7 +1726,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .warnings
-            .push("Changed source warning".into());
+            .push(crate::domain::control::WorkspaceWarning::InventoryTruncated);
         assert!(original != sources_content_from_state(&state));
     }
 

@@ -2,7 +2,9 @@
 
 use crate::controller::event::AppEvent;
 use crate::domain::audio::AudioInput;
-use crate::domain::control::{ControlAction, ControlSnapshot, SourceDetail, SourceItem};
+use crate::domain::control::{
+    ControlAction, ControlSnapshot, SourceDetail, SourceItem, WorkspaceWarning,
+};
 use crate::domain::workflow::ScopeBinding;
 use crate::obs::client::ObsClient;
 use futures_util::FutureExt;
@@ -32,7 +34,7 @@ pub struct WorkspaceObservation {
     pub stream_status: Option<crate::domain::output::OutputStatus>,
     pub record_status: Option<crate::domain::output::OutputStatus>,
     pub screenshot: Option<String>,
-    pub warnings: Vec<String>,
+    pub warnings: Vec<WorkspaceWarning>,
     pub observed_at: Instant,
 }
 
@@ -426,7 +428,9 @@ async fn read_observation(
         match client.get_source_detail(input).await {
             Ok(value) => Some(value),
             Err(e) => {
-                warnings.push(e.to_string());
+                warnings.push(WorkspaceWarning::ReadFailed {
+                    detail: e.to_string(),
+                });
                 None
             }
         }
@@ -440,7 +444,9 @@ async fn read_observation(
                 items
             }
             Err(e) => {
-                warnings.push(e.to_string());
+                warnings.push(WorkspaceWarning::ReadFailed {
+                    detail: e.to_string(),
+                });
                 Vec::new()
             }
         }
@@ -451,7 +457,9 @@ async fn read_observation(
     let audio = match audio_read {
         Ok(value) => value,
         Err(e) => {
-            warnings.push(e.to_string());
+            warnings.push(WorkspaceWarning::ReadFailed {
+                detail: e.to_string(),
+            });
             Vec::new()
         }
     };
@@ -464,7 +472,9 @@ async fn read_observation(
             match client.get_source_screenshot(target).await {
                 Ok(image) => Some(image),
                 Err(e) => {
-                    warnings.push(e.to_string());
+                    warnings.push(WorkspaceWarning::ReadFailed {
+                        detail: e.to_string(),
+                    });
                     None
                 }
             }

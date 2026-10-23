@@ -973,3 +973,13 @@ media-state-stopped = Stopped
 media-state-ended = Ended
 media-state-error = Error
 media-state-unknown = Unknown
+workspace-warning-identity = Input identity lookup failed: { $detail }
+workspace-warning-truncated = Source inventory truncated: inspection budget exhausted
+workspace-warning-container = { $path }: { $detail }
+workspace-warning-visibility = { $owner } / { $item } visibility unavailable: { $detail }
+workspace-warning-recursion = Nested scene scan stopped at { $path }
+workspace-warning-usage-partial = Usage search is partial: limited to { $scenes } scenes and { $items } inspected items
+workspace-warning-omitted = { $count ->
+    [one] 1 more source scan warning omitted
+   *[other] { $count } more source scan warnings omitted
+}

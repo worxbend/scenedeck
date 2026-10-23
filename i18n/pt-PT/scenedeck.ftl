@@ -983,3 +983,13 @@ media-state-stopped = Parado
 media-state-ended = Terminado
 media-state-error = Erro
 media-state-unknown = Desconhecido
+workspace-warning-identity = Falha na consulta das identidades das entradas: { $detail }
+workspace-warning-truncated = Inventário de fontes truncado: orçamento de inspeção esgotado
+workspace-warning-container = { $path }: { $detail }
+workspace-warning-visibility = Visibilidade de { $owner } / { $item } indisponível: { $detail }
+workspace-warning-recursion = Análise de cenas aninhadas parada em { $path }
+workspace-warning-usage-partial = Pesquisa de utilizações parcial: limitada a { $scenes } cenas e { $items } elementos inspecionados
+workspace-warning-omitted = { $count ->
+    [one] Foi omitido mais 1 aviso sobre fontes
+   *[other] Foram omitidos mais { $count } avisos sobre fontes
+}

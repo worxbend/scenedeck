@@ -1051,7 +1051,7 @@ fn text_is_file_backed(settings: &serde_json::Value, defaults: &serde_json::Valu
 #[cfg(test)]
 mod control_tests {
     use super::*;
-    use crate::domain::control::{ControlAction, MediaAction};
+    use crate::domain::control::{ControlAction, MediaAction, WorkspaceWarning};
     use futures_util::{SinkExt, StreamExt};
     use serde_json::{json, Value};
     use tokio::net::TcpListener;
@@ -1215,7 +1215,7 @@ mod control_tests {
         let (items, warnings) = client.scan_source_items("Program", 1).await;
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].input, "First");
-        assert!(warnings.iter().any(|warning| warning.contains("truncated")));
+        assert!(warnings.contains(&WorkspaceWarning::InventoryTruncated));
         assert_eq!(server.await.unwrap().len(), 4);
     }
 
@@ -1235,7 +1235,10 @@ mod control_tests {
         assert_eq!(items.len(), 2);
         assert!(items.iter().any(|item| item.input == "Sibling"));
         assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].contains("Missing nested scene"));
+        assert!(matches!(
+            &warnings[0],
+            WorkspaceWarning::ContainerUnavailable { path, .. } if path.contains("Missing nested scene")
+        ));
         server.await.unwrap();
     }
 

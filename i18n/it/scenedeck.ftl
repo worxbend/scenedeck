@@ -980,3 +980,13 @@ media-state-stopped = Fermato
 media-state-ended = Terminato
 media-state-error = Errore
 media-state-unknown = Sconosciuto
+workspace-warning-identity = Ricerca delle identità degli input non riuscita: { $detail }
+workspace-warning-truncated = Inventario delle fonti troncato: budget di ispezione esaurito
+workspace-warning-container = { $path }: { $detail }
+workspace-warning-visibility = Visibilità di { $owner } / { $item } non disponibile: { $detail }
+workspace-warning-recursion = Scansione delle scene annidate interrotta in { $path }
+workspace-warning-usage-partial = Ricerca degli utilizzi parziale: limitata a { $scenes } scene e { $items } elementi ispezionati
+workspace-warning-omitted = { $count ->
+    [one] 1 altro avviso sulle fonti omesso
+   *[other] { $count } altri avvisi sulle fonti omessi
+}

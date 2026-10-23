@@ -25,7 +25,7 @@ impl ControlAction {
 pub struct ControlSnapshot {
     pub scene: Option<String>,
     pub items: Vec<SourceItem>,
-    pub warnings: Vec<String>,
+    pub warnings: Vec<WorkspaceWarning>,
     pub studio: StudioState,
     pub replay_active: Option<bool>,
     pub last_replay_path: Option<String>,
@@ -83,6 +83,86 @@ pub struct MediaStatus {
     pub duration_ms: Option<i64>,
     pub cursor_ms: Option<i64>,
 }
+/// A partial workspace read. `detail` fields carry raw OBS error text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceWarning {
+    IdentityLookup {
+        detail: String,
+    },
+    InventoryTruncated,
+    ContainerUnavailable {
+        path: String,
+        detail: String,
+    },
+    VisibilityUnavailable {
+        owner: String,
+        item: String,
+        detail: String,
+    },
+    RecursionStopped {
+        path: String,
+    },
+    UsagePartial {
+        scenes: usize,
+        items: usize,
+    },
+    Omitted(usize),
+    /// One sub-read failed; the rest of the workspace is still valid.
+    ReadFailed {
+        detail: String,
+    },
+}
+
+impl WorkspaceWarning {
+    pub fn label(&self) -> String {
+        match self {
+            Self::IdentityLookup { detail } => {
+                fl!(
+                    LANGUAGE_LOADER,
+                    "workspace-warning-identity",
+                    detail = detail.as_str()
+                )
+            }
+            Self::InventoryTruncated => fl!(LANGUAGE_LOADER, "workspace-warning-truncated"),
+            Self::ContainerUnavailable { path, detail } => fl!(
+                LANGUAGE_LOADER,
+                "workspace-warning-container",
+                path = path.as_str(),
+                detail = detail.as_str()
+            ),
+            Self::VisibilityUnavailable {
+                owner,
+                item,
+                detail,
+            } => fl!(
+                LANGUAGE_LOADER,
+                "workspace-warning-visibility",
+                owner = owner.as_str(),
+                item = item.as_str(),
+                detail = detail.as_str()
+            ),
+            Self::RecursionStopped { path } => {
+                fl!(
+                    LANGUAGE_LOADER,
+                    "workspace-warning-recursion",
+                    path = path.as_str()
+                )
+            }
+            Self::UsagePartial { scenes, items } => fl!(
+                LANGUAGE_LOADER,
+                "workspace-warning-usage-partial",
+                scenes = scenes.to_string(),
+                items = items.to_string()
+            ),
+            Self::Omitted(count) => {
+                let count = *count as i64;
+                fl!(LANGUAGE_LOADER, "workspace-warning-omitted", count = count)
+            }
+            Self::ReadFailed { detail } => detail.clone(),
+        }
+    }
+}
+
 /// OBS media-source playback state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediaState {
@@ -223,5 +303,27 @@ mod tests {
         assert!(is_text_kind("text_gdiplus_v2"));
         assert!(!is_text_kind("browser_source"));
         assert!(!is_text_kind("my_text_plugin"));
+    }
+
+    #[test]
+    fn workspace_warning_labels_keep_obs_detail_and_plural_counts() {
+        let visibility = WorkspaceWarning::VisibilityUnavailable {
+            owner: "Main".into(),
+            item: "Mic".into(),
+            detail: "702".into(),
+        }
+        .label();
+        for part in ["Main", "Mic", "702"] {
+            assert!(visibility.contains(part), "{visibility}");
+        }
+        assert!(WorkspaceWarning::Omitted(1).label().contains('1'));
+        assert!(WorkspaceWarning::Omitted(8).label().contains('8'));
+        assert_eq!(
+            WorkspaceWarning::ReadFailed {
+                detail: "raw".into()
+            }
+            .label(),
+            "raw"
+        );
     }
 }

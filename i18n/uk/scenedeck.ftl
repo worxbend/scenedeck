@@ -983,3 +983,13 @@ media-state-stopped = Зупинено
 media-state-ended = Завершено
 media-state-error = Помилка
 media-state-unknown = Невідомо
+workspace-warning-identity = Не вдалося визначити входи: { $detail }
+workspace-warning-truncated = Список джерел скорочено: вичерпано ліміт перевірки
+workspace-warning-container = { $path }: { $detail }
+workspace-warning-visibility = Видимість { $owner } / { $item } недоступна: { $detail }
+workspace-warning-recursion = Сканування вкладених сцен зупинено на { $path }
+workspace-warning-usage-partial = Пошук використань неповний: обмежено { $scenes } сценами та { $items } перевіреними елементами
+workspace-warning-omitted = { $count ->
+    [one] Пропущено ще 1 попередження про джерела
+   *[other] Пропущено ще { $count } попереджень про джерела
+}

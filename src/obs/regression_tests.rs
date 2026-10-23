@@ -3,7 +3,7 @@
 
 use super::control_tests::mock_client;
 use super::*;
-use crate::domain::control::ControlAction;
+use crate::domain::control::{ControlAction, WorkspaceWarning};
 use serde_json::{json, Value};
 
 fn input(name: &str) -> Value {
@@ -101,11 +101,14 @@ async fn source_usage_shares_attempts_across_failure_heavy_roots() {
     assert_eq!(
         warnings
             .iter()
-            .filter(|w| w.contains("visibility unavailable"))
+            .filter(|w| matches!(w, WorkspaceWarning::VisibilityUnavailable { .. }))
             .count(),
         2
     );
-    assert!(warnings.iter().any(|w| w.contains("partial")));
+    assert!(warnings.contains(&WorkspaceWarning::UsagePartial {
+        scenes: 64,
+        items: 2
+    }));
     let requests = server.await.unwrap();
     assert_eq!(
         requests
@@ -131,7 +134,7 @@ async fn source_budget_counts_failed_visibility_before_nested_cycle_scan() {
     .await;
     let (items, warnings) = client.scan_source_items("Program", 2).await;
     assert_eq!(items.len(), 1);
-    assert!(warnings.iter().any(|w| w.contains("truncated")));
+    assert!(warnings.contains(&WorkspaceWarning::InventoryTruncated));
     assert_eq!(server.await.unwrap().len(), 5);
 }
 
@@ -531,9 +534,6 @@ async fn failure_warning_samples_are_bounded_without_losing_omitted_count() {
     let (items, warnings) = client.scan_source_items("Program", 40).await;
     assert!(items.is_empty());
     assert_eq!(warnings.len(), 33);
-    assert_eq!(
-        warnings.last().unwrap(),
-        "8 additional source scan warnings omitted"
-    );
+    assert_eq!(warnings.last(), Some(&WorkspaceWarning::Omitted(8)));
     assert_eq!(server.await.unwrap().len(), 43);
 }
