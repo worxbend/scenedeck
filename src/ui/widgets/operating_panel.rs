@@ -252,8 +252,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
             // Live reads intentionally omit source details; entering Sources needs its own read.
             let ready = {
                 let mut state = map_nav.state.borrow_mut();
-                state.workspace.dirty = true;
-                state.workspace.revision = state.workspace.revision.wrapping_add(1);
+                state.workspace.mark_dirty();
                 !state.workspace.loading && !state.workspace.pending
             };
             refresh();
@@ -1686,7 +1685,7 @@ mod tests {
         });
         let original = sources_content_from_state(&state);
         state.workspace.sequence += 1;
-        state.workspace.revision += 1;
+        state.workspace.touch();
         state.workspace.loading = true;
         state.workspace.pending = true;
         state.workspace.dirty = true;
@@ -1981,7 +1980,7 @@ mod tests {
             {
                 let mut state = nav.state.borrow_mut();
                 state.workspace.sequence += 1;
-                state.workspace.revision += 1;
+                state.workspace.touch();
                 state.workspace.loading = stage == 1 || stage == 2;
                 state.workspace.pending = stage == 1;
                 state.workspace.result = format!("Synthetic stage {stage}");

@@ -119,7 +119,7 @@ fn request(
     state.workspace.pending = action.is_some();
     state.workspace.pending_scene = scene;
     state.workspace.active_action = action.cloned();
-    state.workspace.revision = state.workspace.revision.wrapping_add(1);
+    state.workspace.touch();
     state.workspace.dirty = false;
     state.workspace.error = None;
     let workspace = &state.workspace;
@@ -162,7 +162,7 @@ pub fn inspect_scene(nav: &NavigationContext, scene: Option<String>) {
         state.workspace.detail = None;
         state.workspace.usage.clear();
         state.workspace.screenshot = None;
-        state.workspace.revision = state.workspace.revision.wrapping_add(1);
+        state.workspace.touch();
     }
     refresh(nav);
 }
@@ -215,7 +215,7 @@ fn act_expected(nav: &NavigationContext, action: ControlAction, expected_text: O
                 // Do not supersede an unrelated admitted write. Retain one
                 // explicit intent per toggle and dispatch after its readback.
                 state.workspace.queued_toggles.push_back(action);
-                state.workspace.revision = state.workspace.revision.wrapping_add(1);
+                state.workspace.touch();
                 return;
             }
             ready

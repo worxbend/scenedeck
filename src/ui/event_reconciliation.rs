@@ -27,7 +27,7 @@ pub(super) fn acknowledge(state: &mut AppState, epoch: u64, sequence: u64, resul
         state.workspace.output_results.acknowledge(id, unix_ms());
     }
     state.workspace.result = fl!(LANGUAGE_LOADER, "workspace-action-acknowledged");
-    state.workspace.revision = state.workspace.revision.wrapping_add(1);
+    state.workspace.touch();
 }
 
 pub(super) fn media_loaded(
@@ -48,7 +48,7 @@ pub(super) fn media_loaded(
         Ok(detail) => state.workspace.detail = Some(detail),
         Err(error) => state.workspace.fail_read(error),
     }
-    state.workspace.revision = state.workspace.revision.wrapping_add(1);
+    state.workspace.touch();
 }
 
 /// Returns true only when the shell should redraw scenes, Record, Stream, then Doctor.
@@ -141,7 +141,7 @@ pub(super) fn complete_workspace(state: &mut AppState, event: WorkspaceCompletio
         }
     }
     state.workspace.active_action = None;
-    state.workspace.revision = state.workspace.revision.wrapping_add(1);
+    state.workspace.touch();
     true
 }
 
@@ -149,8 +149,7 @@ pub(super) fn audio_failed(state: &mut AppState, error: String) {
     state
         .workspace
         .log(crate::domain::workflow::ActivityOrigin::Failed, error);
-    state.workspace.dirty = true;
-    state.workspace.revision = state.workspace.revision.wrapping_add(1);
+    state.workspace.mark_dirty();
 }
 
 pub(super) fn replay_saved(state: &mut AppState, path: String) {
@@ -170,8 +169,7 @@ pub(super) fn replay_saved(state: &mut AppState, path: String) {
         crate::domain::workflow::ActivityOrigin::Observed,
         fl!(LANGUAGE_LOADER, "workspace-replay-observed", path = path),
     );
-    state.workspace.dirty = true;
-    state.workspace.revision = state.workspace.revision.wrapping_add(1);
+    state.workspace.mark_dirty();
 }
 
 pub(super) fn update_active_since(active: bool, active_since: &mut Option<Instant>) {
@@ -269,7 +267,7 @@ mod tests {
         assert!(!complete_workspace(&mut state, event));
         assert!(state.workspace.loading && state.workspace.pending);
         assert!(state.workspace.snapshot.is_none());
-        assert_eq!(state.workspace.revision, 0);
+        assert_eq!(state.workspace.revision(), 0);
     }
 
     #[test]
@@ -286,7 +284,7 @@ mod tests {
         assert_eq!(state.workspace.warnings, ["read warning"]);
         assert!(!state.workspace.loading && !state.workspace.pending);
         assert!(state.workspace.dirty);
-        assert_eq!(state.workspace.revision, 1);
+        assert_eq!(state.workspace.revision(), 1);
     }
 
     #[test]
@@ -329,7 +327,7 @@ mod tests {
         let sequence = state.workspace.sequence;
         acknowledge(&mut state, epoch.wrapping_add(1), sequence, Some(id));
         assert!(state.workspace.pending);
-        assert_eq!(state.workspace.revision, 0);
+        assert_eq!(state.workspace.revision(), 0);
         acknowledge(&mut state, epoch, sequence, Some(id));
         assert!(!state.workspace.pending);
         replay_saved(&mut state, "/obs/replay.mkv".into());
@@ -340,7 +338,7 @@ mod tests {
         assert_eq!(entries[1].status, OutputResultStatus::Observed);
         assert_eq!(entries[1].path.as_deref(), Some("/obs/replay.mkv"));
         assert!(state.workspace.dirty);
-        assert_eq!(state.workspace.revision, 2);
+        assert_eq!(state.workspace.revision(), 3, "logged failures render");
     }
 
     #[test]
@@ -363,7 +361,7 @@ mod tests {
         assert_eq!(state.workspace.screenshot_observed_at, Some(observed_at));
         audio_failed(&mut state, "audio failed".into());
         assert!(state.workspace.dirty);
-        assert_eq!(state.workspace.revision, 3);
+        assert_eq!(state.workspace.revision(), 4, "logged failures render");
     }
 
     #[test]
@@ -388,7 +386,7 @@ mod tests {
                 Ok(Default::default()),
             );
             assert_eq!(state.workspace.detail.is_some(), accepted);
-            assert_eq!(state.workspace.revision, u64::from(accepted));
+            assert_eq!(state.workspace.revision(), u64::from(accepted));
         }
     }
 }

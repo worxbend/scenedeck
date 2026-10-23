@@ -305,10 +305,10 @@ fn add_pages(
                     .output_results
                     .expire(crate::controller::workspace::unix_ms())
                 {
-                    state.workspace.revision = state.workspace.revision.wrapping_add(1);
+                    state.workspace.touch();
                 }
                 (
-                    state.workspace.revision,
+                    state.workspace.revision(),
                     (root.is_mapped() || sources_visible)
                         && (state.workspace.dirty
                             || state
@@ -389,7 +389,7 @@ fn install_event_polling(
             let state = nav.state.borrow();
             (
                 state.stats_history.latest().copied(),
-                state.workspace.revision,
+                state.workspace.revision(),
             )
         };
         apply_event(&nav, event, shell.as_ref());
@@ -398,7 +398,7 @@ fn install_event_polling(
             before
                 != (
                     state.stats_history.latest().copied(),
-                    state.workspace.revision,
+                    state.workspace.revision(),
                 )
         };
         if shell.is_none() && changed {
@@ -759,8 +759,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
             if state.workspace.can_control() {
                 state.workspace.observe_global_controls();
             }
-            state.workspace.dirty = true;
-            state.workspace.revision = state.workspace.revision.wrapping_add(1);
+            state.workspace.mark_dirty();
         }
         AppEvent::StudioModeChanged(enabled) => {
             let mut state = nav.state.borrow_mut();
@@ -768,8 +767,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
             if let Some(snapshot) = &mut state.workspace.snapshot {
                 snapshot.studio.enabled = Some(enabled);
             }
-            state.workspace.dirty = true;
-            state.workspace.revision = state.workspace.revision.wrapping_add(1);
+            state.workspace.mark_dirty();
         }
         AppEvent::VirtualCameraChanged(active) => {
             let mut state = nav.state.borrow_mut();
@@ -777,8 +775,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
             if let Some(snapshot) = &mut state.workspace.snapshot {
                 snapshot.virtual_camera_active = active;
             }
-            state.workspace.dirty = true;
-            state.workspace.revision = state.workspace.revision.wrapping_add(1);
+            state.workspace.mark_dirty();
         }
         AppEvent::WorkspaceScopeChanging => {
             if let Some(ui) = ui {
@@ -835,8 +832,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
                 state.available_requests = info.available_requests.clone();
                 state.supported_image_formats = info.supported_image_formats.clone();
                 state.connected_endpoint = Some(info.endpoint.clone());
-                state.workspace.dirty = true;
-                state.workspace.revision = state.workspace.revision.wrapping_add(1);
+                state.workspace.mark_dirty();
             }
             tracing::info!(
                 obs_version = %info.obs_version,
@@ -960,8 +956,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
                         scene = scene_id.clone()
                     ),
                 );
-                state.workspace.dirty = true;
-                state.workspace.revision = state.workspace.revision.wrapping_add(1);
+                state.workspace.mark_dirty();
                 state.set_current_program(scene_id);
                 state.scene_inventory.clone()
             };
@@ -1215,8 +1210,7 @@ fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: Option<&Even
                 crate::domain::workflow::ActivityOrigin::Observed,
                 format!("{}: {}", kind.label(), status.state.label()),
             );
-            state.workspace.dirty = true;
-            state.workspace.revision = state.workspace.revision.wrapping_add(1);
+            state.workspace.mark_dirty();
         }
     }
     // Each arm makes its one state change; rendering is the shared step that
@@ -1264,7 +1258,7 @@ fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: Option<&Even
                     .output_results
                     .acknowledge(id, crate::controller::workspace::unix_ms());
             }
-            state.workspace.revision = state.workspace.revision.wrapping_add(1);
+            state.workspace.touch();
             state.set_record_command_success();
             OutputKind::Record
         }
@@ -1307,7 +1301,6 @@ fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: Option<&Even
                     crate::domain::workflow::ActivityOrigin::Failed,
                     failure.message().to_string(),
                 );
-                state.workspace.revision = state.workspace.revision.wrapping_add(1);
             }
             nav.state
                 .borrow_mut()
@@ -1410,7 +1403,6 @@ fn report_failure(nav: &NavigationContext, ui: Option<&EventUiContext>, message:
     state
         .workspace
         .log(crate::domain::workflow::ActivityOrigin::Failed, message);
-    state.workspace.revision = state.workspace.revision.wrapping_add(1);
 }
 
 fn command_failure_message(operation: FailedOperation, error: &AppError) -> String {
@@ -1668,7 +1660,7 @@ mod tests {
                     (page, widget, child)
                 })
                 .collect();
-                let revision = nav.state.borrow().workspace.revision;
+                let revision = nav.state.borrow().workspace.revision();
                 for _ in 0..16 {
                     apply_event(
                         &nav,
@@ -1691,7 +1683,7 @@ mod tests {
                         !nav.state.borrow().workspace.dirty,
                         "complete audio echoes must not invalidate unrelated controls"
                     );
-                    assert_eq!(nav.state.borrow().workspace.revision, revision);
+                    assert_eq!(nav.state.borrow().workspace.revision(), revision);
                     crate::ui::pages::live::rebuild_scene_cards(&live, &inventory, &nav);
                     assert_eq!(live.scene_cards.borrow()[0].root, card);
                     assert!(card.is_sensitive());

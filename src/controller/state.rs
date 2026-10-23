@@ -359,7 +359,8 @@ pub struct WorkspaceState {
     pub dirty: bool,
     pub epoch: u64,
     pub sequence: u64,
-    pub revision: u64,
+    /// Render key: bump via `touch`/`mark_dirty` whenever visible state changes.
+    revision: u64,
     pub loading: bool,
     pub pending: bool,
     /// Scene activation is independent of Sources/output readback. The
@@ -458,7 +459,7 @@ impl WorkspaceState {
         self.selected_input = input;
         self.detail = None;
         self.usage.clear();
-        self.revision = self.revision.wrapping_add(1);
+        self.touch();
     }
 
     pub fn can_control(&self) -> bool {
@@ -499,9 +500,8 @@ impl WorkspaceState {
             .zip(self.observed_at);
     }
     pub fn invalidate_controls(&mut self) {
-        self.dirty = true;
         self.scene_control_observation = None;
-        self.revision = self.revision.wrapping_add(1);
+        self.mark_dirty();
     }
     pub fn fail_read(&mut self, error: String) {
         self.error = Some(error);
@@ -513,7 +513,7 @@ impl WorkspaceState {
     pub fn invalidate(&mut self) {
         self.epoch = self.epoch.wrapping_add(1);
         self.sequence = self.sequence.wrapping_add(1);
-        self.revision = self.revision.wrapping_add(1);
+        self.touch();
         self.snapshot = None;
         self.detail = None;
         self.usage.clear();
@@ -544,6 +544,18 @@ impl WorkspaceState {
             origin,
             description,
         });
+        self.touch();
+    }
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+    pub fn touch(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
+    }
+    /// Observed values are stale and need readback.
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
+        self.touch();
     }
     pub fn accepts(&self, epoch: u64, sequence: u64) -> bool {
         self.epoch == epoch && self.sequence == sequence
@@ -784,7 +796,6 @@ impl AppState {
         );
         self.workspace
             .log(crate::domain::workflow::ActivityOrigin::Connection, audit);
-        self.workspace.revision = self.workspace.revision.wrapping_add(1);
         self.session_retirements.push_back(terminal);
         while self.session_retirements.len() > 32 {
             self.session_retirements.pop_front();
@@ -1291,6 +1302,25 @@ mod tests {
 
     fn app_state() -> AppState {
         AppState::new(AppConfig::default(), SceneRegistry::default(), None, None)
+    }
+
+    #[test]
+    fn every_visible_workspace_mutation_advances_the_revision() {
+        let mut workspace = WorkspaceState::default();
+        workspace.log(
+            crate::domain::workflow::ActivityOrigin::Failed,
+            "stream failed".into(),
+        );
+        assert_eq!(workspace.revision(), 1, "log entries are rendered");
+
+        workspace.mark_dirty();
+        assert!(workspace.dirty);
+        assert_eq!(workspace.revision(), 2);
+
+        workspace.dirty = false;
+        workspace.invalidate_controls();
+        assert!(workspace.dirty);
+        assert_eq!(workspace.revision(), 3);
     }
 
     #[test]
@@ -3010,7 +3040,7 @@ mod tests {
         state.set_obs_stats(obs_stats(60.0), Some(6000.0), Some(stream_health()));
     }
 
-    fn assert_collection_observations_cleared(state: &AppState) {
+    fn assert_collection_observations_cleared(state: &AppState, revision: u64) {
         assert!(state.scene_inventory.scenes.is_empty());
         assert_eq!(state.scene_inventory.current_id, None);
         assert_eq!(state.scene_inventory.previous_id, None);
@@ -3029,7 +3059,7 @@ mod tests {
         let workspace = &state.workspace;
         assert_eq!(
             (workspace.epoch, workspace.sequence, workspace.revision),
-            (8, 13, 21)
+            (8, 13, revision)
         );
         assert!(!workspace.loading && !workspace.pending && !workspace.dirty);
         assert!(workspace.snapshot.is_none() && workspace.detail.is_none());
@@ -3070,7 +3100,8 @@ mod tests {
 
             state.reset_obs_session(status.clone());
 
-            assert_collection_observations_cleared(&state);
+            // Invalidation and the retirement notice each log a render.
+            assert_collection_observations_cleared(&state, 23);
             assert_eq!(state.obs_status, status);
             assert!(
                 state.available_requests.is_empty() && state.supported_image_formats.is_empty()
@@ -3116,7 +3147,7 @@ mod tests {
 
         state.invalidate_collection_runtime();
 
-        assert_collection_observations_cleared(&state);
+        assert_collection_observations_cleared(&state, 22);
         assert_eq!(state.obs_status, before.obs_status);
         assert_eq!(state.connected_endpoint, before.connected_endpoint);
         assert_eq!(state.available_requests, before.available_requests);

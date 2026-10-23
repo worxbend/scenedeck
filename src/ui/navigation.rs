@@ -186,7 +186,6 @@ impl NavigationContext {
                 crate::domain::workflow::ActivityOrigin::Requested,
                 description,
             );
-            state.workspace.revision = state.workspace.revision.wrapping_add(1);
         }
         if matches!(cmd, AppCommand::StopRecording) {
             let mut state = self.state.borrow_mut();
