@@ -270,31 +270,14 @@ async fn unresponsive_client() -> (
     tokio::task::JoinHandle<Vec<Value>>,
 ) {
     use futures_util::SinkExt;
-    use tokio_websockets::{Message, ServerBuilder};
-    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
-        .await
-        .unwrap();
-    let port = listener.local_addr().unwrap().port();
+    use tokio_websockets::Message;
+    let (listener, port) = crate::obs::obs_fixture::listen().await;
     let (seen_tx, seen_rx) = tokio::sync::mpsc::unbounded_channel();
     let server = tokio::spawn(async move {
-        let (tcp, _) = listener.accept().await.unwrap();
-        let (_, mut socket) = ServerBuilder::new().accept(tcp).await.unwrap();
-        socket
-            .send(Message::text(
-                json!({"op":0,"d":{"obsWebSocketVersion":"5.5.0","rpcVersion":1}}).to_string(),
-            ))
-            .await
-            .unwrap();
-        socket.next().await.unwrap().unwrap();
-        socket
-            .send(Message::text(
-                json!({"op":2,"d":{"negotiatedRpcVersion":1}}).to_string(),
-            ))
-            .await
-            .unwrap();
+        let mut socket = crate::obs::obs_fixture::accept(listener).await;
         let version: Value =
             serde_json::from_str(socket.next().await.unwrap().unwrap().as_text().unwrap()).unwrap();
-        socket.send(Message::text(json!({"op":7,"d":{"requestId":version["d"]["requestId"],"requestType":"GetVersion","requestStatus":{"result":true,"code":100},"responseData":{"obsStudioVersion":"31.0.0","obsWebSocketVersion":"5.5.0","rpcVersion":1,"availableRequests":[],"supportedImageFormats":[],"platform":"mock","platformDescription":"mock"}}}).to_string())).await.unwrap();
+        socket.send(Message::text(json!({"op":7,"d":{"requestId":version["d"]["requestId"],"requestType":"GetVersion","requestStatus":{"result":true,"code":100},"responseData":crate::obs::obs_fixture::version(&[])}}).to_string())).await.unwrap();
         let mut requests = Vec::new();
         while let Some(Ok(message)) = socket.next().await {
             if let Some(text) = message.as_text() {

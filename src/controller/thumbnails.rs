@@ -130,8 +130,8 @@ mod tests {
     use futures_util::{SinkExt, StreamExt};
     use serde_json::{json, Value};
     use std::sync::mpsc;
-    use tokio::{net::TcpListener, sync::oneshot, time::timeout};
-    use tokio_websockets::{Message, ServerBuilder};
+    use tokio::{sync::oneshot, time::timeout};
+    use tokio_websockets::Message;
 
     struct MockObs {
         client: ObsClient,
@@ -142,31 +142,14 @@ mod tests {
     }
 
     async fn mock_obs(before: &str, after: &str, hold_video: bool) -> MockObs {
-        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
-            .await
-            .unwrap();
-        let port = listener.local_addr().unwrap().port();
+        let (listener, port) = crate::obs::obs_fixture::listen().await;
         let before = before.to_owned();
         let after = after.to_owned();
         let (started, capture_started) = oneshot::channel();
         let (release_capture, release) = oneshot::channel();
         let (finish, mut finished) = oneshot::channel();
         let server = tokio::spawn(async move {
-            let (tcp, _) = listener.accept().await.unwrap();
-            let (_, mut socket) = ServerBuilder::new().accept(tcp).await.unwrap();
-            socket
-                .send(Message::text(
-                    json!({"op":0,"d":{"obsWebSocketVersion":"5.5.0","rpcVersion":1}}).to_string(),
-                ))
-                .await
-                .unwrap();
-            socket.next().await.unwrap().unwrap();
-            socket
-                .send(Message::text(
-                    json!({"op":2,"d":{"negotiatedRpcVersion":1}}).to_string(),
-                ))
-                .await
-                .unwrap();
+            let mut socket = crate::obs::obs_fixture::accept(listener).await;
             let mut requests = Vec::new();
             let mut capture_started = Some(started);
             let mut release = release;
@@ -189,9 +172,7 @@ mod tests {
                 requests.push(name.to_owned());
                 let mut hold = false;
                 let data = match name {
-                    "GetVersion" => {
-                        json!({"obsStudioVersion":"31.0.0","obsWebSocketVersion":"5.5.0","rpcVersion":1,"availableRequests":[],"supportedImageFormats":["png"],"platform":"mock","platformDescription":"mock"})
-                    }
+                    "GetVersion" => crate::obs::obs_fixture::version(&["png"]),
                     "GetVideoSettings" => {
                         if hold_video {
                             if let Some(started) = capture_started.take() {

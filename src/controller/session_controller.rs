@@ -601,31 +601,14 @@ mod tests {
         use futures_util::{SinkExt, StreamExt};
         use serde_json::{json, Value};
         use tokio::sync::oneshot;
-        use tokio_websockets::{Message, ServerBuilder};
+        use tokio_websockets::Message;
 
-        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
-            .await
-            .unwrap();
-        let port = listener.local_addr().unwrap().port();
+        let (listener, port) = crate::obs::obs_fixture::listen().await;
         let (started, entered) = oneshot::channel();
         let (release, mut released) = oneshot::channel();
         let (finish, mut finished) = oneshot::channel();
         let server = tokio::spawn(async move {
-            let (tcp, _) = listener.accept().await.unwrap();
-            let (_, mut socket) = ServerBuilder::new().accept(tcp).await.unwrap();
-            socket
-                .send(Message::text(
-                    json!({"op":0,"d":{"obsWebSocketVersion":"5.5.0","rpcVersion":1}}).to_string(),
-                ))
-                .await
-                .unwrap();
-            socket.next().await.unwrap().unwrap();
-            socket
-                .send(Message::text(
-                    json!({"op":2,"d":{"negotiatedRpcVersion":1}}).to_string(),
-                ))
-                .await
-                .unwrap();
+            let mut socket = crate::obs::obs_fixture::accept(listener).await;
             let mut names = Vec::new();
             let mut started = Some(started);
             let mut held = None;
@@ -647,9 +630,7 @@ mod tests {
                 let name = frame["d"]["requestType"].as_str().unwrap();
                 names.push(name.to_owned());
                 let data = match name {
-                    "GetVersion" => Some(
-                        json!({"obsStudioVersion":"31.0.0","obsWebSocketVersion":"5.5.0","rpcVersion":1,"availableRequests":[],"supportedImageFormats":[],"platform":"mock","platformDescription":"mock"}),
-                    ),
+                    "GetVersion" => Some(crate::obs::obs_fixture::version(&[])),
                     "GetStreamStatus" => Some(
                         json!({"outputActive":stream_active,"outputReconnecting":false,"outputTimecode":"00:00:00.000","outputDuration":0,"outputCongestion":0.0,"outputBytes":0,"outputSkippedFrames":0,"outputTotalFrames":0}),
                     ),

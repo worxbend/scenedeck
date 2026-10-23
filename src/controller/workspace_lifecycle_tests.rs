@@ -5,7 +5,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::time::Duration;
 use tokio::sync::{oneshot, Notify};
-use tokio_websockets::{Message, ServerBuilder};
+use tokio_websockets::Message;
 
 struct MockConnection {
     client: ObsClient,
@@ -18,10 +18,7 @@ struct MockConnection {
 }
 
 async fn mock_connection(held_request: &'static str) -> MockConnection {
-    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
-        .await
-        .unwrap();
-    let port = listener.local_addr().unwrap().port();
+    let (listener, port) = crate::obs::obs_fixture::listen().await;
     let entered = Arc::new(Notify::new());
     let release = Arc::new(Notify::new());
     let (finish, mut finished) = oneshot::channel();
@@ -29,21 +26,7 @@ async fn mock_connection(held_request: &'static str) -> MockConnection {
     let started = entered.clone();
     let resume = release.clone();
     let server = tokio::spawn(async move {
-        let (tcp, _) = listener.accept().await.unwrap();
-        let (_, mut socket) = ServerBuilder::new().accept(tcp).await.unwrap();
-        socket
-            .send(Message::text(
-                json!({"op":0,"d":{"obsWebSocketVersion":"5.5.0","rpcVersion":1}}).to_string(),
-            ))
-            .await
-            .unwrap();
-        socket.next().await.unwrap().unwrap();
-        socket
-            .send(Message::text(
-                json!({"op":2,"d":{"negotiatedRpcVersion":1}}).to_string(),
-            ))
-            .await
-            .unwrap();
+        let mut socket = crate::obs::obs_fixture::accept(listener).await;
         let mut held = None;
         let mut held_once = false;
         let mut emitted = false;
@@ -66,9 +49,7 @@ async fn mock_connection(held_request: &'static str) -> MockConnection {
             let name = request["d"]["requestType"].as_str().unwrap();
             requests.push(name.to_owned());
             let response = match name {
-                "GetVersion" => Some(
-                    json!({"obsStudioVersion":"31.0.0","obsWebSocketVersion":"5.5.0","rpcVersion":1,"availableRequests":[],"supportedImageFormats":[],"platform":"mock","platformDescription":"mock"}),
-                ),
+                "GetVersion" => Some(crate::obs::obs_fixture::version(&[])),
                 "GetSceneCollectionList" => {
                     Some(json!({"currentSceneCollectionName":"Show","sceneCollections":["Show"]}))
                 }

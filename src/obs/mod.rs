@@ -11,3 +11,5 @@ mod sources;
 pub(crate) mod client;
 pub(crate) mod event;
 pub(crate) mod mapper;
+#[cfg(test)]
+pub(crate) mod obs_fixture;

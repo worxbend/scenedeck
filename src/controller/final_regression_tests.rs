@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 use tokio::sync::{mpsc as async_mpsc, oneshot};
-use tokio_websockets::{Message, ServerBuilder};
+use tokio_websockets::Message;
 
 #[derive(Default)]
 struct Plan {
@@ -46,32 +46,15 @@ struct Mock {
 }
 
 fn version() -> Value {
-    json!({"obsStudioVersion":"31.0.0","obsWebSocketVersion":"5.5.0","rpcVersion":1,"availableRequests":[],"supportedImageFormats":[],"platform":"mock","platformDescription":"mock"})
+    crate::obs::obs_fixture::version(&[])
 }
 async fn mock(plan: Plan) -> Mock {
-    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
-        .await
-        .unwrap();
-    let port = listener.local_addr().unwrap().port();
+    let (listener, port) = crate::obs::obs_fixture::listen().await;
     let (signals, mut commands) = async_mpsc::unbounded_channel::<(Signal, oneshot::Sender<()>)>();
     let (entered_tx, entered) = async_mpsc::unbounded_channel();
     let (finish, mut finished) = oneshot::channel();
     let server = tokio::spawn(async move {
-        let (tcp, _) = listener.accept().await.unwrap();
-        let (_, mut socket) = ServerBuilder::new().accept(tcp).await.unwrap();
-        socket
-            .send(Message::text(
-                json!({"op":0,"d":{"obsWebSocketVersion":"5.5.0","rpcVersion":1}}).to_string(),
-            ))
-            .await
-            .unwrap();
-        socket.next().await.unwrap().unwrap();
-        socket
-            .send(Message::text(
-                json!({"op":2,"d":{"negotiatedRpcVersion":1}}).to_string(),
-            ))
-            .await
-            .unwrap();
+        let mut socket = crate::obs::obs_fixture::accept(listener).await;
         let mut counts = HashMap::<String, usize>::new();
         let mut held = Vec::new();
         let mut names = Vec::new();
