@@ -15,6 +15,7 @@ error-request = Помилка запиту до OBS: { $detail }
 error-config = Помилка конфігурації: { $detail }
 error-storage = Помилка сховища: { $detail }
 error-notification-title = Помилка SceneDeck: { $message }
+events-resync-warning = Пропущено сповіщення OBS. SceneDeck повторно синхронізується; історія виходів може бути неповною.
 
 ## domain/audio.rs — AudioSourceScope::label()
 audio-scope-global = Глобальний

@@ -20,13 +20,14 @@ use super::event_reconciliation::update_active_since;
 use crate::app_info::APP_NAME;
 use crate::controller::app_controller::AppController;
 use crate::controller::command::AppCommand;
-use crate::controller::event::AppEvent;
+use crate::controller::event::{AppEvent, FailedOperation};
 use crate::controller::state::{
     AppState, MixerAudioRefreshTransition, MixerVisibleAudioStatus, MixerVisibleRenderSource,
     ObsStatus, Page,
 };
 use crate::domain::appearance::ThemeMode;
 use crate::domain::output::{OutputKind, OutputStatus};
+use crate::infra::error::AppError;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::pages::live::{output_label, LivePageHandle};
@@ -666,34 +667,19 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
             );
         }
         AppEvent::CommandFailed { operation, error } => {
-            let label = match operation {
-                "profile" | "profile-readback" => {
-                    fl!(LANGUAGE_LOADER, "window-selector-profile-label")
+            match operation {
+                FailedOperation::ProfileReadback => nav.state.borrow_mut().profiles.current = None,
+                FailedOperation::CollectionReadback => {
+                    apply_event(nav, AppEvent::WorkspaceScopeChanging, ui);
                 }
-                "collection" | "collection-readback" => {
-                    fl!(LANGUAGE_LOADER, "window-selector-collection-label")
-                }
-                _ => fl!(
-                    LANGUAGE_LOADER,
-                    "error-notification-title",
-                    message = error.user_message()
-                ),
-            };
-            if operation == "profile-readback" {
-                nav.state.borrow_mut().profiles.current = None;
+                FailedOperation::Command
+                | FailedOperation::Profile
+                | FailedOperation::Collection => {}
             }
-            if operation == "collection-readback" {
-                apply_event(nav, AppEvent::WorkspaceScopeChanging, ui);
-            }
-            let message = format!("{label}: {}", error.user_message());
-            if let Some(ui) = ui {
-                ui.toast.add_toast(adw::Toast::new(&message));
-            }
-            let mut state = nav.state.borrow_mut();
-            state
-                .workspace
-                .log(crate::domain::workflow::ActivityOrigin::Failed, message);
-            state.workspace.revision = state.workspace.revision.wrapping_add(1);
+            report_failure(nav, ui, command_failure_message(operation, &error));
+        }
+        AppEvent::EventsResynchronized => {
+            report_failure(nav, ui, fl!(LANGUAGE_LOADER, "events-resync-warning"));
         }
         AppEvent::GraphInvalidated => {
             nav.state.borrow_mut().set_topology_loading();
@@ -1427,6 +1413,41 @@ fn format_elapsed(since: Instant) -> String {
     }
 }
 
+/// Toast and log a failure; the next render shows the log entry.
+fn report_failure(nav: &NavigationContext, ui: Option<&EventUiContext>, message: String) {
+    if let Some(ui) = ui {
+        ui.toast.add_toast(adw::Toast::new(&message));
+    }
+    let mut state = nav.state.borrow_mut();
+    state
+        .workspace
+        .log(crate::domain::workflow::ActivityOrigin::Failed, message);
+    state.workspace.revision = state.workspace.revision.wrapping_add(1);
+}
+
+fn command_failure_message(operation: FailedOperation, error: &AppError) -> String {
+    let message = error.user_message();
+    match operation {
+        FailedOperation::Command => fl!(
+            LANGUAGE_LOADER,
+            "error-notification-title",
+            message = message
+        ),
+        FailedOperation::Profile | FailedOperation::ProfileReadback => {
+            format!(
+                "{}: {message}",
+                fl!(LANGUAGE_LOADER, "window-selector-profile-label")
+            )
+        }
+        FailedOperation::Collection | FailedOperation::CollectionReadback => {
+            format!(
+                "{}: {message}",
+                fl!(LANGUAGE_LOADER, "window-selector-collection-label")
+            )
+        }
+    }
+}
+
 fn sync_output_indicators(
     nav: &NavigationContext,
     sidebar: &SidebarControls,
@@ -1575,6 +1596,32 @@ mod tests {
     use super::*;
     use crate::domain::audio::AudioInput;
     use crate::domain::mixer::MixerMode;
+
+    #[test]
+    fn command_failure_message_shows_the_error_once() {
+        let error = AppError::Request("boom".into());
+        let detail = error.user_message();
+        for operation in [
+            FailedOperation::Command,
+            FailedOperation::Profile,
+            FailedOperation::ProfileReadback,
+            FailedOperation::Collection,
+            FailedOperation::CollectionReadback,
+        ] {
+            let message = command_failure_message(operation, &error);
+            assert_eq!(
+                message.matches(&detail).count(),
+                1,
+                "{operation:?}: {message}"
+            );
+        }
+        assert!(command_failure_message(FailedOperation::Profile, &error)
+            .starts_with(&fl!(LANGUAGE_LOADER, "window-selector-profile-label")));
+        assert!(
+            command_failure_message(FailedOperation::CollectionReadback, &error)
+                .starts_with(&fl!(LANGUAGE_LOADER, "window-selector-collection-label"))
+        );
+    }
 
     #[test]
     #[ignore = "requires a disposable GTK display; synthetic OBS events"]

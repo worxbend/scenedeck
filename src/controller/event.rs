@@ -211,6 +211,17 @@ mod tests {
     }
 }
 
+/// What failed, so the UI can label it and run follow-up without string matching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailedOperation {
+    /// Any other OBS command.
+    Command,
+    Profile,
+    ProfileReadback,
+    Collection,
+    CollectionReadback,
+}
+
 #[derive(Debug, Clone)]
 pub enum AppEvent {
     /// Audit identity survives retirement/reconnect; only the same generation
@@ -230,9 +241,11 @@ pub enum AppEvent {
     },
     /// A rejected command or failed readback does not imply a lost connection.
     CommandFailed {
-        operation: &'static str,
+        operation: FailedOperation,
         error: AppError,
     },
+    /// Missed OBS notifications; snapshots resync, output evidence may have gaps.
+    EventsResynchronized,
     GraphInvalidated,
     GraphFailed(AppError),
     /// Command completion, not a reusable topology observation.

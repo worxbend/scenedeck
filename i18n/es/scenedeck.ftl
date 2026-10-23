@@ -18,6 +18,7 @@ error-request = Fallo en la solicitud a OBS: { $detail }
 error-config = Error de configuración: { $detail }
 error-storage = Error de almacenamiento: { $detail }
 error-notification-title = Error de SceneDeck: { $message }
+events-resync-warning = Se perdieron notificaciones de OBS. SceneDeck se está resincronizando; el historial de salidas puede estar incompleto.
 
 ## domain/audio.rs — AudioSourceScope::label()
 audio-scope-global = Global

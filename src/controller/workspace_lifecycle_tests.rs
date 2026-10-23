@@ -184,7 +184,12 @@ async fn profile_collection_rejections_and_profile_readback_errors_are_localized
     .await;
     crate::controller::refresh_controller::publish_profiles_after(Ok(()), &mock.client, &sender)
         .await;
-    for expected in ["profile", "collection", "profile-readback"] {
+    use crate::controller::event::FailedOperation;
+    for expected in [
+        FailedOperation::Profile,
+        FailedOperation::Collection,
+        FailedOperation::ProfileReadback,
+    ] {
         assert!(
             matches!(rx.try_recv(), Ok(AppEvent::CommandFailed { operation, .. }) if operation == expected)
         );

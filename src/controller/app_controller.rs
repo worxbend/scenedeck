@@ -17,7 +17,7 @@ use tokio::runtime::Handle;
 
 use crate::controller::command::AppCommand;
 use crate::controller::dependencies::ControllerDependencies;
-use crate::controller::event::AppEvent;
+use crate::controller::event::{AppEvent, FailedOperation};
 use crate::controller::event_sender::EventSender;
 use crate::controller::lifecycle::SessionScope;
 use crate::controller::output_controller::{refresh_output_statuses, OutputController};
@@ -440,7 +440,7 @@ async fn report_err<T>(result: Result<T, AppError>, tx: &EventSender) {
     if let Err(error) = result {
         let _ = tx
             .send(AppEvent::CommandFailed {
-                operation: "scene",
+                operation: FailedOperation::Command,
                 error,
             })
             .await;

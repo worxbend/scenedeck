@@ -6,7 +6,7 @@ use crate::controller::session_controller::REQUEST_BUDGET;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::controller::event::AppEvent;
+use crate::controller::event::{AppEvent, FailedOperation};
 use crate::infra::error::AppError;
 use crate::obs::client::ObsClient;
 use crate::obs::event::{ObsEvent, ObsEventStream};
@@ -29,12 +29,12 @@ pub(crate) async fn publish_profiles_after(
         Ok(()) => match client.get_profiles().await {
             Ok(profiles) => AppEvent::ProfilesUpdated(profiles),
             Err(error) => AppEvent::CommandFailed {
-                operation: "profile-readback",
+                operation: FailedOperation::ProfileReadback,
                 error,
             },
         },
         Err(error) => AppEvent::CommandFailed {
-            operation: "profile",
+            operation: FailedOperation::Profile,
             error,
         },
     };
@@ -55,7 +55,7 @@ pub(crate) async fn refresh_after_collection_change(
         Err(e) => {
             let _ = tx
                 .send(AppEvent::CommandFailed {
-                    operation: "collection",
+                    operation: FailedOperation::Collection,
                     error: e,
                 })
                 .await;
@@ -71,7 +71,7 @@ pub(crate) async fn refresh_profile_and_collection_lists(client: &ObsClient, tx:
         Err(error) => {
             let _ = tx
                 .send(AppEvent::CommandFailed {
-                    operation: "profile-readback",
+                    operation: FailedOperation::ProfileReadback,
                     error,
                 })
                 .await;
@@ -87,7 +87,7 @@ pub(crate) async fn refresh_profile_and_collection_lists(client: &ObsClient, tx:
         Err(error) => {
             let _ = tx
                 .send(AppEvent::CommandFailed {
-                    operation: "collection-readback",
+                    operation: FailedOperation::CollectionReadback,
                     error,
                 })
                 .await;
@@ -445,8 +445,10 @@ pub(crate) async fn run_event_loop(
                     let queued = [
                         AppEvent::WorkspaceScopeChanging,
                         invalidation,
-                        AppEvent::CommandFailed { operation: "events", error: AppError::Request("OBS event notifications were missed; snapshots are being resynchronized and output evidence may be incomplete".into()) },
-                    ].into_iter().all(|event| enqueue_transport_publication(&pending, &client, &fresh, event));
+                        AppEvent::EventsResynchronized,
+                    ]
+                    .into_iter()
+                    .all(|event| enqueue_transport_publication(&pending, &client, &fresh, event));
                     if !queued {
                         break;
                     }
