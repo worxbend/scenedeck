@@ -664,6 +664,41 @@ impl AppState {
     pub fn set_page(&mut self, page: Page) {
         self.current_page = page;
     }
+    /// Record what the user asked for before the controller acts: output
+    /// commands get an activity entry, and a live recording stop opens a
+    /// result ticket so its file path can be reported later.
+    pub fn note_command_intent(
+        &mut self,
+        cmd: &crate::controller::command::AppCommand,
+        now_ms: u64,
+    ) {
+        use crate::controller::command::AppCommand;
+        let requested = match cmd {
+            AppCommand::StartStreaming => fl!(LANGUAGE_LOADER, "window-sidebar-start-stream"),
+            AppCommand::StopStreaming => fl!(LANGUAGE_LOADER, "window-sidebar-stop-stream"),
+            AppCommand::StartRecording => fl!(LANGUAGE_LOADER, "window-sidebar-start-recording"),
+            AppCommand::StopRecording => fl!(LANGUAGE_LOADER, "window-sidebar-stop-recording"),
+            _ => return,
+        };
+        self.workspace.log(
+            crate::domain::workflow::ActivityOrigin::Requested,
+            requested,
+        );
+        if matches!(cmd, AppCommand::StopRecording)
+            && self.record_status.active
+            && !self.record_status.state.is_transitioning()
+            && self.workspace.recording_stop_result.is_none()
+        {
+            let scope = self.workflow_scope();
+            let id = self.workspace.output_results.request(
+                crate::domain::output_result::OutputResultKind::RecordingStop,
+                scope,
+                now_ms,
+            );
+            self.workspace.recording_stop_result = Some(id);
+        }
+    }
+
     pub fn workflow_scope(&self) -> crate::domain::workflow::ScopeBinding {
         crate::domain::workflow::ScopeBinding {
             endpoint: self
@@ -1302,6 +1337,52 @@ mod tests {
 
     fn app_state() -> AppState {
         AppState::new(AppConfig::default(), SceneRegistry::default(), None, None)
+    }
+
+    #[test]
+    fn output_commands_log_intent_and_only_a_settled_live_recording_opens_a_stop_ticket() {
+        use crate::controller::command::AppCommand;
+        let mut state = app_state();
+        for cmd in [
+            AppCommand::StartStreaming,
+            AppCommand::StopStreaming,
+            AppCommand::StartRecording,
+        ] {
+            state.note_command_intent(&cmd, 1);
+        }
+        state.note_command_intent(&AppCommand::Disconnect, 1);
+        assert_eq!(
+            state.workspace.activity.entries.len(),
+            3,
+            "non-output commands are not logged"
+        );
+
+        state.note_command_intent(&AppCommand::StopRecording, 1);
+        assert_eq!(
+            state.workspace.recording_stop_result, None,
+            "recording was not active"
+        );
+
+        state.record_status = OutputStatus::new(true, OutputRunState::Stopping);
+        state.note_command_intent(&AppCommand::StopRecording, 2);
+        assert_eq!(
+            state.workspace.recording_stop_result, None,
+            "already transitioning"
+        );
+
+        state.record_status = OutputStatus::new(true, OutputRunState::Active);
+        state.note_command_intent(&AppCommand::StopRecording, 3);
+        let ticket = state
+            .workspace
+            .recording_stop_result
+            .expect("ticket opened");
+        state.note_command_intent(&AppCommand::StopRecording, 4);
+        assert_eq!(
+            state.workspace.recording_stop_result,
+            Some(ticket),
+            "one ticket per stop"
+        );
+        assert_eq!(state.workspace.activity.entries.len(), 7);
     }
 
     #[test]

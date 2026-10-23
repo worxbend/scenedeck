@@ -161,47 +161,9 @@ impl NavigationContext {
             }
             return;
         }
-        let requested = match &cmd {
-            AppCommand::StartStreaming => Some(i18n_embed_fl::fl!(
-                crate::infra::i18n::LANGUAGE_LOADER,
-                "window-sidebar-start-stream"
-            )),
-            AppCommand::StopStreaming => Some(i18n_embed_fl::fl!(
-                crate::infra::i18n::LANGUAGE_LOADER,
-                "window-sidebar-stop-stream"
-            )),
-            AppCommand::StartRecording => Some(i18n_embed_fl::fl!(
-                crate::infra::i18n::LANGUAGE_LOADER,
-                "window-sidebar-start-recording"
-            )),
-            AppCommand::StopRecording => Some(i18n_embed_fl::fl!(
-                crate::infra::i18n::LANGUAGE_LOADER,
-                "window-sidebar-stop-recording"
-            )),
-            _ => None,
-        };
-        if let Some(description) = requested {
-            let mut state = self.state.borrow_mut();
-            state.workspace.log(
-                crate::domain::workflow::ActivityOrigin::Requested,
-                description,
-            );
-        }
-        if matches!(cmd, AppCommand::StopRecording) {
-            let mut state = self.state.borrow_mut();
-            if state.record_status.active
-                && !state.record_status.state.is_transitioning()
-                && state.workspace.recording_stop_result.is_none()
-            {
-                let scope = state.workflow_scope();
-                let id = state.workspace.output_results.request(
-                    crate::domain::output_result::OutputResultKind::RecordingStop,
-                    scope,
-                    crate::controller::workspace::unix_ms(),
-                );
-                state.workspace.recording_stop_result = Some(id);
-            }
-        }
+        self.state
+            .borrow_mut()
+            .note_command_intent(&cmd, crate::controller::workspace::unix_ms());
         self.controller.borrow_mut().handle(cmd);
     }
 }
