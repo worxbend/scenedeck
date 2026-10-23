@@ -38,6 +38,26 @@
   </provides>
 
   <releases>
+    <release version="0.5.0" date="2026-10-23">
+      <description>
+        <p>SceneDeck can now run more of your show without switching to OBS.</p>
+        <ul>
+          <li>A redesigned Live page: a scene wall with optional still previews, a Studio mode switch with transition, duration and Take, and an output bar for streaming, recording, replay buffer and virtual camera.</li>
+          <li>A new Sources page to inspect any scene without switching Program, search its sources, and toggle visibility, filters, text, media and audio settings.</li>
+          <li>The Stats page can be detached into its own window, so it can sit on a second monitor.</li>
+          <li>Profiles and scene collections are available from the OBS setup menu in the header.</li>
+        </ul>
+        <p>Fixes and polish:</p>
+        <ul>
+          <li>Controls no longer flicker or briefly disable when audio changes or the Program scene switches.</li>
+          <li>The disconnect button names only the outputs it would stop, and reads plain "Disconnect" when nothing is live.</li>
+          <li>Media states, source warnings and connection errors now appear in your own language, and errors are no longer shown twice.</li>
+          <li>The activity log updates as soon as something happens, including failed stream and recording commands.</li>
+          <li>Faders keep their lock across rebuilds, and audio meters handle peak hold and decay more accurately.</li>
+          <li>Settings and registry writes are safer against crashes, and startup recovery notices are shown instead of hidden.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-08-22">
       <description>
         <p>SceneDeck now explains itself. A new Help page answers the questions that come up in the first ten minutes, and a first-run welcome points at it.</p>
