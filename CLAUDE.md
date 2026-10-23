@@ -8,7 +8,7 @@ SceneDeck is a Linux desktop controller for OBS Studio: Rust 2021, GTK4 +
 libadwaita, Tokio, and the OBS WebSocket protocol (`obws`). Single binary crate
 (`src/lib.rs` exposes only `run()`; every module is `pub(crate)`).
 
-Toolchain is pinned in `rust-toolchain.toml` (1.97.0). Building requires GTK4
+Toolchain is pinned in `rust-toolchain.toml`. Building requires GTK4
 and libadwaita dev libraries, `libdbus-1-dev` (the keyring's sync Secret
 Service backend links the system libdbus), plus `glib-compile-resources`
 (`build.rs` compiles `resources/scenedeck.gresource.xml`).
@@ -36,11 +36,14 @@ cargo test --all-features name_of_test
 cargo test --all-features services::doctor_service
 ```
 
-Locale validation is deliberately excluded from the default suite because it
-mutates the global Fluent loader — run it alone:
+Two suites are `#[ignore]`d and run separately (CI runs both):
 
 ```sh
-cargo test -- --ignored --test-threads=1
+# Locale parity; mutates the global Fluent loader, so run it alone.
+cargo test --workspace --all-features infra::i18n::tests::every_shipped_locale_parses_and_loads -- --exact --ignored --test-threads=1
+# Native GTK tests; needs xvfb-run and dbus-run-session. Each test gets its
+# own process, display and session bus. Never run them with plain cargo.
+python3 tools/test-native.py
 ```
 
 Tests are inline `#[cfg(test)] mod tests` blocks; there is no `tests/`
@@ -56,8 +59,9 @@ preserve:
   (`Rc<RefCell<AppState>>`, `src/controller/state.rs`).
 - **Tokio runtime** (created in `src/app.rs`, outlives the GTK loop) runs all
   OBS WebSocket work.
-- **`std::sync::mpsc`** carries `AppEvent` back; `src/ui/window.rs` polls the
-  receiver on a 50 ms `glib::timeout_add_local` and applies events to widgets.
+- **`std::sync::mpsc`** carries `AppEvent` back; `src/ui/event_pump.rs` drains
+  it on a 50 ms `glib::timeout_add_local` (bounded batch per tick) and
+  `src/ui/window.rs` applies each event.
 
 Command flow:
 
@@ -71,6 +75,8 @@ Pages never call OBS or the controller directly — they hold a
 and `dispatch()`.
 
 ### Module boundaries (enforce these)
+
+`src/architecture_tests.rs` checks these on every `cargo test`.
 
 | Path | Owns |
 | --- | --- |
@@ -103,16 +109,16 @@ and `dispatch()`.
 
 All user-facing strings go through `fl!(LANGUAGE_LOADER, "message-id")` with
 Fluent `.ftl` files under `i18n/<locale>/scenedeck.ftl`, embedded at compile
-time via `rust-embed`. Adding a string means adding it to `i18n/en/` at minimum;
-missing keys in other locales fall back to English. `i18n.toml` sets the
-fallback language.
+time via `rust-embed`. Adding a string means adding it to **every** locale:
+`every_translation_has_the_same_messages_as_english` fails on a missing key.
+`i18n.toml` sets the fallback language.
 
 ### Common changes
 
 - **New OBS capability**: wrap the `obws` call in `src/obs/client.rs`, map to
   domain types, route via `AppCommand`/`AppEvent`, update `docs/obs-websocket.md`.
 - **New page**: add a `Page` variant in `controller/state.rs`, add to
-  `NAV_PAGES` in `ui/window.rs`, create the module under `ui/pages/`.
+  `NAV_PAGES` in `ui/sidebar.rs`, create the module under `ui/pages/`.
 - **New icon**: SVG under `resources/icons/`, register in
   `resources/scenedeck.gresource.xml`, add a `cargo:rerun-if-changed` to
   `build.rs` if needed; reference the name without `.svg`.
@@ -125,8 +131,10 @@ fallback language.
 Controller components accept injectable boundaries so lifecycle behavior is
 testable without a running OBS: `SessionRunner` (`session_controller.rs`),
 `FakeOutputCommandClient` (`output_controller.rs`), and
-`ControllerDependencies` for config/password. Prefer extracting a pure decision
-helper over testing through GTK callbacks.
+`ControllerDependencies` for config/password. Protocol tests use the loopback
+mock in `src/obs/obs_fixture.rs` (handshake + `GetVersion`). Prefer extracting a
+pure decision helper — usually an `AppState` method — over testing through GTK
+callbacks.
 
 ## Repository docs
 

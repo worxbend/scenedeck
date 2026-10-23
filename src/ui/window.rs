@@ -1,8 +1,8 @@
 //! Main application window.
 //!
 //! Builds the `adw::NavigationSplitView` shell, wires the GTK→Controller
-//! command path via `NavigationContext`, and drives the Controller→GTK event
-//! path via a 50 ms glib polling timer.
+//! command path via `NavigationContext`, and applies Controller→GTK events
+//! that `event_pump.rs` drains.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -367,11 +367,8 @@ fn add_pages(
     (live_handle, refreshers)
 }
 
-/// Drain the controller's event channel onto the widgets, forever.
-///
-/// 50 ms gives responsive-enough UI updates without burning CPU. The loop
-/// drains everything queued on each tick so a burst of events costs one tick,
-/// not one tick each.
+/// Route controller events to the widgets via `event_pump` (50 ms ticks,
+/// at most 128 events per tick so a burst cannot stall the main loop).
 fn install_event_polling(
     app: &adw::Application,
     nav: &NavigationContext,
