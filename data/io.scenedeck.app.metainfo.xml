@@ -38,7 +38,7 @@
   </provides>
 
   <releases>
-    <release version="0.5.0" date="2026-10-23">
+    <release version="0.5.1" date="2026-10-24">
       <description>
         <p>SceneDeck can now run more of your show without switching to OBS.</p>
         <ul>
@@ -50,6 +50,7 @@
         <p>Fixes and polish:</p>
         <ul>
           <li>Controls no longer flicker or briefly disable when audio changes or the Program scene switches.</li>
+          <li>Small windows keep the scene grid usable: the audio strip collapses to its heading until expanded, and scenes show as tiles when there is no room for a preview.</li>
           <li>The disconnect button names only the outputs it would stop, and reads plain "Disconnect" when nothing is live.</li>
           <li>Media states, source warnings and connection errors now appear in your own language, and errors are no longer shown twice.</li>
           <li>The activity log updates as soon as something happens, including failed stream and recording commands.</li>
