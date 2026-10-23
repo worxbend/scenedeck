@@ -782,6 +782,8 @@ window-help-tooltip = Guia de ajuda e introdução
 
 # OBS controls and accessible alternatives
 window-stop-disconnect-label = Parar transmissão/gravação e desligar
+window-stop-stream-disconnect-label = Parar transmissão e desligar
+window-stop-record-disconnect-label = Parar gravação e desligar
 disconnect-confirm-heading = Parar a transmissão e a gravação antes de desligar?
 disconnect-confirm-body = Transmissão: { $stream }. Gravação: { $recording }. A transmissão e a gravação ativas serão paradas antes de desligar o SceneDeck. Esta ação não para o buffer de repetição nem a câmara virtual.
 live-scenes-obs-empty = Esta coleção do OBS não tem cenas. Crie uma cena no OBS e atualize o SceneDeck.

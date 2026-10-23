@@ -782,6 +782,8 @@ window-help-tooltip = Pomoc i przewodnik wprowadzający
 
 # OBS controls and accessible alternatives
 window-stop-disconnect-label = Zatrzymaj transmisję/nagrywanie i rozłącz
+window-stop-stream-disconnect-label = Zatrzymaj transmisję i rozłącz
+window-stop-record-disconnect-label = Zatrzymaj nagrywanie i rozłącz
 disconnect-confirm-heading = Zatrzymać transmisję i nagrywanie przed rozłączeniem?
 disconnect-confirm-body = Transmisja: { $stream }. Nagrywanie: { $recording }. Aktywna transmisja i nagrywanie zostaną zatrzymane przed rozłączeniem SceneDeck. Ta czynność nie zatrzymuje bufora powtórek ani kamery wirtualnej.
 live-scenes-obs-empty = Ta kolekcja OBS nie zawiera scen. Utwórz scenę w OBS, a następnie odśwież SceneDeck.

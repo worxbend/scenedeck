@@ -30,14 +30,10 @@ pub(crate) fn string_list(labels: &[String]) -> gtk4::StringList {
     gtk4::StringList::new(&borrowed)
 }
 
-/// Build a page that rebuilds itself from `AppState` whenever it is shown.
-///
-/// Every page in the sidebar has the same shape: a vertical box carrying the
-/// shared `app-page` class plus its own, filled in by `populate`, and a
-/// refresh callback that empties it and fills it in again. The window calls
-/// that callback when an event changes something the page displays, and GTK's
-/// `map` signal calls it when the user navigates back to the page, so a page
-/// that was hidden while events arrived is current by the time it is visible.
+/// Build a page whose descendants change only when its presentation changes.
+/// The key must contain displayed content and callback scope, not event counters
+/// or unrelated app state. Revisiting an unchanged page retains focus, scroll,
+/// expanded sections and, for Graph, user-arranged node positions.
 ///
 /// Returns the widget to add to the navigation stack and the refresh callback.
 ///
@@ -46,9 +42,10 @@ pub(crate) fn string_list(labels: &[String]) -> gtk4::StringList {
 /// leaving it unset: it also sets GTK's `hexpand-set` flag, which stops the
 /// box inheriting horizontal expansion from its children. The pages that pass
 /// `false` here depend on that inheritance.
-pub(crate) fn rebuildable_page(
+pub(crate) fn stateful_page<K: PartialEq + 'static>(
     css_class: &str,
     hexpand: bool,
+    presentation: impl Fn() -> K + 'static,
     populate: impl Fn(&gtk4::Box) + 'static,
 ) -> (gtk4::Widget, std::rc::Rc<dyn Fn()>) {
     use gtk4::prelude::*;
@@ -65,6 +62,7 @@ pub(crate) fn rebuildable_page(
     container.add_css_class("app-page");
     container.add_css_class(css_class);
 
+    let rendered = std::cell::RefCell::new(presentation());
     populate(&container);
 
     let refresh: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
@@ -73,7 +71,12 @@ pub(crate) fn rebuildable_page(
             let Some(container) = container.upgrade() else {
                 return;
             };
+            let next = presentation();
+            if *rendered.borrow() == next {
+                return;
+            }
             rebuild_page(&container, |container| populate(container));
+            *rendered.borrow_mut() = next;
         }
     });
 
@@ -325,9 +328,14 @@ mod tests {
         super::test_support::native_test(
             "ui::tests::native_rebuildable_page_releases_root_even_with_refresher_alive",
             || {
-                let (page, refresh) = super::rebuildable_page("fixture", false, |root| {
-                    root.append(&gtk4::Button::with_label("fixture"));
-                });
+                let (page, refresh) = super::stateful_page(
+                    "fixture",
+                    false,
+                    || (),
+                    |root| {
+                        root.append(&gtk4::Button::with_label("fixture"));
+                    },
+                );
                 let weak = page.downgrade();
                 refresh();
                 drop(page);

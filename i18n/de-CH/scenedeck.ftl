@@ -768,6 +768,8 @@ window-help-tooltip = Hilfe und Einführungsleitfaden
 
 # OBS controls and accessible alternatives
 window-stop-disconnect-label = Stream/Aufnahme stoppen und trennen
+window-stop-stream-disconnect-label = Stream stoppen und trennen
+window-stop-record-disconnect-label = Aufnahme stoppen und trennen
 disconnect-confirm-heading = Stream und Aufnahme vor dem Trennen stoppen?
 disconnect-confirm-body = Stream: { $stream }. Aufnahme: { $recording }. Laufende Streams und Aufnahmen werden beendet, bevor SceneDeck die Verbindung trennt. Replay-Puffer und virtuelle Kamera werden dabei nicht gestoppt.
 live-scenes-obs-empty = Diese OBS-Szenensammlung enthält keine Szenen. Erstellen Sie eine Szene in OBS und aktualisieren Sie dann SceneDeck.

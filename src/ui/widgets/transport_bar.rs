@@ -225,11 +225,14 @@ fn supports(state: &AppState, request: &str) -> bool {
 
 fn output_text(button: &Button, name: &str, status: &str, summary: &str) {
     if let Some(label) = button.child().and_downcast::<gtk4::Label>() {
-        label.set_markup(&format!(
+        let markup = format!(
             "{}\n<span size=\"smaller\" weight=\"normal\">{}</span>",
             glib::markup_escape_text(name),
             glib::markup_escape_text(status)
-        ));
+        );
+        if label.label() != markup {
+            label.set_markup(&markup);
+        }
     }
     button.update_property(&[gtk4::accessible::Property::Label(summary)]);
 }
@@ -325,12 +328,27 @@ fn update(root: &GtkBox, nav: &NavigationContext, controls: &Controls) {
         };
         button.set_tooltip_text(Some(&action));
         button.update_property(&[gtk4::accessible::Property::Description(&action)]);
-        button.set_sensitive(
+        let toggle = crate::domain::control::GlobalToggle::VirtualCamera;
+        let pending = if camera {
+            state.workspace.toggle_pending(toggle)
+        } else {
+            state
+                .workspace
+                .active_action
+                .as_ref()
+                .is_some_and(|action| matches!(action, ControlAction::SetReplayActive(_)))
+        };
+        let available = if camera {
+            connected && state.workspace.toggle_value(toggle).is_some() && !pending
+        } else {
             ready
+        };
+        button.set_sensitive(
+            available
                 && active.is_some()
                 && supports(&state, if active == Some(true) { stop } else { start }),
         );
-        set_active(button, active == Some(true), state.workspace.pending);
+        set_active(button, active == Some(true), pending);
     }
     let paused = state.record_status.state == OutputRunState::Paused;
     controls.pause.set_label(&if paused {

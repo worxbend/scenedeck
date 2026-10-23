@@ -38,6 +38,11 @@ pub(crate) struct MixerPageHandle {
     signature: RefCell<Option<String>>,
     binding: RefCell<Option<(u64, crate::domain::workflow::ScopeBinding)>>,
     cards: RefCell<BTreeMap<String, audio_card::AudioCardHandle>>,
+    controls_signature: RefCell<Option<String>>,
+    groups: RefCell<Vec<glib::WeakRef<PreferencesGroup>>>,
+    summary: glib::WeakRef<adw::ActionRow>,
+    controls: glib::WeakRef<PreferencesGroup>,
+    notice: glib::WeakRef<gtk4::Spinner>,
 }
 
 impl MixerPageHandle {
@@ -68,15 +73,58 @@ impl MixerPageHandle {
         }
     }
 
+    fn update_summary(&self, state: &crate::controller::state::AppState) {
+        if let Some(summary) = self.summary.upgrade() {
+            summary.set_subtitle(&source_summary(
+                state.mixer.mode,
+                state.scene_inventory.current_id.as_deref(),
+                state
+                    .mixer_scene_refresh_target_details()
+                    .map(|target| (target.scene.to_owned(), target.reason)),
+            ));
+        }
+        if let Some(controls) = self.controls.upgrade() {
+            controls.set_description(Some(&state.mixer.mode.description()));
+        }
+    }
+
     fn refresh(self: &Rc<Self>) {
         let Some(root) = self.root.upgrade() else {
             return;
         };
         let state = self.nav.state.borrow();
+        self.update_summary(&state);
+        let binding = (state.workspace.epoch, state.workflow_scope());
+        let loading = matches!(
+            state.visible_mixer_render_source(),
+            MixerVisibleRenderSource::Scene {
+                status: MixerVisibleAudioStatus::Loading,
+                ..
+            }
+        );
+        // These controls address collection-scoped inputs, so a scene membership
+        // read must not disable/dim them or cancel an in-progress fader drag.
+        if loading
+            && self.binding.borrow().as_ref() == Some(&binding)
+            && !self.cards.borrow().is_empty()
+        {
+            if let Some(notice) = self.notice.upgrade() {
+                notice.set_spinning(true);
+                notice.set_opacity(1.0);
+            }
+            return;
+        }
+        if let Some(notice) = self.notice.upgrade() {
+            notice.set_spinning(false);
+            notice.set_opacity(0.0);
+        }
         let signature = mixer_structure(&state);
         if self.signature.borrow().as_ref() == Some(&signature) {
             let inputs = visible_inputs(&state);
             for input in inputs {
+                if let Some(card) = self.cards.borrow().get(&input.id) {
+                    card.set_available(true);
+                }
                 self.update_mute(&input.id, input.muted);
                 self.update_volume(&input.id, input.volume_mul, input.volume_db);
             }
@@ -91,7 +139,7 @@ impl MixerPageHandle {
         }
         *self.binding.borrow_mut() = Some(binding);
         *self.signature.borrow_mut() = Some(signature);
-        crate::ui::rebuild_page(&root, |root| populate(root, &self.nav, self));
+        populate(&root, &self.nav, self);
         view.restore(&root);
     }
 }
@@ -141,7 +189,15 @@ fn mixer_structure(state: &crate::controller::state::AppState) -> String {
         state.workspace.epoch,
         state.workflow_scope(),
         state.obs_status,
-        state.scene_inventory
+        (
+            state.config.language,
+            state
+                .scene_inventory
+                .scenes
+                .iter()
+                .map(|s| &s.id)
+                .collect::<Vec<_>>()
+        )
     )
 }
 
@@ -252,6 +308,11 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>, Rc<M
         signature: RefCell::new(None),
         binding: RefCell::new(None),
         cards: RefCell::new(BTreeMap::new()),
+        controls_signature: RefCell::new(None),
+        groups: RefCell::new(Vec::new()),
+        summary: glib::WeakRef::new(),
+        controls: glib::WeakRef::new(),
+        notice: glib::WeakRef::new(),
     });
     let refresh: Rc<dyn Fn()> = Rc::new({
         let handle = handle.clone();
@@ -287,66 +348,106 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
         .mixer_scene_refresh_target_details()
         .map(|target| (target.scene.to_string(), target.reason));
 
-    if inventory.scenes.is_empty() {
-        let empty = StatusPage::builder()
-            .icon_name("audio-volume-high-symbolic")
-            .title(fl!(LANGUAGE_LOADER, "mixer-empty-title"))
-            .description(fl!(LANGUAGE_LOADER, "mixer-empty-description"))
-            .build();
-        empty.add_css_class("app-status-page");
-        root.append(&empty);
-        return;
-    }
-
-    let page = PreferencesPage::builder()
-        .title(fl!(LANGUAGE_LOADER, "mixer-page-title"))
-        .vexpand(true)
-        .hexpand(true)
-        .build();
-    page.add_css_class("app-preferences-page");
-
-    let controls = PreferencesGroup::builder()
-        .title(fl!(LANGUAGE_LOADER, "mixer-controls-title"))
-        .description(mixer.mode.description())
-        .build();
-
-    let mode_row = build_mode_row(nav, mixer.mode, refresh_tracker);
-    let scene_row = build_scene_row(
-        nav,
-        &inventory.scenes,
-        mixer.selected_scene.as_deref(),
-        refresh_tracker,
+    let controls_key = format!(
+        "{:?}{:?}{:?}{:?}",
+        state.workspace.epoch,
+        state.workflow_scope(),
+        state.config.language,
+        inventory.scenes.iter().map(|s| &s.id).collect::<Vec<_>>()
     );
-    let grouping_row = build_grouping_row(nav, mixer.grouping, refresh_tracker);
-    let search_row = build_search_row(nav, &mixer.search, refresh_tracker);
+    let existing = (refresh_tracker.controls_signature.borrow().as_ref() == Some(&controls_key))
+        .then(|| root.first_child().and_downcast::<PreferencesPage>())
+        .flatten();
+    let page = if let Some(page) = existing {
+        for group in refresh_tracker
+            .groups
+            .borrow_mut()
+            .drain(..)
+            .filter_map(|g| g.upgrade())
+        {
+            page.remove(&group);
+        }
+        while let Some(child) = page.next_sibling() {
+            root.remove(&child);
+        }
+        page
+    } else {
+        crate::ui::clear_children(root);
+        refresh_tracker.groups.borrow_mut().clear();
+        *refresh_tracker.controls_signature.borrow_mut() = Some(controls_key);
+        if inventory.scenes.is_empty() {
+            let empty = StatusPage::builder()
+                .icon_name("audio-volume-high-symbolic")
+                .title(fl!(LANGUAGE_LOADER, "mixer-empty-title"))
+                .description(fl!(LANGUAGE_LOADER, "mixer-empty-description"))
+                .build();
+            empty.add_css_class("app-status-page");
+            root.append(&empty);
+            return;
+        }
 
-    controls.add(&mode_row);
-    controls.add(&scene_row);
-    page.add(&controls);
-    let options = PreferencesGroup::new();
-    let options_row = adw::ExpanderRow::builder()
-        .use_markup(false)
-        .title(fl!(LANGUAGE_LOADER, "mixer-secondary-options"))
-        .build();
-    options_row.add_row(&grouping_row);
-    options_row.add_row(&search_row);
-    options.add(&options_row);
-    page.add(&options);
+        let page = PreferencesPage::builder()
+            .title(fl!(LANGUAGE_LOADER, "mixer-page-title"))
+            .vexpand(true)
+            .hexpand(true)
+            .build();
+        page.add_css_class("app-preferences-page");
 
-    let summary_group = PreferencesGroup::new();
-    let summary = adw::ActionRow::builder()
-        .use_markup(false)
-        .title(fl!(LANGUAGE_LOADER, "mixer-summary-title"))
-        .build();
-    summary.set_subtitle(&source_summary(
-        mixer.mode,
-        active_scene.as_deref(),
-        target_details,
-    ));
-    summary_group.add(&summary);
-    page.add(&summary_group);
+        let controls = PreferencesGroup::builder()
+            .title(fl!(LANGUAGE_LOADER, "mixer-controls-title"))
+            .description(mixer.mode.description())
+            .build();
 
-    root.append(&page);
+        let mode_row = build_mode_row(nav, mixer.mode, refresh_tracker);
+        let scene_row = build_scene_row(
+            nav,
+            &inventory.scenes,
+            mixer.selected_scene.as_deref(),
+            refresh_tracker,
+        );
+        let grouping_row = build_grouping_row(nav, mixer.grouping, refresh_tracker);
+        let search_row = build_search_row(nav, &mixer.search, refresh_tracker);
+
+        refresh_tracker.controls.set(Some(&controls));
+        controls.add(&mode_row);
+        controls.add(&scene_row);
+        page.add(&controls);
+        let options = PreferencesGroup::new();
+        let options_row = adw::ExpanderRow::builder()
+            .use_markup(false)
+            .title(fl!(LANGUAGE_LOADER, "mixer-secondary-options"))
+            .build();
+        options_row.add_row(&grouping_row);
+        options_row.add_row(&search_row);
+        options.add(&options_row);
+        page.add(&options);
+
+        let summary_group = PreferencesGroup::new();
+        let summary = adw::ActionRow::builder()
+            .use_markup(false)
+            .title(fl!(LANGUAGE_LOADER, "mixer-summary-title"))
+            .build();
+        summary.set_subtitle(&source_summary(
+            mixer.mode,
+            active_scene.as_deref(),
+            target_details,
+        ));
+        refresh_tracker.summary.set(Some(&summary));
+        summary_group.add(&summary);
+        let notice = gtk4::Spinner::builder()
+            .valign(Align::Center)
+            .width_request(16)
+            .height_request(16)
+            .opacity(0.0)
+            .tooltip_text(fl!(LANGUAGE_LOADER, "mixer-loading-title"))
+            .build();
+        summary.add_suffix(&notice);
+        refresh_tracker.notice.set(Some(&notice));
+        page.add(&summary_group);
+
+        root.append(&page);
+        page
+    };
 
     let source_inputs = match state.visible_mixer_render_source() {
         MixerVisibleRenderSource::ActiveScene(inputs) => inputs.to_vec(),
@@ -750,6 +851,7 @@ fn append_group(
     }
 
     group.add(&flow);
+    surfaces.tracker.groups.borrow_mut().push(group.downgrade());
     surfaces.page.add(&group);
 }
 
@@ -1742,6 +1844,16 @@ mod layout_tests {
             assert!(popover.is_mapped());
             assert_eq!(handle.cards.borrow().len(), 2);
             popover.popdown();
+            let preferences = page.first_child().unwrap();
+            nav.state.borrow_mut().invalidate_active_audio();
+            refresh();
+            assert_eq!(page.first_child(), Some(preferences.clone()));
+            assert_eq!(handle.cards.borrow()["Mic"].root, first);
+            assert!(first.is_sensitive(), "membership reads must not dim collection-scoped input controls");
+            nav.state.borrow_mut().apply_active_audio(Some("Main".into()), Ok(vec![audio_input("Mic"), audio_input("Music")]));
+            refresh();
+            assert_eq!(handle.cards.borrow()["Mic"].root, first);
+            assert!(first.is_sensitive());
             nav.state.borrow_mut().audio_inputs.push(audio_input("Third"));
             refresh();
             let mut restored_draft = None;
@@ -1750,6 +1862,9 @@ mod layout_tests {
             });
             assert_eq!(restored_draft.as_deref(), Some("unapplied <draft> & search"));
             assert_eq!(handle.cards.borrow().len(), 3);
+            assert_eq!(page.first_child(), Some(preferences), "membership changes replaced the entire Mixer");
+            assert!(search.parent().is_some(), "membership changes detached search controls");
+            assert!(options.is_expanded());
             let weak_scale = scale.downgrade();
             drop((scale, first, second, search, options, menu, popover));
             crate::ui::test_support::pump(Duration::from_millis(80));

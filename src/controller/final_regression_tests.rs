@@ -476,6 +476,106 @@ async fn graph_ready(rx: &mpsc::Receiver<AppEvent>) {
 }
 
 #[tokio::test]
+async fn visibility_and_transition_events_do_not_reload_topology_or_scene_mode() {
+    let mut mock = mock(Plan::default()).await;
+    let (tx, rx) = mpsc::sync_channel(128);
+    let task = pump(&mut mock, tx);
+    graph_ready(&rx).await;
+    mock.signal(Signal::Event(
+        "SceneTransitionEnded",
+        16,
+        json!({"transitionName":"Fade", "transitionUuid":"00000000-0000-0000-0000-000000000001"}),
+    ))
+    .await;
+    mock.signal(Signal::Event(
+        "CurrentPreviewSceneChanged",
+        4,
+        json!({"sceneName":"B", "sceneUuid":"00000000-0000-0000-0000-000000000002"}),
+    ))
+    .await;
+    mock.signal(Signal::Event(
+        "SceneItemEnableStateChanged",
+        128,
+        json!({"sceneName":"A", "sceneUuid":"00000000-0000-0000-0000-000000000001", "sceneItemId":1, "sceneItemEnabled":false}),
+    ))
+    .await;
+    let mut values_changed = false;
+    loop {
+        let event = match peel(receive(&rx).await) {
+            AppEvent::Observation { event, .. } => *event,
+            event => event,
+        };
+        assert!(
+            !matches!(
+                event,
+                AppEvent::WorkspaceInvalidated
+                    | AppEvent::GraphInvalidated
+                    | AppEvent::GraphUpdated(_)
+            ),
+            "value-only event invalidated unrelated state: {event:?}"
+        );
+        values_changed |= matches!(event, AppEvent::WorkspaceValuesChanged);
+        if matches!(event, AppEvent::ActiveAudioObserved { result: Ok(_), .. }) {
+            break;
+        }
+    }
+    assert!(values_changed);
+    task.abort();
+    let _ = task.await;
+    let requests = mock.stop().await;
+    for name in ["GetProfileList", "GetSceneCollectionList"] {
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.as_str() == name)
+                .count(),
+            1
+        );
+    }
+}
+
+#[tokio::test]
+async fn program_switch_refreshes_audio_without_reloading_topology_or_setup() {
+    let mut mock = mock(Plan::default()).await;
+    let (tx, rx) = mpsc::sync_channel(128);
+    let task = pump(&mut mock, tx);
+    graph_ready(&rx).await;
+    switch_b(&mock).await;
+    loop {
+        let event = match peel(receive(&rx).await) {
+            AppEvent::Observation { event, .. } => *event,
+            event => event,
+        };
+        assert!(
+            !matches!(
+                event,
+                AppEvent::GraphInvalidated | AppEvent::GraphUpdated(_)
+            ),
+            "a Program change must not blank Graph or Doctor"
+        );
+        if let AppEvent::ActiveAudioObserved { scene, result } = event {
+            if scene.as_deref() == Some("B") {
+                assert!(result.is_ok());
+                break;
+            }
+        }
+    }
+    task.abort();
+    let _ = task.await;
+    let requests = mock.stop().await;
+    for request in ["GetSceneList", "GetProfileList", "GetSceneCollectionList"] {
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|name| name.as_str() == request)
+                .count(),
+            1,
+            "Program switching repeated {request}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn queued_scene_activation_rejects_authoritative_mode_change_during_collection_read() {
     let mut mock = mock(Plan {
         hold: Some(("GetSceneCollectionList", 1)),
@@ -582,7 +682,7 @@ async fn mode_echo_fences_activation(at_final_gate: bool, aba: bool) {
     ))
     .await;
     loop {
-        if matches!(peel(receive(&rx).await), AppEvent::WorkspaceInvalidated) {
+        if matches!(peel(receive(&rx).await), AppEvent::StudioModeChanged(_)) {
             break;
         }
     }
@@ -594,7 +694,7 @@ async fn mode_echo_fences_activation(at_final_gate: bool, aba: bool) {
         ))
         .await;
         loop {
-            if matches!(peel(receive(&rx).await), AppEvent::WorkspaceInvalidated) {
+            if matches!(peel(receive(&rx).await), AppEvent::StudioModeChanged(_)) {
                 break;
             }
         }

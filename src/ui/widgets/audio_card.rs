@@ -109,6 +109,24 @@ struct VolumeChangeContext<'a> {
 }
 
 impl AudioCardHandle {
+    /// Retain layout while membership is unknown, without letting a queued
+    /// fader edit fire after its source leaves the displayed scene.
+    pub(crate) fn set_available(&self, available: bool) {
+        if !available && self.root.is_sensitive() {
+            if let Some(source) = self.volume_debounce_source.borrow_mut().take() {
+                source.remove();
+            }
+            let (mul, db) = self.observed_volume.get();
+            *self.volume_debouncer.borrow_mut() = VolumeChangeDebouncer::new(mul);
+            self.vol_scale.block_signal(self.vol_signal_id.as_ref());
+            self.vol_scale
+                .set_value(AudioService::slider_db_from_mul(mul));
+            self.vol_scale.unblock_signal(self.vol_signal_id.as_ref());
+            self.db_label.set_text(&AudioService::format_db(db));
+        }
+        self.root.set_sensitive(available);
+    }
+
     /// Update mute state from an OBS event without triggering the dispatch signal.
     pub(crate) fn update_mute(&self, muted: bool) {
         self.mute_btn.block_signal(&self.mute_signal_id);
@@ -382,6 +400,9 @@ fn build_volume_controls(
         )))
         .xalign(0.0)
         .halign(Align::Start)
+        // Reserve the longest readout ("-100.0 dB"). Otherwise changing gain
+        // changes a FlowBox child's minimum width and can wrap the whole strip.
+        .width_chars(9)
         .build();
     db_label.add_css_class("numeric");
     db_label.add_css_class("audio-card-db");
@@ -1028,6 +1049,15 @@ mod tests {
                     assert!(card.volume_debounce_source.borrow().is_none());
                     assert_eq!(card.volume_debouncer.borrow_mut().take_due(), None);
 
+                    card.vol_scale.set_value(-15.0);
+                    card.set_available(false);
+                    pump(VOLUME_SLIDER_DEBOUNCE + Duration::from_millis(30));
+                    assert!(card.volume_debounce_source.borrow().is_none());
+                    assert_eq!(card.volume_debouncer.borrow_mut().take_due(), None, "unavailable input retained an unsent gain");
+                    assert!((card.vol_scale.value() + 3.0).abs() < 0.0001);
+                    card.set_available(true);
+                    card.update_volume(external, -3.0);
+                    assert!((card.vol_scale.value() + 3.0).abs() < 0.0001);
                     card.vol_scale.set_value(-15.0);
                     nav.state.borrow_mut().workspace.epoch += 1;
                     pump(VOLUME_SLIDER_DEBOUNCE + Duration::from_millis(30));

@@ -779,6 +779,8 @@ window-help-tooltip = Guida e introduzione
 
 # OBS controls and accessible alternatives
 window-stop-disconnect-label = Ferma diretta/registrazione e disconnetti
+window-stop-stream-disconnect-label = Ferma diretta e disconnetti
+window-stop-record-disconnect-label = Ferma registrazione e disconnetti
 disconnect-confirm-heading = Fermare diretta e registrazione prima di disconnettersi?
 disconnect-confirm-body = Diretta: { $stream }. Registrazione: { $recording }. Le dirette e le registrazioni attive verranno fermate prima di disconnettere SceneDeck. Questa azione non ferma il buffer replay né la videocamera virtuale.
 live-scenes-obs-empty = Questa raccolta OBS non contiene scene. Crea una scena in OBS, poi aggiorna SceneDeck.

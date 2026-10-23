@@ -26,16 +26,38 @@ fn no_diagnostics_detail() -> String {
 }
 
 pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
-    crate::ui::rebuildable_page("doctor-page", false, move |container| {
-        populate(container, &nav);
-    })
+    let read_nav = nav.clone();
+    crate::ui::stateful_page(
+        "doctor-page",
+        false,
+        move || {
+            let state = read_nav.state.borrow();
+            (
+                state.workspace.epoch,
+                state.config.language,
+                matches!(state.obs_status, ObsStatus::Connected { .. }),
+                state
+                    .scene_inventory
+                    .scenes
+                    .iter()
+                    .map(|s| s.id.clone())
+                    .collect::<Vec<_>>(),
+                state.scene_graph.edges.clone(),
+                state.registry.snapshot(),
+                state.topology_status.clone(),
+            )
+        },
+        move |container| {
+            populate(container, &nav);
+        },
+    )
 }
 
 /// Refill the page in place.
 ///
 /// Kept as its own function, unlike the Graph page, because `populate` wires
 /// it to the "run checks again" button and so needs to call it from inside
-/// itself — where the refresh callback that `rebuildable_page` returns is not
+/// itself — where the refresh callback that `stateful_page` returns is not
 /// reachable.
 fn rebuild(container: &GtkBox, nav: &NavigationContext) {
     crate::ui::rebuild_page(container, |container| populate(container, nav));

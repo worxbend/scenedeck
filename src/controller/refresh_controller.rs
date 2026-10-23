@@ -291,6 +291,7 @@ async fn refresh_scene_audio(
 struct RefreshInvalidation {
     revision: tokio::sync::watch::Sender<u64>,
     announced: Arc<std::sync::atomic::AtomicBool>,
+    audio_scene: tokio::sync::watch::Sender<Option<String>>,
 }
 
 impl Default for RefreshInvalidation {
@@ -298,6 +299,7 @@ impl Default for RefreshInvalidation {
         Self {
             revision: tokio::sync::watch::channel(0).0,
             announced: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            audio_scene: tokio::sync::watch::channel(None).0,
         }
     }
 }
@@ -324,21 +326,54 @@ async fn refresh_worker(
         .await
         .map_err(|()| AppError::Connection("UI event receiver closed".into()))?;
     let mut revisions = dirty.revision.subscribe();
+    let mut audio_scenes = dirty.audio_scene.subscribe();
+    let mut full_refresh = true;
     loop {
-        let scan_revision = *revisions.borrow_and_update();
-        dirty
-            .announced
-            .store(false, std::sync::atomic::Ordering::Release);
         let scan_tx = tx.fresh();
-        refresh_profile_and_collection_lists(client, &scan_tx).await;
-        refresh_output_statuses(client, &scan_tx).await;
-        refresh_live_data_if(client, &scan_tx, audio_filter, &|| {
-            *dirty.revision.borrow() == scan_revision
-        })
-        .await;
+        if full_refresh {
+            let scan_revision = *revisions.borrow_and_update();
+            audio_scenes.borrow_and_update();
+            dirty
+                .announced
+                .store(false, std::sync::atomic::Ordering::Release);
+            refresh_profile_and_collection_lists(client, &scan_tx).await;
+            refresh_output_statuses(client, &scan_tx).await;
+            refresh_live_data_if(client, &scan_tx, audio_filter, &|| {
+                *dirty.revision.borrow() == scan_revision
+            })
+            .await;
+        } else {
+            let scene = audio_scenes.borrow_and_update().clone();
+            let scene = match scene {
+                Some(scene) => Some(scene),
+                // Visibility can change in a nested scene. Read the current
+                // Program once, without invalidating/rebuilding topology.
+                None => match client.get_scene_inventory().await {
+                    Ok(inventory) => inventory.current_id,
+                    Err(error) => {
+                        let _ = scan_tx
+                            .send(AppEvent::WorkspaceAudioFailed(error.user_message()))
+                            .await;
+                        None
+                    }
+                },
+            };
+            // Program changes do not change topology, profiles or outputs.
+            // Refresh only the new scene's audio; UI observation fences discard
+            // replies for scenes superseded during this read.
+            refresh_scene_audio(client, &scan_tx, scene.as_deref(), audio_filter).await;
+        }
         // Every invalidation during the scan is folded into one follow-up scan.
-        if revisions.changed().await.is_err() {
-            return Ok(());
+        tokio::select! {
+            biased;
+            changed = revisions.changed() => {
+                if changed.is_err() { return Ok(()); }
+                full_refresh = true;
+            }
+            changed = audio_scenes.changed() => {
+                if changed.is_err() { return Ok(()); }
+                full_refresh = false;
+            }
         }
     }
 }
@@ -423,14 +458,20 @@ pub(crate) async fn run_event_loop(
         };
         let mut graph_invalidation = None;
         let publication = match event {
-            ObsEvent::ControlsChanged => {
+            ObsEvent::StudioModeChanged(enabled) => {
                 // Fence accepted clicks independently of bounded UI publication.
                 // OBS has no atomic mode-and-scene operation: a mode change not
                 // yet received here can still race an already admitted write.
                 if let Some(scope) = tx.session_scope() {
                     scope.invalidate_scene_activation();
                 }
-                Some(AppEvent::WorkspaceInvalidated)
+                Some(AppEvent::StudioModeChanged(enabled))
+            }
+            ObsEvent::VirtualCameraChanged(active) => Some(AppEvent::VirtualCameraChanged(active)),
+            ObsEvent::ControlsChanged => Some(AppEvent::WorkspaceValuesChanged),
+            ObsEvent::SceneItemVisibilityChanged => {
+                dirty.audio_scene.send_replace(None);
+                Some(AppEvent::WorkspaceValuesChanged)
             }
             ObsEvent::CollectionChanging => {
                 tx.advance_collection();
@@ -447,7 +488,7 @@ pub(crate) async fn run_event_loop(
                 event: Box::new(AppEvent::RecordStatusUpdated(status)),
             }),
             ObsEvent::CurrentProgramSceneChanged(scene) => {
-                dirty.invalidate();
+                dirty.audio_scene.send_replace(Some(scene.clone()));
                 Some(AppEvent::Observation {
                     revision: client.next_observation(),
                     event: Box::new(AppEvent::CurrentSceneChanged(scene)),

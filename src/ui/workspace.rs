@@ -76,12 +76,24 @@ fn action_description(action: &ControlAction) -> String {
     }
 }
 
-fn request(nav: &NavigationContext, screenshot: bool, action: bool) -> Option<WorkspaceRequest> {
+fn request(
+    nav: &NavigationContext,
+    screenshot: bool,
+    action: Option<&ControlAction>,
+) -> Option<WorkspaceRequest> {
     if !nav.is_current() {
         return None;
     }
     let mut state = nav.state.borrow_mut();
-    if !matches!(state.obs_status, ObsStatus::Connected { .. }) || state.workspace.pending {
+    let scene = match action {
+        Some(ControlAction::ActivateScene { scene, .. }) => Some(scene.clone()),
+        _ => None,
+    };
+    if !matches!(state.obs_status, ObsStatus::Connected { .. })
+        || (state.workspace.pending
+            && !(scene.is_some() && state.workspace.pending_scene.is_some()))
+        || (action.is_none() && state.workspace.active_action.is_some())
+    {
         return None;
     }
     let scope = state.workflow_scope();
@@ -89,8 +101,24 @@ fn request(nav: &NavigationContext, screenshot: bool, action: bool) -> Option<Wo
         return None;
     }
     state.workspace.sequence = state.workspace.sequence.wrapping_add(1);
+    if state.workspace.can_control() {
+        state.workspace.observe_global_controls();
+    }
+    // Clearing the refresh request flag must not make invalidated data fresh.
+    // Mutations also need a new readback before value-dependent controls resume.
+    if state.workspace.dirty || action.is_some() {
+        state.workspace.observed_at = None;
+    }
+    if matches!(action, Some(ControlAction::SetStudioMode(_))) {
+        state.workspace.scene_control_observation = None;
+    }
+    if matches!(action, Some(ControlAction::SetVirtualCamera(_))) {
+        state.workspace.virtual_camera_observation = None;
+    }
     state.workspace.loading = true;
-    state.workspace.pending = action;
+    state.workspace.pending = action.is_some();
+    state.workspace.pending_scene = scene;
+    state.workspace.active_action = action.cloned();
     state.workspace.revision = state.workspace.revision.wrapping_add(1);
     state.workspace.dirty = false;
     state.workspace.error = None;
@@ -111,7 +139,7 @@ pub fn refresh(nav: &NavigationContext) {
     if !nav.is_current() {
         return;
     }
-    if let Some(request) = request(nav, false, false) {
+    if let Some(request) = request(nav, false, None) {
         nav.dispatch(AppCommand::ReadWorkspace(request));
     }
 }
@@ -177,17 +205,39 @@ fn act_expected(nav: &NavigationContext, action: ControlAction, expected_text: O
         return;
     }
     {
-        let state = nav.state.borrow();
-        if state.workspace.pending || state.workspace.loading {
+        let mut state = nav.state.borrow_mut();
+        let toggle_ready = if let Some(toggle) = action.global_toggle() {
+            if state.workspace.toggle_pending(toggle) {
+                return;
+            }
+            let ready = state.workspace.toggle_value(toggle).is_some();
+            if ready && (state.workspace.pending || state.workspace.active_action.is_some()) {
+                // Do not supersede an unrelated admitted write. Retain one
+                // explicit intent per toggle and dispatch after its readback.
+                state.workspace.queued_toggles.push_back(action);
+                state.workspace.revision = state.workspace.revision.wrapping_add(1);
+                return;
+            }
+            ready
+        } else {
+            false
+        };
+        let scene_ready = match &action {
+            ControlAction::ActivateScene { scene, .. } => {
+                state.workspace.scene_action(scene).as_ref() == Some(&action)
+            }
+            _ => false,
+        };
+        if state.workspace.pending && !scene_ready {
             return;
         }
-        if !state.workspace.can_control() {
+        if !scene_ready && !toggle_ready && !state.workspace.can_control() {
             drop(state);
             refresh(nav);
             return;
         }
     }
-    if let Some(mut request) = request(nav, false, true) {
+    if let Some(mut request) = request(nav, false, Some(&action)) {
         use crate::domain::output_result::OutputResultKind;
         let kind = match &action {
             ControlAction::SaveReplay => Some(OutputResultKind::ReplaySave),
@@ -211,5 +261,40 @@ fn act_expected(nav: &NavigationContext, action: ControlAction, expected_text: O
             action,
             expected_text,
         });
+    }
+}
+
+/// Finish an unrelated command before submitting a queued global toggle.
+pub(super) fn dispatch_queued_toggle(nav: &NavigationContext) {
+    let action = {
+        let mut state = nav.state.borrow_mut();
+        if state.workspace.pending || state.workspace.loading {
+            return;
+        }
+        if let Some(toggle) = state
+            .workspace
+            .queued_toggles
+            .front()
+            .and_then(|action| action.global_toggle())
+        {
+            if state.workspace.toggle_value(toggle).is_none() {
+                if state.workspace.dirty {
+                    drop(state);
+                    refresh(nav);
+                    return;
+                }
+                // A failed/unsupported observation cannot authorize a queued
+                // toggle. Report it instead of leaving an endless busy state.
+                state.workspace.queued_toggles.clear();
+                let message = fl!(LANGUAGE_LOADER, "control-stale");
+                state.workspace.result.clone_from(&message);
+                state.workspace.log(ActivityOrigin::Failed, message);
+                return;
+            }
+        }
+        state.workspace.queued_toggles.pop_front()
+    };
+    if let Some(action) = action {
+        act(nav, action);
     }
 }

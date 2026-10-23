@@ -154,6 +154,8 @@ pub(crate) enum ObsEvent {
     InputsChanged,
     /// Scene item membership changed and scene-derived audio should refresh.
     SceneItemsChanged,
+    /// Visibility affects audio membership, but does not change graph edges.
+    SceneItemVisibilityChanged,
     /// Active OBS profile changed.
     CurrentProfileChanged(String),
     /// OBS profile list changed.
@@ -166,6 +168,9 @@ pub(crate) enum ObsEvent {
     SceneListChanged,
     /// Native operating controls changed; refresh the current scope.
     ControlsChanged,
+    /// Studio mode changes invalidate the meaning of scene activation.
+    StudioModeChanged(bool),
+    VirtualCameraChanged(Option<bool>),
     /// OBS confirmed an actual replay file save.
     ReplaySaved(String),
     /// Collection is changing; requests must pause until change completes.

@@ -14,6 +14,7 @@ use crate::ui::{navigation::NavigationContext, workspace};
 #[derive(Default)]
 struct LocalState {
     epoch: Option<u64>,
+    syncing: bool,
     query: String,
     show_detail: bool,
     usage_expanded: bool,
@@ -97,7 +98,6 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         .build();
     root.add_css_class("sources-page");
     populate(&root, &nav, &local);
-    let rendered_binding = Rc::new(RefCell::new(refresh_binding(&nav)));
     let rendered_content = Rc::new(RefCell::new(sources_content(&nav)));
     let status_local = local.clone();
     let status_nav = nav.clone();
@@ -159,30 +159,17 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
         let root = root.downgrade();
         move || {
             let Some(root) = root.upgrade() else { return };
-            let binding = refresh_binding(&nav);
             let content = sources_content(&nav);
             update_status(&root, &nav, &local);
             if *rendered_content.borrow() == content {
-                *rendered_binding.borrow_mut() = binding;
                 return;
             }
-            // Defer only media observations while a native popup is open, never
-            // changed text, targets, capabilities or callback scope.
-            let mut without_media = content.clone();
-            if let (Some(current), Some(rendered)) = (
-                without_media.detail.as_mut(),
-                rendered_content.borrow().detail.as_ref(),
-            ) {
-                current.media = rendered.media.clone();
-            }
-            if binding.5
-                && *rendered_binding.borrow() == binding
-                && *rendered_content.borrow() == without_media
-                && mapped_popover(root.upcast_ref())
-            {
+            if content.same_structure(&rendered_content.borrow()) {
+                update_observed_controls(&root, &content, &local);
+                update_status(&root, &nav, &local);
+                *rendered_content.borrow_mut() = content;
                 return;
             }
-            *rendered_binding.borrow_mut() = binding;
             *rendered_content.borrow_mut() = content;
             let focus_root = root.is_mapped().then(|| root.root()).flatten();
             let old_focus = focus_root.as_ref().and_then(|window| window.focus());
@@ -278,27 +265,47 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     (root.upcast(), refresh)
 }
 
-type RefreshBinding = (
-    crate::domain::workflow::ScopeBinding,
-    u64,
-    u64,
-    Option<String>,
-    Option<String>,
-    bool,
-    bool,
-);
-
-fn refresh_binding(nav: &NavigationContext) -> RefreshBinding {
-    let state = nav.state.borrow();
-    (
-        state.workflow_scope(),
-        state.workspace.epoch,
-        state.workspace.sequence,
-        state.workspace.selected_scene.clone(),
-        state.workspace.selected_input.clone(),
-        state.workspace.can_control(),
-        matches!(state.obs_status, ObsStatus::Connected { .. }),
-    )
+fn update_media_values(root: &GtkBox, detail: &SourceDetail, local: &Rc<RefCell<LocalState>>) {
+    let Some(media) = &detail.media else { return };
+    visit(root.upcast_ref(), &mut |widget| {
+        if widget.widget_name() == "sources-media-state" {
+            if let Some(label) = widget.downcast_ref::<Label>() {
+                label.set_text(&media.state);
+            }
+        }
+        if widget.widget_name() == format!("control-focus-seek-position-{}", detail.input) {
+            if let Some(spin) = widget.downcast_ref::<SpinButton>() {
+                let focused = spin
+                    .root()
+                    .and_then(|r| r.focus())
+                    .is_some_and(|focus| focus == *spin || focus.is_ancestor(spin));
+                if focused {
+                    return;
+                }
+                let value = media
+                    .cursor_ms
+                    .unwrap_or(0)
+                    .clamp(0, media.duration_ms.unwrap_or(0).max(0))
+                    as f64
+                    / 1000.0;
+                let value = local
+                    .borrow_mut()
+                    .numeric_draft(&detail.input, "seek", value);
+                let draft = local
+                    .borrow()
+                    .numeric_text
+                    .get(&(detail.input.clone(), "seek".into()))
+                    .cloned();
+                local.borrow_mut().syncing = true;
+                if let Some(draft) = draft {
+                    spin.set_text(&draft);
+                } else {
+                    spin.set_value(value);
+                }
+                local.borrow_mut().syncing = false;
+            }
+        }
+    });
 }
 
 /// Sources-owned content, not the workspace publication clock or Live output
@@ -316,6 +323,177 @@ struct SourcesContent {
     usage: Vec<crate::domain::control::SourceItem>,
     warnings: Vec<String>,
     capabilities: Vec<String>,
+}
+
+impl SourcesContent {
+    fn same_structure(&self, previous: &Self) -> bool {
+        let mut current = self.clone();
+        // Value-only observations have live callbacks; no captured target changes.
+        if let (Some((items, _)), Some((old, _))) = (&mut current.sources, &previous.sources) {
+            for (item, old) in items.iter_mut().zip(old) {
+                item.enabled = old.enabled;
+                item.ancestor_enabled = old.ancestor_enabled;
+            }
+        }
+        if let (Some(detail), Some(old)) = (&mut current.detail, &previous.detail) {
+            if detail.text.is_some() && old.text.is_some() && !detail.text_from_file {
+                detail.text = old.text.clone();
+            }
+            if detail.audio.is_some() && old.audio.is_some() {
+                detail.audio = old.audio.clone();
+            }
+            for (filter, old) in detail.filters.iter_mut().zip(&old.filters) {
+                filter.enabled = old.enabled;
+            }
+            if let (Some(media), Some(old)) = (&mut detail.media, &old.media) {
+                media.state = old.state.clone();
+                media.cursor_ms = old.cursor_ms;
+            }
+        }
+        current == *previous
+    }
+}
+
+fn update_observed_controls(
+    root: &GtkBox,
+    content: &SourcesContent,
+    local: &Rc<RefCell<LocalState>>,
+) {
+    let mut checks = HashMap::new();
+    let mut hidden_parents = HashMap::new();
+    if let Some((items, _)) = &content.sources {
+        for item in items {
+            let key = format!("{}-{}-{}", item.owner, item.item_id, item.path.join("/"));
+            checks.insert(format!("control-focus-item-{key}"), item.enabled);
+            hidden_parents.insert(
+                format!("sources-hidden-parent-{key}"),
+                !item.ancestor_enabled,
+            );
+        }
+    }
+    if let Some(detail) = &content.detail {
+        for filter in &detail.filters {
+            checks.insert(
+                format!("control-focus-filter-{}-{}", detail.input, filter.name),
+                filter.enabled,
+            );
+        }
+        update_media_values(root, detail, local);
+        update_detail_values(root, detail, local);
+    }
+    local.borrow_mut().syncing = true;
+    visit(root.upcast_ref(), &mut |widget| {
+        if let Some(active) = checks.get(widget.widget_name().as_str()) {
+            if let Some(check) = widget.downcast_ref::<CheckButton>() {
+                check.set_active(*active);
+            }
+        }
+        if let Some(visible) = hidden_parents.get(widget.widget_name().as_str()) {
+            widget.set_visible(*visible);
+        }
+    });
+    local.borrow_mut().syncing = false;
+}
+
+fn observed_text(nav: &NavigationContext, input: &str) -> Option<String> {
+    nav.state
+        .borrow()
+        .workspace
+        .detail
+        .as_ref()
+        .filter(|detail| detail.input == input)
+        .and_then(|detail| detail.text.clone())
+}
+
+fn update_detail_values(root: &GtkBox, detail: &SourceDetail, local: &Rc<RefCell<LocalState>>) {
+    let text = detail
+        .text
+        .as_ref()
+        .filter(|_| !detail.text_from_file)
+        .map(|observed| local.borrow_mut().text_draft(&detail.input, observed));
+    let conflict = detail
+        .text
+        .as_ref()
+        .is_some_and(|observed| local.borrow().text_conflict(&detail.input, observed));
+    let tracks = detail
+        .audio
+        .as_ref()
+        .map(|audio| local.borrow_mut().tracks_draft(&detail.input, audio.tracks));
+    let mut numbers = HashMap::new();
+    if let Some(audio) = &detail.audio {
+        for (field, title, value) in [
+            (
+                "sync",
+                fl!(LANGUAGE_LOADER, "control-audio-sync"),
+                audio.sync_offset_ms as f64,
+            ),
+            (
+                "balance",
+                fl!(LANGUAGE_LOADER, "control-audio-balance"),
+                f64::from(audio.balance),
+            ),
+        ] {
+            let value = local
+                .borrow_mut()
+                .numeric_draft(&detail.input, field, value);
+            let draft = local
+                .borrow()
+                .numeric_text
+                .get(&(detail.input.clone(), field.into()))
+                .cloned();
+            numbers.insert(format!("control-focus-number-{title}"), (value, draft));
+        }
+    }
+    local.borrow_mut().syncing = true;
+    visit(root.upcast_ref(), &mut |widget| {
+        let name = widget.widget_name();
+        if name == format!("control-focus-text-{}", detail.input) {
+            if let (Some(view), Some(text)) =
+                (widget.downcast_ref::<gtk4::TextView>(), text.as_ref())
+            {
+                let buffer = view.buffer();
+                if buffer.text(&buffer.start_iter(), &buffer.end_iter(), true) != text.as_str() {
+                    let cursor = buffer.cursor_position();
+                    buffer.set_text(text);
+                    buffer.place_cursor(&buffer.iter_at_offset(cursor.min(buffer.char_count())));
+                }
+            }
+        }
+        if name == "sources-text-conflict" {
+            widget.set_visible(conflict);
+        }
+        if let (Some(spin), Some((value, draft))) = (
+            widget.downcast_ref::<SpinButton>(),
+            numbers.get(name.as_str()),
+        ) {
+            if let Some(draft) = draft {
+                spin.set_text(draft);
+            } else {
+                spin.set_value(*value);
+            }
+        }
+        if name == format!("control-focus-monitor-{}", detail.input) {
+            if let (Some(selector), Some(audio)) =
+                (widget.downcast_ref::<DropDown>(), detail.audio.as_ref())
+            {
+                selector.set_selected(match audio.monitor {
+                    AudioMonitor::Off => 0,
+                    AudioMonitor::MonitorOnly => 1,
+                    AudioMonitor::MonitorAndOutput => 2,
+                });
+            }
+        }
+        if let Some(tracks) = tracks {
+            for (index, active) in tracks.iter().enumerate() {
+                if name == format!("control-focus-track-{}-{index}", detail.input) {
+                    if let Some(check) = widget.downcast_ref::<CheckButton>() {
+                        check.set_active(*active);
+                    }
+                }
+            }
+        }
+    });
+    local.borrow_mut().syncing = false;
 }
 
 fn sources_content(nav: &NavigationContext) -> SourcesContent {
@@ -373,11 +551,7 @@ fn update_status(root: &GtkBox, nav: &NavigationContext, local: &Rc<RefCell<Loca
         (
             connected,
             workspace.loading,
-            connected
-                && !workspace.loading
-                && !workspace.pending
-                && fresh
-                && workspace.error.is_none(),
+            connected && workspace.can_control(),
             fresh,
             workspace.error.clone(),
             workspace.result.clone(),
@@ -407,7 +581,9 @@ fn update_status(root: &GtkBox, nav: &NavigationContext, local: &Rc<RefCell<Loca
                 "sources-status-error" => {
                     Some((error.is_some(), error.clone().unwrap_or_default()))
                 }
-                "sources-status-result" => Some((!result.is_empty(), result.clone())),
+                "sources-status-result" => {
+                    Some((error.is_none() && !result.is_empty(), result.clone()))
+                }
                 "sources-status-age" => Some((
                     observed.is_some(),
                     observed
@@ -429,12 +605,13 @@ fn update_status(root: &GtkBox, nav: &NavigationContext, local: &Rc<RefCell<Loca
             if let Some((visible, value)) = value {
                 if label.label() != value {
                     label.set_label(&value);
+                    label.set_tooltip_text(Some(&value));
                 }
                 label.set_visible(visible);
             }
         }
         if widget.widget_name() == "control-focus-refresh" {
-            widget.set_sensitive(connected && !loading);
+            widget.set_sensitive(connected && !loading && !nav.state.borrow().workspace.pending);
         }
         if widget.has_css_class("sources-mutation") {
             widget.set_sensitive(
@@ -442,7 +619,7 @@ fn update_status(root: &GtkBox, nav: &NavigationContext, local: &Rc<RefCell<Loca
             );
         }
         if widget.has_css_class("sources-inspect") {
-            widget.set_sensitive(connected && !loading);
+            widget.set_sensitive(connected && !nav.state.borrow().workspace.pending);
         }
         if let Some(split) = widget.downcast_ref::<adw::NavigationSplitView>() {
             if split.shows_content() != show_detail {
@@ -537,7 +714,14 @@ fn populate(root: &GtkBox, nav: &NavigationContext, local: &Rc<RefCell<LocalStat
         root.append(&page);
         return;
     }
-    // Stable status slots: hide empty observations instead of rebuilding editors.
+    // Routine read activity belongs in the existing heading. Adding/removing
+    // vertical status rows shifted the browser and editor on every command.
+    let activity = row();
+    activity.set_valign(gtk4::Align::Center);
+    heading.insert_child_after(&activity, Some(&title));
+    let message_line = row();
+    message_line.set_height_request(20);
+    page.append(&message_line);
     for (name, class) in [
         ("sources-status-loading", "dim-label"),
         ("sources-status-error", "error"),
@@ -549,7 +733,22 @@ fn populate(root: &GtkBox, nav: &NavigationContext, local: &Rc<RefCell<LocalStat
         label.set_widget_name(name);
         label.add_css_class(class);
         label.set_visible(false);
-        page.append(&label);
+        if matches!(
+            name,
+            "sources-status-loading" | "sources-status-age" | "sources-status-stale"
+        ) {
+            label.set_wrap(false);
+            label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+            label.set_max_width_chars(22);
+            activity.append(&label);
+        } else {
+            // Errors and operation results share one reserved line. Error text
+            // remains available in full through the tooltip.
+            label.set_wrap(false);
+            label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+            label.set_hexpand(true);
+            message_line.append(&label);
+        }
     }
     let source_browser = column(12);
     source_browser.add_css_class("sources-list");
@@ -580,8 +779,7 @@ fn populate(root: &GtkBox, nav: &NavigationContext, local: &Rc<RefCell<LocalStat
         return;
     };
     let fresh = observed.is_some_and(|time| time.elapsed().as_secs() <= 30) && !dirty;
-    let mutations_allowed =
-        !loading && !pending && fresh && nav.state.borrow().workspace.error.is_none();
+    let mutations_allowed = !pending && fresh && nav.state.borrow().workspace.error.is_none();
     let search = gtk4::SearchEntry::builder()
         .placeholder_text(fl!(LANGUAGE_LOADER, "control-source-search"))
         .build();
@@ -621,7 +819,11 @@ fn populate(root: &GtkBox, nav: &NavigationContext, local: &Rc<RefCell<LocalStat
         let nav_toggle = nav.clone();
         let owner = item.owner.clone();
         let item_id = item.item_id;
+        let toggle_local = local.clone();
         check.connect_toggled(move |check| {
+            if toggle_local.borrow().syncing {
+                return;
+            }
             workspace::act(
                 &nav_toggle,
                 ControlAction::SetItemEnabled {
@@ -668,9 +870,15 @@ fn populate(root: &GtkBox, nav: &NavigationContext, local: &Rc<RefCell<LocalStat
         let caption = text(&breadcrumb);
         caption.add_css_class("caption");
         item_row.append(&caption);
-        if !item.ancestor_enabled {
-            item_row.append(&text(&fl!(LANGUAGE_LOADER, "control-hidden-parent")));
-        }
+        let hidden = text(&fl!(LANGUAGE_LOADER, "control-hidden-parent"));
+        hidden.set_widget_name(&format!(
+            "sources-hidden-parent-{}-{}-{}",
+            item.owner,
+            item.item_id,
+            item.path.join("/")
+        ));
+        hidden.set_visible(!item.ancestor_enabled);
+        item_row.append(&hidden);
         let haystack = format!("{} {path} {}", item.input, item.owner).to_lowercase();
         item_row.set_visible(haystack.contains(&local.borrow().query.to_lowercase()));
         search_rows.push((haystack, item_row.clone()));
@@ -891,7 +1099,11 @@ fn build_source_detail(
             let input = detail.input.clone();
             let filter = filter.name.clone();
             check.set_widget_name(&format!("control-focus-filter-{}-{}", detail.input, filter));
+            let toggle_local = local.clone();
             check.connect_toggled(move |check| {
+                if toggle_local.borrow().syncing {
+                    return;
+                }
                 workspace::act(
                     &nav,
                     ControlAction::SetFilterEnabled {
@@ -920,6 +1132,7 @@ fn build_source_detail(
             let conflict = local.borrow().text_conflict(&input, original);
             let conflict_warning = text(&fl!(LANGUAGE_LOADER, "sources-text-conflict"));
             conflict_warning.add_css_class("warning");
+            conflict_warning.set_widget_name("sources-text-conflict");
             conflict_warning.set_visible(conflict);
             content.append(&conflict_warning);
             let buffer = gtk4::TextBuffer::new(None);
@@ -938,14 +1151,20 @@ fn build_source_detail(
             content.append(&view);
             let local_edit = local.clone();
             let input_edit = input.clone();
-            let original_edit = original.clone();
+            let nav_edit = nav.clone();
             buffer.connect_changed(move |buffer| {
+                if local_edit.borrow().syncing || !nav_edit.is_current() {
+                    return;
+                }
+                let Some(observed) = observed_text(&nav_edit, &input_edit) else {
+                    return;
+                };
                 let value = buffer
                     .text(&buffer.start_iter(), &buffer.end_iter(), true)
                     .to_string();
                 local_edit
                     .borrow_mut()
-                    .edit_text(&input_edit, &original_edit, value);
+                    .edit_text(&input_edit, &observed, value);
             });
             let actions = row();
             let save = Button::with_label(&fl!(LANGUAGE_LOADER, "control-text-save"));
@@ -955,7 +1174,6 @@ fn build_source_detail(
             save.add_css_class("sources-text-save");
             let buffer_save = buffer.clone();
             let local_save = local.clone();
-            let original_save = original.clone();
             let nav_save = nav.clone();
             save.connect_clicked(move |_| {
                 let expected = local_save
@@ -963,7 +1181,8 @@ fn build_source_detail(
                     .text_origins
                     .get(&input)
                     .cloned()
-                    .unwrap_or_else(|| original_save.clone());
+                    .or_else(|| observed_text(&nav_save, &input));
+                let Some(expected) = expected else { return };
                 workspace::save_text(
                     &nav_save,
                     input.clone(),
@@ -975,7 +1194,6 @@ fn build_source_detail(
             });
             let cancel = Button::with_label(&fl!(LANGUAGE_LOADER, "live-cancel-button-label"));
             cancel.set_widget_name(&format!("control-focus-cancel-{}", detail.input));
-            let original = original.clone();
             let local = local.clone();
             let input = detail.input.clone();
             let save_cancel = save.clone();
@@ -985,7 +1203,12 @@ fn build_source_detail(
                 if !nav_cancel.is_current() {
                     return;
                 }
-                buffer.set_text(&original);
+                let Some(observed) = observed_text(&nav_cancel, &input) else {
+                    return;
+                };
+                local.borrow_mut().syncing = true;
+                buffer.set_text(&observed);
+                local.borrow_mut().syncing = false;
                 conflict_warning.set_visible(false);
                 save_cancel
                     .set_sensitive(can_save && nav_cancel.state.borrow().workspace.can_control());
@@ -1005,7 +1228,9 @@ fn build_source_detail(
     }
     if let Some(media) = &detail.media {
         let content = column(6);
-        content.append(&text(&media.state));
+        let status = text(&media.state);
+        status.set_widget_name("sources-media-state");
+        content.append(&status);
         let buttons = gtk4::FlowBox::builder()
             .selection_mode(gtk4::SelectionMode::None)
             .max_children_per_line(3)
@@ -1115,7 +1340,11 @@ fn build_source_detail(
         mark_mutation(&selector, supported(caps, "SetInputAudioMonitorType"));
         let input = detail.input.clone();
         let nav_monitor = nav.clone();
+        let monitor_local = local.clone();
         selector.connect_selected_notify(move |selector| {
+            if monitor_local.borrow().syncing {
+                return;
+            }
             let monitor = match selector.selected() {
                 0 => AudioMonitor::Off,
                 1 => AudioMonitor::MonitorOnly,
@@ -1193,12 +1422,26 @@ fn build_source_detail(
                 check.set_widget_name(&format!("control-focus-track-{}-{index}", detail.input));
                 let track_local = local.clone();
                 let input = detail.input.clone();
+                let track_nav = nav.clone();
                 check.connect_toggled(move |check| {
+                    if track_local.borrow().syncing || !track_nav.is_current() {
+                        return;
+                    }
+                    let observed = track_nav
+                        .state
+                        .borrow()
+                        .workspace
+                        .detail
+                        .as_ref()
+                        .filter(|detail| detail.input == input)
+                        .and_then(|detail| detail.audio.as_ref())
+                        .map(|audio| audio.tracks);
+                    let Some(observed) = observed else { return };
                     track_local
                         .borrow_mut()
                         .track_drafts
                         .entry(input.clone())
-                        .or_insert(draft_tracks)[index] = check.is_active();
+                        .or_insert(observed)[index] = check.is_active();
                 });
                 tracks.append(&check);
                 check
@@ -1247,6 +1490,9 @@ fn bind_numeric_draft(
         let local = local.clone();
         let key = key.clone();
         move |spin| {
+            if local.borrow().syncing {
+                return;
+            }
             local
                 .borrow_mut()
                 .numeric_text
@@ -1255,6 +1501,9 @@ fn bind_numeric_draft(
     });
     let local = local.clone();
     spin.connect_value_changed(move |spin| {
+        if local.borrow().syncing {
+            return;
+        }
         local
             .borrow_mut()
             .numeric_drafts
@@ -1347,6 +1596,83 @@ fn expand(parent: &GtkBox, title: &str, content: &GtkBox, _expanded: bool) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[ignore = "requires a disposable GTK display; synthetic source observations"]
+    fn native_visibility_and_filter_readback_retain_widgets_without_echoing_commands() {
+        crate::ui::test_support::native_test(
+            "ui::widgets::operating_panel::tests::native_visibility_and_filter_readback_retain_widgets_without_echoing_commands",
+            || {
+                use super::*;
+                use crate::domain::control::{ControlSnapshot, SourceItem, SourceFilter};
+                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+                {
+                    let mut state = nav.state.borrow_mut();
+                    state.obs_status = ObsStatus::Connected { obs_version: "fixture".into() };
+                    state.scene_collections.current = Some("Fixture".into());
+                    state.available_requests = vec!["SetSceneItemEnabled".into(), "SetSourceFilterEnabled".into()];
+                    state.workspace.observed_at = Some(std::time::Instant::now());
+                    state.workspace.snapshot = Some(ControlSnapshot {
+                        scene: Some("Main".into()),
+                        items: vec![SourceItem {
+                            owner: "Main".into(), item_id: 1, input: "Camera".into(), input_uuid: String::new(),
+                            kind: None, path: vec!["Main".into()], enabled: true, ancestor_enabled: true,
+                            is_group: false, is_scene: false,
+                        }], ..Default::default()
+                    });
+                    state.workspace.selected_input = Some("Camera".into());
+                    state.workspace.detail = Some(SourceDetail {
+                        input: "Camera".into(), filters: vec![SourceFilter { name: "Crop".into(), kind: "crop_filter".into(), enabled: true }],
+                        text: Some("Original".into()),
+                        audio: Some(crate::domain::control::AudioSettings { balance: 0.5, sync_offset_ms: 0, monitor: AudioMonitor::Off, tracks: [true; 6] }),
+                        ..Default::default()
+                    });
+                }
+                let (page, refresh) = build(nav.clone());
+                let mut checks = Vec::new();
+                visit(&page, &mut |widget| {
+                    if widget.widget_name().starts_with("control-focus-item-") || widget.widget_name().starts_with("control-focus-filter-") {
+                        if let Some(check) = widget.downcast_ref::<CheckButton>() { checks.push(check.clone()); }
+                    }
+                });
+                assert_eq!(checks.len(), 2);
+                let first = page.first_child();
+                let sequence = nav.state.borrow().workspace.sequence;
+                for enabled in [false, true, false] {
+                    {
+                        let mut state = nav.state.borrow_mut();
+                        state.workspace.snapshot.as_mut().unwrap().items[0].enabled = enabled;
+                        state.workspace.snapshot.as_mut().unwrap().items[0].ancestor_enabled = enabled;
+                        let detail = state.workspace.detail.as_mut().unwrap();
+                        detail.filters[0].enabled = enabled;
+                        detail.text = Some(if enabled { "Enabled" } else { "Disabled" }.into());
+                        let audio = detail.audio.as_mut().unwrap();
+                        audio.monitor = if enabled { AudioMonitor::MonitorOnly } else { AudioMonitor::Off };
+                        audio.sync_offset_ms = if enabled { 150 } else { 250 };
+                        audio.balance = if enabled { 0.25 } else { 0.75 };
+                        audio.tracks = [enabled; 6];
+                    }
+                    refresh();
+                    assert_eq!(page.first_child(), first);
+                    assert!(checks.iter().all(|check| check.parent().is_some() && check.is_active() == enabled));
+                    visit(&page, &mut |widget| {
+                        if let Some(view) = widget.downcast_ref::<gtk4::TextView>() {
+                            let buffer = view.buffer();
+                            assert_eq!(buffer.text(&buffer.start_iter(), &buffer.end_iter(), true), if enabled { "Enabled" } else { "Disabled" });
+                        }
+                        if widget.widget_name() == "control-focus-monitor-Camera" {
+                            assert_eq!(widget.downcast_ref::<DropDown>().unwrap().selected(), u32::from(enabled));
+                        }
+                        if widget.widget_name().starts_with("control-focus-track-Camera-") {
+                            assert_eq!(widget.downcast_ref::<CheckButton>().unwrap().is_active(), enabled);
+                        }
+                    });
+                    assert_eq!(nav.state.borrow().workspace.sequence, sequence, "readback emitted a command");
+                    assert!(nav.state.borrow().workspace.activity.entries.is_empty());
+                }
+            },
+        );
+    }
+
     #[test]
     fn sources_content_ignores_publication_metadata_but_tracks_control_content() {
         use super::*;
@@ -1649,6 +1975,7 @@ mod tests {
         pump();
         assert!(search.grab_focus());
         let search_focus = gtk4::prelude::RootExt::focus(&window).unwrap();
+        let browser_bounds = browser.compute_bounds(&window).unwrap();
         for stage in 0..4 {
             {
                 let mut state = nav.state.borrow_mut();
@@ -1673,6 +2000,11 @@ mod tests {
             );
             assert_eq!(named(&page, "sources-list-scroll"), browser);
             assert_eq!(
+                browser.compute_bounds(&window).unwrap(),
+                browser_bounds,
+                "status readback shifted the Sources browser"
+            );
+            assert_eq!(
                 gtk4::prelude::RootExt::focus(&window).unwrap(),
                 search_focus
             );
@@ -1692,7 +2024,7 @@ mod tests {
             assert_eq!(sync.text(), "-");
             assert_eq!(sync.value(), 125.0);
             assert!(!track.is_active());
-            assert_eq!(save.is_sensitive(), stage != 1 && stage != 2);
+            assert_eq!(save.is_sensitive(), stage != 1);
             assert_eq!(
                 named(&page, "control-focus-refresh").is_sensitive(),
                 stage != 1 && stage != 2
@@ -1719,7 +2051,10 @@ mod tests {
                 gtk4::prelude::RootExt::focus(&window).unwrap(),
                 editor_focus
             );
-            assert_eq!(save.is_sensitive(), !loading);
+            assert!(
+                save.is_sensitive(),
+                "background reads must preserve valid editors"
+            );
         }
         {
             let mut state = nav.state.borrow_mut();
@@ -1760,10 +2095,10 @@ mod tests {
         }
         refresh();
         let replaced = named(&page, "control-focus-text-Shared caption");
-        assert_ne!(
+        assert_eq!(
             replaced,
             editor.clone().upcast::<gtk4::Widget>(),
-            "changed text must rebind captured origins and Cancel"
+            "text readback must preserve the editor and use current origins for Cancel"
         );
         named(&page, "control-focus-cancel-Shared caption")
             .downcast::<Button>()
@@ -1873,9 +2208,16 @@ mod tests {
         refresh();
         pump();
         let resumed = named(&page, "control-focus-monitor-Media");
-        assert_ne!(
+        assert_eq!(
             resumed, selector,
-            "closing a popup must resume readback rendering"
+            "media readback must retain the native selector"
+        );
+        assert_eq!(
+            named(&page, "control-focus-seek-position-Media")
+                .downcast::<SpinButton>()
+                .unwrap()
+                .value(),
+            1.5
         );
         let mut popup = None;
         visit(&resumed, &mut |widget| {

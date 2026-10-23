@@ -46,17 +46,32 @@ struct OutputConfirmationDialog {
 struct AudioPresentation {
     epoch: u64,
     scope: crate::domain::workflow::ScopeBinding,
-    scene: Option<String>,
     language: crate::domain::appearance::Language,
     inputs: Vec<(String, String, String)>,
 }
 
+#[derive(PartialEq, Eq)]
+struct ScenePresentation {
+    epoch: u64,
+    scope: crate::domain::workflow::ScopeBinding,
+    language: crate::domain::appearance::Language,
+    images: bool,
+    has_scenes: bool,
+    hotkeys: SceneHotkeyConfig,
+    scenes: Vec<SceneCardPresentation>,
+}
+
+#[derive(PartialEq, Eq)]
+struct SceneCardPresentation {
+    id: String,
+    role: Option<crate::domain::role::SceneRole>,
+    icon: Option<String>,
+    accent: Option<String>,
+}
+
 impl AudioPresentation {
     fn same_owner(&self, other: &Self) -> bool {
-        self.epoch == other.epoch
-            && self.scope == other.scope
-            && self.scene == other.scene
-            && self.language == other.language
+        self.epoch == other.epoch && self.scope == other.scope && self.language == other.language
     }
 }
 
@@ -68,9 +83,9 @@ pub(crate) struct LivePageHandle {
     pub(crate) hotkey_hint: Label,
     pub(crate) hotkey_notice_generation: crate::ui::hotkeys::NoticeGeneration,
     pub(crate) audio_box: FlowBox,
-    scene_signature: std::cell::RefCell<String>,
+    scene_signature: std::cell::RefCell<Option<ScenePresentation>>,
     audio_signature: std::cell::RefCell<Option<AudioPresentation>>,
-    audio_refresh_notice: Label,
+    audio_refresh_notice: gtk4::Spinner,
     pub(crate) scene_cards: std::cell::RefCell<Vec<scene_card::SceneCardHandle>>,
     pub(crate) scene_scroll: ScrolledWindow,
     pub(crate) previews: std::rc::Rc<std::cell::RefCell<crate::ui::previews::PreviewState>>,
@@ -160,15 +175,18 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
         .xalign(0.0)
         .build();
     label.add_css_class("heading");
-    header.append(&label);
-    let audio_refresh_notice = Label::builder()
-        .xalign(0.0)
-        .wrap(true)
-        .max_width_chars(14)
-        .visible(false)
+    let audio_heading = GtkBox::new(Orientation::Horizontal, 4);
+    audio_heading.append(&label);
+    header.append(&audio_heading);
+    // Reserve a small activity slot. Adding a loading label changed the strip's
+    // minimum height and resized every scene preview during an ordinary read.
+    let audio_refresh_notice = gtk4::Spinner::builder()
+        .valign(Align::Center)
+        .width_request(16)
+        .height_request(16)
+        .opacity(0.0)
         .build();
-    audio_refresh_notice.add_css_class("dim-label");
-    header.append(&audio_refresh_notice);
+    audio_heading.append(&audio_refresh_notice);
     let expand = gtk4::ToggleButton::builder()
         .icon_name("pan-down-symbolic")
         .tooltip_text(fl!(LANGUAGE_LOADER, "live-audio-expand"))
@@ -227,7 +245,7 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
         disconnected_detail,
         audio_cards: std::cell::RefCell::new(Vec::new()),
         scene_cards: std::cell::RefCell::new(Vec::new()),
-        scene_signature: std::cell::RefCell::new(String::new()),
+        scene_signature: std::cell::RefCell::new(None),
         audio_signature: std::cell::RefCell::new(None),
         audio_refresh_notice,
         previews: std::rc::Rc::new(std::cell::RefCell::new(Default::default())),
@@ -295,6 +313,25 @@ fn requires_disconnect_confirmation(
         || (record.active && config.confirm_stop_recording)
 }
 
+fn output_running(status: &OutputStatus) -> bool {
+    status.active || status.state.is_transitioning()
+}
+
+/// Whether disconnecting would stop a running stream or recording.
+pub(crate) fn disconnect_stops_outputs(stream: &OutputStatus, record: &OutputStatus) -> bool {
+    output_running(stream) || output_running(record)
+}
+
+/// Names only the outputs a disconnect would actually stop.
+pub(crate) fn disconnect_label(stream: &OutputStatus, record: &OutputStatus) -> String {
+    match (output_running(stream), output_running(record)) {
+        (true, true) => fl!(LANGUAGE_LOADER, "window-stop-disconnect-label"),
+        (true, false) => fl!(LANGUAGE_LOADER, "window-stop-stream-disconnect-label"),
+        (false, true) => fl!(LANGUAGE_LOADER, "window-stop-record-disconnect-label"),
+        (false, false) => fl!(LANGUAGE_LOADER, "window-connect-btn-disconnect"),
+    }
+}
+
 pub(crate) fn handle_disconnect(button: &Button, nav: &NavigationContext) {
     let (stream, record, confirm) = {
         let state = nav.state.borrow();
@@ -330,10 +367,7 @@ pub(crate) fn handle_disconnect(button: &Button, nav: &NavigationContext) {
         Some(&body),
     );
     dialog.add_response("cancel", &fl!(LANGUAGE_LOADER, "live-cancel-button-label"));
-    dialog.add_response(
-        "confirm",
-        &fl!(LANGUAGE_LOADER, "window-stop-disconnect-label"),
-    );
+    dialog.add_response("confirm", &disconnect_label(&stream, &record));
     dialog.set_default_response(Some("cancel"));
     dialog.set_close_response("cancel");
     dialog.set_response_appearance("confirm", adw::ResponseAppearance::Destructive);
@@ -558,21 +592,39 @@ pub(crate) fn rebuild_scene_cards(
         )
     };
     let scene_order = live_scene_order(inventory, &registry);
-    let binding = {
+    let signature = {
         let state = nav.state.borrow();
-        (state.workspace.epoch, state.workflow_scope())
+        ScenePresentation {
+            epoch: state.workspace.epoch,
+            scope: state.workflow_scope(),
+            language: state.config.language,
+            images,
+            has_scenes: !inventory.scenes.is_empty(),
+            hotkeys,
+            scenes: scene_order
+                .iter()
+                .map(|id| {
+                    let entry = registry.scenes.get(id);
+                    SceneCardPresentation {
+                        id: id.clone(),
+                        role: entry.and_then(|e| e.role),
+                        icon: entry.and_then(|e| e.icon.clone()),
+                        accent: entry.and_then(|e| e.accent_color.clone()),
+                    }
+                })
+                .collect(),
+        }
     };
-    let signature = format!("{scene_order:?}{registry:?}{hotkeys:?}{images}{binding:?}");
     handle
         .hotkey_hint
         .set_tooltip_text(crate::ui::hotkeys::scene_hint(nav, &hotkeys).as_deref());
-    if *handle.scene_signature.borrow() == signature {
+    if handle.scene_signature.borrow().as_ref() == Some(&signature) {
         for card in handle.scene_cards.borrow().iter() {
             card.update_state(nav, inventory.current_id.as_deref() == Some(&card.scene_id));
         }
         return;
     }
-    *handle.scene_signature.borrow_mut() = signature;
+    *handle.scene_signature.borrow_mut() = Some(signature);
     handle.scene_cards.borrow_mut().clear();
     // Remove all existing children
     // FlowBox requires removing via the FlowBoxChild wrapper
@@ -667,13 +719,12 @@ pub(crate) fn rebuild_audio_cards(
     inputs: &[crate::domain::audio::AudioInput],
     nav: &NavigationContext,
 ) {
-    let (presentation, notice) = {
+    let (presentation, notice, loading) = {
         let state = nav.state.borrow();
         (
             AudioPresentation {
                 epoch: state.workspace.epoch,
                 scope: state.workflow_scope(),
-                scene: state.scene_inventory.current_id.clone(),
                 language: state.config.language,
                 inputs: inputs
                     .iter()
@@ -687,6 +738,10 @@ pub(crate) fn rebuild_audio_cards(
                     .collect(),
             },
             state.active_audio_notice(),
+            matches!(
+                state.active_audio_status,
+                crate::controller::state::ActiveAudioStatus::Loading
+            ),
         )
     };
     if let Some(notice) = notice.as_ref() {
@@ -695,26 +750,31 @@ pub(crate) fn rebuild_audio_cards(
             .borrow()
             .as_ref()
             .is_some_and(|previous| previous.same_owner(&presentation));
-        if same_owner && !handle.audio_cards.borrow().is_empty() {
+        if same_owner && loading && !handle.audio_cards.borrow().is_empty() {
             for card in handle.audio_cards.borrow().iter() {
-                card.root.set_sensitive(false);
+                // An input is collection-scoped, not scene-scoped. The existing
+                // controls still address that exact input while membership is read.
+                card.set_available(loading);
             }
-            handle.audio_refresh_notice.set_text(notice);
-            handle.audio_refresh_notice.set_visible(true);
+            handle.audio_refresh_notice.set_tooltip_text(Some(notice));
+            handle.audio_refresh_notice.set_spinning(loading);
+            handle.audio_refresh_notice.set_opacity(1.0);
             return;
         }
     } else if !inputs.is_empty() && handle.audio_signature.borrow().as_ref() == Some(&presentation)
     {
-        handle.audio_refresh_notice.set_visible(false);
+        handle.audio_refresh_notice.set_spinning(false);
+        handle.audio_refresh_notice.set_opacity(0.0);
         for (card, input) in handle.audio_cards.borrow().iter().zip(inputs) {
-            card.root.set_sensitive(true);
+            card.set_available(true);
             card.update_mute(input.muted);
             card.update_volume(input.volume_mul, input.volume_db);
             audio_card::set_compact_expanded(card.root.upcast_ref(), handle.audio_expanded.get());
         }
         return;
     }
-    handle.audio_refresh_notice.set_visible(false);
+    handle.audio_refresh_notice.set_spinning(false);
+    handle.audio_refresh_notice.set_opacity(0.0);
     if notice.is_some() || inputs.is_empty() {
         let text = notice.unwrap_or_else(|| fl!(LANGUAGE_LOADER, "live-audio-empty-hint"));
         // A status-only update does not need a new placeholder either.
@@ -735,10 +795,57 @@ pub(crate) fn rebuild_audio_cards(
         insert_compact_flow_child(&handle.audio_box, &hint);
         return;
     }
-    clear_audio_cards(handle);
-    for input in inputs {
-        let card = audio_card::build_compact(input, nav.clone(), handle.audio_expanded.get());
-        insert_compact_flow_child(&handle.audio_box, &card.root);
+    let previous = handle.audio_signature.borrow_mut().take();
+    let same_owner = previous
+        .as_ref()
+        .is_some_and(|old| old.same_owner(&presentation));
+    let mut retained = std::mem::take(&mut *handle.audio_cards.borrow_mut());
+    retained.retain(|card| {
+        let unchanged = same_owner
+            && presentation.inputs.iter().any(|input| {
+                input.0 == card.input_id && previous.as_ref().unwrap().inputs.contains(input)
+            });
+        if !unchanged {
+            if let Some(wrapper) = card.root.parent() {
+                handle.audio_box.remove(&wrapper);
+            }
+        }
+        unchanged
+    });
+    // Clear a status placeholder, never a still-valid input card.
+    if retained.is_empty() {
+        while let Some(child) = handle.audio_box.first_child() {
+            handle.audio_box.remove(&child);
+        }
+    }
+    for (index, input) in inputs.iter().enumerate() {
+        let card = retained
+            .iter()
+            .position(|card| card.input_id == input.id)
+            .map(|index| retained.remove(index))
+            .unwrap_or_else(|| {
+                audio_card::build_compact(input, nav.clone(), handle.audio_expanded.get())
+            });
+        if let Some(wrapper) = card.root.parent() {
+            if handle
+                .audio_box
+                .child_at_index(index as i32)
+                .as_ref()
+                .map(|child| child.upcast_ref::<gtk4::Widget>())
+                != Some(&wrapper)
+            {
+                handle.audio_box.remove(&wrapper);
+                handle.audio_box.insert(&wrapper, index as i32);
+            }
+        } else {
+            handle.audio_box.insert(&card.root, index as i32);
+            if let Some(wrapper) = card.root.parent() {
+                wrapper.set_focusable(false);
+            }
+        }
+        card.set_available(true);
+        card.update_mute(input.muted);
+        card.update_volume(input.volume_mul, input.volume_db);
         handle.audio_cards.borrow_mut().push(card);
     }
     *handle.audio_signature.borrow_mut() = Some(presentation);
@@ -776,22 +883,30 @@ mod tests {
             assert_eq!(live.audio_cards.borrow()[0].root, root, "identical audio readback replaced its controls");
             nav.state.borrow_mut().invalidate_active_audio();
             rebuild_audio_cards(&live, &[], &nav);
-            assert_eq!(live.audio_cards.borrow()[0].root, root, "same-scene loading should disable, not replace, controls");
-            assert!(!root.is_sensitive());
+            assert_eq!(live.audio_cards.borrow()[0].root, root, "same-scene loading replaced controls");
+            assert!(root.is_sensitive());
             nav.state.borrow_mut().apply_active_audio(Some("Main".into()), Ok(vec![input.clone()]));
             rebuild_audio_cards(&live, std::slice::from_ref(&input), &nav);
             assert_eq!(live.audio_cards.borrow()[0].root, root);
             assert!(root.is_sensitive());
             nav.state.borrow_mut().set_current_program("Other".into());
             rebuild_audio_cards(&live, &[], &nav);
-            assert!(live.audio_cards.borrow().is_empty(), "a different Program must not retain stale controls");
+            assert_eq!(live.audio_cards.borrow()[0].root, root, "Program changed the layout before membership arrived");
+            let other = crate::domain::audio::AudioInput::new("Other input".into(), false, 1.0, 0.0);
+            let inputs = vec![input.clone(), other];
+            nav.state.borrow_mut().apply_active_audio(Some("Other".into()), Ok(inputs.clone()));
+            rebuild_audio_cards(&live, &inputs, &nav);
+            assert_eq!(live.audio_cards.borrow()[0].root, root, "adding an input replaced an unrelated fader");
+            nav.state.borrow_mut().workspace.invalidate();
+            rebuild_audio_cards(&live, &[], &nav);
+            assert!(live.audio_cards.borrow().is_empty(), "collection/session changes must retire old controls");
         });
     }
 
     #[test]
     #[ignore = "requires a native GTK display"]
-    fn native_active_audio_readiness_never_presents_previous_program_controls() {
-        crate::ui::test_support::native_test("ui::pages::live::tests::native_active_audio_readiness_never_presents_previous_program_controls", || {
+    fn native_active_audio_readiness_retains_loading_but_retires_failed_controls() {
+        crate::ui::test_support::native_test("ui::pages::live::tests::native_active_audio_readiness_retains_loading_but_retires_failed_controls", || {
             let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
             {
                 let mut state = nav.state.borrow_mut();
@@ -804,9 +919,9 @@ mod tests {
             assert_eq!(live.audio_cards.borrow().len(), 1);
             nav.state.borrow_mut().set_current_program("B".into());
             rebuild_audio_cards(&live, &[], &nav);
-            assert!(live.audio_cards.borrow().is_empty());
+            assert_eq!(live.audio_cards.borrow().len(), 1);
+            assert!(live.audio_refresh_notice.is_spinning());
             let rendered_hint = || live.audio_box.first_child().unwrap().first_child().unwrap().downcast::<Label>().unwrap().text().to_string();
-            assert_eq!(rendered_hint(), nav.state.borrow().active_audio_notice().unwrap());
             nav.state.borrow_mut().apply_active_audio(Some("B".into()), Err("fixture observation unavailable".into()));
             rebuild_audio_cards(&live, &[], &nav);
             assert!(live.audio_cards.borrow().is_empty());
@@ -842,8 +957,10 @@ mod tests {
                     let mut state = nav.state.borrow_mut();
                     state.workspace.snapshot.as_mut().unwrap().studio.enabled = Some(studio);
                     state.workspace.pending = false;
+                    state.workspace.active_action = None;
                     state.workspace.loading = false;
                     state.workspace.observed_at = Some(std::time::Instant::now());
+                    state.workspace.observe_global_controls();
                 }
                 rebuild_scene_cards(&live, &inventory, &nav);
                 assert_eq!(live.scene_cards.borrow()[0].root, root);

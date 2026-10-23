@@ -257,6 +257,10 @@ pub enum AppEvent {
         action: bool,
     },
     WorkspaceInvalidated,
+    /// Values need readback; the last observed Studio mode remains valid.
+    WorkspaceValuesChanged,
+    StudioModeChanged(bool),
+    VirtualCameraChanged(Option<bool>),
     WorkspaceScopeChanging,
     WorkspaceAudioFailed(String),
     ReplaySaved(String),

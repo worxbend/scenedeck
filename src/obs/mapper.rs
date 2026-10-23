@@ -178,8 +178,8 @@ pub(super) fn map_event(event: Event) -> ObsEvent {
         | Event::InputNameChanged { .. } => ObsEvent::InputsChanged,
         Event::SceneItemCreated { .. }
         | Event::SceneItemRemoved { .. }
-        | Event::SceneItemListReindexed { .. }
-        | Event::SceneItemEnableStateChanged { .. } => ObsEvent::SceneItemsChanged,
+        | Event::SceneItemListReindexed { .. } => ObsEvent::SceneItemsChanged,
+        Event::SceneItemEnableStateChanged { .. } => ObsEvent::SceneItemVisibilityChanged,
         Event::CurrentProfileChanged { name } => ObsEvent::CurrentProfileChanged(name),
         Event::ProfileListChanged { profiles } => ObsEvent::ProfileListChanged(profiles),
         Event::CurrentSceneCollectionChanged { name } => {
@@ -193,13 +193,18 @@ pub(super) fn map_event(event: Event) -> ObsEvent {
             ObsEvent::ReplaySaved(path.to_string_lossy().into_owned())
         }
         Event::CurrentSceneCollectionChanging { .. } => ObsEvent::CollectionChanging,
+        Event::StudioModeStateChanged { enabled } => ObsEvent::StudioModeChanged(enabled),
+        Event::VirtualcamStateChanged { active, state } => {
+            let status = map_output_status(active, state, None);
+            ObsEvent::VirtualCameraChanged((!status.state.is_transitioning()).then_some(active))
+        }
+        // Program/Preview events already publish the resulting scene. Ended is
+        // the transition cut point, not a mode or topology change.
+        Event::SceneTransitionEnded { .. } => ObsEvent::Ignored,
         Event::ReplayBufferStateChanged { .. }
-        | Event::VirtualcamStateChanged { .. }
-        | Event::StudioModeStateChanged { .. }
         | Event::CurrentPreviewSceneChanged { .. }
         | Event::CurrentSceneTransitionChanged { .. }
         | Event::CurrentSceneTransitionDurationChanged { .. }
-        | Event::SceneTransitionEnded { .. }
         | Event::SourceFilterCreated { .. }
         | Event::SourceFilterRemoved { .. }
         | Event::SourceFilterEnableStateChanged { .. }
@@ -220,6 +225,46 @@ pub(super) fn map_event(event: Event) -> ObsEvent {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn value_events_do_not_invalidate_topology_or_scene_mode() {
+        use crate::obs::event::ObsEvent;
+        use serde_json::json;
+        for (name, mut data, expected) in [
+            (
+                "SceneTransitionEnded",
+                json!({"transitionName":"Fade"}),
+                ObsEvent::Ignored,
+            ),
+            (
+                "SceneItemEnableStateChanged",
+                json!({"sceneName":"Main", "sceneItemId":1, "sceneItemEnabled":false}),
+                ObsEvent::SceneItemVisibilityChanged,
+            ),
+            (
+                "CurrentPreviewSceneChanged",
+                json!({"sceneName":"Preview"}),
+                ObsEvent::ControlsChanged,
+            ),
+            (
+                "InputAudioBalanceChanged",
+                json!({"inputName":"Mic", "inputAudioBalance":0.5}),
+                ObsEvent::ControlsChanged,
+            ),
+            (
+                "StudioModeStateChanged",
+                json!({"studioModeEnabled":true}),
+                ObsEvent::StudioModeChanged(true),
+            ),
+        ] {
+            for field in ["sceneUuid", "transitionUuid", "inputUuid"] {
+                data[field] = json!("00000000-0000-0000-0000-000000000001");
+            }
+            let event =
+                serde_json::from_value(json!({"eventType":name, "eventData":data})).unwrap();
+            assert_eq!(super::map_event(event), expected, "{name}");
+        }
+    }
+
     #[test]
     fn paused_record_event_keeps_recording_active_for_resume_and_stop() {
         let event = super::map_event(obws::events::Event::RecordStateChanged {

@@ -1,5 +1,22 @@
 //! Native OBS operating controls. These values contain no protocol or GTK types.
 
+/// Controls whose state is independent of the currently inspected scene/source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GlobalToggle {
+    StudioMode,
+    VirtualCamera,
+}
+
+impl ControlAction {
+    pub fn global_toggle(&self) -> Option<GlobalToggle> {
+        match self {
+            Self::SetStudioMode(_) => Some(GlobalToggle::StudioMode),
+            Self::SetVirtualCamera(_) => Some(GlobalToggle::VirtualCamera),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ControlSnapshot {
     pub scene: Option<String>,

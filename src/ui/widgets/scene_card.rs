@@ -57,6 +57,7 @@ pub(crate) struct SceneCardHandle {
     title: Label,
     role: SceneRole,
     shortcut: Option<SceneShortcut>,
+    pending: gtk4::Spinner,
 }
 
 impl SceneCardHandle {
@@ -80,6 +81,11 @@ impl SceneCardHandle {
         let state = nav.state.borrow();
         let (studio, preview) =
             studio_card_state(state.workspace.snapshot.as_ref(), &self.scene_id);
+        let pending = state.workspace.pending_scene.as_deref() == Some(&self.scene_id);
+        self.pending.set_spinning(pending);
+        self.pending.set_opacity(if pending { 1.0 } else { 0.0 });
+        self.root
+            .update_state(&[gtk4::accessible::State::Busy(pending)]);
         self.root
             .set_sensitive(state.workspace.scene_action(&self.scene_id).is_some());
         let hint = scene_action_hint(studio);
@@ -181,6 +187,10 @@ pub(crate) fn build(model: SceneCardModel<'_>, nav: NavigationContext) -> SceneC
         .build();
     content.add_css_class("scene-card-content");
     let header = GtkBox::new(Orientation::Horizontal, 6);
+    let pending = gtk4::Spinner::new();
+    pending.set_size_request(16, 16);
+    pending.set_opacity(0.0);
+    header.append(&pending);
     if let Some(shortcut) = shortcut.as_ref() {
         let badge = Label::new(Some(&shortcut.badge));
         badge.add_css_class("scene-card-hotkey");
@@ -244,6 +254,7 @@ pub(crate) fn build(model: SceneCardModel<'_>, nav: NavigationContext) -> SceneC
         title,
         role: scene_role,
         shortcut,
+        pending,
     }
 }
 

@@ -782,6 +782,8 @@ window-help-tooltip = Guía de ayuda e introducción
 
 # OBS controls and accessible alternatives
 window-stop-disconnect-label = Detener emisión/grabación y desconectar
+window-stop-stream-disconnect-label = Detener emisión y desconectar
+window-stop-record-disconnect-label = Detener grabación y desconectar
 disconnect-confirm-heading = ¿Detener la emisión y la grabación antes de desconectar?
 disconnect-confirm-body = Emisión: { $stream }. Grabación: { $recording }. Las emisiones y grabaciones activas se detendrán antes de que SceneDeck se desconecte. Esta acción no detiene el búfer de repetición ni la cámara virtual.
 live-scenes-obs-empty = OBS no tiene escenas en esta colección. Crea una escena en OBS y actualiza SceneDeck.

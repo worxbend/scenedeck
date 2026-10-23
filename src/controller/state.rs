@@ -362,6 +362,14 @@ pub struct WorkspaceState {
     pub revision: u64,
     pub loading: bool,
     pub pending: bool,
+    /// Scene activation is independent of Sources/output readback. The
+    /// controller validates the observed Studio mode again before dispatch.
+    pub scene_control_observation: Option<(bool, Instant)>,
+    pub pending_scene: Option<String>,
+    /// Keep target-specific busy state through acknowledgement and readback.
+    pub active_action: Option<crate::domain::control::ControlAction>,
+    pub queued_toggles: std::collections::VecDeque<crate::domain::control::ControlAction>,
+    pub virtual_camera_observation: Option<(Option<bool>, Instant)>,
     pub error: Option<String>,
     pub selected_scene: Option<String>,
     pub selected_input: Option<String>,
@@ -381,6 +389,64 @@ pub struct WorkspaceState {
 }
 
 impl WorkspaceState {
+    pub fn toggle_value(&self, toggle: crate::domain::control::GlobalToggle) -> Option<bool> {
+        use crate::domain::control::GlobalToggle;
+        let observed = match toggle {
+            GlobalToggle::StudioMode => self
+                .scene_control_observation
+                .map(|(value, at)| (Some(value), at)),
+            GlobalToggle::VirtualCamera => self.virtual_camera_observation,
+        };
+        if let Some((value, at)) = observed {
+            return (at.elapsed().as_secs() <= 30).then_some(value).flatten();
+        }
+        // Initial snapshots also support callers before the first GTK refresh.
+        if !self.can_control() {
+            return None;
+        }
+        match toggle {
+            GlobalToggle::StudioMode => self.snapshot.as_ref()?.studio.enabled,
+            GlobalToggle::VirtualCamera => self.snapshot.as_ref()?.virtual_camera_active,
+        }
+    }
+
+    pub fn toggle_pending(&self, toggle: crate::domain::control::GlobalToggle) -> bool {
+        self.toggle_target(toggle).is_some()
+    }
+
+    pub fn toggle_target(&self, toggle: crate::domain::control::GlobalToggle) -> Option<bool> {
+        self.active_action
+            .iter()
+            .chain(self.queued_toggles.iter())
+            .find(|action| action.global_toggle() == Some(toggle))
+            .and_then(|action| match action {
+                crate::domain::control::ControlAction::SetStudioMode(value)
+                | crate::domain::control::ControlAction::SetVirtualCamera(value) => Some(*value),
+                _ => None,
+            })
+    }
+
+    pub fn observe_global_controls(&mut self) {
+        let Some(at) = self.observed_at else {
+            return;
+        };
+        if self
+            .scene_control_observation
+            .is_none_or(|(_, previous)| previous <= at)
+        {
+            self.observe_scene_controls();
+        }
+        if self
+            .virtual_camera_observation
+            .is_none_or(|(_, previous)| previous <= at)
+        {
+            self.virtual_camera_observation = self
+                .snapshot
+                .as_ref()
+                .map(|s| (s.virtual_camera_active, at));
+        }
+    }
+
     pub fn select_input(&mut self, input: Option<String>) {
         // Explicit source inspection remains attached to its scene when Program changes.
         if input.is_some() && self.selected_scene.is_none() {
@@ -396,8 +462,9 @@ impl WorkspaceState {
     }
 
     pub fn can_control(&self) -> bool {
-        !self.loading
-            && !self.pending
+        // A background read does not invalidate a recent observation. A mutation
+        // may supersede that read; epoch/sequence fencing rejects its late reply.
+        !self.pending
             && !self.dirty
             && self.error.is_none()
             && self
@@ -405,17 +472,43 @@ impl WorkspaceState {
                 .is_some_and(|time| time.elapsed().as_secs() <= 30)
     }
     pub fn scene_action(&self, scene: &str) -> Option<crate::domain::control::ControlAction> {
-        if !self.can_control() {
-            return None;
-        }
+        let studio_enabled = if let Some((enabled, observed_at)) = self.scene_control_observation {
+            if observed_at.elapsed().as_secs() > 30
+                || self.error.is_some()
+                || (self.pending && self.pending_scene.is_none())
+            {
+                return None;
+            }
+            enabled
+        } else {
+            if !self.can_control() {
+                return None;
+            }
+            self.snapshot.as_ref()?.studio.enabled?
+        };
         Some(crate::domain::control::ControlAction::ActivateScene {
             scene: scene.to_owned(),
-            studio_enabled: self.snapshot.as_ref()?.studio.enabled?,
+            studio_enabled,
         })
+    }
+    pub fn observe_scene_controls(&mut self) {
+        self.scene_control_observation = self
+            .snapshot
+            .as_ref()
+            .and_then(|s| s.studio.enabled)
+            .zip(self.observed_at);
+    }
+    pub fn invalidate_controls(&mut self) {
+        self.dirty = true;
+        self.scene_control_observation = None;
+        self.revision = self.revision.wrapping_add(1);
     }
     pub fn fail_read(&mut self, error: String) {
         self.error = Some(error);
         self.observed_at = None;
+        self.scene_control_observation = None;
+        self.virtual_camera_observation = None;
+        self.queued_toggles.clear();
     }
     pub fn invalidate(&mut self) {
         self.epoch = self.epoch.wrapping_add(1);
@@ -432,6 +525,11 @@ impl WorkspaceState {
         self.output_results.invalidate(super::workspace::unix_ms());
         self.loading = false;
         self.pending = false;
+        self.pending_scene = None;
+        self.active_action = None;
+        self.queued_toggles.clear();
+        self.virtual_camera_observation = None;
+        self.scene_control_observation = None;
         self.recording_stop_result = None;
         self.selected_scene = None;
         self.selected_input = None;
@@ -1052,6 +1150,19 @@ impl AppState {
             input.muted = muted;
         }
         self.update_mixer_input_mute(input_id, muted);
+        for input in &mut self.workspace.audio {
+            if input.id == input_id {
+                input.muted = muted;
+            }
+        }
+        if let Some(detail) = self
+            .workspace
+            .detail
+            .as_mut()
+            .filter(|d| d.input == input_id)
+        {
+            detail.muted = Some(muted);
+        }
     }
 
     /// Record a volume change OBS reported for `input_id`, in both places the
@@ -1062,6 +1173,20 @@ impl AppState {
             input.volume_db = volume_db;
         }
         self.update_mixer_input_volume(input_id, volume_mul, volume_db);
+        for input in &mut self.workspace.audio {
+            if input.id == input_id {
+                input.volume_mul = volume_mul;
+                input.volume_db = volume_db;
+            }
+        }
+        if let Some(detail) = self
+            .workspace
+            .detail
+            .as_mut()
+            .filter(|d| d.input == input_id)
+        {
+            detail.volume_db = Some(volume_db);
+        }
     }
 
     fn audio_input_mut(&mut self, input_id: &str) -> Option<&mut AudioInput> {
@@ -3207,6 +3332,44 @@ mod tests {
     }
 
     #[test]
+    fn global_toggle_availability_is_independent_and_retires_with_its_scope() {
+        use crate::domain::control::{ControlAction, GlobalToggle};
+        let mut workspace = controllable_workspace(Some(false));
+        workspace.snapshot.as_mut().unwrap().virtual_camera_active = Some(false);
+        workspace.observe_global_controls();
+        workspace.pending = true;
+        workspace.loading = true;
+        workspace.dirty = true;
+        workspace.observed_at = None;
+        workspace.active_action = Some(ControlAction::SetText {
+            input: "Caption".into(),
+            text: "Edit".into(),
+        });
+        for toggle in [GlobalToggle::StudioMode, GlobalToggle::VirtualCamera] {
+            assert_eq!(workspace.toggle_value(toggle), Some(false));
+            assert!(!workspace.toggle_pending(toggle));
+        }
+        workspace
+            .queued_toggles
+            .push_back(ControlAction::SetVirtualCamera(true));
+        assert!(workspace.toggle_pending(GlobalToggle::VirtualCamera));
+        assert!(!workspace.toggle_pending(GlobalToggle::StudioMode));
+        workspace.virtual_camera_observation = Some((
+            Some(false),
+            Instant::now() - std::time::Duration::from_secs(31),
+        ));
+        assert_eq!(workspace.toggle_value(GlobalToggle::VirtualCamera), None);
+        assert_eq!(
+            workspace.toggle_value(GlobalToggle::StudioMode),
+            Some(false)
+        );
+        workspace.invalidate();
+        assert!(workspace.active_action.is_none() && workspace.queued_toggles.is_empty());
+        assert_eq!(workspace.toggle_value(GlobalToggle::StudioMode), None);
+        assert_eq!(workspace.toggle_value(GlobalToggle::VirtualCamera), None);
+    }
+
+    #[test]
     fn workspace_scene_action_requires_known_studio_mode() {
         use crate::domain::control::ControlAction;
         let unknown = controllable_workspace(None);
@@ -3231,11 +3394,68 @@ mod tests {
     }
 
     #[test]
+    fn scene_controls_survive_scene_readback_but_reject_mode_changes_failures_and_other_actions() {
+        for studio in [false, true] {
+            let mut workspace = controllable_workspace(Some(studio));
+            workspace.observe_scene_controls();
+            workspace.loading = true;
+            workspace.pending = true;
+            workspace.pending_scene = Some("First".into());
+            workspace.observed_at = None;
+            workspace.dirty = true; // Program echo requires source membership readback.
+            assert_eq!(
+                workspace.scene_action("Next"),
+                Some(crate::domain::control::ControlAction::ActivateScene {
+                    scene: "Next".into(),
+                    studio_enabled: studio,
+                })
+            );
+            workspace.pending_scene = None;
+            assert!(
+                workspace.scene_action("Next").is_none(),
+                "another mutation owns the workspace"
+            );
+            workspace.pending = false;
+            workspace.invalidate_controls();
+            assert!(
+                workspace.scene_action("Next").is_none(),
+                "an OBS mode change must invalidate cached scene controls"
+            );
+            workspace.dirty = false;
+            workspace.observed_at = Some(Instant::now());
+            workspace.observe_scene_controls();
+            workspace.fail_read("read failed".into());
+            assert!(workspace.scene_action("Next").is_none());
+            workspace.error = None;
+            workspace.scene_control_observation =
+                Some((studio, Instant::now() - std::time::Duration::from_secs(31)));
+            assert!(workspace.scene_action("Next").is_none());
+            workspace.invalidate();
+            assert!(workspace.scene_control_observation.is_none());
+        }
+    }
+
+    #[test]
+    fn background_read_keeps_recent_controls_available_but_never_revives_invalid_data() {
+        let mut workspace = controllable_workspace(Some(false));
+        workspace.loading = true;
+        assert!(workspace.can_control());
+        assert!(workspace.scene_action("Target").is_some());
+        workspace.dirty = true;
+        assert!(!workspace.can_control());
+        workspace.dirty = false;
+        workspace.observed_at = None;
+        assert!(!workspace.can_control());
+        workspace.observed_at = Some(Instant::now());
+        workspace.pending = true;
+        assert!(!workspace.can_control());
+    }
+
+    #[test]
     fn workspace_scene_actions_reject_busy_stale_and_failed_observations_in_both_modes() {
         type Invalidate = fn(&mut super::WorkspaceState);
-        let cases: [(&str, Invalidate); 6] = [
+        let cases: [(&str, Invalidate); 5] = [
             ("dirty", |state| state.dirty = true),
-            ("loading", |state| state.loading = true),
             ("pending", |state| state.pending = true),
             ("failed", |state| state.error = Some("Read failed".into())),
             ("expired", |state| {

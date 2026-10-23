@@ -1,7 +1,7 @@
 //! Studio controls follow authoritative OBS state; refresh never emits a command.
 use crate::{
     controller::state::ObsStatus,
-    domain::control::ControlAction,
+    domain::control::{ControlAction, GlobalToggle},
     infra::i18n::LANGUAGE_LOADER,
     ui::{navigation::NavigationContext, workspace},
 };
@@ -12,15 +12,17 @@ use std::{cell::Cell, rc::Rc, time::Duration};
 
 pub(crate) fn ready(nav: &NavigationContext) -> bool {
     let state = nav.state.borrow();
+    matches!(state.obs_status, ObsStatus::Connected { .. }) && state.workspace.can_control()
+}
+
+fn mode_ready(nav: &NavigationContext) -> bool {
+    let state = nav.state.borrow();
     matches!(state.obs_status, ObsStatus::Connected { .. })
-        && !state.workspace.loading
-        && !state.workspace.pending
-        && !state.workspace.dirty
-        && state.workspace.error.is_none()
         && state
             .workspace
-            .observed_at
-            .is_some_and(|time| time.elapsed() < Duration::from_secs(30))
+            .toggle_value(GlobalToggle::StudioMode)
+            .is_some()
+        && !state.workspace.toggle_pending(GlobalToggle::StudioMode)
 }
 
 pub(crate) fn toggle(nav: NavigationContext) -> GtkBox {
@@ -51,7 +53,7 @@ pub(crate) fn toggle(nav: NavigationContext) -> GtkBox {
                         .iter()
                         .any(|r| r == "SetStudioModeEnabled")
             };
-            if !syncing.get() && allowed && ready(&nav) {
+            if !syncing.get() && allowed && mode_ready(&nav) {
                 workspace::act(&nav, ControlAction::SetStudioMode(desired));
             }
             glib::Propagation::Stop
@@ -59,6 +61,7 @@ pub(crate) fn toggle(nav: NavigationContext) -> GtkBox {
     });
     let weak = root.downgrade();
     let last_observed = Cell::new(None::<Option<bool>>);
+    let last_requested = Cell::new(None::<bool>);
     glib::timeout_add_local(Duration::from_millis(100), move || {
         if weak.upgrade().is_none() {
             return glib::ControlFlow::Break;
@@ -69,19 +72,24 @@ pub(crate) fn toggle(nav: NavigationContext) -> GtkBox {
             .snapshot
             .as_ref()
             .and_then(|s| s.studio.enabled);
+        let requested = state.workspace.toggle_target(GlobalToggle::StudioMode);
+        let request_finished = last_requested.replace(requested).is_some() && requested.is_none();
         syncing.set(true);
         // Do not reset GTK's tentative active value before its toggle animation emits state-set.
         if last_observed.replace(Some(observed)) != Some(observed)
             || switch.state() != observed.unwrap_or(false)
-            || state.workspace.pending
-            || state.workspace.error.is_some()
+            || request_finished
         {
             switch.set_state(observed.unwrap_or(false));
-            switch.set_active(observed.unwrap_or(false));
+            switch.set_active(requested.or(observed).unwrap_or(false));
+        } else if let Some(requested) = requested {
+            if switch.is_active() != requested {
+                switch.set_active(requested);
+            }
         }
         switch.set_sensitive(
             observed.is_some()
-                && ready(&nav)
+                && mode_ready(&nav)
                 && state
                     .available_requests
                     .iter()
@@ -351,6 +359,7 @@ mod tests {
         {
             let mut state = state.borrow_mut();
             state.workspace.pending = false;
+            state.workspace.active_action = None;
             state.workspace.loading = false;
             state.workspace.snapshot.as_mut().unwrap().studio.enabled = None;
         }

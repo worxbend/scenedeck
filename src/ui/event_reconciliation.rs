@@ -22,6 +22,7 @@ pub(super) fn acknowledge(state: &mut AppState, epoch: u64, sequence: u64, resul
         return;
     }
     state.workspace.pending = false;
+    state.workspace.pending_scene = None;
     if let Some(id) = result_id {
         state.workspace.output_results.acknowledge(id, unix_ms());
     }
@@ -67,13 +68,26 @@ pub(super) fn complete_workspace(state: &mut AppState, event: WorkspaceCompletio
     }
     state.workspace.loading = false;
     state.workspace.pending = false;
+    state.workspace.pending_scene = None;
     if acknowledged {
         if let Some(id) = result_id {
             state.workspace.output_results.acknowledge(id, unix_ms());
         }
     }
     match result {
-        Ok(observed) => {
+        Ok(mut observed) => {
+            // A workspace read may have begun before a toggle's transport echo.
+            // Never animate a control back to that older readback value.
+            if let Some((enabled, at)) = state.workspace.scene_control_observation {
+                if at > observed.observed_at {
+                    observed.snapshot.studio.enabled = Some(enabled);
+                }
+            }
+            if let Some((active, at)) = state.workspace.virtual_camera_observation {
+                if at > observed.observed_at {
+                    observed.snapshot.virtual_camera_active = active;
+                }
+            }
             if let Some(id) = result_id {
                 state.workspace.output_results.acknowledge(id, unix_ms());
             }
@@ -96,6 +110,9 @@ pub(super) fn complete_workspace(state: &mut AppState, event: WorkspaceCompletio
             state.workspace.usage = observed.usage;
             state.workspace.audio = observed.audio;
             state.workspace.observed_at = Some(observed.observed_at);
+            if !state.workspace.dirty {
+                state.workspace.observe_global_controls();
+            }
             state.workspace.warnings = observed.warnings;
             if observed.screenshot.is_some() {
                 state.workspace.screenshot = observed.screenshot;
@@ -123,6 +140,7 @@ pub(super) fn complete_workspace(state: &mut AppState, event: WorkspaceCompletio
             state.workspace.fail_read(error);
         }
     }
+    state.workspace.active_action = None;
     state.workspace.revision = state.workspace.revision.wrapping_add(1);
     true
 }
@@ -203,6 +221,41 @@ mod tests {
             uncertain: false,
             result: Ok(observation()),
             action: false,
+        }
+    }
+
+    #[test]
+    fn older_readback_cannot_roll_back_global_toggle_events_or_their_timestamps() {
+        use crate::domain::control::GlobalToggle;
+        for dirty in [false, true] {
+            for camera in [None, Some(true)] {
+                let mut state = state();
+                let mut event = completion(&state);
+                let observed = event.result.as_mut().unwrap();
+                observed.observed_at = Instant::now() - std::time::Duration::from_secs(1);
+                observed.snapshot.studio.enabled = Some(false);
+                observed.snapshot.virtual_camera_active = Some(false);
+                let latest = Instant::now();
+                state.workspace.scene_control_observation = Some((true, latest));
+                state.workspace.virtual_camera_observation = Some((camera, latest));
+                state.workspace.dirty = dirty;
+                assert!(complete_workspace(&mut state, event));
+                let snapshot = state.workspace.snapshot.as_ref().unwrap();
+                assert_eq!(snapshot.studio.enabled, Some(true));
+                assert_eq!(snapshot.virtual_camera_active, camera);
+                assert_eq!(
+                    state.workspace.scene_control_observation,
+                    Some((true, latest))
+                );
+                assert_eq!(
+                    state.workspace.virtual_camera_observation,
+                    Some((camera, latest))
+                );
+                assert_eq!(
+                    state.workspace.toggle_value(GlobalToggle::VirtualCamera),
+                    camera
+                );
+            }
         }
     }
 

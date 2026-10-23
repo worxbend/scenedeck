@@ -782,6 +782,8 @@ window-help-tooltip = Допомога й посібник із початку �
 
 # OBS controls and accessible alternatives
 window-stop-disconnect-label = Зупинити трансляцію/запис і від’єднатися
+window-stop-stream-disconnect-label = Зупинити трансляцію і від’єднатися
+window-stop-record-disconnect-label = Зупинити запис і від’єднатися
 disconnect-confirm-heading = Зупинити трансляцію та запис перед від’єднанням?
 disconnect-confirm-body = Трансляція: { $stream }. Запис: { $recording }. Активні трансляцію та запис буде зупинено перед від’єднанням SceneDeck. Ця дія не зупиняє буфер повторів і віртуальну камеру.
 live-scenes-obs-empty = У цій колекції OBS немає сцен. Створіть сцену в OBS, а потім оновіть SceneDeck.

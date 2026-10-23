@@ -13,8 +13,10 @@ use crate::app_info::{APP_ID, APP_NAME};
 use crate::controller::command::AppCommand;
 use crate::controller::state::{AppState, ObsStatus, Page};
 use crate::domain::obs::ObsNamedList;
+use crate::domain::output::OutputStatus;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::ui::navigation::NavigationContext;
+use crate::ui::pages::live;
 use crate::ui::widgets::status_bar;
 
 pub(super) const NAV_PAGES: [Page; 8] = [
@@ -243,8 +245,14 @@ pub(super) struct SidebarControls {
 }
 
 impl SidebarControls {
-    pub(super) fn apply_connection(&self, status: &ObsStatus) {
-        let model = sidebar_connection_model(status);
+    /// Re-applies connection status and button wording; the button names
+    /// only the outputs a disconnect would stop, so output changes call this too.
+    pub(super) fn apply_connection(&self, state: &AppState) {
+        let model = sidebar_connection_model(
+            &state.obs_status,
+            &state.stream_status,
+            &state.record_status,
+        );
         self.status_label.set_text(&model.status_text);
         set_status_class(&self.status_label, model.css_class);
         apply_button_model(&self.connect_btn, model.button);
@@ -252,6 +260,7 @@ impl SidebarControls {
 
     pub(super) fn sync_output_buttons(&self, state: &AppState) {
         self.set_streaming(state.stream_status.active);
+        self.apply_connection(state);
     }
 
     fn set_streaming(&self, streaming: bool) {
@@ -317,7 +326,7 @@ pub(super) fn build(nav: &NavigationContext) -> (adw::NavigationPage, ListBox, S
                         nav.dispatch(AppCommand::Connect);
                     }
                     ObsStatus::Connected { .. } => {
-                        crate::ui::pages::live::handle_disconnect(button, &nav);
+                        live::handle_disconnect(button, &nav);
                     }
                     ObsStatus::Connecting => nav.dispatch(AppCommand::Disconnect),
                 }
@@ -391,7 +400,11 @@ struct SidebarConnectionModel {
     button: SidebarButtonModel,
 }
 
-fn sidebar_connection_model(status: &ObsStatus) -> SidebarConnectionModel {
+fn sidebar_connection_model(
+    status: &ObsStatus,
+    stream: &OutputStatus,
+    record: &OutputStatus,
+) -> SidebarConnectionModel {
     let (status_text, label, sensitive, suggested, destructive) = match status {
         ObsStatus::Connecting => (
             fl!(LANGUAGE_LOADER, "window-status-connecting"),
@@ -406,10 +419,10 @@ fn sidebar_connection_model(status: &ObsStatus) -> SidebarConnectionModel {
                 "window-status-connected",
                 version = obs_version.clone()
             ),
-            fl!(LANGUAGE_LOADER, "window-stop-disconnect-label"),
+            live::disconnect_label(stream, record),
             true,
             false,
-            true,
+            live::disconnect_stops_outputs(stream, record),
         ),
         ObsStatus::Disconnected => (
             fl!(LANGUAGE_LOADER, "window-status-disconnected"),
@@ -535,6 +548,7 @@ fn sidebar_button(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::output::OutputRunState;
 
     #[test]
     #[ignore = "requires a disposable GTK display; no OBS or keyring access"]
@@ -691,33 +705,71 @@ mod tests {
 
     #[test]
     fn connection_model_covers_every_state() {
-        let connecting = sidebar_connection_model(&ObsStatus::Connecting);
+        let idle = OutputStatus::inactive();
+        let live_out = OutputStatus::new(true, OutputRunState::Active);
+        let connecting = sidebar_connection_model(&ObsStatus::Connecting, &idle, &idle);
         assert_eq!(connecting.css_class, "obs-connecting");
         assert!(!connecting.button.sensitive);
         assert!(!connecting.button.suggested);
         assert!(!connecting.button.destructive);
 
-        let connected = sidebar_connection_model(&ObsStatus::Connected {
-            obs_version: "30.1.2".to_string(),
-        });
+        let connected = sidebar_connection_model(
+            &ObsStatus::Connected {
+                obs_version: "30.1.2".to_string(),
+            },
+            &live_out,
+            &idle,
+        );
         assert_eq!(connected.css_class, "obs-connected");
         assert!(connected.button.sensitive);
         assert!(connected.button.destructive);
         assert!(!connected.button.suggested);
         assert!(connected.status_text.contains("30.1.2"));
 
-        let disconnected = sidebar_connection_model(&ObsStatus::Disconnected);
+        let disconnected = sidebar_connection_model(&ObsStatus::Disconnected, &idle, &idle);
         assert_eq!(disconnected.css_class, "obs-disconnected");
         assert!(disconnected.button.sensitive);
         assert!(disconnected.button.suggested);
         assert!(!disconnected.button.destructive);
 
-        let failed = sidebar_connection_model(&ObsStatus::Error("refused".to_string()));
+        let failed =
+            sidebar_connection_model(&ObsStatus::Error("refused".to_string()), &idle, &idle);
         assert_eq!(failed.css_class, "obs-error");
         assert!(failed.button.sensitive);
         assert!(failed.button.suggested);
         assert!(!failed.button.destructive);
         assert!(failed.status_text.contains("refused"));
+    }
+
+    #[test]
+    fn connected_button_names_only_running_outputs() {
+        let connected = ObsStatus::Connected {
+            obs_version: "32.2.2".to_string(),
+        };
+        let idle = OutputStatus::inactive();
+        let running = OutputStatus::new(true, OutputRunState::Active);
+        let starting = OutputStatus::new(false, OutputRunState::Starting);
+        let button = |stream: &OutputStatus, record: &OutputStatus| {
+            sidebar_connection_model(&connected, stream, record).button
+        };
+
+        let plain = button(&idle, &idle);
+        assert_eq!(
+            plain.label,
+            fl!(LANGUAGE_LOADER, "window-connect-btn-disconnect")
+        );
+        assert!(!plain.destructive);
+
+        for (stream, record, key) in [
+            (&running, &idle, "window-stop-stream-disconnect-label"),
+            (&starting, &idle, "window-stop-stream-disconnect-label"),
+            (&idle, &running, "window-stop-record-disconnect-label"),
+            (&running, &running, "window-stop-disconnect-label"),
+        ] {
+            let model = button(stream, record);
+            assert_eq!(model.label, LANGUAGE_LOADER.get(key));
+            assert!(model.destructive);
+        }
     }
 
     #[test]

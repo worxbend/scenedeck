@@ -777,6 +777,8 @@ window-help-tooltip = Help & onboarding guide
 
 # OBS controls and accessible alternatives
 window-stop-disconnect-label = Stop stream/record & disconnect
+window-stop-stream-disconnect-label = Stop stream & disconnect
+window-stop-record-disconnect-label = Stop recording & disconnect
 disconnect-confirm-heading = Stop stream and recording before disconnecting?
 disconnect-confirm-body = Stream: { $stream }. Recording: { $recording }. Active streaming and recording will stop before SceneDeck disconnects. Replay buffer and virtual camera are not stopped by this action.
 live-scenes-obs-empty = OBS has no scenes in this collection. Create a scene in OBS, then refresh SceneDeck.

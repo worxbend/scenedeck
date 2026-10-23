@@ -763,10 +763,36 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
                 refresh_output_status_bar(nav, ui, OutputKind::Stream);
                 ui.refreshers.call_if_visible(nav, Page::Doctor);
             }
+            super::workspace::dispatch_queued_toggle(nav);
         }
         AppEvent::WorkspaceInvalidated => {
+            nav.state.borrow_mut().workspace.invalidate_controls();
+        }
+        AppEvent::WorkspaceValuesChanged => {
             let mut state = nav.state.borrow_mut();
+            if state.workspace.can_control() {
+                state.workspace.observe_global_controls();
+            }
             state.workspace.dirty = true;
+            state.workspace.revision = state.workspace.revision.wrapping_add(1);
+        }
+        AppEvent::StudioModeChanged(enabled) => {
+            let mut state = nav.state.borrow_mut();
+            state.workspace.scene_control_observation = Some((enabled, Instant::now()));
+            if let Some(snapshot) = &mut state.workspace.snapshot {
+                snapshot.studio.enabled = Some(enabled);
+            }
+            state.workspace.dirty = true;
+            state.workspace.revision = state.workspace.revision.wrapping_add(1);
+        }
+        AppEvent::VirtualCameraChanged(active) => {
+            let mut state = nav.state.borrow_mut();
+            state.workspace.virtual_camera_observation = Some((active, Instant::now()));
+            if let Some(snapshot) = &mut state.workspace.snapshot {
+                snapshot.virtual_camera_active = active;
+            }
+            state.workspace.dirty = true;
+            state.workspace.revision = state.workspace.revision.wrapping_add(1);
         }
         AppEvent::WorkspaceScopeChanging => {
             if let Some(ui) = ui {
@@ -843,7 +869,6 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
                     OutputStatus::new(false, crate::domain::output::OutputRunState::Unknown);
             }
             if let Some(ui) = ui {
-                ui.sidebar_controls.apply_connection(&obs_status);
                 sync_output_indicators(nav, &ui.sidebar_controls, &ui.streaming_chrome);
                 status_bar::set_connection(&ui.status_bar, &obs_status);
                 show_live_view(&ui.live);
@@ -1028,8 +1053,6 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
             let rebuild_mixer = {
                 let mut state = nav.state.borrow_mut();
                 state.apply_input_mute(&input, muted);
-                state.workspace.dirty = true;
-                state.workspace.revision = state.workspace.revision.wrapping_add(1);
                 should_rebuild_visible_mixer_for_input_event(&state, &input)
             };
 
@@ -1049,8 +1072,6 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
             let rebuild_mixer = {
                 let mut state = nav.state.borrow_mut();
                 state.apply_input_volume(&input, volume_mul, volume_db);
-                state.workspace.dirty = true;
-                state.workspace.revision = state.workspace.revision.wrapping_add(1);
                 should_rebuild_visible_mixer_for_input_event(&state, &input)
             };
 
@@ -1140,7 +1161,6 @@ fn show_no_session_ui(
         return;
     };
 
-    ui.sidebar_controls.apply_connection(status);
     sync_output_indicators(nav, &ui.sidebar_controls, &ui.streaming_chrome);
 
     status_bar::set_connection(&ui.status_bar, status);
@@ -1547,10 +1567,205 @@ pub(crate) fn apply_color_scheme(style_manager: &adw::StyleManager, mode: ThemeM
 }
 
 #[cfg(test)]
+#[path = "window_render_tests.rs"]
+mod render_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::audio::AudioInput;
     use crate::domain::mixer::MixerMode;
+
+    #[test]
+    #[ignore = "requires a disposable GTK display; synthetic OBS events"]
+    fn native_audio_events_and_background_reads_do_not_blink_pages() {
+        crate::ui::test_support::native_test(
+            "ui::window::tests::native_audio_events_and_background_reads_do_not_blink_pages",
+            || {
+                let (nav, stack, _runtime, _events) = crate::ui::test_support::navigation();
+                {
+                    let mut state = nav.state.borrow_mut();
+                    state.obs_status = ObsStatus::Connected {
+                        obs_version: "fixture".into(),
+                    };
+                    state.scene_collections.current = Some("Fixture".into());
+                    state.scene_inventory.scenes =
+                        vec![crate::domain::scene::Scene { id: "Main".into() }];
+                    state.scene_inventory.current_id = Some("Main".into());
+                    state
+                        .registry
+                        .set_scene_role("Main", Some(crate::domain::role::SceneRole::Primary));
+                    state.workspace.observed_at = Some(Instant::now());
+                    state.workspace.snapshot = Some(Default::default());
+                    state.workspace.snapshot.as_mut().unwrap().studio.enabled = Some(false);
+                    state.set_topology_ready(Default::default());
+                    state.apply_active_audio(
+                        Some("Main".into()),
+                        Ok(vec![AudioInput::new("Mic".into(), false, 1.0, 0.0)]),
+                    );
+                }
+                let mut sources = WindowSources::default();
+                let (live, refreshers) = add_pages(&stack, &nav, &mut sources);
+                let (_, _, sidebar_controls) = sidebar::build(&nav);
+                let ui = EventUiContext {
+                    live: live.clone(),
+                    toast: adw::ToastOverlay::new(),
+                    refreshers,
+                    header_selectors: HeaderSelectors::build(&nav),
+                    sidebar_controls,
+                    streaming_chrome: Rc::new(RefCell::new(None)),
+                    status_bar: status_bar::build(),
+                };
+                let inventory = nav.state.borrow().scene_inventory.clone();
+                crate::ui::pages::live::rebuild_scene_cards(&live, &inventory, &nav);
+                let card = live.scene_cards.borrow()[0].root.clone();
+                let pages: Vec<_> = [
+                    Page::Graph,
+                    Page::Doctor,
+                    Page::Inventory,
+                    Page::Settings,
+                    Page::Help,
+                ]
+                .into_iter()
+                .map(|page| {
+                    let widget = stack.child_by_name(page.id()).unwrap();
+                    let child = widget.first_child();
+                    (page, widget, child)
+                })
+                .collect();
+                let revision = nav.state.borrow().workspace.revision;
+                for _ in 0..16 {
+                    apply_event(
+                        &nav,
+                        AppEvent::InputVolumeChanged {
+                            input: "Mic".into(),
+                            volume_mul: 0.5,
+                            volume_db: -6.0,
+                        },
+                        Some(&ui),
+                    );
+                    apply_event(
+                        &nav,
+                        AppEvent::InputMuteChanged {
+                            input: "Mic".into(),
+                            muted: true,
+                        },
+                        Some(&ui),
+                    );
+                    assert!(
+                        !nav.state.borrow().workspace.dirty,
+                        "complete audio echoes must not invalidate unrelated controls"
+                    );
+                    assert_eq!(nav.state.borrow().workspace.revision, revision);
+                    crate::ui::pages::live::rebuild_scene_cards(&live, &inventory, &nav);
+                    assert_eq!(live.scene_cards.borrow()[0].root, card);
+                    assert!(card.is_sensitive());
+                    for (page, widget, child) in &pages {
+                        nav.state.borrow_mut().current_page = *page;
+                        ui.refreshers.call_if_visible(&nav, *page);
+                        assert_eq!(
+                            widget.first_child(),
+                            *child,
+                            "unrelated update rebuilt {page:?}"
+                        );
+                    }
+                }
+                super::super::workspace::refresh(&nav);
+                assert!(nav.state.borrow().workspace.loading);
+                assert!(nav.state.borrow().workspace.can_control());
+                crate::ui::pages::live::rebuild_scene_cards(&live, &inventory, &nav);
+                assert!(
+                    card.is_sensitive(),
+                    "background refresh dimmed the entire scene wall"
+                );
+                nav.state.borrow_mut().workspace.observe_scene_controls();
+                nav.dispatch(AppCommand::SwitchPrimaryScene("Main".into()));
+                let first_sequence = nav.state.borrow().workspace.sequence;
+                assert_eq!(
+                    nav.state.borrow().workspace.pending_scene.as_deref(),
+                    Some("Main")
+                );
+                crate::ui::pages::live::rebuild_scene_cards(&live, &inventory, &nav);
+                assert!(
+                    card.is_sensitive(),
+                    "scene activation must not disable the scene wall"
+                );
+                nav.dispatch(AppCommand::SwitchPrimaryScene("Main".into()));
+                let next_sequence = nav.state.borrow().workspace.sequence;
+                assert!(
+                    next_sequence > first_sequence,
+                    "rapid clicks must reach the latest-wins queue"
+                );
+                let epoch = nav.state.borrow().workspace.epoch;
+                apply_event(
+                    &nav,
+                    AppEvent::WorkspaceAcknowledged {
+                        epoch,
+                        sequence: first_sequence,
+                        result_id: None,
+                    },
+                    Some(&ui),
+                );
+                assert!(
+                    nav.state.borrow().workspace.pending,
+                    "old acknowledgement cleared the newer action"
+                );
+                let epoch = nav.state.borrow().workspace.epoch;
+                apply_event(
+                    &nav,
+                    AppEvent::WorkspaceAcknowledged {
+                        epoch,
+                        sequence: next_sequence,
+                        result_id: None,
+                    },
+                    Some(&ui),
+                );
+                {
+                    // Complete the synthetic scene readback. Acknowledgement
+                    // alone must keep later global toggles queued.
+                    let mut state = nav.state.borrow_mut();
+                    state.workspace.observed_at = Some(Instant::now());
+                    state.workspace.loading = false;
+                    state.workspace.active_action = None;
+                    state.workspace.observe_global_controls();
+                }
+                super::super::workspace::act(
+                    &nav,
+                    crate::domain::control::ControlAction::SetStudioMode(true),
+                );
+                assert!(nav
+                    .state
+                    .borrow()
+                    .workspace
+                    .scene_control_observation
+                    .is_none());
+                let sequence = nav.state.borrow().workspace.sequence;
+                apply_event(
+                    &nav,
+                    AppEvent::WorkspaceAcknowledged {
+                        epoch,
+                        sequence,
+                        result_id: None,
+                    },
+                    Some(&ui),
+                );
+                assert!(
+                    nav.state.borrow().workspace.scene_action("Main").is_none(),
+                    "Studio mode acknowledgement is not a mode observation"
+                );
+                apply_event(&nav, AppEvent::WorkspaceInvalidated, Some(&ui));
+                super::super::workspace::refresh(&nav);
+                assert!(nav.state.borrow().workspace.observed_at.is_none());
+                assert!(
+                    !nav.state.borrow().workspace.can_control(),
+                    "invalidated data became writable while reloading"
+                );
+                nav.state.borrow_mut().workspace.invalidate();
+                crate::ui::pages::live::rebuild_scene_cards(&live, &inventory, &nav);
+                assert!(!live.scene_cards.borrow()[0].root.is_sensitive());
+            },
+        );
+    }
 
     #[test]
     #[ignore = "requires a disposable GTK display; no OBS connection"]
