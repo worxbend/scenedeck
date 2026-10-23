@@ -224,7 +224,6 @@ async fn fader_silence_unity_and_finite_levels_reach_wire_canonically() {
         ("SetInputVolume", json!({})),
         ("SetInputVolume", json!({})),
         ("SetInputVolume", json!({})),
-        ("SetInputVolume", json!({})),
     ])
     .await;
     for db in [MIN_VOLUME_DB, MAX_VOLUME_DB, -6.0] {
@@ -236,7 +235,6 @@ async fn fader_silence_unity_and_finite_levels_reach_wire_canonically() {
             .await
             .unwrap();
     }
-    client.set_input_volume("Mic", 0.0).await.unwrap();
     let requests = server.await.unwrap();
     assert_eq!(requests[1]["d"]["requestData"]["inputVolumeMul"], 0.0);
     assert_eq!(requests[2]["d"]["requestData"]["inputVolumeMul"], 1.0);
@@ -244,7 +242,7 @@ async fn fader_silence_unity_and_finite_levels_reach_wire_canonically() {
         .as_f64()
         .unwrap();
     assert!((finite - volume_db_to_mul(-6.0)).abs() < 0.000001);
-    assert_eq!(requests[4]["d"]["requestData"]["inputVolumeMul"], 0.0);
+    assert_eq!(requests.len(), 4);
 }
 
 #[tokio::test]
@@ -258,9 +256,6 @@ async fn invalid_gain_commands_are_rejected_before_network_work() {
             })
             .await
             .is_err());
-    }
-    for mul in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.1, 1.1] {
-        assert!(client.set_input_volume("Mic", mul).await.is_err());
     }
     assert_eq!(server.await.unwrap().len(), 1);
 }

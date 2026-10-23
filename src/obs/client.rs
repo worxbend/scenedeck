@@ -303,21 +303,6 @@ impl ObsClient {
                 .map_err(AppError::request)
         }
     }
-
-    #[cfg(test)]
-    pub async fn set_input_volume(&self, name: &str, volume_mul: f64) -> Result<(), AppError> {
-        if !volume_mul.is_finite() || !(0.0..=1.0).contains(&volume_mul) {
-            return Err(AppError::request(
-                "Audio multiplier must be between 0 and 1",
-            ));
-        }
-        self.request(self.inner.inputs().set_volume(
-            obws::requests::inputs::InputId::Name(name),
-            obws::requests::inputs::Volume::Mul(volume_mul as f32),
-        ))
-        .await
-        .map_err(AppError::request)
-    }
 }
 
 #[cfg(test)]

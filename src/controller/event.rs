@@ -303,8 +303,6 @@ pub enum AppEvent {
         result: Result<Vec<AudioInput>, String>,
     },
     // Audio
-    #[cfg(test)]
-    AudioInputsUpdated(Vec<AudioInput>),
     /// Completes only the exact GTK-issued current-scope Mixer request.
     MixerAudioInputsUpdated {
         request: crate::controller::state::MixerAudioRequest,

@@ -712,7 +712,7 @@ pub(crate) fn set_hotkey_hint(handle: &LivePageHandle, text: Option<&str>) {
 
 /// Rebuild the audio mixer cards from the given input list.
 ///
-/// Called by `ui::window::apply_event` whenever `AudioInputsUpdated` arrives
+/// Called by `ui::window::apply_event` when active-scene audio is observed
 /// or the connection is reset.
 pub(crate) fn rebuild_audio_cards(
     handle: &LivePageHandle,

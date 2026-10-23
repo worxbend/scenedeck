@@ -162,11 +162,6 @@ impl NavigationContext {
             return;
         }
         let requested = match &cmd {
-            AppCommand::SwitchPrimaryScene(scene) => Some(i18n_embed_fl::fl!(
-                crate::infra::i18n::LANGUAGE_LOADER,
-                "control-program",
-                scene = scene.clone()
-            )),
             AppCommand::StartStreaming => Some(i18n_embed_fl::fl!(
                 crate::infra::i18n::LANGUAGE_LOADER,
                 "window-sidebar-start-stream"

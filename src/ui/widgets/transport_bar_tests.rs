@@ -146,14 +146,15 @@ fn native_compact_large_text_outputs_and_hidden_pages_fit() {
         ))
         .unwrap();
     fixture_events
-        .send(crate::controller::event::AppEvent::AudioInputsUpdated(
-            vec![AudioInput::new(
+        .send(crate::controller::event::AppEvent::ActiveAudioObserved {
+            scene: inventory.current_id.clone(),
+            result: Ok(vec![AudioInput::new(
                 "Synthetic audio input".into(),
                 true,
                 1.0,
                 0.0,
-            )],
-        ))
+            )]),
+        })
         .unwrap();
     window.set_default_size(640, 600);
     pump();

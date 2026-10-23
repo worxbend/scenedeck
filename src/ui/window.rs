@@ -1003,18 +1003,6 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
             }
         }
 
-        #[cfg(test)]
-        AppEvent::AudioInputsUpdated(inputs) => {
-            let scene = nav.state.borrow().scene_inventory.current_id.clone();
-            nav.state
-                .borrow_mut()
-                .apply_active_audio(scene, Ok(inputs.clone()));
-            if let Some(ui) = ui {
-                rebuild_audio_cards(&ui.live, &inputs, nav);
-                ui.refreshers.call_if_visible(nav, Page::Mixer);
-            }
-        }
-
         AppEvent::MixerAudioInputsUpdated { request, inputs } => {
             let transition = nav
                 .state
