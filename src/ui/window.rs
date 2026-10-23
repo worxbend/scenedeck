@@ -884,14 +884,10 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
                 refresh_output_status_bar(nav, ui, kind);
             }
         }
-        AppEvent::StreamStatusUpdated(_)
-        | AppEvent::RecordStatusUpdated(_)
-        | AppEvent::StreamCommandPending(_)
-        | AppEvent::RecordCommandPending(_)
-        | AppEvent::StreamCommandSucceeded
-        | AppEvent::RecordCommandSucceeded
-        | AppEvent::StreamCommandFailed(_)
-        | AppEvent::RecordCommandFailed(_) => {
+        AppEvent::OutputStatusUpdated(..)
+        | AppEvent::OutputCommandPending(..)
+        | AppEvent::OutputCommandSucceeded(_)
+        | AppEvent::OutputCommandFailed(..) => {
             apply_output_event(nav, event, ui);
         }
 
@@ -1182,11 +1178,7 @@ fn refresh_output_status_bar(nav: &NavigationContext, ui: &EventUiContext, kind:
 }
 
 fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiContext>) {
-    if let (
-        Some(ui),
-        AppEvent::StreamCommandFailed(failure) | AppEvent::RecordCommandFailed(failure),
-    ) = (ui, &event)
-    {
+    if let (Some(ui), AppEvent::OutputCommandFailed(_, failure)) = (ui, &event) {
         ui.toast.add_toast(adw::Toast::new(failure.message()));
     }
     let kind = nav

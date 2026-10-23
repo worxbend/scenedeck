@@ -1,4 +1,5 @@
 //! Merge transport echoes over reads started before them, including bootstrap.
+use crate::domain::output::OutputKind;
 use std::collections::BTreeMap;
 
 use super::event::AppEvent;
@@ -24,13 +25,13 @@ pub(crate) struct Observations {
 impl Observations {
     pub(crate) fn reconcile(&mut self, revision: u64, mut event: AppEvent) -> Option<AppEvent> {
         match &mut event {
-            AppEvent::StreamStatusUpdated(_) => {
+            AppEvent::OutputStatusUpdated(OutputKind::Stream, _) => {
                 if revision < self.stream_revision {
                     return None;
                 }
                 self.stream_revision = revision;
             }
-            AppEvent::RecordStatusUpdated(_) => {
+            AppEvent::OutputStatusUpdated(OutputKind::Record, _) => {
                 if revision < self.record_revision {
                     return None;
                 }

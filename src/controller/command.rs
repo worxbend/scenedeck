@@ -1,4 +1,5 @@
 use crate::domain::audio::InputId;
+use crate::domain::output::OutputKind;
 use crate::domain::scene::SceneId;
 
 #[derive(Debug, Clone)]
@@ -39,10 +40,10 @@ pub enum AppCommand {
     RefreshMixerSceneAudio(crate::controller::state::MixerAudioRequest),
 
     // Outputs
-    StartStreaming,
-    StopStreaming,
-    StartRecording,
-    StopRecording,
+    SetOutput {
+        kind: OutputKind,
+        active: bool,
+    },
     /// Poll `GetStats` and stream byte counters for the status bar.
     RefreshStats,
 }

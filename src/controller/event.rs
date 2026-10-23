@@ -2,7 +2,7 @@ use crate::domain::audio::{AudioInput, InputId};
 use crate::domain::graph::SceneGraph;
 use crate::domain::meter::InputLevels;
 use crate::domain::obs::ObsNamedList;
-use crate::domain::output::{OutputRunState, OutputStatus};
+use crate::domain::output::{OutputKind, OutputRunState, OutputStatus};
 use crate::domain::scene::{SceneId, SceneInventory};
 use crate::domain::stats::{ObsStats, StreamHealth};
 use crate::infra::error::AppError;
@@ -333,14 +333,10 @@ pub enum AppEvent {
         kind: crate::domain::output::OutputKind,
         error: AppError,
     },
-    StreamStatusUpdated(OutputStatus),
-    RecordStatusUpdated(OutputStatus),
-    StreamCommandPending(OutputStatus),
-    RecordCommandPending(OutputStatus),
-    StreamCommandSucceeded,
-    RecordCommandSucceeded,
-    StreamCommandFailed(OutputCommandFailureRecovery),
-    RecordCommandFailed(OutputCommandFailureRecovery),
+    OutputStatusUpdated(OutputKind, OutputStatus),
+    OutputCommandPending(OutputKind, OutputStatus),
+    OutputCommandSucceeded(OutputKind),
+    OutputCommandFailed(OutputKind, OutputCommandFailureRecovery),
 
     // Graph
     GraphUpdated(SceneGraph),

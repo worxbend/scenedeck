@@ -8,7 +8,7 @@ use crate::domain::graph::SceneGraph;
 use crate::domain::meter::{InputLevelSnapshot, InputLevels};
 use crate::domain::mixer::{MixerMode, MixerSelection};
 use crate::domain::obs::ObsNamedList;
-use crate::domain::output::OutputStatus;
+use crate::domain::output::{OutputKind, OutputStatus};
 use crate::domain::scene::{SceneId, SceneInventory};
 use crate::domain::stats::{ObsStats, StatsHistory, StreamHealth};
 use crate::infra::i18n::LANGUAGE_LOADER;
@@ -682,18 +682,20 @@ impl AppState {
         now_ms: u64,
     ) {
         use crate::controller::command::AppCommand;
-        let requested = match cmd {
-            AppCommand::StartStreaming => fl!(LANGUAGE_LOADER, "window-sidebar-start-stream"),
-            AppCommand::StopStreaming => fl!(LANGUAGE_LOADER, "window-sidebar-stop-stream"),
-            AppCommand::StartRecording => fl!(LANGUAGE_LOADER, "window-sidebar-start-recording"),
-            AppCommand::StopRecording => fl!(LANGUAGE_LOADER, "window-sidebar-stop-recording"),
-            _ => return,
+        let AppCommand::SetOutput { kind, active } = *cmd else {
+            return;
+        };
+        let requested = match (kind, active) {
+            (OutputKind::Stream, true) => fl!(LANGUAGE_LOADER, "window-sidebar-start-stream"),
+            (OutputKind::Stream, false) => fl!(LANGUAGE_LOADER, "window-sidebar-stop-stream"),
+            (OutputKind::Record, true) => fl!(LANGUAGE_LOADER, "window-sidebar-start-recording"),
+            (OutputKind::Record, false) => fl!(LANGUAGE_LOADER, "window-sidebar-stop-recording"),
         };
         self.workspace.log(
             crate::domain::workflow::ActivityOrigin::Requested,
             requested,
         );
-        if matches!(cmd, AppCommand::StopRecording)
+        if (kind, active) == (OutputKind::Record, false)
             && self.record_status.active
             && !self.record_status.state.is_transitioning()
             && self.workspace.recording_stop_result.is_none()
@@ -719,12 +721,8 @@ impl AppState {
         use crate::domain::output_result::OutputResultKind;
         use crate::domain::workflow::ActivityOrigin;
 
-        let observation = match event {
-            AppEvent::StreamStatusUpdated(status) => Some((OutputKind::Stream, status)),
-            AppEvent::RecordStatusUpdated(status) => Some((OutputKind::Record, status)),
-            _ => None,
-        };
-        if let Some((kind, status)) = observation {
+        if let AppEvent::OutputStatusUpdated(kind, status) = event {
+            let kind = *kind;
             let previous = match kind {
                 OutputKind::Stream => &self.stream_status,
                 OutputKind::Record => &self.record_status,
@@ -750,12 +748,12 @@ impl AppState {
         }
 
         let kind = match event {
-            AppEvent::StreamStatusUpdated(status) => {
+            AppEvent::OutputStatusUpdated(OutputKind::Stream, status) => {
                 update_active_since(status.active, &mut self.stream_active_since);
                 self.set_stream_status(status.clone());
                 OutputKind::Stream
             }
-            AppEvent::RecordStatusUpdated(status) => {
+            AppEvent::OutputStatusUpdated(OutputKind::Record, status) => {
                 update_active_since(status.active, &mut self.record_active_since);
                 // OBS sends an empty path when there is no new file, not "no recording".
                 if let Some(path) = status.detail.as_ref().filter(|path| !path.is_empty()) {
@@ -764,21 +762,21 @@ impl AppState {
                 self.set_record_status(status.clone());
                 OutputKind::Record
             }
-            AppEvent::StreamCommandPending(status) => {
+            AppEvent::OutputCommandPending(OutputKind::Stream, status) => {
                 update_active_since(status.active, &mut self.stream_active_since);
                 self.set_stream_command_pending(status.clone());
                 OutputKind::Stream
             }
-            AppEvent::RecordCommandPending(status) => {
+            AppEvent::OutputCommandPending(OutputKind::Record, status) => {
                 update_active_since(status.active, &mut self.record_active_since);
                 self.set_record_command_pending(status.clone());
                 OutputKind::Record
             }
-            AppEvent::StreamCommandSucceeded => {
+            AppEvent::OutputCommandSucceeded(OutputKind::Stream) => {
                 self.set_stream_command_success();
                 OutputKind::Stream
             }
-            AppEvent::RecordCommandSucceeded => {
+            AppEvent::OutputCommandSucceeded(OutputKind::Record) => {
                 if let Some(id) = self.workspace.recording_stop_result.take() {
                     self.workspace.output_results.acknowledge(id, now_ms);
                 }
@@ -786,13 +784,13 @@ impl AppState {
                 self.set_record_command_success();
                 OutputKind::Record
             }
-            AppEvent::StreamCommandFailed(failure) => {
+            AppEvent::OutputCommandFailed(OutputKind::Stream, failure) => {
                 self.workspace
                     .log(ActivityOrigin::Failed, failure.message().to_owned());
                 self.set_stream_command_failure_with_recovery(failure.clone());
                 OutputKind::Stream
             }
-            AppEvent::RecordCommandFailed(failure) => {
+            AppEvent::OutputCommandFailed(OutputKind::Record, failure) => {
                 if let Some(id) = self.workspace.recording_stop_result.take() {
                     if failure.uncertain() {
                         self.workspace.output_results.invalidate(now_ms);
@@ -1459,9 +1457,18 @@ mod tests {
         use crate::controller::command::AppCommand;
         let mut state = app_state();
         for cmd in [
-            AppCommand::StartStreaming,
-            AppCommand::StopStreaming,
-            AppCommand::StartRecording,
+            AppCommand::SetOutput {
+                kind: OutputKind::Stream,
+                active: true,
+            },
+            AppCommand::SetOutput {
+                kind: OutputKind::Stream,
+                active: false,
+            },
+            AppCommand::SetOutput {
+                kind: OutputKind::Record,
+                active: true,
+            },
         ] {
             state.note_command_intent(&cmd, 1);
         }
@@ -1472,26 +1479,50 @@ mod tests {
             "non-output commands are not logged"
         );
 
-        state.note_command_intent(&AppCommand::StopRecording, 1);
+        state.note_command_intent(
+            &AppCommand::SetOutput {
+                kind: OutputKind::Record,
+                active: false,
+            },
+            1,
+        );
         assert_eq!(
             state.workspace.recording_stop_result, None,
             "recording was not active"
         );
 
         state.record_status = OutputStatus::new(true, OutputRunState::Stopping);
-        state.note_command_intent(&AppCommand::StopRecording, 2);
+        state.note_command_intent(
+            &AppCommand::SetOutput {
+                kind: OutputKind::Record,
+                active: false,
+            },
+            2,
+        );
         assert_eq!(
             state.workspace.recording_stop_result, None,
             "already transitioning"
         );
 
         state.record_status = OutputStatus::new(true, OutputRunState::Active);
-        state.note_command_intent(&AppCommand::StopRecording, 3);
+        state.note_command_intent(
+            &AppCommand::SetOutput {
+                kind: OutputKind::Record,
+                active: false,
+            },
+            3,
+        );
         let ticket = state
             .workspace
             .recording_stop_result
             .expect("ticket opened");
-        state.note_command_intent(&AppCommand::StopRecording, 4);
+        state.note_command_intent(
+            &AppCommand::SetOutput {
+                kind: OutputKind::Record,
+                active: false,
+            },
+            4,
+        );
         assert_eq!(
             state.workspace.recording_stop_result,
             Some(ticket),
@@ -1509,7 +1540,7 @@ mod tests {
         let mut state = app_state();
         let active = OutputStatus::new(true, OutputRunState::Active);
 
-        let event = AppEvent::StreamStatusUpdated(active.clone());
+        let event = AppEvent::OutputStatusUpdated(OutputKind::Stream, active.clone());
         assert_eq!(
             state.apply_output_event(&event, 1),
             Some(OutputKind::Stream)
@@ -1523,38 +1554,62 @@ mod tests {
         assert!(state.workspace.dirty);
         state.apply_output_event(&event, 2);
         assert_eq!(state.workspace.activity.entries.len(), 1, "repeats are not");
-        state.apply_output_event(&AppEvent::StreamStatusUpdated(OutputStatus::inactive()), 3);
+        state.apply_output_event(
+            &AppEvent::OutputStatusUpdated(OutputKind::Stream, OutputStatus::inactive()),
+            3,
+        );
         assert!(state.stream_active_since.is_none());
 
         // A settled stop opens a ticket; success acknowledges it.
-        state.apply_output_event(&AppEvent::RecordStatusUpdated(active.clone()), 4);
-        state.note_command_intent(&AppCommand::StopRecording, 5);
+        state.apply_output_event(
+            &AppEvent::OutputStatusUpdated(OutputKind::Record, active.clone()),
+            4,
+        );
+        state.note_command_intent(
+            &AppCommand::SetOutput {
+                kind: OutputKind::Record,
+                active: false,
+            },
+            5,
+        );
         assert!(state.workspace.recording_stop_result.is_some());
-        state.apply_output_event(&AppEvent::RecordCommandSucceeded, 6);
+        state.apply_output_event(&AppEvent::OutputCommandSucceeded(OutputKind::Record), 6);
         assert_eq!(state.workspace.recording_stop_result, None);
 
         let stopped = OutputStatus {
             detail: Some("/tmp/take.mkv".into()),
             ..OutputStatus::inactive()
         };
-        state.apply_output_event(&AppEvent::RecordStatusUpdated(stopped), 7);
+        state.apply_output_event(
+            &AppEvent::OutputStatusUpdated(OutputKind::Record, stopped),
+            7,
+        );
         assert_eq!(state.last_recording_path.as_deref(), Some("/tmp/take.mkv"));
         assert!(state.record_active_since.is_none());
         let empty = OutputStatus {
             detail: Some(String::new()),
             ..OutputStatus::new(true, OutputRunState::Active)
         };
-        state.apply_output_event(&AppEvent::RecordStatusUpdated(empty), 8);
+        state.apply_output_event(&AppEvent::OutputStatusUpdated(OutputKind::Record, empty), 8);
         assert_eq!(state.last_recording_path.as_deref(), Some("/tmp/take.mkv"));
 
         // A rejected stop fails its ticket instead.
-        state.note_command_intent(&AppCommand::StopRecording, 9);
+        state.note_command_intent(
+            &AppCommand::SetOutput {
+                kind: OutputKind::Record,
+                active: false,
+            },
+            9,
+        );
         let ticket = state.workspace.recording_stop_result.expect("ticket");
         let failure = OutputCommandFailureRecovery::with_failed_command_fallback_status(
             "refused".into(),
             OutputStatus::inactive(),
         );
-        state.apply_output_event(&AppEvent::RecordCommandFailed(failure), 10);
+        state.apply_output_event(
+            &AppEvent::OutputCommandFailed(OutputKind::Record, failure),
+            10,
+        );
         assert_eq!(state.workspace.recording_stop_result, None);
         assert!(state
             .workspace

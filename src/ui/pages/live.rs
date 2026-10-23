@@ -259,16 +259,6 @@ pub(crate) fn show_disconnected_view(handle: &LivePageHandle, message: &str) {
     handle.disconnected_detail.set_text(message);
 }
 
-/// The command that flips `kind` from its current state.
-fn output_toggle_command(kind: OutputKind, active: bool) -> AppCommand {
-    match (kind, active) {
-        (OutputKind::Stream, false) => AppCommand::StartStreaming,
-        (OutputKind::Stream, true) => AppCommand::StopStreaming,
-        (OutputKind::Record, false) => AppCommand::StartRecording,
-        (OutputKind::Record, true) => AppCommand::StopRecording,
-    }
-}
-
 /// Start or stop one output, asking first when the user has asked to be asked.
 ///
 /// The stream and record buttons behave identically apart from which output
@@ -291,7 +281,10 @@ fn handle_output_toggle(button: &Button, nav: &NavigationContext, kind: OutputKi
         )
     };
 
-    let command = output_toggle_command(kind, active);
+    let command = AppCommand::SetOutput {
+        kind,
+        active: !active,
+    };
     if should_confirm {
         let action = output_action_for_active_state(active);
         let dialog = output_confirmation_dialog(kind, action);

@@ -78,7 +78,7 @@ impl OutputController {
             );
             let tx = self.event_tx.scoped(&self.scope);
             self.scope.spawn(&self.runtime, async move {
-                let _ = tx.send(failed_event(kind, failure)).await;
+                let _ = tx.send(AppEvent::OutputCommandFailed(kind, failure)).await;
             });
             return;
         };
@@ -102,7 +102,9 @@ impl OutputController {
         };
         self.scope.spawn_reserved(&self.runtime, async move {
             let _completion = completion;
-            let _ = tx.send(pending_event(kind, pending_status)).await;
+            let _ = tx
+                .send(AppEvent::OutputCommandPending(kind, pending_status))
+                .await;
             let acknowledged = match client
                 .set_output_if(kind, active, &|| {
                     if !scope.is_active() {
@@ -115,15 +117,18 @@ impl OutputController {
             {
                 Ok(path) => {
                     evidence.acknowledge();
-                    let _ = tx.send(succeeded_event(kind)).await;
+                    let _ = tx.send(AppEvent::OutputCommandSucceeded(kind)).await;
                     // Stopping a recording reports the file OBS wrote.
                     if let (OutputKind::Record, Some(path)) = (kind, path) {
                         let _ = tx
-                            .send(AppEvent::RecordStatusUpdated(OutputStatus {
-                                active: false,
-                                state: OutputRunState::Inactive,
-                                detail: Some(path),
-                            }))
+                            .send(AppEvent::OutputStatusUpdated(
+                                OutputKind::Record,
+                                OutputStatus {
+                                    active: false,
+                                    state: OutputRunState::Inactive,
+                                    detail: Some(path),
+                                },
+                            ))
                             .await;
                     }
                     true
@@ -150,7 +155,7 @@ impl OutputController {
                     } else {
                         evidence.finish(Err(failure.message().to_owned()));
                     }
-                    let _ = tx.send(failed_event(kind, failure)).await;
+                    let _ = tx.send(AppEvent::OutputCommandFailed(kind, failure)).await;
                     false
                 }
             };
@@ -437,27 +442,6 @@ fn operation_kind(kind: OutputKind) -> super::lifecycle::OperationKind {
     }
 }
 
-fn pending_event(kind: OutputKind, status: OutputStatus) -> AppEvent {
-    match kind {
-        OutputKind::Stream => AppEvent::StreamCommandPending(status),
-        OutputKind::Record => AppEvent::RecordCommandPending(status),
-    }
-}
-
-fn succeeded_event(kind: OutputKind) -> AppEvent {
-    match kind {
-        OutputKind::Stream => AppEvent::StreamCommandSucceeded,
-        OutputKind::Record => AppEvent::RecordCommandSucceeded,
-    }
-}
-
-fn failed_event(kind: OutputKind, failure: OutputCommandFailureRecovery) -> AppEvent {
-    match kind {
-        OutputKind::Stream => AppEvent::StreamCommandFailed(failure),
-        OutputKind::Record => AppEvent::RecordCommandFailed(failure),
-    }
-}
-
 pub(crate) async fn stop_active_outputs_before_disconnect(client: &OutputCommandClient) {
     match client.read_stream_status().await {
         Ok(status) if status.active => {
@@ -516,7 +500,7 @@ pub(crate) async fn refresh_output_statuses(
     let stream_revision = client.next_observation();
     let stream = match tokio::time::timeout(REQUEST_BUDGET, client.read_stream_status()).await {
         Ok(Ok(status)) => {
-            let status = AppEvent::StreamStatusUpdated(status);
+            let status = AppEvent::OutputStatusUpdated(OutputKind::Stream, status);
             let event = match stream_revision {
                 Some(revision) => AppEvent::Observation {
                     revision,
@@ -539,7 +523,7 @@ pub(crate) async fn refresh_output_statuses(
     let record_revision = client.next_observation();
     let record = match tokio::time::timeout(REQUEST_BUDGET, client.read_record_status()).await {
         Ok(Ok(status)) => {
-            let status = AppEvent::RecordStatusUpdated(status);
+            let status = AppEvent::OutputStatusUpdated(OutputKind::Record, status);
             let event = match record_revision {
                 Some(revision) => AppEvent::Observation {
                     revision,
@@ -638,11 +622,11 @@ mod tests {
         outputs.set_output(OutputKind::Stream, true);
         assert!(matches!(
             receive(&rx).await,
-            AppEvent::StreamCommandPending(_)
+            AppEvent::OutputCommandPending(OutputKind::Stream, _)
         ));
         assert!(matches!(
             receive(&rx).await,
-            AppEvent::StreamCommandSucceeded
+            AppEvent::OutputCommandSucceeded(OutputKind::Stream)
         ));
         fake.reading.notified().await;
         assert!(
@@ -652,7 +636,7 @@ mod tests {
         fake.release.notify_one();
         assert!(matches!(
             receive(&rx).await,
-            AppEvent::RecordStatusUpdated(_)
+            AppEvent::OutputStatusUpdated(OutputKind::Record, _)
         ));
         assert!(matches!(
             receive(&rx).await,

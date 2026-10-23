@@ -13,10 +13,8 @@ fn is_collection_independent(event: &AppEvent) -> bool {
             | AppEvent::Connected(_)
             | AppEvent::Disconnected
             | AppEvent::Error(_)
-            | AppEvent::StreamCommandSucceeded
-            | AppEvent::RecordCommandSucceeded
-            | AppEvent::StreamCommandFailed(_)
-            | AppEvent::RecordCommandFailed(_)
+            | AppEvent::OutputCommandSucceeded(_)
+            | AppEvent::OutputCommandFailed(..)
             | AppEvent::OutputReadbackFailed { .. }
             | AppEvent::GraphRefreshRejected(_)
             | AppEvent::WorkspaceAcknowledged { .. }
@@ -179,10 +177,16 @@ mod tests {
                 AppEvent::Error(AppError::Request("fixture failure".into())),
                 true,
             ),
-            (AppEvent::StreamCommandSucceeded, true),
-            (AppEvent::RecordCommandSucceeded, true),
-            (AppEvent::StreamCommandFailed(failure()), true),
-            (AppEvent::RecordCommandFailed(failure()), true),
+            (AppEvent::OutputCommandSucceeded(OutputKind::Stream), true),
+            (AppEvent::OutputCommandSucceeded(OutputKind::Record), true),
+            (
+                AppEvent::OutputCommandFailed(OutputKind::Stream, failure()),
+                true,
+            ),
+            (
+                AppEvent::OutputCommandFailed(OutputKind::Record, failure()),
+                true,
+            ),
             (
                 AppEvent::OutputReadbackFailed {
                     kind: OutputKind::Stream,

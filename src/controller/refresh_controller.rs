@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::controller::event::{AppEvent, FailedOperation};
+use crate::domain::output::OutputKind;
 use crate::infra::error::AppError;
 use crate::obs::client::ObsClient;
 use crate::obs::event::{ObsEvent, ObsEventStream};
@@ -483,11 +484,11 @@ pub(crate) async fn run_event_loop(
             ObsEvent::ReplaySaved(path) => Some(AppEvent::ReplaySaved(path)),
             ObsEvent::StreamStatusUpdated(status) => Some(AppEvent::Observation {
                 revision: client.next_observation(),
-                event: Box::new(AppEvent::StreamStatusUpdated(status)),
+                event: Box::new(AppEvent::OutputStatusUpdated(OutputKind::Stream, status)),
             }),
             ObsEvent::RecordStatusUpdated(status) => Some(AppEvent::Observation {
                 revision: client.next_observation(),
-                event: Box::new(AppEvent::RecordStatusUpdated(status)),
+                event: Box::new(AppEvent::OutputStatusUpdated(OutputKind::Record, status)),
             }),
             ObsEvent::CurrentProgramSceneChanged(scene) => {
                 dirty.audio_scene.send_replace(Some(scene.clone()));

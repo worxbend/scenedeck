@@ -7,6 +7,7 @@ use crate::controller::state::{
 };
 use crate::controller::workspace::{WorkspaceController, WorkspaceRequest};
 use crate::domain::control::ControlAction;
+use crate::domain::output::OutputKind;
 use crate::domain::workflow::ScopeBinding;
 use crate::obs::event::ObsEventStream;
 use futures_util::{SinkExt, StreamExt};
@@ -1527,7 +1528,10 @@ async fn terminal_case(acknowledged: bool, full: bool, reconnect: bool) {
     controller.handle(AppCommand::Connect);
     graph_ready(&rx).await;
     let generation = controller.session.scope().generation();
-    controller.handle(AppCommand::StartStreaming);
+    controller.handle(AppCommand::SetOutput {
+        kind: OutputKind::Stream,
+        active: true,
+    });
     first.wait(held.0, held.1).await;
     tokio::time::timeout(Duration::from_secs(12), first.client.wait_retired())
         .await
@@ -1573,7 +1577,10 @@ async fn terminal_case(acknowledged: bool, full: bool, reconnect: bool) {
     }
     state.apply_terminal_evidence(terminal, current);
     assert_eq!(state.session_retirements.len(), 1);
-    assert!(!state.accepts_session_publication(generation, &AppEvent::StreamCommandSucceeded));
+    assert!(!state.accepts_session_publication(
+        generation,
+        &AppEvent::OutputCommandSucceeded(OutputKind::Stream)
+    ));
     assert!(!state.accepts_session_publication(generation, &AppEvent::Disconnected));
     assert!(state.accepts_session_publication(
         generation,
@@ -1848,7 +1855,7 @@ async fn output_status_snapshot_cannot_undo_a_newer_transport_echo() {
     let mut state = state();
     loop {
         if let AppEvent::Observation { revision, event } = receive(&rx).await {
-            if let Some(AppEvent::StreamStatusUpdated(status)) =
+            if let Some(AppEvent::OutputStatusUpdated(OutputKind::Stream, status)) =
                 state.reconcile_observation(revision, *event)
             {
                 assert!(status.active);
@@ -1860,7 +1867,7 @@ async fn output_status_snapshot_cannot_undo_a_newer_transport_echo() {
     mock.signal(Signal::Release).await;
     loop {
         if let AppEvent::Observation { revision, event } = receive(&rx).await {
-            if matches!(*event, AppEvent::StreamStatusUpdated(_)) {
+            if matches!(*event, AppEvent::OutputStatusUpdated(OutputKind::Stream, _)) {
                 assert!(state.reconcile_observation(revision, *event).is_none());
                 break;
             }
