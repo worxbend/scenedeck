@@ -30,6 +30,7 @@ use crate::controller::refresh_controller::{
     refresh_profile_and_collection_lists, BitrateSample,
 };
 use crate::controller::session_controller::SessionController;
+use crate::domain::output::OutputKind;
 #[cfg(test)]
 use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::infra::error::AppError;
@@ -204,11 +205,11 @@ impl AppController {
             }
             AppCommand::RefreshMixerSceneAudio(scene) => self.refresh_mixer_scene_audio(scene),
 
-            AppCommand::StartStreaming => self.outputs.set_streaming(true),
-            AppCommand::StopStreaming => self.outputs.set_streaming(false),
+            AppCommand::StartStreaming => self.outputs.set_output(OutputKind::Stream, true),
+            AppCommand::StopStreaming => self.outputs.set_output(OutputKind::Stream, false),
 
-            AppCommand::StartRecording => self.outputs.set_recording(true),
-            AppCommand::StopRecording => self.outputs.set_recording(false),
+            AppCommand::StartRecording => self.outputs.set_output(OutputKind::Record, true),
+            AppCommand::StopRecording => self.outputs.set_output(OutputKind::Record, false),
             AppCommand::RefreshStats => self.refresh_stats(),
 
             AppCommand::RefreshData => self.refresh_data(),
@@ -825,6 +826,32 @@ mod tests {
         assert_eq!(fake.stream_status_call_count(), 1);
         assert_eq!(fake.record_status_call_count(), 1);
         assert_eq!(fake.stream_commands(), vec![false]);
+        assert_eq!(fake.record_commands(), vec![false]);
+    }
+
+    #[test]
+    fn recording_stop_reports_the_written_file_before_status_readback() {
+        let (_runtime, mut controller, rx) = controller_with_receiver();
+        let fake = Arc::new(FakeOutputClient {
+            record_result: Ok(Some("/tmp/take-1.mkv".to_string())),
+            ..Arc::into_inner(FakeOutputClient::with_successful_commands(
+                inactive_status(),
+                inactive_status(),
+            ))
+            .expect("fresh fake")
+        });
+        controller.set_output_client_override(OutputCommandClient::Fake(fake.clone()));
+
+        controller.handle(AppCommand::StopRecording);
+
+        let events = receive_events(&rx, 3, "record stop with path");
+        assert!(matches!(events[0], AppEvent::RecordCommandPending(_)));
+        assert!(matches!(events[1], AppEvent::RecordCommandSucceeded));
+        assert!(matches!(
+            &events[2],
+            AppEvent::RecordStatusUpdated(OutputStatus { detail: Some(path), .. })
+                if path == "/tmp/take-1.mkv"
+        ));
         assert_eq!(fake.record_commands(), vec![false]);
     }
 

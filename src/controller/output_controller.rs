@@ -60,24 +60,25 @@ impl OutputController {
         self.scope = scope;
     }
 
-    pub(crate) fn set_streaming(&self, active: bool) {
-        let Some(operation) = mark_stream_pending(&self.pending) else {
+    pub(crate) fn set_output(&self, kind: OutputKind, active: bool) {
+        let Some(operation) = mark_pending(&self.pending, kind) else {
             tracing::warn!(
+                ?kind,
                 active,
-                "stream command ignored while previous operation is pending"
+                "output command ignored while previous operation is pending"
             );
             return;
         };
 
         let Some(client) = self.client() else {
-            clear_stream_pending(&self.pending, operation);
+            clear_pending(&self.pending, kind, operation);
             let failure = OutputCommandFailureRecovery::with_failed_command_fallback_status(
                 fl!(LANGUAGE_LOADER, "controller-not-connected"),
                 OutputStatus::default(),
             );
             let tx = self.event_tx.scoped(&self.scope);
             self.scope.spawn(&self.runtime, async move {
-                let _ = tx.send(AppEvent::StreamCommandFailed(failure)).await;
+                let _ = tx.send(failed_event(kind, failure)).await;
             });
             return;
         };
@@ -86,9 +87,9 @@ impl OutputController {
         let pending = Arc::clone(&self.pending);
         let Some(evidence) = self
             .scope
-            .operation(super::lifecycle::OperationKind::Stream, client.endpoint())
+            .operation(operation_kind(kind), client.endpoint())
         else {
-            clear_stream_pending(&pending, operation);
+            clear_pending(&pending, kind, operation);
             return;
         };
         let scope = self.scope.clone();
@@ -96,110 +97,14 @@ impl OutputController {
         let fallback = fallback_status_after_failed_output_command(&pending_status);
         let completion = PendingOperation {
             pending: pending.clone(),
-            kind: OutputKind::Stream,
+            kind,
             operation,
         };
         self.scope.spawn_reserved(&self.runtime, async move {
             let _completion = completion;
-            let _ = tx
-                .send(AppEvent::StreamCommandPending(pending_status))
-                .await;
+            let _ = tx.send(pending_event(kind, pending_status)).await;
             let acknowledged = match client
-                .set_streaming_if(active, &|| {
-                    if !scope.is_active() {
-                        return false;
-                    }
-                    evidence.dispatch();
-                    true
-                })
-                .await
-            {
-                Ok(()) => {
-                    evidence.acknowledge();
-                    let _ = tx.send(AppEvent::StreamCommandSucceeded).await;
-                    true
-                }
-                Err(error) => {
-                    tracing::warn!(%error, active, "stream command failed");
-                    let uncertain = match &client {
-                        OutputCommandClient::Obs(client) => {
-                            client.wait_retired().now_or_never().is_some()
-                        }
-                        #[cfg(test)]
-                        OutputCommandClient::Fake(_) => matches!(error, AppError::Connection(_)),
-                    };
-                    let failure = if uncertain {
-                        OutputCommandFailureRecovery::outcome_unknown(error.user_message())
-                    } else {
-                        OutputCommandFailureRecovery::with_failed_command_fallback_status(
-                            error.user_message(),
-                            fallback,
-                        )
-                    };
-                    if uncertain {
-                        evidence.unknown(failure.message().to_owned());
-                    } else {
-                        evidence.finish(Err(failure.message().to_owned()));
-                    }
-                    let _ = tx.send(AppEvent::StreamCommandFailed(failure)).await;
-                    false
-                }
-            };
-            let readback = refresh_output_statuses(&client, &tx).await;
-            if acknowledged {
-                evidence.finish(readback.result_for(OutputKind::Stream));
-                readback.publish(&tx).await;
-            }
-            clear_stream_pending(&pending, operation);
-        });
-    }
-
-    pub(crate) fn set_recording(&self, active: bool) {
-        let Some(operation) = mark_record_pending(&self.pending) else {
-            tracing::warn!(
-                active,
-                "record command ignored while previous operation is pending"
-            );
-            return;
-        };
-
-        let Some(client) = self.client() else {
-            clear_record_pending(&self.pending, operation);
-            let failure = OutputCommandFailureRecovery::with_failed_command_fallback_status(
-                fl!(LANGUAGE_LOADER, "controller-not-connected"),
-                OutputStatus::default(),
-            );
-            let tx = self.event_tx.scoped(&self.scope);
-            self.scope.spawn(&self.runtime, async move {
-                let _ = tx.send(AppEvent::RecordCommandFailed(failure)).await;
-            });
-            return;
-        };
-
-        let tx = self.event_tx.scoped(&self.scope);
-        let pending = Arc::clone(&self.pending);
-        let Some(evidence) = self
-            .scope
-            .operation(super::lifecycle::OperationKind::Record, client.endpoint())
-        else {
-            clear_record_pending(&pending, operation);
-            return;
-        };
-        let scope = self.scope.clone();
-        let pending_status = pending_status(active);
-        let fallback = fallback_status_after_failed_output_command(&pending_status);
-        let completion = PendingOperation {
-            pending: pending.clone(),
-            kind: OutputKind::Record,
-            operation,
-        };
-        self.scope.spawn_reserved(&self.runtime, async move {
-            let _completion = completion;
-            let _ = tx
-                .send(AppEvent::RecordCommandPending(pending_status))
-                .await;
-            let acknowledged = match client
-                .set_recording_if(active, &|| {
+                .set_output_if(kind, active, &|| {
                     if !scope.is_active() {
                         return false;
                     }
@@ -210,8 +115,9 @@ impl OutputController {
             {
                 Ok(path) => {
                     evidence.acknowledge();
-                    let _ = tx.send(AppEvent::RecordCommandSucceeded).await;
-                    if let Some(path) = path {
+                    let _ = tx.send(succeeded_event(kind)).await;
+                    // Stopping a recording reports the file OBS wrote.
+                    if let (OutputKind::Record, Some(path)) = (kind, path) {
                         let _ = tx
                             .send(AppEvent::RecordStatusUpdated(OutputStatus {
                                 active: false,
@@ -223,7 +129,7 @@ impl OutputController {
                     true
                 }
                 Err(error) => {
-                    tracing::warn!(%error, active, "record command failed");
+                    tracing::warn!(%error, ?kind, active, "output command failed");
                     let uncertain = match &client {
                         OutputCommandClient::Obs(client) => {
                             client.wait_retired().now_or_never().is_some()
@@ -244,16 +150,16 @@ impl OutputController {
                     } else {
                         evidence.finish(Err(failure.message().to_owned()));
                     }
-                    let _ = tx.send(AppEvent::RecordCommandFailed(failure)).await;
+                    let _ = tx.send(failed_event(kind, failure)).await;
                     false
                 }
             };
             let readback = refresh_output_statuses(&client, &tx).await;
             if acknowledged {
-                evidence.finish(readback.result_for(OutputKind::Record));
+                evidence.finish(readback.result_for(kind));
                 readback.publish(&tx).await;
             }
-            clear_record_pending(&pending, operation);
+            clear_pending(&pending, kind, operation);
         });
     }
 
@@ -315,6 +221,19 @@ impl OutputCommandClient {
             Self::Obs(client) => client.endpoint().to_owned(),
             #[cfg(test)]
             Self::Fake(_) => "fixture".into(),
+        }
+    }
+
+    /// Stream commands report no path; a recording stop may.
+    async fn set_output_if(
+        &self,
+        kind: OutputKind,
+        active: bool,
+        valid: &(impl Fn() -> bool + Sync),
+    ) -> Result<Option<String>, AppError> {
+        match kind {
+            OutputKind::Stream => self.set_streaming_if(active, valid).await.map(|()| None),
+            OutputKind::Record => self.set_recording_if(active, valid).await,
         }
     }
 
@@ -475,16 +394,22 @@ struct PendingOperation {
 
 impl Drop for PendingOperation {
     fn drop(&mut self) {
-        match self.kind {
-            OutputKind::Stream => clear_stream_pending(&self.pending, self.operation),
-            OutputKind::Record => clear_record_pending(&self.pending, self.operation),
+        clear_pending(&self.pending, self.kind, self.operation);
+    }
+}
+
+impl OutputPending {
+    fn slot(&mut self, kind: OutputKind) -> &mut Option<u64> {
+        match kind {
+            OutputKind::Stream => &mut self.stream,
+            OutputKind::Record => &mut self.record,
         }
     }
 }
 
-fn mark_stream_pending(pending: &Arc<Mutex<OutputPending>>) -> Option<u64> {
+fn mark_pending(pending: &Arc<Mutex<OutputPending>>, kind: OutputKind) -> Option<u64> {
     let mut pending = pending.lock().ok()?;
-    if pending.stream.is_some() {
+    if pending.slot(kind).is_some() {
         return None;
     }
     pending.next = pending
@@ -492,37 +417,44 @@ fn mark_stream_pending(pending: &Arc<Mutex<OutputPending>>) -> Option<u64> {
         .checked_add(1)
         .expect("output operation exhausted");
     let operation = pending.next;
-    pending.stream = Some(operation);
+    *pending.slot(kind) = Some(operation);
     Some(operation)
 }
 
-fn clear_stream_pending(pending: &Arc<Mutex<OutputPending>>, operation: u64) {
+fn clear_pending(pending: &Arc<Mutex<OutputPending>>, kind: OutputKind, operation: u64) {
     if let Ok(mut pending) = pending.lock() {
-        if pending.stream == Some(operation) {
-            pending.stream = None;
+        let slot = pending.slot(kind);
+        if *slot == Some(operation) {
+            *slot = None;
         }
     }
 }
 
-fn mark_record_pending(pending: &Arc<Mutex<OutputPending>>) -> Option<u64> {
-    let mut pending = pending.lock().ok()?;
-    if pending.record.is_some() {
-        return None;
+fn operation_kind(kind: OutputKind) -> super::lifecycle::OperationKind {
+    match kind {
+        OutputKind::Stream => super::lifecycle::OperationKind::Stream,
+        OutputKind::Record => super::lifecycle::OperationKind::Record,
     }
-    pending.next = pending
-        .next
-        .checked_add(1)
-        .expect("output operation exhausted");
-    let operation = pending.next;
-    pending.record = Some(operation);
-    Some(operation)
 }
 
-fn clear_record_pending(pending: &Arc<Mutex<OutputPending>>, operation: u64) {
-    if let Ok(mut pending) = pending.lock() {
-        if pending.record == Some(operation) {
-            pending.record = None;
-        }
+fn pending_event(kind: OutputKind, status: OutputStatus) -> AppEvent {
+    match kind {
+        OutputKind::Stream => AppEvent::StreamCommandPending(status),
+        OutputKind::Record => AppEvent::RecordCommandPending(status),
+    }
+}
+
+fn succeeded_event(kind: OutputKind) -> AppEvent {
+    match kind {
+        OutputKind::Stream => AppEvent::StreamCommandSucceeded,
+        OutputKind::Record => AppEvent::RecordCommandSucceeded,
+    }
+}
+
+fn failed_event(kind: OutputKind, failure: OutputCommandFailureRecovery) -> AppEvent {
+    match kind {
+        OutputKind::Stream => AppEvent::StreamCommandFailed(failure),
+        OutputKind::Record => AppEvent::RecordCommandFailed(failure),
     }
 }
 
@@ -680,16 +612,16 @@ mod tests {
     #[test]
     fn retired_output_completion_cannot_release_a_new_operation() {
         let pending = Arc::new(Mutex::new(OutputPending::default()));
-        let old = mark_stream_pending(&pending).unwrap();
+        let old = mark_pending(&pending, OutputKind::Stream).unwrap();
         pending.lock().unwrap().stream = None;
-        let new = mark_stream_pending(&pending).unwrap();
+        let new = mark_pending(&pending, OutputKind::Stream).unwrap();
         drop(PendingOperation {
             pending: pending.clone(),
             kind: OutputKind::Stream,
             operation: old,
         });
         assert_eq!(pending.lock().unwrap().stream, Some(new));
-        clear_stream_pending(&pending, new);
+        clear_pending(&pending, OutputKind::Stream, new);
         assert!(pending.lock().unwrap().stream.is_none());
     }
 
@@ -703,7 +635,7 @@ mod tests {
             release: Notify::new(),
         });
         outputs.set_client_override(OutputCommandClient::Fake(fake.clone()));
-        outputs.set_streaming(true);
+        outputs.set_output(OutputKind::Stream, true);
         assert!(matches!(
             receive(&rx).await,
             AppEvent::StreamCommandPending(_)
@@ -745,7 +677,7 @@ mod tests {
             release: Notify::new(),
         });
         outputs.set_client_override(OutputCommandClient::Fake(fake.clone()));
-        outputs.set_streaming(true);
+        outputs.set_output(OutputKind::Stream, true);
         let _ = receive(&rx).await;
         let _ = receive(&rx).await;
         fake.reading.notified().await;
