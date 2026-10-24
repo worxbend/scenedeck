@@ -38,7 +38,7 @@
   </provides>
 
   <releases>
-    <release version="0.5.1" date="2026-10-24">
+    <release version="0.5.2" date="2026-10-24">
       <description>
         <p>SceneDeck can now run more of your show without switching to OBS.</p>
         <ul>
