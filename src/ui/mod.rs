@@ -326,6 +326,18 @@ pub(crate) mod test_support {
             std::thread::sleep(Duration::from_millis(2));
         }
     }
+
+    /// Pump until `ready` holds or `timeout` passes; true when ready.
+    pub(crate) fn pump_until(timeout: Duration, mut ready: impl FnMut() -> bool) -> bool {
+        let until = std::time::Instant::now() + timeout;
+        while !ready() {
+            if std::time::Instant::now() >= until {
+                return false;
+            }
+            pump(Duration::from_millis(10));
+        }
+        true
+    }
 }
 
 #[cfg(test)]
