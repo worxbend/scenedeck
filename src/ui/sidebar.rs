@@ -631,16 +631,6 @@ mod tests {
                     .build();
                 window.add_css_class("scenedeck-root");
                 window.present();
-                // Popup before X maps the window: no monitor, garbage size, BadAlloc.
-                assert!(
-                    crate::ui::test_support::pump_until(std::time::Duration::from_secs(5), || {
-                        window.is_mapped()
-                            && window.surface().is_some_and(|surface| {
-                                surface.display().monitor_at_surface(&surface).is_some()
-                            })
-                    }),
-                    "test window never got a monitor"
-                );
                 let popover = selectors.menu.popover().unwrap();
                 for (mode, expected) in [
                     (ThemeMode::Dark, [46_u8, 52, 64]),
@@ -654,6 +644,14 @@ mod tests {
                         ..Default::default()
                     };
                     assert!(ThemeManager::apply(&preference).is_ok());
+                    // Theme swap drops allocation. Popup on a 0x0 window: no monitor, garbage size, BadAlloc.
+                    assert!(
+                        crate::ui::test_support::pump_until(
+                            std::time::Duration::from_secs(5),
+                            || { window.width() > 0 && selectors.menu.width() > 0 }
+                        ),
+                        "setup button never got allocated"
+                    );
                     selectors.menu.popup();
                     crate::ui::test_support::pump(std::time::Duration::from_millis(100));
                     assert!(popover.is_mapped());
