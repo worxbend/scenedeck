@@ -154,7 +154,8 @@ class WorkflowContracts(unittest.TestCase):
         self.assertNotIn("build-snaps", recipe["parts"]["rust-deps"])
         self.assertEqual(len(re.findall(r"checksum=[0-9a-f]{64}", bootstrap)), 2)
         self.assertLess(bootstrap.index("sha256sum --check --strict"), bootstrap.index("./rustup-init -y"))
-        self.assertIn("--locked", recipe["parts"]["scenedeck"]["rust-cargo-parameters"])
+        # snapcraft's rust plugin adds --locked itself; a second copy is an error.
+        self.assertNotIn("--locked", recipe["parts"]["scenedeck"]["rust-cargo-parameters"])
         for part in recipe["parts"].values():
             for key, script in part.items():
                 if key.startswith("override-"):

@@ -185,22 +185,24 @@ jobs:
           ln -sf "usr/share/icons/hicolor/256x256/apps/${APP_ID}.png" "${appdir}/${APP_ID}.png"
           ln -sf "usr/share/icons/hicolor/256x256/apps/${APP_ID}.png" "${appdir}/.DirIcon"
 
-          # These existing URLs serve mutable continuous-release assets. Keep
-          # the reviewed content hashes: if upstream replaces a file, fail closed
-          # rather than silently trusting new bytes. Immutable mirroring is separate.
+          # Tagged releases, not mutable `continuous` builds (those were replaced
+          # upstream and broke v0.5.1). Hashes match GitHub's asset digests; if
+          # a tag's bytes ever change, fail closed rather than trust them.
+          linuxdeploy_tag=1-alpha-20251107-1
+          appimagetool_tag=1.9.1
           wget -q -O linuxdeploy-${APPIMAGE_ARCH}.AppImage \
-            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${APPIMAGE_ARCH}.AppImage
+            "https://github.com/linuxdeploy/linuxdeploy/releases/download/${linuxdeploy_tag}/linuxdeploy-${APPIMAGE_ARCH}.AppImage"
           wget -q -O appimagetool-${APPIMAGE_ARCH}.AppImage \
-            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${APPIMAGE_ARCH}.AppImage
+            "https://github.com/AppImage/appimagetool/releases/download/${appimagetool_tag}/appimagetool-${APPIMAGE_ARCH}.AppImage"
 
           case "${APPIMAGE_ARCH}" in
             x86_64)
-              echo "36a2d7e274d12e1050d0e9ecfe11d339ed54720b2bec464c286d53f8b07f5c62  linuxdeploy-x86_64.AppImage" | sha256sum --check --strict
-              echo "a6d71e2b6cd66f8e8d16c37ad164658985e0cf5fcaa950c90a482890cb9d13e0  appimagetool-x86_64.AppImage" | sha256sum --check --strict
+              echo "c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d  linuxdeploy-x86_64.AppImage" | sha256sum --check --strict
+              echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  appimagetool-x86_64.AppImage" | sha256sum --check --strict
               ;;
             aarch64)
-              echo "556ab80baa98e600aa80f0dcedfb70bca0e1ce7e9f147fb345be3fcc3e91b2b1  linuxdeploy-aarch64.AppImage" | sha256sum --check --strict
-              echo "1b00524ba8c6b678dc15ef88a5c25ec24def36cdfc7e3abb32ddcd068e8007fe  appimagetool-aarch64.AppImage" | sha256sum --check --strict
+              echo "620095110d693282b8ebeb244a95b5e911cf8f65f76c88b4b47d16ae6346fcff  linuxdeploy-aarch64.AppImage" | sha256sum --check --strict
+              echo "f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158  appimagetool-aarch64.AppImage" | sha256sum --check --strict
               ;;
           esac
 

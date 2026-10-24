@@ -142,7 +142,8 @@ parts:
     plugin: rust
     source: .
     rust-channel: none
-    rust-cargo-parameters: [--locked, --all-features]
+    # The rust plugin already passes --locked; repeating it makes cargo fail.
+    rust-cargo-parameters: [--all-features]
     after:
       - rust-deps
     build-packages:
