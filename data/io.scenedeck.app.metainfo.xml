@@ -38,6 +38,11 @@
   </provides>
 
   <releases>
+    <release version="0.5.3" date="2026-10-28">
+      <description>
+        <p>Packaging release: no app changes from 0.5.2. A flaky native UI test no longer blocks the arm64 Snap build, so this version reaches the Snap Store.</p>
+      </description>
+    </release>
     <release version="0.5.2" date="2026-10-24">
       <description>
         <p>SceneDeck can now run more of your show without switching to OBS.</p>

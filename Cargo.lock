@@ -2146,7 +2146,7 @@ dependencies = [
 
 [[package]]
 name = "scenedeck"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "cssparser",
  "futures-util",
