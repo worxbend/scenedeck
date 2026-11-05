@@ -117,6 +117,8 @@ impl AppController {
 
     pub fn handle(&mut self, cmd: AppCommand) {
         match cmd {
+            AppCommand::ApplyAudioPreset(plan) => self.workspace.preset(plan),
+            AppCommand::CancelAudioPreset => self.workspace.cancel_preset(),
             AppCommand::CaptureThumbnail(request) => self.thumbnails.request(request),
             AppCommand::CancelThumbnails => self.thumbnails.cancel(),
             AppCommand::ReadWorkspace(request) => self.workspace.request(request, None, None),
@@ -164,6 +166,7 @@ impl AppController {
 
             AppCommand::SetCurrentSceneCollection(name) => {
                 self.thumbnails.cancel();
+                self.workspace.cancel_preset();
                 self.workspace.cancel();
                 let dependencies = self.dependencies.clone();
                 self.spawn_with_client(|c, tx| async move {
@@ -491,7 +494,7 @@ mod tests {
     struct EmptyPasswordProvider;
 
     impl crate::controller::dependencies::ObsPasswordProvider for EmptyPasswordProvider {
-        fn obs_password(&self) -> Result<Option<String>, AppError> {
+        fn obs_password(&self, _connection_id: &str) -> Result<Option<String>, AppError> {
             Ok(None)
         }
     }
@@ -532,11 +535,13 @@ mod tests {
                 stream_result: Err(AppError::Request("stream backend refused".to_string())),
                 record_result: Err(AppError::Request("record backend refused".to_string())),
                 stream_status: Ok(OutputStatus {
+                    duration_ms: None,
                     active: false,
                     state: OutputRunState::Inactive,
                     detail: None,
                 }),
                 record_status: Ok(OutputStatus {
+                    duration_ms: None,
                     active: true,
                     state: OutputRunState::Active,
                     detail: Some("/tmp/current-recording.mkv".to_string()),
@@ -689,6 +694,7 @@ mod tests {
 
     fn inactive_status() -> OutputStatus {
         OutputStatus {
+            duration_ms: None,
             active: false,
             state: OutputRunState::Inactive,
             detail: None,
@@ -697,6 +703,7 @@ mod tests {
 
     fn active_status() -> OutputStatus {
         OutputStatus {
+            duration_ms: None,
             active: true,
             state: OutputRunState::Active,
             detail: Some("/tmp/current-recording.mkv".to_string()),
@@ -830,7 +837,7 @@ mod tests {
         let events = receive_events(&rx, 3, "record stop with path");
         assert!(matches!(
             events[0],
-            AppEvent::OutputCommandPending(OutputKind::Record, _)
+            AppEvent::OutputCommandPending(OutputKind::Record, _, _)
         ));
         assert!(matches!(
             events[1],
@@ -838,7 +845,7 @@ mod tests {
         ));
         assert!(matches!(
             &events[2],
-            AppEvent::OutputStatusUpdated(OutputKind::Record, OutputStatus { detail: Some(path), .. })
+            AppEvent::RecordingStopObserved { path, .. }
                 if path == "/tmp/take-1.mkv"
         ));
         assert_eq!(fake.record_commands(), vec![false]);
@@ -861,10 +868,12 @@ mod tests {
             AppEvent::OutputCommandPending(
                 OutputKind::Stream,
                 OutputStatus {
+                    duration_ms: None,
                     active: false,
                     state: OutputRunState::Starting,
                     detail: None
-                }
+                },
+                _
             )
         ));
 
@@ -879,10 +888,12 @@ mod tests {
             AppEvent::OutputStatusUpdated(
                 OutputKind::Stream,
                 OutputStatus {
+                    duration_ms: None,
                     active: false,
                     state: OutputRunState::Inactive,
                     detail: None
-                }
+                },
+                _
             )
         ));
         assert!(matches!(
@@ -890,10 +901,12 @@ mod tests {
             AppEvent::OutputStatusUpdated(
                 OutputKind::Record,
                 OutputStatus {
+                    duration_ms: None,
                     active: true,
                     state: OutputRunState::Active,
                     detail: Some(_)
-                }
+                },
+                _
             )
         ));
         assert!(
@@ -924,10 +937,12 @@ mod tests {
             AppEvent::OutputCommandPending(
                 OutputKind::Record,
                 OutputStatus {
+                    duration_ms: None,
                     active: false,
                     state: OutputRunState::Starting,
                     detail: None
-                }
+                },
+                _
             )
         ));
 
@@ -942,10 +957,12 @@ mod tests {
             AppEvent::OutputStatusUpdated(
                 OutputKind::Stream,
                 OutputStatus {
+                    duration_ms: None,
                     active: false,
                     state: OutputRunState::Inactive,
                     detail: None
-                }
+                },
+                _
             )
         ));
         assert!(matches!(
@@ -953,10 +970,12 @@ mod tests {
             AppEvent::OutputStatusUpdated(
                 OutputKind::Record,
                 OutputStatus {
+                    duration_ms: None,
                     active: true,
                     state: OutputRunState::Active,
                     detail: Some(_)
-                }
+                },
+                _
             )
         ));
         assert!(
@@ -992,10 +1011,12 @@ mod tests {
             AppEvent::OutputCommandPending(
                 OutputKind::Stream,
                 OutputStatus {
+                    duration_ms: None,
                     active: false,
                     state: OutputRunState::Starting,
                     detail: None
-                }
+                },
+                _
             )
         ));
         let AppEvent::OutputCommandFailed(OutputKind::Stream, failure) = &events[1] else {
@@ -1005,7 +1026,7 @@ mod tests {
         assert_eq!(failure.fallback_status(), &inactive_status());
         assert!(matches!(
             events[2],
-            AppEvent::OutputStatusUpdated(OutputKind::Record, _)
+            AppEvent::OutputStatusUpdated(OutputKind::Record, _, _)
         ));
         assert!(
             !events
@@ -1058,10 +1079,12 @@ mod tests {
             AppEvent::OutputCommandPending(
                 OutputKind::Record,
                 OutputStatus {
+                    duration_ms: None,
                     active: false,
                     state: OutputRunState::Starting,
                     detail: None
-                }
+                },
+                _
             )
         ));
         let AppEvent::OutputCommandFailed(OutputKind::Record, failure) = &events[1] else {
@@ -1071,7 +1094,7 @@ mod tests {
         assert_eq!(failure.fallback_status(), &inactive_status());
         assert!(matches!(
             events[2],
-            AppEvent::OutputStatusUpdated(OutputKind::Stream, _)
+            AppEvent::OutputStatusUpdated(OutputKind::Stream, _, _)
         ));
         assert!(
             !events
@@ -1124,10 +1147,12 @@ mod tests {
             AppEvent::OutputCommandPending(
                 OutputKind::Stream,
                 OutputStatus {
+                    duration_ms: None,
                     active: true,
                     state: OutputRunState::Stopping,
                     detail: None
-                }
+                },
+                _
             )
         ));
         let AppEvent::OutputCommandFailed(OutputKind::Stream, failure) = &events[1] else {
@@ -1137,6 +1162,7 @@ mod tests {
         assert_eq!(
             failure.fallback_status(),
             &OutputStatus {
+                duration_ms: None,
                 active: true,
                 state: OutputRunState::Active,
                 detail: None
@@ -1159,6 +1185,7 @@ mod tests {
         assert_eq!(
             state.stream_status,
             OutputStatus {
+                duration_ms: None,
                 active: true,
                 state: OutputRunState::Active,
                 detail: None
@@ -1196,10 +1223,12 @@ mod tests {
             AppEvent::OutputCommandPending(
                 OutputKind::Record,
                 OutputStatus {
+                    duration_ms: None,
                     active: true,
                     state: OutputRunState::Stopping,
                     detail: None
-                }
+                },
+                _
             )
         ));
         let AppEvent::OutputCommandFailed(OutputKind::Record, failure) = &events[1] else {
@@ -1209,6 +1238,7 @@ mod tests {
         assert_eq!(
             failure.fallback_status(),
             &OutputStatus {
+                duration_ms: None,
                 active: true,
                 state: OutputRunState::Active,
                 detail: None
@@ -1231,6 +1261,7 @@ mod tests {
         assert_eq!(
             state.record_status,
             OutputStatus {
+                duration_ms: None,
                 active: true,
                 state: OutputRunState::Active,
                 detail: None

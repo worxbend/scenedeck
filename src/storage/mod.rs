@@ -1,8 +1,12 @@
 //! Persistence adapters for local files and desktop secrets.
 
 pub(crate) mod atomic;
+pub(crate) mod bookmarks;
 pub(crate) mod config;
 pub(crate) mod registry;
+pub(crate) mod report_export;
+pub(crate) mod report_history;
 pub(crate) mod secret;
+pub(crate) mod show_workspaces;
 pub(crate) mod small_file;
 pub(crate) mod xdg;

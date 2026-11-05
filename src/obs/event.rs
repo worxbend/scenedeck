@@ -149,6 +149,11 @@ pub(crate) enum ObsEvent {
     SceneCollectionListChanged(Vec<String>),
     /// OBS scene inventory changed.
     SceneListChanged,
+    SceneRenamed {
+        uuid: Option<String>,
+        old: String,
+        new: String,
+    },
     /// Native operating controls changed; refresh the current scope.
     ControlsChanged,
     /// Studio mode changes invalidate the meaning of scene activation.

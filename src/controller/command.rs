@@ -27,6 +27,8 @@ pub enum AppCommand {
     SetCurrentSceneCollection(String),
 
     // Audio
+    ApplyAudioPreset(crate::domain::audio_preset::PresetPlan),
+    CancelAudioPreset,
     SetInputMute {
         scope: crate::domain::workflow::ScopeBinding,
         input: InputId,

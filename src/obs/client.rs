@@ -55,6 +55,7 @@ pub struct ObsClient {
     requests: Arc<super::requests::RequestGate>,
     images: Arc<super::requests::RequestGate>,
     endpoint: String,
+    connection_id: String,
     observation: Arc<std::sync::atomic::AtomicU64>,
 }
 
@@ -96,6 +97,7 @@ impl ObsClient {
                 requests: Arc::new(super::requests::RequestGate::default()),
                 images: Arc::new(super::requests::RequestGate::optional_image()),
                 endpoint: format!("{host}:{port}"),
+                connection_id: "default".into(),
                 observation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             },
             // Wrapped here so the raw `obws` stream never leaves this module.
@@ -174,12 +176,19 @@ impl ObsClient {
         &self.endpoint
     }
 
+    /// Bind connection metadata before publishing or cloning the live session.
+    pub(crate) fn with_connection_id(mut self, connection_id: String) -> Self {
+        self.connection_id = connection_id;
+        self
+    }
+
     pub async fn get_version(&self) -> Result<ConnectionInfo, AppError> {
         self.request(self.inner.general().version())
             .await
             .map(|v| {
                 let mut info = mapper::map_version(&v);
                 info.endpoint = self.endpoint.clone();
+                info.connection_id = self.connection_id.clone();
                 info
             })
             .map_err(AppError::request)
@@ -517,7 +526,17 @@ impl ObsClient {
             .request(self.inner.scenes().list())
             .await
             .map_err(AppError::request)?;
-        let mut snapshot = ControlSnapshot::default();
+        let mut snapshot = ControlSnapshot {
+            scenes: scenes
+                .scenes
+                .iter()
+                .map(|scene| crate::domain::scene::Scene {
+                    id: scene.id.name.clone(),
+                    uuid: (!scene.id.uuid.is_nil()).then(|| scene.id.uuid.to_string()),
+                })
+                .collect(),
+            ..Default::default()
+        };
         snapshot.studio.program = scenes.current_program_scene.map(|s| s.name);
         snapshot.studio.preview = scenes.current_preview_scene.map(|s| s.name);
         snapshot.scene = scene
@@ -755,14 +774,35 @@ impl ObsClient {
         action: &crate::domain::control::ControlAction,
         valid: &(impl Fn() -> bool + Sync),
     ) -> Result<(), AppError> {
+        self.execute_control_with_identity_if(action, None, valid)
+            .await
+    }
+
+    pub(crate) async fn execute_control_with_identity_if(
+        &self,
+        action: &crate::domain::control::ControlAction,
+        target_uuid: Option<&str>,
+        valid: &(impl Fn() -> bool + Sync),
+    ) -> Result<(), AppError> {
         use crate::domain::control::{AudioMonitor, ControlAction as A, MediaAction};
         use obws::requests::{inputs::InputId, scenes::SceneId, sources::SourceId};
+        let identity = target_uuid
+            .map(|value| value.parse().map(InputId::Uuid))
+            .transpose()
+            .map_err(AppError::request)?;
+        let uuid = identity.and_then(|id| id.as_uuid());
         match action {
             A::ActivateScene {
                 scene,
                 studio_enabled,
             } => {
-                return self.activate_scene_if(scene, *studio_enabled, valid).await;
+                return self
+                    .activate_scene_if(
+                        uuid.map(SceneId::Uuid).unwrap_or(SceneId::Name(scene)),
+                        *studio_enabled,
+                        valid,
+                    )
+                    .await;
             }
             A::SetItemEnabled {
                 owner,
@@ -862,7 +902,7 @@ impl ObsClient {
                 self.mutation(
                     valid,
                     self.inner.media_inputs().trigger_action(
-                        InputId::Name(input),
+                        uuid.map(InputId::Uuid).unwrap_or(InputId::Name(input)),
                         match action {
                             MediaAction::Play => obws::common::MediaAction::Play,
                             MediaAction::Pause => obws::common::MediaAction::Pause,
@@ -877,7 +917,11 @@ impl ObsClient {
             }
             A::SeekMedia { input, position_ms } => {
                 let status = self
-                    .request(self.inner.media_inputs().status(InputId::Name(input)))
+                    .request(
+                        self.inner
+                            .media_inputs()
+                            .status(uuid.map(InputId::Uuid).unwrap_or(InputId::Name(input))),
+                    )
                     .await
                     .map_err(AppError::request)?;
                 let duration = status.duration.filter(|d| d.is_positive()).ok_or_else(|| {
@@ -889,9 +933,10 @@ impl ObsClient {
                 }
                 self.mutation(
                     valid,
-                    self.inner
-                        .media_inputs()
-                        .set_cursor(InputId::Name(input), cursor),
+                    self.inner.media_inputs().set_cursor(
+                        uuid.map(InputId::Uuid).unwrap_or(InputId::Name(input)),
+                        cursor,
+                    ),
                 )
                 .await
             }
@@ -905,7 +950,7 @@ impl ObsClient {
                     self.inner
                         .filters()
                         .set_enabled(obws::requests::filters::SetEnabled {
-                            source: SourceId::Name(input),
+                            source: uuid.map(SourceId::Uuid).unwrap_or(SourceId::Name(input)),
                             filter,
                             enabled: *enabled,
                         }),
@@ -914,11 +959,9 @@ impl ObsClient {
             }
             A::SetText { input, text } => {
                 let settings = self
-                    .request(
-                        self.inner
-                            .inputs()
-                            .settings::<serde_json::Value>(InputId::Name(input)),
-                    )
+                    .request(self.inner.inputs().settings::<serde_json::Value>(
+                        uuid.map(InputId::Uuid).unwrap_or(InputId::Name(input)),
+                    ))
                     .await
                     .map_err(AppError::request)?;
                 if !crate::domain::control::is_text_kind(&settings.kind) {
@@ -944,7 +987,7 @@ impl ObsClient {
                     self.inner
                         .inputs()
                         .set_settings(obws::requests::inputs::SetSettings {
-                            input: InputId::Name(input),
+                            input: uuid.map(InputId::Uuid).unwrap_or(InputId::Name(input)),
                             settings: &serde_json::json!({"text":text}),
                             overlay: Some(true),
                         }),
@@ -954,7 +997,10 @@ impl ObsClient {
             A::SetInputMuted { input, muted } => {
                 self.mutation(
                     valid,
-                    self.inner.inputs().set_muted(InputId::Name(input), *muted),
+                    self.inner.inputs().set_muted(
+                        uuid.map(InputId::Uuid).unwrap_or(InputId::Name(input)),
+                        *muted,
+                    ),
                 )
                 .await
             }
@@ -965,7 +1011,7 @@ impl ObsClient {
                 self.mutation(
                     valid,
                     self.inner.inputs().set_volume(
-                        InputId::Name(input),
+                        uuid.map(InputId::Uuid).unwrap_or(InputId::Name(input)),
                         obws::requests::inputs::Volume::Mul(volume_db_to_mul(*db) as f32),
                     ),
                 )
@@ -975,7 +1021,7 @@ impl ObsClient {
                 self.mutation(
                     valid,
                     self.inner.inputs().set_audio_monitor_type(
-                        InputId::Name(input),
+                        uuid.map(InputId::Uuid).unwrap_or(InputId::Name(input)),
                         match monitor {
                             AudioMonitor::Off => obws::common::MonitorType::None,
                             AudioMonitor::MonitorOnly => obws::common::MonitorType::MonitorOnly,
@@ -994,7 +1040,7 @@ impl ObsClient {
                 self.mutation(
                     valid,
                     self.inner.inputs().set_audio_sync_offset(
-                        InputId::Name(input),
+                        uuid.map(InputId::Uuid).unwrap_or(InputId::Name(input)),
                         time::Duration::milliseconds(*offset_ms),
                     ),
                 )
@@ -1006,18 +1052,20 @@ impl ObsClient {
                 }
                 self.mutation(
                     valid,
-                    self.inner
-                        .inputs()
-                        .set_audio_balance(InputId::Name(input), *balance),
+                    self.inner.inputs().set_audio_balance(
+                        uuid.map(InputId::Uuid).unwrap_or(InputId::Name(input)),
+                        *balance,
+                    ),
                 )
                 .await
             }
             A::SetAudioTracks { input, tracks } => {
                 self.mutation(
                     valid,
-                    self.inner
-                        .inputs()
-                        .set_audio_tracks(InputId::Name(input), tracks.map(Some)),
+                    self.inner.inputs().set_audio_tracks(
+                        uuid.map(InputId::Uuid).unwrap_or(InputId::Name(input)),
+                        tracks.map(Some),
+                    ),
                 )
                 .await
             }
@@ -1049,14 +1097,14 @@ fn text_is_file_backed(settings: &serde_json::Value, defaults: &serde_json::Valu
 }
 
 #[cfg(test)]
-mod control_tests {
+pub(crate) mod control_tests {
     use super::*;
     use crate::domain::control::{ControlAction, MediaAction, WorkspaceWarning};
     use futures_util::{SinkExt, StreamExt};
     use serde_json::{json, Value};
     use tokio_websockets::Message;
 
-    pub(super) async fn mock_client(
+    pub(crate) async fn mock_client(
         script: Vec<(&'static str, Value)>,
     ) -> (ObsClient, tokio::task::JoinHandle<Vec<Value>>) {
         let (listener, port) = crate::obs::obs_fixture::listen().await;

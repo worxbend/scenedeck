@@ -124,6 +124,8 @@ fn request(
     state.workspace.error = None;
     let workspace = &state.workspace;
     Some(WorkspaceRequest {
+        operator_reads: operator_reads(&state),
+        target_uuid: None,
         epoch: workspace.epoch,
         sequence: workspace.sequence,
         scope,
@@ -133,6 +135,41 @@ fn request(
         screenshot,
         result_id: None,
     })
+}
+
+fn operator_reads(
+    state: &crate::controller::state::AppState,
+) -> Vec<crate::domain::operator_input::InputRead> {
+    let mut operator_reads = Vec::new();
+    for binding in state
+        .registry
+        .action_bindings
+        .iter()
+        .filter(|binding| binding.enabled)
+    {
+        if let Some(read) = crate::domain::operator_input::InputRead::for_action(&binding.action) {
+            read.merge_into(&mut operator_reads);
+        }
+    }
+    for (_, target) in &state.workspace.operator_inspections {
+        crate::domain::operator_input::InputRead {
+            target: target.clone(),
+            media: true,
+            filters: true,
+        }
+        .merge_into(&mut operator_reads);
+    }
+    for pin in state
+        .registry
+        .quick_actions
+        .iter()
+        .filter(|pin| pin.enabled)
+    {
+        if let Some(read) = crate::domain::operator_input::InputRead::for_action(&pin.action) {
+            read.merge_into(&mut operator_reads);
+        }
+    }
+    operator_reads
 }
 
 pub fn refresh(nav: &NavigationContext) {
@@ -190,17 +227,31 @@ pub fn act(nav: &NavigationContext, action: ControlAction) {
         .detail
         .as_ref()
         .and_then(|detail| detail.text.clone());
-    act_expected(nav, action, expected_text);
+    act_expected(nav, action, expected_text, None);
 }
 
 pub fn save_text(nav: &NavigationContext, input: String, text: String, expected: String) {
     if !nav.is_current() {
         return;
     }
-    act_expected(nav, ControlAction::SetText { input, text }, Some(expected));
+    act_expected(
+        nav,
+        ControlAction::SetText { input, text },
+        Some(expected),
+        None,
+    );
 }
 
-fn act_expected(nav: &NavigationContext, action: ControlAction, expected_text: Option<String>) {
+pub fn act_identified(nav: &NavigationContext, action: ControlAction, target_uuid: Option<String>) {
+    act_expected(nav, action, None, target_uuid);
+}
+
+fn act_expected(
+    nav: &NavigationContext,
+    action: ControlAction,
+    expected_text: Option<String>,
+    target_uuid: Option<String>,
+) {
     if !nav.is_current() {
         return;
     }
@@ -238,6 +289,7 @@ fn act_expected(nav: &NavigationContext, action: ControlAction, expected_text: O
         }
     }
     if let Some(mut request) = request(nav, false, Some(&action)) {
+        request.target_uuid = target_uuid;
         use crate::domain::output_result::OutputResultKind;
         let kind = match &action {
             ControlAction::SaveReplay => Some(OutputResultKind::ReplaySave),
@@ -296,5 +348,77 @@ pub(super) fn dispatch_queued_toggle(nav: &NavigationContext) {
     };
     if let Some(action) = action {
         act(nav, action);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn pinned_properties_share_reads_with_bindings_and_independent_inspectors() {
+        use crate::domain::{
+            action_shortcut::{ActionBinding, ActionShortcut},
+            hotkey::Modifiers,
+            operator_action::{ActionTarget, OperatorAction, OperatorPin},
+        };
+        let mut state = super::super::action_catalog::tests::connected();
+        state.workspace.selected_input = Some("Sources editor".into());
+        let target = ActionTarget {
+            name: "Clip".into(),
+            uuid: Some("clip-1".into()),
+        };
+        state.registry.action_bindings.push(ActionBinding {
+            action: OperatorAction::SetFilterEnabled {
+                target: target.clone(),
+                filter: "Crop".into(),
+                enabled: true,
+            },
+            shortcut: ActionShortcut {
+                key: "F8".into(),
+                modifiers: Modifiers::NONE,
+            },
+            enabled: true,
+        });
+        state.registry.quick_actions = vec![
+            OperatorPin {
+                action: OperatorAction::RestartMedia {
+                    target: target.clone(),
+                },
+                enabled: true,
+            },
+            OperatorPin {
+                action: OperatorAction::ToggleFilter {
+                    target: ActionTarget {
+                        name: "Renamed".into(),
+                        uuid: Some("clip-1".into()),
+                    },
+                    filter: "Crop".into(),
+                },
+                enabled: true,
+            },
+            OperatorPin {
+                action: OperatorAction::RestartMedia {
+                    target: ActionTarget {
+                        name: "Disabled".into(),
+                        uuid: None,
+                    },
+                },
+                enabled: false,
+            },
+        ];
+        state.workspace.inspect_operator_input(target);
+        let reads = super::operator_reads(&state);
+        assert_eq!(reads.len(), 1);
+        assert!(reads[0].media && reads[0].filters);
+        assert_eq!(
+            state.workspace.selected_input.as_deref(),
+            Some("Sources editor")
+        );
+        state.registry.action_bindings.clear();
+        state.workspace.operator_inspections.clear();
+        assert_eq!(
+            super::operator_reads(&state),
+            reads,
+            "enabled pins alone retain their property requirements"
+        );
     }
 }

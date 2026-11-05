@@ -216,7 +216,10 @@ mod tests {
 
         let inventory = SceneInventory {
             scenes: ["Missing Z", "Missing A", "P", "D", "M", "R"]
-                .map(|id| Scene { id: id.into() })
+                .map(|id| Scene {
+                    uuid: None,
+                    id: id.into(),
+                })
                 .into(),
             ..Default::default()
         };

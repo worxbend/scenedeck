@@ -5,6 +5,7 @@ use crate::domain::audio::AudioInput;
 use crate::domain::control::{
     ControlAction, ControlSnapshot, SourceDetail, SourceItem, WorkspaceWarning,
 };
+use crate::domain::operator_input::{InputIdentity, InputObservation, InputRead};
 use crate::domain::workflow::ScopeBinding;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::obs::client::ObsClient;
@@ -15,8 +16,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::{runtime::Handle, task::JoinHandle};
 
+mod audio_presets;
+
 #[derive(Debug, Clone)]
 pub struct WorkspaceRequest {
+    pub operator_reads: Vec<InputRead>,
+    /// Stable target for explicit actions; never fall back to its cached name.
+    pub target_uuid: Option<String>,
     pub epoch: u64,
     pub sequence: u64,
     pub scope: ScopeBinding,
@@ -29,12 +35,18 @@ pub struct WorkspaceRequest {
 
 #[derive(Debug, Clone)]
 pub struct WorkspaceObservation {
+    /// Transport observation clock issued before this read starts.
+    pub audio_revision: u64,
+    pub input_catalog: Result<Vec<InputIdentity>, String>,
+    pub operator_inputs: Vec<InputObservation>,
     pub snapshot: ControlSnapshot,
     pub detail: Option<SourceDetail>,
     pub usage: Vec<SourceItem>,
     pub audio: Vec<AudioInput>,
     pub stream_status: Option<crate::domain::output::OutputStatus>,
+    pub stream_observed_at: Instant,
     pub record_status: Option<crate::domain::output::OutputStatus>,
+    pub record_observed_at: Instant,
     pub screenshot: Option<String>,
     pub warnings: Vec<WorkspaceWarning>,
     pub observed_at: Instant,
@@ -64,6 +76,8 @@ pub(crate) struct WorkspaceController {
     task: Option<JoinHandle<()>>,
     media_task: Option<JoinHandle<()>>,
     audio_tasks: Vec<JoinHandle<()>>,
+    preset_task: Option<JoinHandle<()>>,
+    preset_cancellation: Arc<std::sync::atomic::AtomicU64>,
     queued: Arc<Mutex<WorkspaceQueue>>,
     cancellation: Arc<std::sync::atomic::AtomicU64>,
     revision: Arc<std::sync::atomic::AtomicU64>,
@@ -83,6 +97,8 @@ impl WorkspaceController {
             task: None,
             media_task: None,
             audio_tasks: Vec::new(),
+            preset_task: None,
+            preset_cancellation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             queued: Arc::new(Mutex::new(WorkspaceQueue::default())),
             cancellation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             revision: Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -90,6 +106,8 @@ impl WorkspaceController {
     }
 
     pub fn set_scope(&mut self, scope: crate::controller::lifecycle::SessionScope) {
+        self.cancel_preset();
+        self.preset_task = None;
         self.cancel();
         self.task = None;
         self.media_task = None;
@@ -308,24 +326,28 @@ impl WorkspaceController {
                                     ));
                                 }
                                 client
-                                    .execute_control_if(action, &|| {
-                                        let valid = cancellation
-                                            .load(std::sync::atomic::Ordering::Acquire)
-                                            == ticket
-                                            && current_revision
+                                    .execute_control_with_identity_if(
+                                        action,
+                                        request.target_uuid.as_deref(),
+                                        &|| {
+                                            let valid = cancellation
                                                 .load(std::sync::atomic::Ordering::Acquire)
-                                                == revision
-                                            && tx.accepts_current_scope()
-                                            && (!matches!(
-                                                action,
-                                                ControlAction::ActivateScene { .. }
-                                            ) || scope.scene_activation_revision()
-                                                == activation_revision);
-                                        if valid {
-                                            evidence.dispatch();
-                                        }
-                                        valid
-                                    })
+                                                == ticket
+                                                && current_revision
+                                                    .load(std::sync::atomic::Ordering::Acquire)
+                                                    == revision
+                                                && tx.accepts_current_scope()
+                                                && (!matches!(
+                                                    action,
+                                                    ControlAction::ActivateScene { .. }
+                                                ) || scope.scene_activation_revision()
+                                                    == activation_revision);
+                                            if valid {
+                                                evidence.dispatch();
+                                            }
+                                            valid
+                                        },
+                                    )
                                     .await
                                     .map_err(|error| error.user_message())?;
                             }
@@ -424,6 +446,7 @@ async fn read_observation(
     request: &WorkspaceRequest,
 ) -> Result<WorkspaceObservation, String> {
     let observed_at = Instant::now();
+    let audio_revision = client.next_observation();
     let mut snapshot = client
         .get_control_snapshot(request.scene.as_deref(), request.include_sources)
         .await
@@ -462,7 +485,19 @@ async fn read_observation(
     } else {
         Vec::new()
     };
-    let audio_read = client.get_all_audio_inputs().await;
+    let input_catalog = client.get_input_catalog().await.map_err(|e| e.to_string());
+    let (audio_read, operator_inputs) = match &input_catalog {
+        Ok(inventory) => (
+            client
+                .get_audio_for_catalog(inventory)
+                .await
+                .map_err(|e| e.to_string()),
+            client
+                .get_operator_inputs(inventory, &request.operator_reads)
+                .await,
+        ),
+        Err(error) => (Err(error.clone()), Vec::new()),
+    };
     let audio = match audio_read {
         Ok(value) => value,
         Err(e) => {
@@ -493,7 +528,9 @@ async fn read_observation(
     } else {
         None
     };
+    let stream_observed_at = Instant::now();
     let stream_status = client.get_stream_status().await.ok();
+    let record_observed_at = Instant::now();
     let record_status = client.get_record_status().await.ok();
     let collection = client
         .get_scene_collections()
@@ -508,12 +545,17 @@ async fn read_observation(
     }
     warnings.append(&mut snapshot.warnings);
     Ok(WorkspaceObservation {
+        audio_revision,
+        input_catalog,
+        operator_inputs,
         snapshot,
         detail,
         usage,
         audio,
         stream_status,
+        stream_observed_at,
         record_status,
+        record_observed_at,
         screenshot,
         warnings,
         observed_at,
@@ -649,9 +691,9 @@ mod tests {
                 let name = request["d"]["requestType"].as_str().unwrap();
                 let data = match name {
                     "GetVersion" => Some(crate::obs::obs_fixture::version(&["png"])),
-                    "GetSceneList" => {
-                        Some(json!({"currentProgramSceneName":"Program", "scenes":[]}))
-                    }
+                    "GetSceneList" => Some(
+                        json!({"currentProgramSceneName":"Program", "scenes":[{"sceneIndex":0,"sceneName":"Program","sceneUuid":"00000000-0000-0000-0000-000000000123"}]}),
+                    ),
                     "GetInputList" => Some(json!({"inputs":[]})),
                     "GetSceneCollectionList" => Some(
                         json!({"currentSceneCollectionName":"Expected collection","sceneCollections":["Expected collection"]}),
@@ -675,6 +717,8 @@ mod tests {
         });
         let (client, _events) = ObsClient::connect("127.0.0.1", port, None).await.unwrap();
         let request = WorkspaceRequest {
+            operator_reads: Vec::new(),
+            target_uuid: None,
             epoch: 1,
             sequence: 1,
             scope: scope(&client),
@@ -691,6 +735,11 @@ mod tests {
         assert!(observation.detail.is_none());
         assert!(observation.usage.is_empty());
         assert!(observation.snapshot.items.is_empty());
+        assert_eq!(observation.snapshot.scenes[0].id, "Program");
+        assert_eq!(
+            observation.snapshot.scenes[0].uuid.as_deref(),
+            Some("00000000-0000-0000-0000-000000000123")
+        );
         let requests = server.await.unwrap();
         assert_eq!(
             requests
@@ -720,6 +769,8 @@ mod tests {
         let (mut controller, events) = controller(&mock.client);
         controller.request(
             WorkspaceRequest {
+                operator_reads: Vec::new(),
+                target_uuid: None,
                 result_id: None,
                 epoch: 4,
                 sequence: 9,
@@ -838,6 +889,8 @@ mod tests {
         }));
         controller.request(
             WorkspaceRequest {
+                operator_reads: Vec::new(),
+                target_uuid: None,
                 result_id: None,
                 epoch: 1,
                 sequence: 1,

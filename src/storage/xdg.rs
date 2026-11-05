@@ -17,6 +17,30 @@ pub fn registry_path() -> PathBuf {
     config_dir().join(REGISTRY_FILE)
 }
 
+pub(crate) fn show_workspaces_path() -> PathBuf {
+    config_dir().join("show-workspaces.json")
+}
+
+pub(crate) fn bookmarks_path() -> PathBuf {
+    config_dir().join("bookmarks.json")
+}
+
+pub(crate) fn report_history_path() -> PathBuf {
+    env::var("XDG_STATE_HOME")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var("HOME")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .map(|home| PathBuf::from(home).join(".local/state"))
+        })
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(APP_DIR)
+        .join("session-history.json")
+}
+
 /// Return the config directory, using XDG_CONFIG_HOME, HOME, then the current directory.
 fn config_dir() -> PathBuf {
     env::var("XDG_CONFIG_HOME")

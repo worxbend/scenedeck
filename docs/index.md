@@ -17,6 +17,8 @@ This directory contains the detailed SceneDeck documentation.
 
 ## For Developers
 
+- [Feature implementation program](feature-program.md): active milestones,
+  acceptance criteria, verified checkpoints, and continuation notes.
 - [Developer guide](developer-guide.md): local setup, build commands,
   validation, logging, and contribution workflow.
 - [Architecture overview](architecture.md): runtime model, controller flow,

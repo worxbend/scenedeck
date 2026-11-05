@@ -5,8 +5,7 @@ use std::rc::Rc;
 
 use crate::ui::{index_of, string_list};
 use adw::{
-    prelude::*, ActionRow, ComboRow, EntryRow, PasswordEntryRow, PreferencesGroup, PreferencesPage,
-    SwitchRow,
+    prelude::*, ActionRow, ComboRow, EntryRow, PreferencesGroup, PreferencesPage, SwitchRow,
 };
 use i18n_embed_fl::fl;
 
@@ -19,7 +18,6 @@ use crate::domain::hotkey::{
 use crate::infra::i18n;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::config::{AppConfig, OutputConfig};
-use crate::storage::secret;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::persist::{persist_config, persist_config_with};
 use crate::ui::theme::ThemeManager;
@@ -75,6 +73,8 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     page.add(&obs_group);
     page.add(&output_group);
     page.add(&hotkey_group);
+    page.add(&crate::ui::action_shortcuts::settings_group(&nav));
+    page.add(&crate::ui::report_history::settings_group(&nav));
     page.add(&status_group);
 
     // Closure that refreshes the status row when navigating back to this page
@@ -443,138 +443,10 @@ fn build_language_group(nav: &NavigationContext, cfg: &AppConfig) -> Preferences
     language_group
 }
 
-/// OBS host, port, and password.
-///
-/// Returns the status row alongside the group: the row reports what happened
-/// to a save and lives in its own group at the bottom of the page, but it is
-/// these rows' handlers that write into it.
-fn build_obs_group(nav: &NavigationContext, cfg: &AppConfig) -> (PreferencesGroup, ActionRow) {
-    let obs_group = PreferencesGroup::builder()
-        .title(fl!(LANGUAGE_LOADER, "settings-obs-connection-title"))
-        .description(fl!(LANGUAGE_LOADER, "settings-obs-connection-description"))
-        .build();
+mod connections;
 
-    let host_row = EntryRow::builder()
-        .use_markup(false)
-        .title(fl!(LANGUAGE_LOADER, "settings-host-title"))
-        .text(&cfg.obs.host)
-        .show_apply_button(true)
-        .build();
-    host_row.set_widget_name("settings-obs-host");
-
-    let port_row = EntryRow::builder()
-        .use_markup(false)
-        .title(fl!(LANGUAGE_LOADER, "settings-port-title"))
-        .text(cfg.obs.port.to_string())
-        .show_apply_button(true)
-        .build();
-    port_row.set_widget_name("settings-obs-port");
-
-    // Password is stored in the system keyring, never in config.json.
-    let password_row = PasswordEntryRow::builder()
-        .use_markup(false)
-        .title(fl!(LANGUAGE_LOADER, "settings-password-title"))
-        .show_apply_button(true)
-        .build();
-    if let Some(existing) = nav.state.borrow().obs_password.as_ref() {
-        password_row.set_text(existing);
-    }
-
-    let status_row = ActionRow::builder()
-        .use_markup(false)
-        .title(fl!(LANGUAGE_LOADER, "settings-obs-status-title"))
-        .build();
-    status_row.set_subtitle(&obs_status_text(nav));
-
-    let save_handler = {
-        let nav = nav.clone();
-        let host_row = host_row.downgrade();
-        let port_row = port_row.downgrade();
-        let status_row = status_row.downgrade();
-        move || {
-            let (Some(host_row), Some(port_row), Some(status_row)) =
-                (host_row.upgrade(), port_row.upgrade(), status_row.upgrade())
-            else {
-                return;
-            };
-            let host = host_row.text().trim().to_string();
-            let port: u16 = match port_row.text().trim().parse() {
-                Ok(p) => p,
-                Err(_) => {
-                    status_row.set_subtitle(&fl!(LANGUAGE_LOADER, "settings-invalid-port"));
-                    return;
-                }
-            };
-            let status_row = status_row.clone();
-            persist_config_with(
-                &nav,
-                move |config| {
-                    config.obs.host = host;
-                    config.obs.port = port;
-                },
-                move |result, _| match result {
-                    Ok(()) => status_row.set_subtitle(&fl!(LANGUAGE_LOADER, "settings-saved")),
-                    Err(err) => report_save_failure(&status_row, &err),
-                },
-            );
-        }
-    };
-
-    host_row.connect_apply({
-        let save = save_handler.clone();
-        move |_| save()
-    });
-    port_row.connect_apply({
-        let save = save_handler.clone();
-        move |_| save()
-    });
-
-    // Secret completion must not overwrite connection/config save feedback.
-    let password_status = ActionRow::builder()
-        .use_markup(false)
-        .title(fl!(LANGUAGE_LOADER, "settings-password-title"))
-        .build();
-    let password_writes = PasswordWrites::new(nav.state.borrow().obs_password.clone());
-    password_row.connect_apply({
-        let status_row = password_status.clone();
-        let nav = nav.clone();
-        move |row| {
-            let password = (!row.text().is_empty()).then(|| row.text().to_string());
-            let status_row = status_row.clone();
-            let nav = nav.clone();
-            password_writes.submit(
-                password,
-                |password| match password {
-                    Some(password) => secret::set_obs_password(password),
-                    None => secret::delete_obs_password(),
-                },
-                move |result, confirmed| {
-                    // On failure the snapshot includes preceding successful jobs,
-                    // even if their GTK completions have not been delivered yet.
-                    nav.state.borrow_mut().obs_password = confirmed;
-                    match result {
-                        Ok(()) => status_row
-                            .set_subtitle(&fl!(LANGUAGE_LOADER, "settings-password-saved")),
-                        Err(error) => status_row.set_subtitle(&fl!(
-                            LANGUAGE_LOADER,
-                            "settings-keyring-error",
-                            err = error.to_string()
-                        )),
-                    }
-                },
-            );
-        }
-    });
-
-    with_entry_icon(&host_row, "nf-md-server-network-symbolic");
-    obs_group.add(&host_row);
-    with_entry_icon(&port_row, "nf-md-ethernet-symbolic");
-    obs_group.add(&port_row);
-    with_entry_icon(&password_row, "nf-md-key-variant-symbolic");
-    obs_group.add(&password_row);
-    obs_group.add(&password_status);
-
-    (obs_group, status_row)
+fn build_obs_group(nav: &NavigationContext, _cfg: &AppConfig) -> (PreferencesGroup, ActionRow) {
+    connections::build(nav)
 }
 
 /// The worker snapshot is the last successful operation, not the latest draft.
@@ -861,11 +733,28 @@ fn obs_status_text(nav: &NavigationContext) -> String {
         ObsStatus::Disconnected => fl!(LANGUAGE_LOADER, "settings-obs-not-connected"),
         ObsStatus::Connecting => fl!(LANGUAGE_LOADER, "settings-obs-connecting"),
         ObsStatus::Connected { obs_version } => {
-            fl!(
-                LANGUAGE_LOADER,
-                "settings-obs-connected",
-                version = obs_version
-            )
+            let state = nav.state.borrow();
+            if let Some(endpoint) = &state.connected_endpoint {
+                let name = state
+                    .config
+                    .connection_profiles()
+                    .into_iter()
+                    .find(|profile| Some(&profile.id) == state.connected_connection_id.as_ref())
+                    .map_or_else(|| "OBS".to_string(), |profile| profile.name);
+                fl!(
+                    LANGUAGE_LOADER,
+                    "settings-obs-connected-profile",
+                    name = name,
+                    endpoint = endpoint.as_str(),
+                    version = obs_version
+                )
+            } else {
+                fl!(
+                    LANGUAGE_LOADER,
+                    "settings-obs-connected",
+                    version = obs_version
+                )
+            }
         }
         ObsStatus::Error(e) => fl!(LANGUAGE_LOADER, "settings-obs-error", err = e),
     }

@@ -20,6 +20,7 @@ use crate::obs::event::ObsEvent;
 /// Convert OBS version metadata into controller connection info.
 pub(super) fn map_version(v: &Version) -> ConnectionInfo {
     ConnectionInfo {
+        connection_id: "default".into(),
         endpoint: String::new(),
         obs_version: v.obs_studio_version.to_string(),
         websocket_version: v.obs_web_socket_version.to_string(),
@@ -40,6 +41,7 @@ pub(super) fn map_scenes(resp: Scenes) -> SceneInventory {
         .iter()
         .rev()
         .map(|s| Scene {
+            uuid: (!s.id.uuid.is_nil()).then(|| s.id.uuid.to_string()),
             id: s.id.name.clone(),
         })
         .collect();
@@ -127,7 +129,11 @@ pub(super) fn map_stats(stats: Stats) -> ObsStats {
 
 /// Convert `GetRecordStatus` into the app's normalized output status.
 pub(super) fn map_record_status(status: RecordStatus) -> OutputStatus {
-    OutputStatus::new(
+    let duration_ms = status
+        .active
+        .then(|| u64::try_from(status.duration.whole_milliseconds()).ok())
+        .flatten();
+    let mut output = OutputStatus::new(
         status.active,
         if status.paused {
             OutputRunState::Paused
@@ -136,7 +142,9 @@ pub(super) fn map_record_status(status: RecordStatus) -> OutputStatus {
         } else {
             OutputRunState::Inactive
         },
-    )
+    );
+    output.duration_ms = duration_ms;
+    output
 }
 
 /// Convert a raw OBS event into the controller-facing event model.
@@ -191,6 +199,15 @@ pub(super) fn map_event(event: Event) -> ObsEvent {
             ObsEvent::SceneCollectionListChanged(collections)
         }
         Event::SceneListChanged { .. } => ObsEvent::SceneListChanged,
+        Event::SceneNameChanged {
+            uuid,
+            old_name,
+            new_name,
+        } => ObsEvent::SceneRenamed {
+            uuid: (!uuid.is_nil()).then(|| uuid.to_string()),
+            old: old_name,
+            new: new_name,
+        },
         Event::ReplayBufferSaved { path } => {
             ObsEvent::ReplaySaved(path.to_string_lossy().into_owned())
         }
@@ -241,6 +258,42 @@ pub(crate) fn map_media_state(state: ObsMediaState) -> MediaState {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn scene_inventory_keeps_uuid_and_treats_nil_as_unknown() {
+        let wire = serde_json::from_value(serde_json::json!({"scenes": [
+            {"sceneName": "Unknown", "sceneUuid": "00000000-0000-0000-0000-000000000000", "sceneIndex": 0},
+            {"sceneName": "Camera", "sceneUuid": "00000000-0000-0000-0000-000000000001", "sceneIndex": 1}
+        ]})).unwrap();
+        let inventory = super::map_scenes(wire);
+        assert_eq!(inventory.scenes[0].id, "Camera");
+        assert_eq!(
+            inventory.scenes[0].uuid.as_deref(),
+            Some("00000000-0000-0000-0000-000000000001")
+        );
+        assert_eq!(inventory.scenes[1].uuid, None);
+    }
+
+    #[test]
+    fn scene_rename_event_keeps_both_names_for_curation_migration() {
+        let event = serde_json::from_value(serde_json::json!({
+            "eventType": "SceneNameChanged",
+            "eventData": {
+                "sceneUuid": "00000000-0000-0000-0000-000000000001",
+                "oldSceneName": "Camera",
+                "sceneName": "Guest"
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            super::map_event(event),
+            crate::obs::event::ObsEvent::SceneRenamed {
+                uuid: Some("00000000-0000-0000-0000-000000000001".into()),
+                old: "Camera".into(),
+                new: "Guest".into()
+            }
+        );
+    }
+
     #[test]
     fn every_obs_media_state_maps_to_a_domain_state() {
         use super::{map_media_state, MediaState, ObsMediaState};
@@ -474,12 +527,14 @@ mod tests {
         let status = map_record_status(RecordStatus {
             active: true,
             paused: true,
+            duration: time::Duration::milliseconds(12_345),
             ..Default::default()
         });
 
         assert!(status.active);
         assert_eq!(status.state, OutputRunState::Paused);
         assert_eq!(status.detail, None);
+        assert_eq!(status.duration_ms, Some(12_345));
     }
 
     #[test]
@@ -492,5 +547,15 @@ mod tests {
 
         assert_eq!(active.state, OutputRunState::Active);
         assert_eq!(inactive.state, OutputRunState::Inactive);
+        assert_eq!(inactive.duration_ms, None);
+        assert_eq!(
+            map_record_status(RecordStatus {
+                active: true,
+                duration: time::Duration::milliseconds(-1),
+                ..Default::default()
+            })
+            .duration_ms,
+            None
+        );
     }
 }

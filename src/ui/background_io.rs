@@ -52,6 +52,9 @@ impl SerialQueue {
 pub(crate) enum SerialLane {
     Config,
     Registry,
+    Bookmarks,
+    ReportExports,
+    ReportHistory,
     Secret,
 }
 
@@ -59,8 +62,20 @@ fn serial_queue(lane: SerialLane) -> &'static SerialQueue {
     static CONFIG: OnceLock<SerialQueue> = OnceLock::new();
     static REGISTRY: OnceLock<SerialQueue> = OnceLock::new();
     static SECRET: OnceLock<SerialQueue> = OnceLock::new();
+    static BOOKMARKS: OnceLock<SerialQueue> = OnceLock::new();
+    static REPORT_EXPORTS: OnceLock<SerialQueue> = OnceLock::new();
+    static REPORT_HISTORY: OnceLock<SerialQueue> = OnceLock::new();
 
     match lane {
+        SerialLane::ReportHistory => {
+            REPORT_HISTORY.get_or_init(|| SerialQueue::new("scenedeck-history-writer"))
+        }
+        SerialLane::ReportExports => {
+            REPORT_EXPORTS.get_or_init(|| SerialQueue::new("scenedeck-report-exporter"))
+        }
+        SerialLane::Bookmarks => {
+            BOOKMARKS.get_or_init(|| SerialQueue::new("scenedeck-bookmark-writer"))
+        }
         SerialLane::Secret => SECRET.get_or_init(|| SerialQueue::new("scenedeck-secret-writer")),
         SerialLane::Config => CONFIG.get_or_init(|| SerialQueue::new("scenedeck-config-writer")),
         SerialLane::Registry => {

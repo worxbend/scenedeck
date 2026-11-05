@@ -1,7 +1,7 @@
 //! Application configuration persistence.
 //!
 //! Stored at `$XDG_CONFIG_HOME/scenedeck/config.json`.
-//! Scene role assignments live in `registry.json` (see `storage::registry`).
+//! Scene curation lives in `show-workspaces.json` (see `storage::show_workspaces`).
 //! OBS passwords live in the Secret Service (see `storage::secret`).
 
 use std::io;
@@ -16,14 +16,32 @@ use crate::domain::mixer::MixerSelection;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::xdg;
 
+mod connections;
+mod preflight;
+pub(crate) use connections::SavedConnection;
+
 // ── Config structs ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
+    #[serde(default)]
+    pub(crate) session_history: crate::domain::session_report::HistoryPolicy,
     #[serde(default = "default_version")]
     pub version: u32,
     #[serde(default)]
     pub obs: ObsConfig,
+    /// Stable saved-connection identity; display names may change independently.
+    #[serde(default = "default_connection_id")]
+    pub connection_id: String,
+    /// Saved endpoints; passwords live only in the keyring.
+    #[serde(default, deserialize_with = "connections::deserialize_connections")]
+    pub(crate) connections: Vec<SavedConnection>,
+    /// Readiness expectations keyed by saved connection and actual endpoint.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) preflight_plans: Vec<crate::domain::preflight::SavedPreflight>,
+    /// Endpoint eligible to adopt the pre-workspace registry once.
+    #[serde(default)]
+    pub legacy_registry_endpoint: Option<String>,
     #[serde(default)]
     pub live: LiveConfig,
     #[serde(default)]
@@ -47,8 +65,13 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
+            session_history: Default::default(),
             version: default_version(),
             obs: ObsConfig::default(),
+            connection_id: default_connection_id(),
+            connections: Vec::new(),
+            preflight_plans: Vec::new(),
+            legacy_registry_endpoint: None,
             live: LiveConfig::default(),
             outputs: OutputConfig::default(),
             appearance: ThemePreference::default(),
@@ -73,7 +96,7 @@ pub struct OnboardingConfig {
     pub welcome_shown: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObsConfig {
     #[serde(default = "default_obs_host")]
     pub host: String,
@@ -132,7 +155,11 @@ pub struct LiveConfig {
 // ── Defaults ──────────────────────────────────────────────────────────────────
 
 /// Current on-disk config schema version.  Bump when adding a migration.
-pub const CURRENT_VERSION: u32 = 3;
+pub const CURRENT_VERSION: u32 = 5;
+
+fn default_connection_id() -> String {
+    "default".into()
+}
 
 fn default_version() -> u32 {
     CURRENT_VERSION
@@ -290,7 +317,8 @@ fn preserve_unparsable_config(path: &Path) -> Option<PathBuf> {
 fn apply_migrations(config: &mut AppConfig) -> bool {
     let version_changed = migrate(config);
     let custom_css_changed = config.appearance.migrate_legacy_custom_css_path();
-    version_changed || custom_css_changed
+    let connections_changed = config.version <= CURRENT_VERSION && config.normalize_connections();
+    version_changed || custom_css_changed || connections_changed
 }
 
 /// Upgrade an older config in place.  Returns `true` if anything changed
@@ -325,6 +353,16 @@ fn migrate(config: &mut AppConfig) -> bool {
                     config.version = 3;
                     changed = true;
                 }
+                3 => {
+                    config.legacy_registry_endpoint =
+                        Some(format!("{}:{}", config.obs.host, config.obs.port));
+                    config.version = 4;
+                    changed = true;
+                }
+                4 => {
+                    config.version = 5;
+                    changed = true;
+                }
                 _ => {
                     config.version = CURRENT_VERSION;
                     changed = true;
@@ -350,7 +388,13 @@ pub fn write_config_to_path(path: &Path, config: &AppConfig) -> io::Result<()> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error),
     }
-    let raw = serde_json::to_string_pretty(config).map_err(io::Error::other)?;
+    // Materialize profiles at the ordered write boundary. Reconnecting must not
+    // discover an empty list and trigger a migration write outside the UI lane.
+    let mut persisted = config.clone();
+    if persisted.version <= CURRENT_VERSION {
+        persisted.normalize_connections();
+    }
+    let raw = serde_json::to_string_pretty(&persisted).map_err(io::Error::other)?;
     crate::storage::small_file::check_size(
         raw.len() as u64,
         crate::storage::small_file::CONFIG_LIMIT,
@@ -365,6 +409,74 @@ pub fn write_config_to_path(path: &Path, config: &AppConfig) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn partial_legacy_config_cannot_rebind_registry_by_editing_its_endpoint() {
+        let (mut config, _) =
+            load_from_temp_file(r#"{"obs":{"host":"original.local","port":4456}}"#);
+        let mut profile = config.connection_profiles()[0].clone();
+        profile.obs.host = "replacement.local".into();
+        assert!(config.save_connection(profile));
+        assert_eq!(config.obs.host, "replacement.local");
+        assert_eq!(
+            config.legacy_registry_endpoint.as_deref(),
+            Some("original.local:4456")
+        );
+        assert!(!apply_migrations(&mut config));
+    }
+
+    #[test]
+    fn ordinary_config_save_materializes_profiles_before_connection_reads() {
+        let path = std::env::temp_dir().join(format!(
+            "scenedeck-profile-save-{}.json",
+            std::process::id()
+        ));
+        let config = AppConfig {
+            obs: ObsConfig {
+                host: "studio.local".into(),
+                port: 4456,
+            },
+            ..Default::default()
+        };
+        assert!(config.connections.is_empty());
+        write_config_to_path(&path, &config).unwrap();
+        let before = std::fs::read_to_string(&path).unwrap();
+        let raw: serde_json::Value = serde_json::from_str(&before).unwrap();
+        assert_eq!(raw["connections"][0]["obs"]["host"], "studio.local");
+        assert_eq!(raw["connections"][0]["id"], "default");
+        assert_eq!(read_config_from_path(&path).config.obs, config.obs);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn future_config_is_not_rewritten_to_materialize_connection_profiles() {
+        let original = r#"{"version":999,"obs":{"host":"future.local","port":4455},"future_setting":{"preserve":true}}"#;
+        let (config, persisted) = load_from_temp_file(original);
+        assert_eq!(config.version, 999);
+        assert_eq!(persisted, original);
+    }
+
+    #[test]
+    fn workspace_migration_remembers_original_endpoint_before_settings_change() {
+        let mut config: AppConfig =
+            serde_json::from_str(r#"{"version":3,"obs":{"host":"studio.local","port":4456}}"#)
+                .unwrap();
+        assert!(apply_migrations(&mut config));
+        assert_eq!(config.connection_id, "default");
+        assert_eq!(
+            config.legacy_registry_endpoint.as_deref(),
+            Some("studio.local:4456")
+        );
+        let mut profile = config.connection_profiles()[0].clone();
+        profile.obs.host = "other.local".into();
+        assert!(config.save_connection(profile));
+        assert!(!apply_migrations(&mut config));
+        assert_eq!(
+            config.legacy_registry_endpoint.as_deref(),
+            Some("studio.local:4456")
+        );
+    }
 
     #[test]
     fn config_writes_cannot_replace_refused_or_unpreserved_inputs() {

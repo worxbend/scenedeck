@@ -4,6 +4,8 @@
 //! importing raw `obws` response or event types outside this boundary.
 
 mod audio;
+mod audio_presets;
+mod operator_inputs;
 mod requests;
 mod scene_activation;
 mod sources;

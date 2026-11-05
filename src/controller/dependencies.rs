@@ -15,7 +15,7 @@ pub trait AppConfigProvider: Send + Sync {
 }
 
 pub trait ObsPasswordProvider: Send + Sync {
-    fn obs_password(&self) -> Result<Option<String>, AppError>;
+    fn obs_password(&self, _connection_id: &str) -> Result<Option<String>, AppError>;
 }
 
 #[derive(Clone)]
@@ -39,8 +39,8 @@ impl ControllerDependencies {
         self.config_provider.load_config()
     }
 
-    pub fn obs_password(&self) -> Result<Option<String>, AppError> {
-        self.password_provider.obs_password()
+    pub fn obs_password(&self, connection_id: &str) -> Result<Option<String>, AppError> {
+        self.password_provider.obs_password(connection_id)
     }
 }
 
@@ -64,8 +64,8 @@ impl AppConfigProvider for FileAppConfigProvider {
 pub struct KeyringObsPasswordProvider;
 
 impl ObsPasswordProvider for KeyringObsPasswordProvider {
-    fn obs_password(&self) -> Result<Option<String>, AppError> {
-        secret::get_obs_password()
+    fn obs_password(&self, connection_id: &str) -> Result<Option<String>, AppError> {
+        secret::get_obs_password(connection_id)
     }
 }
 
@@ -86,7 +86,8 @@ mod tests {
     struct StaticPasswordProvider(Option<String>);
 
     impl ObsPasswordProvider for StaticPasswordProvider {
-        fn obs_password(&self) -> Result<Option<String>, AppError> {
+        fn obs_password(&self, connection_id: &str) -> Result<Option<String>, AppError> {
+            assert_eq!(connection_id, "studio");
             Ok(self.0.clone())
         }
     }
@@ -94,6 +95,7 @@ mod tests {
     #[test]
     fn dependencies_delegate_to_injected_providers() {
         let config = AppConfig {
+            connection_id: "studio".into(),
             version: 1,
             obs: ObsConfig {
                 host: "192.0.2.10".to_string(),
@@ -117,7 +119,9 @@ mod tests {
 
         assert_eq!(dependencies.load_config().obs.host, "192.0.2.10");
         assert_eq!(
-            dependencies.obs_password().unwrap(),
+            dependencies
+                .obs_password(&dependencies.load_config().connection_id)
+                .unwrap(),
             Some("secret".to_string())
         );
     }

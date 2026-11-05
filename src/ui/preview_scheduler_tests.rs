@@ -69,6 +69,7 @@ fn native_preview_scheduler_bounds_scope_and_visibility() {
     let inventory = SceneInventory {
         scenes: (0..30)
             .map(|index| Scene {
+                uuid: None,
                 id: format!("Scene {index:02}"),
             })
             .collect(),

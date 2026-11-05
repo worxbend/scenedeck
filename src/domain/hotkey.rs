@@ -1,7 +1,7 @@
 //! Scene-switch keyboard shortcuts for the Live page.
 //!
-//! Live scene cards are laid out in the order stored in `registry.json`, so the
-//! nth switchable card always has the same index. This module turns that index
+//! Slots follow the workspace's saved Inventory order, before search, deck
+//! filters or favorite presentation. This module turns that stable slot index
 //! into a keyboard binding: a digit key, optionally qualified by modifiers or
 //! preceded by a vim-style leader key.
 //!
@@ -49,7 +49,8 @@ pub fn slot_badge(slot: usize) -> Option<String> {
 ///
 /// Compared for equality, never as a subset: `Ctrl+Alt+1` must not trigger a
 /// binding configured as `Ctrl` + digit.
-#[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Modifiers {
     /// Control key.
     pub ctrl: bool,

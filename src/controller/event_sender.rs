@@ -13,6 +13,7 @@ fn is_collection_independent(event: &AppEvent) -> bool {
             | AppEvent::Connected(_)
             | AppEvent::Disconnected
             | AppEvent::Error(_)
+            | AppEvent::OutputCommandPending(..)
             | AppEvent::OutputCommandSucceeded(_)
             | AppEvent::OutputCommandFailed(..)
             | AppEvent::OutputReadbackFailed { .. }
@@ -164,6 +165,7 @@ mod tests {
             (AppEvent::Connecting, true),
             (
                 AppEvent::Connected(ConnectionInfo {
+                    connection_id: "default".into(),
                     endpoint: String::new(),
                     obs_version: String::new(),
                     websocket_version: String::new(),
@@ -175,6 +177,14 @@ mod tests {
             (AppEvent::Disconnected, true),
             (
                 AppEvent::Error(AppError::Request("fixture failure".into())),
+                true,
+            ),
+            (
+                AppEvent::OutputCommandPending(
+                    OutputKind::Record,
+                    OutputStatus::new(true, OutputRunState::Stopping),
+                    std::time::Instant::now(),
+                ),
                 true,
             ),
             (AppEvent::OutputCommandSucceeded(OutputKind::Stream), true),
@@ -189,6 +199,7 @@ mod tests {
             ),
             (
                 AppEvent::OutputReadbackFailed {
+                    observed_at: std::time::Instant::now(),
                     kind: OutputKind::Stream,
                     error: AppError::Request("fixture failure".into()),
                 },
@@ -205,6 +216,13 @@ mod tests {
                     result_id: None,
                 },
                 true,
+            ),
+            (
+                AppEvent::RecordingStopObserved {
+                    path: "take.mkv".into(),
+                    command_at: std::time::Instant::now(),
+                },
+                false,
             ),
             (AppEvent::GraphInvalidated, false),
             (AppEvent::WorkspaceInvalidated, false),

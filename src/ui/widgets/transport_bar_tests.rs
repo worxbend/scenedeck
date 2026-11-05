@@ -44,7 +44,8 @@ fn find(root: &gtk4::Widget, matches: &impl Fn(&gtk4::Widget) -> bool) -> Option
 fn native_compact_large_text_outputs_and_hidden_pages_fit() {
     const CHILD: &str = "SCENEDECK_NATIVE_COMPACT_CHILD";
     if std::env::var_os(CHILD).is_none() {
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
+        for with_alerts in ["0", "1"] {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "ui::widgets::transport_bar::native_layout_tests::native_compact_large_text_outputs_and_hidden_pages_fit",
@@ -52,14 +53,16 @@ fn native_compact_large_text_outputs_and_hidden_pages_fit() {
                 "--test-threads=1",
             ])
             .env(CHILD, "1")
+            .env("SCENEDECK_NATIVE_COMPACT_HEALTH", with_alerts)
             .output()
             .unwrap();
-        assert!(
-            output.status.success(),
-            "compact native child failed: {}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
+            assert!(
+                output.status.success(),
+                "compact native child failed (alerts={with_alerts}): {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
         return;
     }
     crate::ui::test_support::require_native_runner();
@@ -105,11 +108,12 @@ fn native_compact_large_text_outputs_and_hidden_pages_fit() {
         state.obs_status = ObsStatus::Connected {
             obs_version: "synthetic fixture".into(),
         };
-        state
-            .scene_inventory
-            .scenes
-            .push(Scene { id: "Intro".into() });
         state.scene_inventory.scenes.push(Scene {
+            uuid: None,
+            id: "Intro".into(),
+        });
+        state.scene_inventory.scenes.push(Scene {
+            uuid: None,
             id: LONG_SCENE.into(),
         });
         state.scene_inventory.current_id = Some("Intro".into());
@@ -128,6 +132,14 @@ fn native_compact_large_text_outputs_and_hidden_pages_fit() {
             virtual_camera_active: Some(false),
             ..Default::default()
         });
+    }
+    let with_alerts = std::env::var("SCENEDECK_NATIVE_COMPACT_HEALTH").as_deref() == Ok("1");
+    if with_alerts {
+        crate::domain::health::tests::raise(
+            &mut state.borrow_mut().health,
+            crate::domain::health::AlertKind::NetworkDrops,
+            Instant::now() - Duration::from_secs(6),
+        );
     }
     let controller = Rc::new(RefCell::new(AppController::new(
         runtime.handle().clone(),
@@ -188,6 +200,11 @@ fn native_compact_large_text_outputs_and_hidden_pages_fit() {
             "an invisible page must not dictate the visible page minimum"
         );
     }
+    let health = find(window.upcast_ref(), &|widget| {
+        widget.widget_name() == "health-alerts"
+    })
+    .unwrap();
+    assert_eq!(health.is_visible(), with_alerts);
     let positions: Vec<_> = ["stream", "record", "replay", "camera"]
         .map(|name| {
             let button = find(window.upcast_ref(), &|w| {

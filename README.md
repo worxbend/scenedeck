@@ -30,6 +30,15 @@ keep local metadata about how scenes are used.
 - **Organization and telemetry:** readable, resizable Inventory columns, local
   roles/icons/accents, keyboard or drag ordering, registry YAML import/export,
   nested-scene Graph, structural Doctor checks, and bounded Stats history.
+- **Show workspaces:** saved OBS connections with separate credentials and
+  collection-specific curation, UUID-aware renames, tags, favorites, search and
+  named deck views.
+- **Operator controls:** Ctrl+K command palette, stable action bindings, optional
+  desktop portal shortcuts, pinned Live actions and selected-input audio presets
+  with review and per-input results.
+- **Show readiness and review:** preflight checks, sustained cross-page health
+  alerts, media progress, timestamp bookmarks, and optional session history with
+  CSV/JSON export. Requested actions remain distinct from observed results.
 - **Desktop appearance:** 12 light/dark theme families, custom CSS, motion
   preferences, eight Fluent catalogs, XDG settings and Secret Service passwords.
 

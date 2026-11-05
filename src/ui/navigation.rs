@@ -18,6 +18,7 @@ use crate::domain::workflow::ScopeBinding;
 #[derive(Clone)]
 pub(crate) struct NavigationContext {
     pub(crate) state: Rc<RefCell<AppState>>,
+    pub(super) global_shortcuts: Rc<RefCell<super::global_shortcuts::Manager>>,
     content_stack: glib::WeakRef<Stack>,
     controller: Rc<RefCell<AppController>>,
     /// Sidebar list and the page order it was built from, once the window has
@@ -27,6 +28,7 @@ pub(crate) struct NavigationContext {
     /// just left.
     sidebar: Rc<RefCell<Option<Sidebar>>>,
     binding: Option<NavigationBinding>,
+    registry_binding: Option<(crate::storage::show_workspaces::RegistryTarget, u64)>,
 }
 
 #[derive(Clone)]
@@ -48,6 +50,11 @@ struct Sidebar {
 }
 
 impl NavigationContext {
+    pub(super) fn parent_window(&self) -> Option<gtk4::Window> {
+        use gtk4::prelude::*;
+        self.content_stack.upgrade()?.root()?.downcast().ok()
+    }
+
     pub(crate) fn new(
         state: Rc<RefCell<AppState>>,
         content_stack: Stack,
@@ -55,10 +62,12 @@ impl NavigationContext {
     ) -> Self {
         Self {
             state,
+            global_shortcuts: Rc::new(RefCell::new(Default::default())),
             content_stack: content_stack.downgrade(),
             controller,
             sidebar: Rc::new(RefCell::new(None)),
             binding: None,
+            registry_binding: None,
         }
     }
 
@@ -84,6 +93,32 @@ impl NavigationContext {
                 matches!(state.obs_status, ObsStatus::Connected { .. }),
             )
         })
+    }
+
+    /// Bind local edits to the curation that was displayed when a callback formed.
+    pub(crate) fn registry_scoped(&self) -> Self {
+        let mut nav = self.clone();
+        if nav.registry_binding.is_none() {
+            let state = self.state.borrow();
+            nav.registry_binding = Some((
+                state.show_registry.target.clone(),
+                state.show_registry.generation,
+            ));
+        }
+        nav
+    }
+
+    pub(crate) fn registry_is_current(&self) -> bool {
+        let state = self.state.borrow();
+        state.show_registry.status == crate::controller::state::RegistryStatus::Ready
+            && !crate::ui::persist::registry_import_busy()
+            && self
+                .registry_binding
+                .as_ref()
+                .is_none_or(|(target, generation)| {
+                    target == &state.show_registry.target
+                        && *generation == state.show_registry.generation
+                })
     }
 
     /// Hand the sidebar list to every clone of this context.
@@ -147,6 +182,9 @@ impl NavigationContext {
             return;
         }
         if let AppCommand::SwitchPrimaryScene(ref scene) = cmd {
+            if !self.registry_is_current() || crate::ui::persist::registry_import_busy() {
+                return;
+            }
             let (action, refresh) = {
                 let state = self.state.borrow();
                 (
@@ -160,6 +198,12 @@ impl NavigationContext {
                 crate::ui::workspace::refresh(self);
             }
             return;
+        }
+        if matches!(
+            &cmd,
+            AppCommand::Connect | AppCommand::Disconnect | AppCommand::SetCurrentSceneCollection(_)
+        ) {
+            self.global_shortcuts.borrow_mut().stop();
         }
         self.state
             .borrow_mut()

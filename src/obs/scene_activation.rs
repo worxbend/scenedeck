@@ -10,12 +10,13 @@ impl ObsClient {
     /// Reject changed/unknown mode rather than silently rerouting an old click.
     /// `valid` is checked by mutation admission immediately before first poll;
     /// callers must retain their invalidation ticket across the mode read.
-    pub(crate) async fn activate_scene_if(
+    pub(crate) async fn activate_scene_if<'a>(
         &self,
-        scene: &str,
+        scene: impl Into<SceneId<'a>>,
         studio_enabled: bool,
         valid: &(impl Fn() -> bool + Sync),
     ) -> Result<(), AppError> {
+        let scene = scene.into();
         let authoritative = self
             .request(self.inner.ui().studio_mode_enabled())
             .await
@@ -27,21 +28,11 @@ impl ObsClient {
             )));
         }
         if authoritative {
-            self.mutation(
-                valid,
-                self.inner
-                    .scenes()
-                    .set_current_preview_scene(SceneId::Name(scene)),
-            )
-            .await
+            self.mutation(valid, self.inner.scenes().set_current_preview_scene(scene))
+                .await
         } else {
-            self.mutation(
-                valid,
-                self.inner
-                    .scenes()
-                    .set_current_program_scene(SceneId::Name(scene)),
-            )
-            .await
+            self.mutation(valid, self.inner.scenes().set_current_program_scene(scene))
+                .await
         }
         .map_err(AppError::request)
     }

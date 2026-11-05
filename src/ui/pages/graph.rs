@@ -51,6 +51,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
                     .collect::<Vec<_>>(),
                 state.scene_graph.edges.clone(),
                 state.registry.snapshot(),
+                state.show_registry.status.clone(),
                 state.topology_status.clone(),
             )
         },
@@ -70,7 +71,10 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
         )
     };
 
-    if let Some((title, description)) = topology_status.notice() {
+    if let Some((title, description)) = topology_status.notice().or_else(|| {
+        crate::ui::persist::registry_availability_message(nav)
+            .map(|message| (fl!(LANGUAGE_LOADER, "workspace-curation-title"), message))
+    }) {
         let unavailable = StatusPage::builder()
             .icon_name("view-grid-symbolic")
             .title(&title)
@@ -933,7 +937,10 @@ mod tests {
         SceneInventory {
             scenes: ids
                 .into_iter()
-                .map(|id| Scene { id: id.to_string() })
+                .map(|id| Scene {
+                    uuid: None,
+                    id: id.to_string(),
+                })
                 .collect(),
             current_id: None,
             previous_id: None,

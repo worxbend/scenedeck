@@ -17,6 +17,112 @@ fn scene(name: &str) -> Value {
 }
 
 #[tokio::test]
+async fn operator_reads_share_catalog_and_retain_independent_property_errors() {
+    use crate::domain::operator_action::ActionTarget;
+    use crate::domain::operator_input::InputRead;
+    let uuid = "00000000-0000-0000-0000-000000000001";
+    let target = ActionTarget {
+        name: "Old name".into(),
+        uuid: Some(uuid.into()),
+    };
+    let (client, server) = mock_client(vec![
+        ("GetInputList", json!({"inputs":[input("Renamed")]})),
+        (
+            "GetMediaInputStatus",
+            json!({"mediaState":"OBS_MEDIA_STATE_PLAYING","mediaDuration":5000,"mediaCursor":1000}),
+        ),
+        ("GetSourceFilterList", json!({"__error":true,"__code":702})),
+    ])
+    .await;
+    let inventory = client.get_input_catalog().await.unwrap();
+    let reads = vec![
+        InputRead {
+            target: target.clone(),
+            media: true,
+            filters: false,
+        },
+        InputRead {
+            target,
+            media: false,
+            filters: true,
+        },
+        InputRead {
+            target: ActionTarget {
+                name: "Renamed".into(),
+                uuid: Some("00000000-0000-0000-0000-000000000002".into()),
+            },
+            media: true,
+            filters: true,
+        },
+    ];
+    let observed = client.get_operator_inputs(&inventory, &reads).await;
+    assert_eq!(observed.len(), 1);
+    assert_eq!(observed[0].target.name, "Renamed");
+    assert_eq!(
+        observed[0]
+            .media
+            .as_ref()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .cursor_ms,
+        Some(1000)
+    );
+    assert!(observed[0].filters.as_ref().unwrap().is_err());
+    let requests = server.await.unwrap();
+    assert_eq!(
+        requests.len(),
+        4,
+        "one catalog and only requested properties, deduplicated by UUID"
+    );
+    for (index, field, absent) in [
+        (2, "inputUuid", "inputName"),
+        (3, "sourceUuid", "sourceName"),
+    ] {
+        assert_eq!(requests[index]["d"]["requestData"][field], uuid);
+        assert!(requests[index]["d"]["requestData"].get(absent).is_none());
+    }
+}
+
+#[tokio::test]
+async fn operator_read_failure_cannot_hide_filters_or_dispatch_invalid_identity() {
+    use crate::domain::operator_action::ActionTarget;
+    use crate::domain::operator_input::InputRead;
+    let (client, server) = mock_client(vec![
+        ("GetInputList", json!({"inputs":[input("Image")]})),
+        ("GetMediaInputStatus", json!({"__error":true,"__code":604})),
+        ("GetSourceFilterList", json!({"filters":[]})),
+    ])
+    .await;
+    let mut inventory = client.get_input_catalog().await.unwrap();
+    let read = InputRead {
+        target: inventory[0].target.clone(),
+        media: true,
+        filters: true,
+    };
+    let observed = client.get_operator_inputs(&inventory, &[read]).await;
+    assert!(observed[0].media.as_ref().unwrap().is_err());
+    assert_eq!(observed[0].filters, Some(Ok(Vec::new())));
+    inventory[0].target = ActionTarget {
+        name: "Image".into(),
+        uuid: Some("invalid UUID".into()),
+    };
+    let observed = client
+        .get_operator_inputs(
+            &inventory,
+            &[InputRead {
+                target: inventory[0].target.clone(),
+                media: true,
+                filters: true,
+            }],
+        )
+        .await;
+    assert!(observed[0].media.as_ref().unwrap().is_err());
+    assert!(observed[0].filters.as_ref().unwrap().is_err());
+    assert_eq!(server.await.unwrap().len(), 4);
+}
+
+#[tokio::test]
 async fn definite_non_audio_is_omitted_but_complete_audio_is_retained() {
     let (client, server) = mock_client(vec![
         ("GetInputList", json!({"inputs":[input("Image"),input("Mic")]})),
@@ -27,6 +133,10 @@ async fn definite_non_audio_is_omitted_but_complete_audio_is_retained() {
     let inputs = client.get_all_audio_inputs().await.unwrap();
     assert_eq!(inputs.len(), 1);
     assert_eq!(inputs[0].id, "Mic");
+    assert_eq!(
+        inputs[0].uuid.as_deref(),
+        Some("00000000-0000-0000-0000-000000000001")
+    );
     assert!(!inputs[0].muted);
     assert_eq!(inputs[0].volume_mul, 0.5);
     assert_eq!(server.await.unwrap().len(), 5);
@@ -184,9 +294,13 @@ async fn graph_flattens_groups_including_disabled_and_repeated_membership() {
     let inventory = SceneInventory {
         scenes: vec![
             Scene {
+                uuid: None,
                 id: "Program".into(),
             },
-            Scene { id: "Debug".into() },
+            Scene {
+                uuid: None,
+                id: "Debug".into(),
+            },
         ],
         ..Default::default()
     };
@@ -519,4 +633,74 @@ async fn failure_warning_samples_are_bounded_without_losing_omitted_count() {
     assert_eq!(warnings.len(), 33);
     assert_eq!(warnings.last(), Some(&WorkspaceWarning::Omitted(8)));
     assert_eq!(server.await.unwrap().len(), 43);
+}
+
+#[tokio::test]
+async fn audio_nil_identity_stays_unknown_without_an_extra_read() {
+    let mut microphone = input("Mic");
+    microphone["inputUuid"] = json!("00000000-0000-0000-0000-000000000000");
+    let (client, server) = mock_client(vec![
+        ("GetInputList", json!({"inputs":[microphone]})),
+        ("GetInputMute", json!({"inputMuted":false})),
+        (
+            "GetInputVolume",
+            json!({"inputVolumeMul":1.0,"inputVolumeDb":0.0}),
+        ),
+    ])
+    .await;
+    let inputs = client.get_all_audio_inputs().await.unwrap();
+    assert_eq!(inputs.len(), 1);
+    assert_eq!(inputs[0].uuid, None);
+    assert_eq!(server.await.unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn explicit_actions_send_identity_without_cached_names() {
+    use crate::domain::control::MediaAction;
+    let uuid = "00000000-0000-0000-0000-000000000001";
+    let (client, server) = mock_client(vec![
+        ("SetInputMute", json!({})),
+        ("TriggerMediaInputAction", json!({})),
+        ("SetSourceFilterEnabled", json!({})),
+        ("GetStudioModeEnabled", json!({"studioModeEnabled":true})),
+        ("SetCurrentPreviewScene", json!({})),
+    ])
+    .await;
+    for action in [
+        ControlAction::SetInputMuted {
+            input: "Reused name".into(),
+            muted: true,
+        },
+        ControlAction::Media {
+            input: "Reused name".into(),
+            action: MediaAction::Restart,
+        },
+        ControlAction::SetFilterEnabled {
+            input: "Reused name".into(),
+            filter: "Limiter".into(),
+            enabled: true,
+        },
+        ControlAction::ActivateScene {
+            scene: "Reused scene".into(),
+            studio_enabled: true,
+        },
+    ] {
+        client
+            .execute_control_with_identity_if(&action, Some(uuid), &|| true)
+            .await
+            .unwrap();
+    }
+    let requests = server.await.unwrap();
+    for (index, key) in [
+        (1, "inputUuid"),
+        (2, "inputUuid"),
+        (3, "sourceUuid"),
+        (5, "sceneUuid"),
+    ] {
+        let data = &requests[index]["d"]["requestData"];
+        assert_eq!(data[key], uuid);
+        for name in ["inputName", "sourceName", "sceneName"] {
+            assert!(data.get(name).is_none());
+        }
+    }
 }

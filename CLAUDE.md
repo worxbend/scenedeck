@@ -84,7 +84,7 @@ and `dispatch()`.
 | `src/controller/` | Orchestration. `app_controller.rs` routes commands and delegates to `session_controller.rs` (connect/reconnect/disconnect task ownership), `refresh_controller.rs` (refresh helpers, stats polling, OBS event stream), `output_controller.rs` (stream/record guards). Runtime deps (config, keyring) are injected via `dependencies.rs`. |
 | `src/domain/` | Pure app concepts — scenes, roles, audio, graph, diagnostics, appearance, mixer selection, output/stats. No GTK, no `obws`. |
 | `src/services/` | Pure/mostly-pure logic over domain snapshots — Doctor checks, graph edge classification, audio dB conversion and debouncing. |
-| `src/storage/` | Local persistence: `config.json`, `registry.json`, XDG paths, Secret Service keyring. Storage structs are the serde representation and convert to domain snapshots before services use them. |
+| `src/storage/` | Local persistence: `config.json`, `show-workspaces.json`, legacy `registry.json`, XDG paths, Secret Service keyring. Storage structs are the serde representation and convert to domain snapshots before services use them. |
 | `src/ui/` | GTK widget construction, pages, theme/CSS, actions, `background_io.rs`. |
 | `src/infra/` | `error.rs` (`AppError`), `logging.rs`, `i18n.rs`. |
 

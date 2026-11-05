@@ -12,9 +12,12 @@ pub(super) fn install(
     app: &adw::Application,
     receiver: mpsc::Receiver<AppEvent>,
     apply: impl Fn(AppEvent) + 'static,
+    tick: impl Fn() + 'static,
 ) {
     let id = glib::timeout_add_local(Duration::from_millis(50), move || {
-        drain_batch(&receiver, &apply)
+        let result = drain_batch(&receiver, &apply);
+        tick();
+        result
     });
     // Source::destroy is idempotent, including after the channel terminates.
     let source = Rc::new(RefCell::new(

@@ -183,7 +183,10 @@ mod tests {
     use crate::domain::scene::Scene;
 
     fn scene(id: &str) -> Scene {
-        Scene { id: id.to_owned() }
+        Scene {
+            uuid: None,
+            id: id.to_owned(),
+        }
     }
 
     fn metadata(role: SceneRole) -> SceneMetadata {

@@ -73,6 +73,8 @@ impl AudioSourceScope {
 #[derive(Debug, Clone)]
 pub struct AudioInput {
     pub id: InputId,
+    /// Stable identity from the complete input inventory, when available.
+    pub uuid: Option<String>,
     pub name: String,
     pub display_name: String,
     pub source_scope: AudioSourceScope,
@@ -87,6 +89,7 @@ pub struct AudioInput {
 impl AudioInput {
     pub fn new(id: InputId, muted: bool, volume_mul: f64, volume_db: f64) -> Self {
         Self {
+            uuid: None,
             display_name: id.clone(),
             name: id.clone(),
             id,
@@ -105,6 +108,11 @@ impl AudioInput {
     ) -> Self {
         self.source_scope = source_scope;
         self.parent_scene_path = parent_scene_path;
+        self
+    }
+
+    pub fn with_identity(mut self, uuid: Option<String>) -> Self {
+        self.uuid = uuid;
         self
     }
 

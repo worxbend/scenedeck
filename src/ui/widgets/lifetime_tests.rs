@@ -60,7 +60,10 @@ fn native_owned_pages_release_roots_handles_and_timer_subtrees() {
         "ui::widgets::lifetime_tests::native_owned_pages_release_roots_handles_and_timer_subtrees",
         || {
             let (nav, stack, _runtime, _events) = test_support::navigation();
-            nav.state.borrow_mut().scene_inventory.scenes = vec![Scene { id: "Main".into() }];
+            nav.state.borrow_mut().scene_inventory.scenes = vec![Scene {
+                uuid: None,
+                id: "Main".into(),
+            }];
             nav.state.borrow_mut().scene_inventory.current_id = Some("Main".into());
             nav.state
                 .borrow_mut()
@@ -118,7 +121,7 @@ fn native_external_row_names_remain_literal_without_markup_or_links() {
         let name = "Q&A <live> \"quote\" <b>bold</b> <a href=\"https://example.invalid\">link</a>";
         {
             let mut state = nav.state.borrow_mut();
-            state.scene_inventory.scenes = vec![Scene { id: name.into() }, Scene { id: "Child <i>&</i>".into() }];
+            state.scene_inventory.scenes = vec![Scene { uuid: None, id: name.into() }, Scene { uuid: None, id: "Child <i>&</i>".into() }];
             state.scene_inventory.current_id = Some(name.into());
             state.scene_graph.edges.insert(name.into(), vec!["Child <i>&</i>".into()]);
             let graph = state.scene_graph.clone();

@@ -214,7 +214,7 @@ inventory-empty-state-description = Conéctese a OBS para cargar la lista de esc
 inventory-scenes-group-title = Escenas de OBS
 inventory-scenes-group-description = Asigne roles para controlar qué escenas aparecen en la página Directo.
 inventory-stale-group-title = Entradas de registro obsoletas
-inventory-stale-group-description = Estas escenas están en su registro local pero ya no existen en OBS.
+inventory-stale-group-description = Revisa las entradas de escenas ausentes o con conflictos de identidad. Las entradas conservadas no se aplican a las escenas actuales.
 inventory-remove-stale-tooltip = Eliminar entrada obsoleta
 inventory-yaml-row-title = YAML del registro de escenas
 inventory-yaml-row-subtitle = Exporte o importe roles de escenas, etiquetas, marcas de protección y reglas del grafo.
@@ -610,10 +610,9 @@ help-quickstart-body =
 help-concepts-title = Cómo entiende SceneDeck su configuración
 help-concepts-subtitle = Los roles, el registro y lo que nunca modifica OBS
 help-concepts-body =
-    SceneDeck nunca cambia el nombre, elimina ni reordena nada dentro de OBS. Lee sus escenas mediante la conexión WebSocket de OBS y guarda sus propias notas sobre ellas.
-    Un «rol» es una de esas notas: una etiqueta propia que indica para qué sirve una escena, ya sea la que muestra en directo, una superposición reutilizable o una escena de prueba antigua.
-    Esas notas se guardan en registry.json junto al archivo de configuración, por lo que sobreviven a los reinicios y se pueden exportar y trasladar a otro equipo desde la página Inventario.
-    Como las notas son locales, dos personas pueden compartir una configuración de OBS y mantener cada una una página Directo distinta.
+    Las conexiones guardadas tienen credenciales separadas. Cada conexión, dirección y colección de escenas tiene su propio espacio de trabajo.
+    Los roles, etiquetas, favoritos, orden, colores, iconos y vistas de baraja son organización local; no modifican las escenas de OBS. La búsqueda y las vistas guardadas no cambian las acciones asignadas.
+    Los UUID conocidos conservan los metadatos al renombrar. Un reemplazo con otro UUID no hereda esa identidad.
 
 help-group-connect-title = Conexión con OBS
 help-group-connect-description = En este equipo o al otro lado de la sala.
@@ -679,9 +678,8 @@ help-scenes-order-body =
 help-scenes-registry-title = Copia de seguridad y traslado de la configuración
 help-scenes-registry-subtitle = La fila YAML del registro de escenas en Inventario
 help-scenes-registry-body =
-    Exportar guarda los roles, el orden, los colores de acento, los iconos, las etiquetas y las reglas del grafo en un único archivo YAML, un formato de texto sencillo que puede leer y mantener bajo control de versiones.
-    Importar sustituye el registro local por el contenido de ese archivo. Úselo para trasladar una configuración terminada a otro equipo o para restaurarla después de un experimento.
-    Los nombres de escena vinculan el archivo con OBS, por lo que una escena cuyo nombre cambie en OBS reaparecerá como una entrada obsoleta. Inventario muestra esas entradas y permite eliminarlas.
+    Inventario exporta el registro del espacio actual a YAML, incluidas vistas, acciones, reglas de comprobación y preajustes de audio. Importar sustituye la organización de este espacio, no otros espacios ni las credenciales de OBS.
+    Los atajos y acciones rápidas importados empiezan desactivados. Revisa las identidades antes de activarlos. Los UUID siguen los cambios de nombre; el mismo nombre con otro UUID es otro destino. Puedes eliminar entradas obsoletas en Inventario.
 
 help-group-operate-title = Durante una emisión
 help-group-operate-description = Las páginas que realmente usa mientras emite.
@@ -698,10 +696,10 @@ help-live-body =
 help-hotkeys-title = Cambiar de escena con el teclado
 help-hotkeys-subtitle = Ctrl+1 … Ctrl+0 de forma predeterminada y configurable
 help-hotkeys-body =
-    Cada una de las diez primeras tarjetas de Directo muestra una pequeña insignia con su dígito: la primera es 1, la novena es 9 y la décima es 0. El texto junto al encabezado Escenas siempre indica la combinación actual.
-    Los números de posición siguen el orden de Inventario, así que reordenar allí las tarjetas reordena también los atajos.
+    Las diez primeras escenas conmutables en el orden guardado del Inventario reciben los dígitos 1–9 y luego 0. Cada tarjeta visible muestra su dígito asignado; la indicación de escena muestra la combinación configurada.
+    La búsqueda, las vistas guardadas y mostrar favoritas primero no cambian los números. Un atajo puede activar una escena oculta por el filtro. Reordenar el Inventario sin filtros cambia las asignaciones.
     Preferencias → Atajos de escena permite elegir cómo se pulsa el dígito. Un modificador más el dígito (Ctrl de forma predeterminada) evita activaciones accidentales al escribir. El dígito solo es la opción más rápida. El estilo de tecla líder funciona como en vim: pulse la tecla líder, suéltela y pulse el dígito; el texto mostrará «Líder activo» mientras espera.
-    Los atajos solo funcionan en la página Directo y los estilos sin modificador se desactivan cuando un campo de texto tiene el foco. Si no hay una escena asignada a un dígito, el texto lo indicará sin cambiar de escena.
+    Los atajos de escenas solo funcionan en Live y se suspenden cuando un campo de texto tiene el foco. Un dígito sin escena asignada indica un espacio vacío sin cambiar de escena.
 
 help-audio-title = Audio: la página Mezclador y los medidores
 help-audio-subtitle = Qué indican las barras de colores
@@ -760,10 +758,9 @@ help-appearance-body =
 help-files-title = Dónde guarda SceneDeck sus datos
 help-files-subtitle = Configuración, registro y contraseña de OBS
 help-files-body =
-    Los ajustes, incluidos el anfitrión y el puerto de OBS, se guardan en $XDG_CONFIG_HOME/scenedeck/config.json, normalmente ~/.config/scenedeck/config.json.
-    Los roles, el orden, los acentos y los iconos de las escenas se guardan en registry.json en la misma carpeta.
-    La contraseña de OBS no aparece en ninguno de esos archivos. Se almacena en el depósito de claves Secret Service del escritorio, la misma caja fuerte que usa el navegador.
-    Haga una copia de seguridad de ambos archivos JSON para trasladar una configuración completa a otro equipo, o use la exportación YAML de Inventario solo para la parte de las escenas.
+    config.json guarda ajustes y conexiones en $XDG_CONFIG_HOME/scenedeck (normalmente ~/.config/scenedeck). show-workspaces.json guarda la organización por espacio; registry.json se conserva y se adopta una sola vez.
+    bookmarks.json guarda notas. El historial opcional session-history.json está en $XDG_STATE_HOME/scenedeck (normalmente ~/.local/state/scenedeck).
+    Las contraseñas permanecen en Secret Service, separadas por conexión. Las exportaciones JSON/YAML no incluyen credenciales. Copia los archivos necesarios y transfiere las contraseñas por separado.
 
 help-shortcuts-title = Atajos de teclado
 help-shortcuts-subtitle = La lista completa
@@ -772,7 +769,8 @@ help-shortcuts-body =
     Ctrl+R — volver a conectarse a OBS.
     Ctrl+, — abrir Preferencias.
     Ctrl+Q — salir de SceneDeck.
-    Ctrl+1 … Ctrl+0 en la página Directo — cambiar a una de las diez primeras tarjetas de escena. La combinación se puede configurar en Preferencias → Atajos de escena.
+    Ctrl+1 … Ctrl+0 en Live — activar la escena asignada a esa posición del Inventario, aunque esté filtrada. Configura la combinación en Ajustes → Atajos de escenas.
+    { palette-title }
 
 ## ui/window.rs — diálogo de bienvenida del primer inicio
 welcome-dialog-heading = Bienvenido a SceneDeck
@@ -1007,3 +1005,339 @@ controller-stop-deadline = se superó el plazo de detención ordenada
 controller-connection-deadline = Se superó el plazo de conexión con OBS
 controller-publication-backlog = La cola de notificaciones de OBS superó su límite; vuelve a conectar y actualiza; el historial de salidas puede estar incompleto
 controller-event-connection-ended = La conexión de eventos de OBS terminó; es necesario actualizar
+
+# Scene identity changes
+registry-scene-rename-conflict = La escena «{ $old }» cambió de nombre a «{ $new }», pero ese nombre ya tiene metadatos locales. Se conservaron ambas entradas; revisa el Inventario.
+registry-scene-rename-backlog = Se recibieron demasiadas actualizaciones del registro durante la importación. Revisa el Inventario al finalizar.
+
+# Collection-specific curation
+workspace-curation-title = Espacio de trabajo del programa
+workspace-curation-loading = Cargando la organización de esta colección…
+workspace-curation-unavailable = Conéctate a OBS y espera a que se cargue la colección de escenas.
+workspace-curation-failed = No se pudo cargar este espacio de trabajo: { $error }
+workspace-curation-retry = Reintentar
+
+# Saved OBS connections
+settings-connections-description = Guarda una configuración por conexión OBS. Seleccionarla no vuelve a conectar; usa Conectar configuración guardada cuando estés listo.
+settings-connections-picker = Conexión guardada
+settings-connection-name = Nombre de la conexión
+settings-connection-add = Añadir conexión
+settings-connection-connect = Conectar configuración guardada
+settings-connection-new-name = Nueva conexión { $number }
+settings-connection-invalid = Introduce un nombre, un servidor y un puerto entre 1 y 65535.
+settings-obs-connected-profile = Conectado a { $name } ({ $endpoint }), OBS { $version }
+
+inventory-retained-identity = { $role } · Conservado tras un conflicto de nombre o identidad; no se aplica a ninguna escena.
+
+inventory-scene-favorite = Favorita
+inventory-scene-tags = Etiquetas (separadas por comas)
+inventory-apply-tags = Aplicar etiquetas
+
+deck-search-placeholder = Buscar escenas y etiquetas
+deck-favorites-only = Solo favoritas
+deck-reset = Mostrar todas
+deck-no-results = Ninguna escena coincide con esta vista. Borra los filtros para mostrar todas las escenas.
+deck-reorder-hint = Borra los filtros para reordenar las escenas.
+
+deck-menu = Vistas
+deck-none = Aún no hay vistas guardadas.
+deck-remove = Eliminar la vista «{ $name }»
+deck-save-title = Guardar vista
+deck-save-help = Elige un nombre único. La búsqueda actual y el filtro de favoritas se guardarán para este espacio de trabajo.
+deck-cancel = Cancelar
+deck-save = Guardar
+deck-name = Nombre de la vista
+
+## Command palette
+palette-title = Paleta de comandos (Ctrl+K)
+palette-search = Buscar escenas y acciones…
+palette-open-page = Abrir { $page }
+palette-stage-scene = Preparar { $name }
+palette-switch-scene = Cambiar a { $name }
+palette-open-source = Abrir fuente { $name }
+palette-unmute = Activar sonido de { $name }
+palette-restart = Reiniciar { $name }
+palette-disable-filter = Desactivar { $filter } · { $name }
+palette-enable-filter = Activar { $filter } · { $name }
+palette-scope-changed = Las acciones de OBS no están disponibles en esta paleta. Vuelve a abrirla después de conectar o cambiar de espacio de trabajo.
+palette-empty = No hay acciones coincidentes.
+palette-hint = Usa ↑ / ↓ para seleccionar, Intro para ejecutar y Esc para cerrar. Las acciones guardadas de medios y filtros funcionan en todas las páginas.
+palette-unavailable = No disponible: comprueba la conexión, actualiza el estado de OBS o revisa la fuente de la acción.
+
+## Custom action shortcuts
+binding-title = Atajos de acciones
+binding-description = Los atajos pertenecen a este espacio y funcionan en todas las páginas salvo al escribir. Los atajos en conflicto quedan inactivos. Los importados empiezan desactivados.
+binding-manage = Gestionar atajos de acciones
+binding-invalid = Usa Ctrl, Alt o Super con un carácter, o una tecla de función F2–F24.
+binding-reserved = Este atajo está reservado por la aplicación.
+binding-slots-conflict = Este atajo entra en conflicto con los ajustes de posiciones de escenas.
+binding-duplicate = Otra acción activada ya utiliza este atajo.
+binding-empty = Todavía no hay atajos de acciones.
+binding-enabled = Activado
+binding-edit = Editar atajo
+binding-remove = Eliminar atajo
+binding-add = Añadir atajo
+binding-record-help = Elige una acción y registra una combinación de teclas. Escape cancela la captura. Las entradas compartidas afectan a todas las escenas que las usan.
+binding-action = Acción
+binding-record = Registrar atajo
+binding-recording = Pulsa una combinación de teclas…
+binding-unavailable = Acción no disponible. Se está actualizando el estado de OBS; compruébalo y vuelve a pulsar el atajo.
+
+action-inspect-input = Consultar medios y filtros de una fuente
+action-inspect-none = Elige una fuente…
+action-inspect-help = Las acciones disponibles aparecen abajo. Se mantiene tu selección en Fuentes.
+
+quick-title = Acciones rápidas
+quick-manage = Personalizar acciones rápidas
+quick-add = Fijar acción
+quick-edit = Cambiar acción
+quick-remove = Quitar acción fijada
+quick-up = Subir acción
+quick-down = Bajar acción
+quick-empty = Fija los controles frecuentes junto a tus escenas.
+quick-description = Los controles fijados pertenecen a este espacio de trabajo. Las fuentes compartidas afectan a todas las escenas que las usan.
+quick-disabled = Desactivada: revísala y actívala en Personalizar.
+quick-observed = Estado observado: { $state }
+quick-ready = Lista
+quick-muted = Silenciado
+quick-unmuted = Con sonido
+quick-filter-enabled = Filtro activado
+quick-filter-disabled = Filtro desactivado
+
+quick-toggle-mute = Alternar silencio · { $name }
+quick-toggle-filter = Alternar filtro · { $name } / { $filter }
+
+# Readiness review
+preflight-title = Comprobación previa
+preflight-description = Comprueba la preparación antes de empezar. Habla por el micrófono seleccionado: la señal posterior al fader superior a −50 dBFS se recuerda durante 10 segundos mientras haya niveles recientes. Las lecturas ausentes o antiguas siguen siendo desconocidas.
+preflight-close = Cerrar
+preflight-passed = Correcto
+preflight-failed = Requiere atención
+preflight-unknown = Desconocido
+preflight-skipped = Omitido
+preflight-refresh = Actualizar observaciones de OBS
+preflight-reset = Reiniciar lista
+preflight-ready = Listo: todas las comprobaciones configuradas son correctas.
+preflight-attention = Revisa las comprobaciones siguientes.
+preflight-collection-result = Colección: { $status } — esperada «{ $expected }», observada «{ $actual }»
+preflight-scene-result = Escena «{ $name }»: { $status }
+preflight-no-scenes = Escenas necesarias: ninguna configurada.
+preflight-mic-result = Micrófono «{ $name }»: presente { $presence }; sin silenciar { $unmuted }; señal reciente { $signal }
+preflight-disk-result = Espacio de grabación (mínimo { $minimum } MiB): { $status }
+
+preflight-configure = Configurar comprobación previa
+preflight-expected = Colección de escenas esperada
+preflight-targets-description = Cambiar la expectativa reinicia la selección de escenas y micrófono. Las opciones disponibles proceden de la colección observada; los elementos guardados ausentes siguen visibles. Para elegir otra colección, cámbiala en OBS y vuelve a abrir Configurar.
+preflight-scenes = Escenas necesarias
+preflight-check-mic = Comprobar presencia, silencio y señal del micrófono
+preflight-no-scene-choices = No hay escenas disponibles para esta expectativa.
+preflight-no-microphone = Ningún micrófono seleccionado
+preflight-check-disk = Comprobar espacio de grabación
+preflight-minimum-disk = Espacio libre mínimo (MiB)
+preflight-manual-items = Lista manual (un elemento único por línea)
+preflight-invalid-plan = Introduce una colección esperada, un umbral de espacio entero positivo y elementos únicos.
+preflight-saving = Guardando…
+preflight-save-failed = No se pudo guardar: { $error }. Los cambios permanecen aquí; intenta guardar de nuevo.
+preflight-editor-retired = La conexión, colección o configuración guardada ha cambiado. Cierra este editor y vuelve a abrirlo.
+
+preflight-continue = Continuar para iniciar { $output }…
+preflight-continue-description = Puedes continuar con comprobaciones pendientes. Se mantienen tus ajustes habituales de confirmación. Nada se inicia automáticamente.
+preflight-review-before-output = Revisar comprobaciones antes de iniciar emisión o grabación
+
+preflight-free-space = Espacio libre de grabación observado: { $space } MiB
+
+# Sustained live health
+health-title = Alertas de estado en directo
+health-network = Pérdida de fotogramas en la red
+health-render = Sobrecarga de renderizado
+health-encoder = Sobrecarga de codificación
+health-disk = Poco espacio de grabación
+health-network-help = OBS está perdiendo fotogramas de emisión. Comprueba la conexión de red o reduce el bitrate.
+health-render-help = OBS omite fotogramas de renderizado. Reduce la complejidad de las escenas o los ajustes de vídeo.
+health-encoder-help = OBS omite fotogramas de codificación. Reduce la carga del codificador o los ajustes de emisión y grabación.
+health-disk-help = El volumen de grabación tiene menos de 1 GiB libre durante la grabación. Libera espacio o termina de grabar antes de que se agote.
+health-active = Requiere atención
+health-recovering = Recuperación: las lecturas recientes son normales
+health-unobserved = Lecturas recientes no disponibles
+health-caption = { $title } — { $phase }
+health-more = { $summary } · { $count } más
+health-policy = Las alertas de fotogramas requieren al menos un 1% de pérdidas en intervalos recientes durante 5 segundos. La falta de espacio también debe durar 5 segundos. Las advertencias de rendimiento desaparecen tras 10 segundos de lecturas normales; los datos ausentes o antiguos no indican recuperación.
+health-open-stats = Abrir estadísticas
+health-no-alerts = No hay alertas de estado actuales.
+
+health-connection-lost = Conexión con OBS perdida
+health-stream-stopped = Emisión detenida
+health-record-stopped = Grabación detenida
+health-connection-help = SceneDeck perdió la conexión con OBS. Comprueba OBS y la red y vuelve a conectar. El estado de las salidas no está confirmado hasta que vuelvan las observaciones.
+health-stream-stopped-help = OBS informó que la emisión se detuvo sin una orden reciente de parada desde SceneDeck. Comprueba OBS y el destino antes de reiniciar.
+health-record-stopped-help = OBS informó que la grabación se detuvo sin una orden reciente de parada desde SceneDeck. Comprueba el espacio y OBS. Esta alerta no confirma que se haya guardado un archivo.
+health-acknowledge = Reconocer
+
+health-event-policy = Las alertas de eventos pertenecen a la conexión actual. La recuperación observada o una nueva conexión las elimina. El reconocimiento solo elimina el aviso.
+
+# Selected-input audio health
+health-audio-silence = { $input }: silencio
+health-audio-clipping = { $input }: saturación
+health-audio-silence-help = Silenciado o a −50 dBFS o menos después del fader durante 15 segundos. Comprueba el micrófono, el silencio y el enrutamiento. Desactiva esta regla durante el silencio previsto.
+health-audio-clipping-help = Al menos un canal ha permanecido a escala completa antes del fader durante un segundo. Comprueba la ganancia de entrada.
+health-audio-disabled = Supervisión desactivada
+health-audio-missing = La entrada seleccionada falta o es ambigua
+health-audio-monitoring = Supervisando lecturas recientes
+health-audio-muted = Supervisión — entrada silenciada
+health-audio-settings = Supervisión de audio
+health-audio-select = Conservar una regla para esta entrada
+health-audio-check-silence = Avisar de silencio sostenido
+health-audio-check-clipping = Avisar de saturación sostenida
+health-audio-policy = Selecciona entradas para añadir reglas; desmarca para eliminarlas. Activa la supervisión explícitamente. Las reglas funcionan mientras hay conexión, incluso antes de iniciar las salidas. Silencio: 15 segundos a −50 dBFS o menos después del fader, o silenciado. Saturación: un segundo a escala completa antes del fader. La recuperación requiere diez segundos de lecturas normales. Las lecturas ausentes o antiguas no indican silencio, sino falta de datos. Actualiza para buscar entradas.
+health-audio-invalid = Elige al menos un aviso por regla activada y conserva solo una regla por entrada.
+health-audio-saved = Reglas guardadas.
+health-audio-unsaved = Cambios sin guardar.
+health-audio-retired = El espacio de trabajo o las reglas guardadas han cambiado. Cierra y vuelve a abrir este editor.
+
+# Observed media timing
+media-progress-label = Progreso del medio
+media-position-observed = Posición observada: { $time }
+media-duration-observed = Duración: { $time }
+media-time-remaining = Restante: { $time }
+media-time-unavailable = No disponible
+media-duration-unavailable = No disponible o indefinida
+media-progress-hint = Los tiempos reflejan la última observación de OBS. Usa el campo de posición inferior para desplazarte.
+
+# Local timestamp bookmarks
+bookmarks-title = Marcadores
+bookmark-policy = Se guardan localmente. El tiempo de sesión incluye las pausas. El tiempo de OBS es una muestra reciente de la salida, no una posición del archivo ni un capítulo.
+bookmark-name = Nombre del marcador
+bookmark-add = Añadir marcador
+bookmark-retry = Reintentar
+bookmark-saving = Guardando…
+bookmark-save-error = Marcadores no disponibles o sin guardar: { $error }
+bookmark-scope-changed = Conecta con OBS o vuelve a abrir esta ventana tras cambiar la conexión o colección. Las notas existentes siguen disponibles.
+bookmark-saved = { $count } marcadores guardados localmente
+bookmark-default = Marcador { $number }
+bookmark-invalid-name = Introduce un nombre de 1–120 caracteres sin caracteres de control.
+bookmark-full = Se ha alcanzado el límite de 2000 marcadores. Elimina notas para añadir más.
+bookmark-rename = Renombrar
+bookmark-remove = Eliminar
+bookmark-record-unknown = Tiempo de grabación no disponible
+bookmark-record-inactive = La grabación estaba inactiva
+bookmark-record-time = Tiempo de salida de OBS: { $time } · { $state } · Antigüedad de la muestra: { $age } s
+bookmark-description = { $created }
+    Sesión { $session }: { $elapsed } desde la conexión
+    { $connection } · { $endpoint }
+    Colección: { $collection } · Escena observada: { $scene }
+    { $recording }
+
+# Session reports and explicit export
+reports-title = Informes de sesión
+reports-previous = Sesión anterior
+reports-next = Sesión siguiente
+reports-refresh = Actualizar instantánea
+reports-export-json = Exportar JSON
+reports-export-csv = Exportar CSV
+reports-empty = Aún no hay sesiones registradas. Conecta con OBS para iniciar un informe.
+reports-current = Sesión actual
+reports-scene = Escena observada: { $scene }
+reports-ended = Sesión de observación finalizada: { $reason }
+reports-alert-cleared = Alerta retirada; no implica recuperación
+reports-exporting = Exportando…
+reports-exported = Exportación guardada: { $path }
+reports-export-error = Error al exportar: { $error }
+reports-policy = Las últimas ocho sesiones de conexión permanecen en memoria. El historial guardado también está disponible aquí. Actualiza para incluir nuevas evidencias o cambios de marcadores. La exportación conserva la instantánea seleccionada. Las confirmaciones no prueban que se guardara un archivo; las rutas pertenecen al equipo de OBS.
+reports-view-limit = Esta vista muestra los últimos 150 eventos y 50 marcadores. Las exportaciones incluyen todos los registros conservados. Las muestras ausentes y los reinicios de contadores limitan la interpretación; los contadores de fotogramas son acumulativos.
+reports-summary = { $start } → { $end }
+    { $connection } · { $endpoint }
+    Eventos conservados: { $events } · Omitidos: { $omitted } · Lagunas de actividad: { $gaps }
+    Muestras observadas: { $samples } · Conservadas: { $kept }
+    CPU máxima medida: { $cpu } · FPS mínimos medidos: { $fps }
+    Marcadores: { $bookmarks }
+
+# Optional session history
+history-title = Historial de sesiones
+history-enable = Guardar el historial automáticamente
+history-retain = Sesiones que conservar (1–32)
+history-apply = Aplicar ajustes del historial
+history-retry = Recargar y reintentar
+history-clear = Borrar historial guardado
+history-saving = Guardando o cargando historial…
+history-error = Historial no disponible o sin guardar: { $error }
+history-status = { $mode } · Sesiones guardadas: { $count }
+history-on = Historial automático activado
+history-off = Historial automático desactivado
+history-settings-changed = Los ajustes cambiaron en otra ventana. Vuelve a abrir esta ventana.
+history-app-closed = SceneDeck cerrado
+reports-interrupted = Ejecución anterior; hora de finalización desconocida
+history-settings-description = El guardado automático está desactivado por defecto. Gestiona aquí la retención, la recarga y los errores de guardado.
+history-policy = Al activar el historial se guarda el informe actual, incluidos los eventos anteriores conservados, y las sesiones futuras. Se guarda aproximadamente cada diez segundos y al cambiar de sesión. Desactivar detiene los próximos guardados y conserva los informes existentes. Aplicar un límite menor elimina las sesiones guardadas más antiguas. Los marcadores se guardan por separado.
+history-clear-confirm = ¿Eliminar todo el historial guardado y pendiente? Los informes recientes en memoria y los marcadores seguirán disponibles. La conexión actual no volverá a guardarse; el historial automático se reanuda en la próxima conexión si está activado.
+
+history-exit-requested = Se solicitó salir de SceneDeck
+history-exit-resumed = Salida cancelada o aplazada; registro del informe reanudado
+
+# Selected-input audio presets
+preset-title = Preajustes de audio
+preset-open = Abrir
+preset-shared = Selecciona entradas para guardar su silencio y ganancia actuales. Los cambios en una entrada afectan a todas las escenas que la utilizan. Los preajustes pertenecen a esta conexión y colección de escenas.
+preset-name = Nombre del preajuste
+preset-new = Nuevo preajuste
+preset-save = Guardar entradas seleccionadas
+preset-replace = Reemplazar preajuste seleccionado
+preset-rename = Renombrar preajuste seleccionado
+preset-delete = Eliminar preajuste seleccionado
+preset-preview = Vista previa de valores guardados
+preset-missing = Ausente o no disponible
+preset-invalid = Elige entre 1 y 64 entradas disponibles y un nombre único de hasta 80 caracteres. Se pueden guardar hasta 64 preajustes.
+preset-current = Actual: { $value }
+preset-saved = Guardado: { $value }
+preset-none = Selecciona un preajuste guardado para revisar sus valores.
+preset-refresh-needed = Actualiza los datos de audio antes de capturar un preajuste o revisar los cambios.
+preset-retired = El espacio de trabajo o los preajustes guardados han cambiado. Cierra este editor y vuelve a abrirlo.
+preset-pending = En espera
+preset-running = Comprobando y aplicando
+preset-observed = Valores confirmados por OBS
+preset-unchanged = Ya coincide
+preset-changed = Los valores cambiaron; revisa de nuevo
+preset-failed = Solicitud fallida
+preset-unconfirmed = Resultado sin confirmar por completo
+preset-cancelled = Cambios restantes cancelados
+preset-acknowledgements = Confirmaciones de OBS: ganancia { $gain }, silencio { $mute }
+preset-unavailable = No se puede aplicar: conexión no disponible, otro preajuste en curso o revisión caducada.
+preset-review = Revisar cambios
+preset-apply = Aplicar a entradas disponibles
+preset-cancel = Detener cambios restantes
+preset-apply-policy = Revisa antes de aplicar. Se omiten las entradas ausentes; las demás pueden completarse de forma independiente. Una confirmación de solicitud no confirma los valores leídos. La ganancia se comprueba antes de activar el sonido. Detener impide cambios posteriores, pero no deshace los completados. Actualiza y revisa si cambian los valores.
+preset-unsupported = Esta conexión de OBS no anuncia todas las solicitudes necesarias para aplicar preajustes de audio.
+preset-reviewed = La instantánea de revisión se conserva durante un máximo de 30 segundos.
+
+# Desktop portal shortcuts
+global-title = Atajos del escritorio
+global-description = Registra hasta 64 acciones habilitadas para este espacio de trabajo conectado. El escritorio elige las teclas y puede pedir permiso. Las teclas confirmadas sustituyen a las de la aplicación hasta detenerlas. El registro termina al desconectarse, cambiar el espacio o los atajos, o cerrar la ventana principal; vuelve a activarlo cuando estés listo.
+global-enable = Activar atajos del escritorio
+global-stop = Detener atajos del escritorio
+global-off = Los atajos del escritorio están desactivados.
+global-pending = Esperando al escritorio…
+global-active = Los atajos del escritorio están activos. Teclas asignadas:
+global-none = El escritorio no asignó ningún atajo.
+global-unavailable = No se pudieron activar los atajos del escritorio. Comprueba que el escritorio ofrece el portal GlobalShortcuts e inténtalo de nuevo.
+
+help-controls-subtitle =
+    Atajos, acciones rápidas y preajustes de audio
+
+help-controls-body =
+    Ctrl+K busca escenas y acciones compatibles. Ajustes → Atajos de acciones asigna teclas estables; las acciones rápidas de Live fijan controles individuales. Las entradas compartidas afectan a todas las escenas que las usan.
+    Los atajos del escritorio se activan expresamente en el gestor y requieren un portal compatible. El escritorio elige las teclas; el registro termina al cambiar conexión, espacio o atajos, o al cerrar la ventana principal.
+    Mixer → Preajustes de audio captura ganancia y silencio de entradas seleccionadas. Revisa cambios y entradas ausentes antes de aplicar. Los resultados separan confirmaciones de valores observados; puede haber éxito parcial. Detener cancela cambios no enviados y reconectar nunca los repite.
+
+help-readiness-subtitle =
+    Preparación y avisos persistentes en directo
+
+help-readiness-body =
+    La comprobación previa revisa colección esperada, escenas necesarias, silencio/señal del micrófono elegido, espacio de grabación y una lista manual. Nunca inicia una salida. Los datos desconocidos o antiguos no cuentan como aprobados.
+    Los avisos permanecen visibles entre páginas. Detectan pérdidas recientes sostenidas de fotogramas, sobrecarga de renderizado/codificación, poco espacio, desconexión y paradas inesperadas. Las reglas de silencio/saturación requieren entradas elegidas explícitamente; los medidores no prueban qué oye el público.
+
+help-session-subtitle =
+    Marcadores, medios e informes de sesión
+
+help-session-body =
+    Fuentes muestra progreso y tiempo restante cuando OBS proporciona duración, además de búsqueda compatible. Los controles de salida incluyen pausa y reanudación de grabación.
+    Los marcadores guardan tiempo local de sesión y una muestra reciente del tiempo de grabación de OBS. Por pausas y reconexiones, no son posiciones exactas del archivo ni capítulos.
+    Los informes conservan eventos, incidencias y pruebas de salida limitados, con exportación CSV/JSON. El historial automático está desactivado por defecto; actívalo y elige retención en Historial de sesiones. Solicitudes y confirmaciones siguen separadas de resultados observados. Las rutas de grabación pertenecen al equipo OBS.

@@ -279,6 +279,34 @@ fn operating_group(nav: &NavigationContext) -> PreferencesGroup {
         TopicState::Collapsed,
     ));
 
+    group.add(&topic(
+        nav,
+        "input-keyboard-symbolic",
+        fl!(LANGUAGE_LOADER, "palette-title"),
+        fl!(LANGUAGE_LOADER, "help-controls-subtitle"),
+        fl!(LANGUAGE_LOADER, "help-controls-body"),
+        vec![open(Page::Settings), open(Page::Live), open(Page::Mixer)],
+        TopicState::Collapsed,
+    ));
+    group.add(&topic(
+        nav,
+        "dialog-warning-symbolic",
+        fl!(LANGUAGE_LOADER, "preflight-title"),
+        fl!(LANGUAGE_LOADER, "help-readiness-subtitle"),
+        fl!(LANGUAGE_LOADER, "help-readiness-body"),
+        vec![open(Page::Live), open(Page::Stats)],
+        TopicState::Collapsed,
+    ));
+    group.add(&topic(
+        nav,
+        "document-save-symbolic",
+        fl!(LANGUAGE_LOADER, "history-title"),
+        fl!(LANGUAGE_LOADER, "help-session-subtitle"),
+        fl!(LANGUAGE_LOADER, "help-session-body"),
+        vec![open(Page::Stats), open(Page::Sources)],
+        TopicState::Collapsed,
+    ));
+
     group
 }
 

@@ -23,6 +23,8 @@ impl ControlAction {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ControlSnapshot {
+    /// Complete membership from the same GetSceneList used for Studio state.
+    pub scenes: Vec<crate::domain::scene::Scene>,
     pub scene: Option<String>,
     pub items: Vec<SourceItem>,
     pub warnings: Vec<WorkspaceWarning>,

@@ -88,6 +88,8 @@ async fn mock_connection(held_request: &'static str) -> MockConnection {
 
 fn request(client: &ObsClient, sequence: u64) -> WorkspaceRequest {
     WorkspaceRequest {
+        operator_reads: Vec::new(),
+        target_uuid: None,
         epoch: 5,
         sequence,
         scope: ScopeBinding {

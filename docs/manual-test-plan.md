@@ -107,10 +107,11 @@ requests; acknowledgement alone never claims a saved file. Late or unrelated
 observations remain separate evidence. Failed/aged/scope-lost requests remain
 failed or unconfirmed. Never substitute a real broadcast for a local test.
 
-### Removed Features and Retained Activity
+### Retired Workflow Files and Retained Activity
 
-1. Navigate every page and Settings. Confirm no rehearsal, setup-expectation,
-   show-cue, Show page or replacement watch-configuration surface remains.
+1. Confirm retired rehearsal and cue surfaces remain removed. The new Preflight,
+   health alerts and session reports must use their own scoped models and must
+   not import retired setup expectations.
 2. Put an existing `workflows.json` in disposable config, record its hash, run
    connected Live/Sources/output scenarios and restart. Confirm no routine
    workflow reads/writes and identical file bytes afterward.
@@ -291,7 +292,8 @@ freezing it.
    card's scope bar.
 5. Open the Mixer page and confirm the same source shows the same icon.
 6. Restart SceneDeck.
-7. Open `registry.json` and confirm the `icon` keys and the `inputs` section.
+7. Inspect this connection/collection entry in `show-workspaces.json` and confirm
+   the `icon` keys and the `inputs` section. The legacy `registry.json` is retained.
 8. Hand-edit one icon key to something invented, and restart again.
 
 Expected result: icons appear beside the scene name on Live cards and in the
@@ -530,3 +532,27 @@ changes, and non-slider controls still behave as designed.
 Expected result: SceneDeck reflects OBS volume and mute events, source visibility
 matches the active or selected Mixer scope, and no stale mute or volume state is
 shown after scene changes.
+
+
+## Show workflow acceptance checks
+
+Run these on disposable setups; record actual results and unavailable prerequisites
+in `manual-test-runs.md`. Automated fixture results are recorded separately in
+`feature-program.md` and do not certify a real OBS/desktop combination.
+
+| Area | Exercise | Expected result |
+| --- | --- | --- |
+| Connections/workspaces | Two saved endpoints and collections with identical scene names; switch, rename a UUID-backed scene, restart | Credentials and curation remain separate; rename preserves identity; legacy files remain intact |
+| Decks and bindings | Edit tags/favorites; filter, save/select decks, reorder cards; bind a named scene/action | Filtering does not retarget explicit or positional bindings; only Inventory ordering changes positional slots |
+| Palette/quick actions | Ctrl+K, pin/reorder/remove actions, rename/reuse a source name, make observations stale | Current capabilities and UUID identity govern admission; refresh never replays a rejected action |
+| Desktop shortcuts | A supporting desktop and an unsupported desktop; accept/cancel permission, choose only a subset, change keys externally, revoke, hold key, edit text/modal, switch collection/disconnect/close | Actual assigned keys shown; no duplicate local firing, stale-session action or automatic re-registration; Stop restores local bindings |
+| Preflight | Missing scene, wrong collection, muted/silent chosen microphone, unavailable meter/disk read, manual checklist | Passed/failed/unknown remain distinct; explicit check never starts an output; stale signal is not healthy |
+| Health | Sustained recent drop/render/encode incidents, recovery, low disk, unexpected output stop, selected-input silence/clipping | Cross-page alerts use intervals/persistence/cooldowns; old cumulative drops do not imply an active incident |
+| Media/bookmarks | Pause/resume, seek known/unknown duration media, bookmark during a pause and after reconnect | Progress and remaining time follow observations; local session/recording elapsed timing is distinguished from encoded-file position |
+| Audio presets | Capture selected inputs, rename/reuse UUID/name, missing/changed preview, positive gain, 64 inputs, one failed write, stop/reconnect during Apply | Shared-input effects disclosed; gain confirmed before unmute; per-input ack/readback/partial results retained after editor closes; unsent changes never replay |
+| Reports/history | Opt in/out; long session, scene/output events, incidents, bookmarks; export CSV/JSON; retry failed disk writes; retention and final-window Close/Quit | Bounded history, no credentials, original scopes retained, requests separate from acknowledgements/readback; unsaved evidence is handled explicitly |
+| Presentation | Ukrainian/German, large text, 360×600 dialogs, keyboard-only operation, supported desktop theme variants | Wrapped literal names, reachable controls, visible status and no minimum-size overflow |
+
+The portal backend and packaging permissions vary by desktop; record the actual
+portal/backend version when testing. Tests must never require or invoke an active
+production broadcast. A file path reported by OBS belongs to the OBS host.

@@ -44,6 +44,7 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
                     .collect::<Vec<_>>(),
                 state.scene_graph.edges.clone(),
                 state.registry.snapshot(),
+                state.show_registry.status.clone(),
                 state.topology_status.clone(),
             )
         },
@@ -115,14 +116,20 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
     summary_group.add(&summary_row);
     page.add(&summary_group);
 
-    let notice = topology_status.notice().or_else(|| {
-        inventory.scenes.is_empty().then(|| {
-            (
-                fl!(LANGUAGE_LOADER, "topology-empty-title"),
-                fl!(LANGUAGE_LOADER, "topology-empty-description"),
-            )
+    let notice = topology_status
+        .notice()
+        .or_else(|| {
+            crate::ui::persist::registry_availability_message(nav)
+                .map(|message| (fl!(LANGUAGE_LOADER, "workspace-curation-title"), message))
         })
-    });
+        .or_else(|| {
+            inventory.scenes.is_empty().then(|| {
+                (
+                    fl!(LANGUAGE_LOADER, "topology-empty-title"),
+                    fl!(LANGUAGE_LOADER, "topology-empty-description"),
+                )
+            })
+        });
     if let Some((title, description)) = notice {
         summary_row.set_title(&title);
         summary_row.set_subtitle(&description);
@@ -242,7 +249,7 @@ mod tests {
                 let container = GtkBox::new(gtk4::Orientation::Vertical, 0);
                 {
                     let mut state = nav.state.borrow_mut();
-                    state.scene_inventory.scenes = vec![Scene { id: "Main".into() }];
+                    state.scene_inventory.scenes = vec![Scene { uuid: None, id: "Main".into() }];
                     state.registry.set_scene_role("Main", Some(SceneRole::Primary));
                 }
                 populate(&container, &nav);
@@ -255,7 +262,7 @@ mod tests {
                 {
                     let mut state = nav.state.borrow_mut();
                     state.obs_status = ObsStatus::Connected { obs_version: "fixture".into() };
-                    state.scene_inventory.scenes = vec![Scene { id: "Main".into() }];
+                    state.scene_inventory.scenes = vec![Scene { uuid: None, id: "Main".into() }];
                     state.registry.set_scene_role("Main", Some(SceneRole::Primary));
                     state.set_topology_ready(SceneGraph::default());
                 }

@@ -37,6 +37,13 @@ pub(crate) enum OperationKind {
         result_id: Option<u64>,
     },
     Audio,
+    AudioPreset {
+        epoch: u64,
+        run: u64,
+        index: usize,
+        property: crate::domain::audio_preset::PresetProperty,
+        input: crate::domain::operator_action::ActionTarget,
+    },
 }
 
 #[derive(Debug, Clone)]

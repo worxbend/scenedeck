@@ -15,13 +15,15 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use crate::storage::config::{write_config, AppConfig};
-use crate::storage::registry::{write_registry, SceneRegistry};
+use crate::storage::registry::SceneRegistry;
+use crate::storage::show_workspaces::RegistryTarget;
 use crate::ui::background_io::SerialLane;
 use crate::ui::navigation::NavigationContext;
 
 type RegistryWrite = std::sync::Arc<dyn Fn() -> std::io::Result<()> + Send + Sync>;
 
 struct RegistryOperation {
+    target: RegistryTarget,
     write: RegistryWrite,
     succeeded: bool,
 }
@@ -29,7 +31,6 @@ struct RegistryOperation {
 #[derive(Default)]
 struct RegistryWrites {
     revision: u64,
-    confirmed: u64,
     // Keep successful later fields behind a failed predecessor: retrying an
     // old field must replay its successors, not overwrite newer accepted edits.
     operations: std::collections::BTreeMap<u64, RegistryOperation>,
@@ -66,9 +67,17 @@ pub(crate) fn registry_save_status() -> RegistrySaveStatus {
 }
 
 fn confirm_registry_through(writes: &mut RegistryWrites, revision: u64) {
-    writes.confirmed = writes.confirmed.max(revision);
-    let confirmed = writes.confirmed;
-    writes.operations.retain(|id, _| *id > confirmed);
+    writes.operations.retain(|id, _| *id > revision);
+}
+
+fn confirm_registry_target_through(
+    writes: &mut RegistryWrites,
+    revision: u64,
+    target: &RegistryTarget,
+) {
+    writes
+        .operations
+        .retain(|id, operation| *id > revision || &operation.target != target);
 }
 
 fn registry_write_finished(revision: u64, covers_snapshot: bool, result: std::io::Result<()>) {
@@ -76,15 +85,26 @@ fn registry_write_finished(revision: u64, covers_snapshot: bool, result: std::io
         let mut writes = writes.borrow_mut();
         match result {
             Ok(()) => {
+                let Some(target) = writes
+                    .operations
+                    .get(&revision)
+                    .map(|operation| operation.target.clone())
+                else {
+                    return;
+                };
                 if covers_snapshot {
-                    confirm_registry_through(&mut writes, revision);
+                    confirm_registry_target_through(&mut writes, revision, &target);
                 } else if let Some(operation) = writes.operations.get_mut(&revision) {
                     operation.succeeded = true;
-                    while let Some((&id, operation)) = writes.operations.first_key_value() {
-                        if !operation.succeeded {
-                            break;
-                        }
-                        confirm_registry_through(&mut writes, id);
+                    let through = writes
+                        .operations
+                        .iter()
+                        .filter(|(_, operation)| operation.target == target)
+                        .take_while(|(_, operation)| operation.succeeded)
+                        .map(|(id, _)| *id)
+                        .last();
+                    if let Some(through) = through {
+                        confirm_registry_target_through(&mut writes, through, &target);
                     }
                 }
             }
@@ -99,7 +119,17 @@ fn registry_write_finished(revision: u64, covers_snapshot: bool, result: std::io
     });
 }
 
+#[cfg(test)]
 fn submit_registry_write(what: &'static str, covers_snapshot: bool, write: RegistryWrite) {
+    submit_registry_write_to(what, covers_snapshot, RegistryTarget::legacy(), write);
+}
+
+fn submit_registry_write_to(
+    what: &'static str,
+    covers_snapshot: bool,
+    target: RegistryTarget,
+    write: RegistryWrite,
+) {
     let revision = REGISTRY_WRITES.with(|writes| {
         let mut writes = writes.borrow_mut();
         writes.revision += 1;
@@ -107,6 +137,7 @@ fn submit_registry_write(what: &'static str, covers_snapshot: bool, write: Regis
         writes.operations.insert(
             revision,
             RegistryOperation {
+                target,
                 write: write.clone(),
                 succeeded: false,
             },
@@ -159,6 +190,7 @@ pub(crate) fn retry_registry_writes() -> bool {
                 let mut writes = writes.borrow_mut();
                 writes.retrying = false;
                 if succeeded {
+                    confirm_registry_through(&mut writes, revision);
                     for evidence in writes.failures.drain(..failure_count) {
                         crate::ui::background_io::resolve_failure(evidence);
                     }
@@ -174,6 +206,26 @@ pub(crate) fn retry_registry_writes() -> bool {
 
 thread_local! {
     static REGISTRY_IMPORTING: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+    static AFTER_REGISTRY_IMPORT: RefCell<Vec<Box<dyn FnOnce()>>> = RefCell::new(Vec::new());
+}
+
+/// Observed identity changes must follow an import's disk commit and cache
+/// publication. Unlike user edits, they cannot be retried by clicking again.
+/// Callers retain their session binding and recheck it when the job runs.
+pub(crate) fn after_registry_import(job: impl FnOnce() + 'static) -> bool {
+    if REGISTRY_IMPORTING.with(|busy| busy.get()) {
+        AFTER_REGISTRY_IMPORT.with(|pending| {
+            let mut pending = pending.borrow_mut();
+            if pending.len() >= 64 {
+                return false;
+            }
+            pending.push(Box::new(job));
+            true
+        })
+    } else {
+        job();
+        true
+    }
 }
 
 /// All registry mutation entry points share this gate through disk commit and
@@ -183,6 +235,16 @@ struct RegistryImportGuard(Rc<Cell<bool>>);
 impl Drop for RegistryImportGuard {
     fn drop(&mut self) {
         self.0.set(false);
+        while !self.0.get() {
+            let next = AFTER_REGISTRY_IMPORT.with(|jobs| {
+                let mut jobs = jobs.borrow_mut();
+                (!jobs.is_empty()).then(|| jobs.remove(0))
+            });
+            let Some(job) = next else {
+                break;
+            };
+            job();
+        }
     }
 }
 
@@ -204,6 +266,117 @@ fn registry_edit_allowed() -> bool {
     allowed
 }
 
+pub(crate) fn registry_import_busy() -> bool {
+    REGISTRY_IMPORTING.with(|busy| busy.get())
+}
+
+pub(crate) fn registry_availability_message(nav: &NavigationContext) -> Option<String> {
+    use crate::controller::state::RegistryStatus;
+    use crate::infra::i18n::LANGUAGE_LOADER;
+    use i18n_embed_fl::fl;
+    match &nav.state.borrow().show_registry.status {
+        RegistryStatus::Ready => None,
+        RegistryStatus::Loading => Some(fl!(LANGUAGE_LOADER, "workspace-curation-loading")),
+        RegistryStatus::Unavailable => Some(fl!(LANGUAGE_LOADER, "workspace-curation-unavailable")),
+        RegistryStatus::Failed(error) => Some(fl!(
+            LANGUAGE_LOADER,
+            "workspace-curation-failed",
+            error = error.as_str()
+        )),
+    }
+}
+
+/// Resolve curation only after OBS reports its actual collection. The registry
+/// lane and import gate keep migration, imports, and accepted edits in order.
+pub(crate) fn select_registry_scope(nav: &NavigationContext, refresh: impl Fn() + 'static) {
+    let Some(target) = nav.state.borrow().desired_registry_target() else {
+        return;
+    };
+    let ticket = nav.state.borrow_mut().select_registry(target.clone());
+    if ticket.is_none() && registry_edit_allowed() {
+        reconcile_registry(nav);
+    }
+    refresh();
+    let Some(generation) = ticket else {
+        return;
+    };
+    let nav = nav.scoped();
+    let failed_nav = nav.clone();
+    let failed_target = target.clone();
+    let refresh: Rc<dyn Fn()> = Rc::new(refresh);
+    let failed_refresh = refresh.clone();
+    if !after_registry_import(move || {
+        if !nav.is_current()
+            || !nav
+                .state
+                .borrow()
+                .accepts_registry_load(generation, &target)
+        {
+            return;
+        }
+        let guard = begin_registry_import().expect("deferred registry jobs run outside the gate");
+        let legacy = {
+            let state = nav.state.borrow();
+            let original_endpoint = state
+                .config
+                .legacy_registry_endpoint
+                .clone()
+                .unwrap_or_else(|| format!("{}:{}", state.config.obs.host, state.config.obs.port));
+            matches!(&target, RegistryTarget::Workspace { key, .. }
+                if key.connection == "default" && key.endpoint == original_endpoint)
+            .then(crate::storage::xdg::registry_path)
+        };
+        let destination = target.clone();
+        crate::ui::background_io::run_serialized(
+            SerialLane::Registry,
+            move || destination.load_or_create(legacy.as_deref()),
+            move |result| {
+                if nav.is_current() {
+                    nav.state
+                        .borrow_mut()
+                        .finish_registry_load(generation, &target, result);
+                }
+                if nav.is_current() {
+                    reconcile_registry(&nav);
+                }
+                drop(guard);
+                refresh();
+            },
+        );
+    }) {
+        failed_nav.state.borrow_mut().finish_registry_load(
+            generation,
+            &failed_target,
+            Err(std::io::Error::other("too many pending workspace changes")),
+        );
+        failed_refresh();
+    }
+}
+
+/// Reconcile only the selected ready registry. This also runs inside the import
+/// gate before publication finishes, so no editor can target pre-rename data.
+pub(crate) fn reconcile_registry(nav: &NavigationContext) {
+    let snapshot = {
+        let mut state = nav.state.borrow_mut();
+        if state.show_registry.status != crate::controller::state::RegistryStatus::Ready {
+            return;
+        }
+        let inventory = state.scene_inventory.clone();
+        if !state.registry.reconcile_scenes(&inventory) {
+            return;
+        }
+        state.show_registry.generation += 1;
+        (state.show_registry.target.clone(), state.registry.clone())
+    };
+    let (target, registry) = snapshot;
+    submit_registry_write_to(
+        "scene identities",
+        true,
+        target.clone(),
+        std::sync::Arc::new(move || target.write(&registry)),
+    );
+}
+
 /// Import is an exclusive transaction: edits/imports submitted while it is
 /// pending are refused, not silently replayed against a pre-import snapshot.
 /// Parse off-lane; commit after already-accepted edits; publish only on success.
@@ -212,18 +385,37 @@ pub(crate) fn import_registry(
     source: std::path::PathBuf,
     complete: impl FnOnce(std::io::Result<()>) + 'static,
 ) -> bool {
-    let nav = nav.clone();
-    import_registry_to_path(
+    if !nav.registry_is_current() {
+        return false;
+    }
+    let nav = nav.registry_scoped();
+    let target = nav.state.borrow().show_registry.target.clone();
+    import_registry_to_target(
         source,
-        crate::storage::xdg::registry_path(),
-        move |registry| nav.state.borrow_mut().registry = registry,
+        target.clone(),
+        move |registry| {
+            nav.state
+                .borrow_mut()
+                .publish_registry_import(target, registry);
+            reconcile_registry(&nav);
+        },
         complete,
     )
 }
 
+#[cfg(test)]
 fn import_registry_to_path(
     source: std::path::PathBuf,
     target: std::path::PathBuf,
+    publish: impl FnOnce(SceneRegistry) + 'static,
+    complete: impl FnOnce(std::io::Result<()>) + 'static,
+) -> bool {
+    import_registry_to_target(source, RegistryTarget::File(target), publish, complete)
+}
+
+fn import_registry_to_target(
+    source: std::path::PathBuf,
+    target: RegistryTarget,
     publish: impl FnOnce(SceneRegistry) + 'static,
     complete: impl FnOnce(std::io::Result<()>) + 'static,
 ) -> bool {
@@ -235,16 +427,17 @@ fn import_registry_to_path(
         move |parsed| match parsed {
             Ok(registry) => {
                 let persisted = registry.clone();
+                let destination = target.clone();
                 crate::ui::background_io::run_serialized(
                     SerialLane::Registry,
-                    move || crate::storage::registry::write_registry_to_path(&target, &persisted),
+                    move || destination.write(&persisted),
                     move |result| {
                         if result.is_ok() {
+                            let revision = REGISTRY_WRITES.with(|writes| writes.borrow().revision);
                             publish(registry);
                             REGISTRY_WRITES.with(|writes| {
                                 let mut writes = writes.borrow_mut();
-                                let revision = writes.revision;
-                                confirm_registry_through(&mut writes, revision);
+                                confirm_registry_target_through(&mut writes, revision, &target);
                             });
                         }
                         drop(guard);
@@ -320,23 +513,25 @@ pub(crate) fn persist_registry(
     what: &'static str,
     update: impl FnOnce(&mut SceneRegistry) -> bool,
 ) -> bool {
-    if !registry_edit_allowed() {
+    if !registry_edit_allowed() || !nav.registry_is_current() {
         return false;
     }
-    let registry = {
+    let (target, registry) = {
         let mut state = nav.state.borrow_mut();
         if !update(&mut state.registry) {
             drop(state);
             retry_registry_writes();
             return false;
         }
-        state.registry.clone()
+        state.show_registry.revision = state.show_registry.revision.wrapping_add(1);
+        (state.show_registry.target.clone(), state.registry.clone())
     };
 
-    submit_registry_write(
+    submit_registry_write_to(
         what,
         true,
-        std::sync::Arc::new(move || write_registry(&registry)),
+        target.clone(),
+        std::sync::Arc::new(move || target.write(&registry)),
     );
     true
 }
@@ -361,26 +556,35 @@ pub(crate) fn persist_registry_field<Cached, Disk>(
     disk: Disk,
 ) where
     Cached: FnOnce(&mut SceneRegistry) -> bool,
-    Disk: Fn() -> Result<bool, crate::storage::registry::RegistryMutationError>
-        + Send
-        + Sync
-        + 'static,
+    Disk: Fn(&mut SceneRegistry) -> bool + Send + Sync + 'static,
 {
-    if !registry_edit_allowed() {
+    if !registry_edit_allowed() || !nav.registry_is_current() {
         return;
     }
+    let target = nav.state.borrow().show_registry.target.clone();
     let changed = {
         let mut state = nav.state.borrow_mut();
-        cached(&mut state.registry)
+        let changed = cached(&mut state.registry);
+        if changed {
+            state.show_registry.revision = state.show_registry.revision.wrapping_add(1);
+        }
+        changed
     };
     if !changed {
         retry_registry_writes();
         return;
     }
-    submit_registry_write(
+    submit_registry_write_to(
         what,
         false,
-        std::sync::Arc::new(move || disk().map(|_| ()).map_err(std::io::Error::other)),
+        target.clone(),
+        std::sync::Arc::new(move || {
+            let mut registry = target.read()?;
+            if disk(&mut registry) {
+                target.write(&registry)?;
+            }
+            Ok(())
+        }),
     );
 }
 
@@ -388,6 +592,78 @@ pub(crate) fn persist_registry_field<Cached, Disk>(
 mod tests {
     use super::*;
     use std::{cell::RefCell, time::Duration};
+
+    #[test]
+    fn successful_workspace_snapshot_cannot_retire_another_workspaces_failed_intent() {
+        if !crate::ui::background_io::isolated_test_child(
+            "ui::persist::tests::successful_workspace_snapshot_cannot_retire_another_workspaces_failed_intent",
+        ) { return; }
+        let dir =
+            std::env::temp_dir().join(format!("scenedeck-workspace-retry-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = RegistryTarget::File(dir.join("a.json"));
+        let b = RegistryTarget::File(dir.join("b.json"));
+        let fail = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let mut registry = SceneRegistry::default();
+        registry.set_scene_icon("Camera", Some("A"));
+        submit_registry_write_to(
+            "A",
+            true,
+            a.clone(),
+            std::sync::Arc::new({
+                let a = a.clone();
+                let fail = fail.clone();
+                let registry = registry.clone();
+                move || {
+                    if fail.load(std::sync::atomic::Ordering::SeqCst) {
+                        Err(std::io::Error::other("A failed"))
+                    } else {
+                        a.write(&registry)
+                    }
+                }
+            }),
+        );
+        registry.set_scene_icon("Camera", Some("B"));
+        submit_registry_write_to(
+            "B",
+            true,
+            b.clone(),
+            std::sync::Arc::new({
+                let b = b.clone();
+                move || b.write(&registry)
+            }),
+        );
+        drain_expect(Err(crate::ui::background_io::FlushError::WorkerFailed));
+        assert_eq!(b.read().unwrap().scene_icon("Camera"), Some("B"));
+        fail.store(false, std::sync::atomic::Ordering::SeqCst);
+        assert!(retry_registry_writes());
+        drain();
+        assert_eq!(a.read().unwrap().scene_icon("Camera"), Some("A"));
+        assert_eq!(b.read().unwrap().scene_icon("Camera"), Some("B"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn observed_registry_changes_wait_for_import_publication_and_are_bounded() {
+        let guard = begin_registry_import().unwrap();
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        for index in 0..64 {
+            let observed = observed.clone();
+            assert!(after_registry_import(move || observed
+                .borrow_mut()
+                .push(index)));
+        }
+        assert!(!after_registry_import(|| panic!("overflow must not run")));
+        assert!(observed.borrow().is_empty());
+        drop(guard);
+        assert_eq!(*observed.borrow(), (0..64).collect::<Vec<_>>());
+        let ran = Rc::new(Cell::new(false));
+        assert!(after_registry_import({
+            let ran = ran.clone();
+            move || ran.set(true)
+        }));
+        assert!(ran.get());
+    }
 
     fn drain() {
         drain_expect(Ok(()));
@@ -617,9 +893,10 @@ mod tests {
         let first_fails = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
         let mut older = SceneRegistry::default();
         older.set_scene_icon("Camera", Some("older"));
-        submit_registry_write(
+        submit_registry_write_to(
             "old snapshot",
             true,
+            RegistryTarget::File(target.clone()),
             std::sync::Arc::new({
                 let target = target.clone();
                 let first_fails = first_fails.clone();

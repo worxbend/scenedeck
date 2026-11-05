@@ -149,10 +149,15 @@ fn native_global_toggles_only_show_their_own_pending_state() {
                     action: true,
                     result: Ok(Box::new(
                         crate::controller::workspace::WorkspaceObservation {
+                            audio_revision: 0,
+                            input_catalog: Ok(Vec::new()),
+                            operator_inputs: Vec::new(),
                             snapshot,
                             detail: None,
                             usage: vec![],
                             audio: vec![],
+                            stream_observed_at: std::time::Instant::now(),
+                            record_observed_at: std::time::Instant::now(),
                             stream_status: None,
                             record_status: None,
                             screenshot: None,
@@ -215,8 +220,16 @@ fn native_scene_readback_retains_audio_and_page_geometry() {
                     obs_version: "fixture".into(),
                 };
                 state.scene_collections.current = Some("Fixture".into());
-                state.scene_inventory.scenes =
-                    vec![Scene { id: "Main".into() }, Scene { id: "Other".into() }];
+                state.scene_inventory.scenes = vec![
+                    Scene {
+                        uuid: None,
+                        id: "Main".into(),
+                    },
+                    Scene {
+                        uuid: None,
+                        id: "Other".into(),
+                    },
+                ];
                 state.scene_inventory.current_id = Some("Main".into());
                 for scene in ["Main", "Other"] {
                     state

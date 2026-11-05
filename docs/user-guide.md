@@ -33,6 +33,20 @@ Open Settings and configure:
 Use the Connect control at the bottom of the sidebar. The Live page shows a
 disconnected view until OBS is connected.
 
+## Saved OBS Connections
+
+In Settings, use **Add connection** to create a separate setup, such as
+“Streaming PC” or “Event laptop”. Edit its name, host and port with their Apply
+controls, then save its password separately. Each connection has its own keyring
+entry. New setups begin without a password.
+
+Choose a setup from **Saved connection**, then use **Connect saved setup** when
+ready. Choosing a setup alone keeps the current OBS session connected. The
+status row shows the actual connected setup and endpoint, which can differ from
+the setup selected for the next connection. Connection-specific scene curation
+loads after OBS reports its collection. Renaming a setup keeps its curation and
+credential identity.
+
 ## Live Page
 
 Live puts scene switching first: one scrolling scene grid, a compact expandable
@@ -76,6 +90,13 @@ conflict protection, media transport/seek, existing filters, and audio
 monitoring/sync/balance/tracks. These settings affect the shared OBS input,
 wherever it appears. Selecting a source is separate from switching a scene.
 See the [operating guide](obs-operating-workspace.md) for scope and result rules.
+
+Media transport shows the last observed position, duration and remaining time,
+with a progress bar when both timing values are available. Times follow OBS
+readbacks, including when paused; SceneDeck does not advance a guessed playback
+clock. Unknown or indefinite duration has no progress percentage or countdown.
+Stale workspace data shows unavailable timing. Enter a position in seconds and
+press **Seek** to move playback; polling preserves a position you are editing.
 
 ## Stats Page
 
@@ -148,13 +169,15 @@ If no scene cards appear after connecting, open Inventory and assign the
 
 ### Scene Hotkeys
 
-Each of the first ten scene cards carries a small badge with its digit: the
-first card is `1`, the ninth is `9`, and the tenth is `0`. Pressing that digit
-activates that card using the current direct/Studio mode, so keyboard order
-matches the visible order. The scene shortcut hint names the configured binding.
+The first ten switchable scenes in the saved Inventory order receive digits
+`1` through `9`, then `0`. Each visible card shows its assigned digit. Pressing
+it activates that scene using the current direct/Studio mode. The scene shortcut
+hint names the configured binding.
 
-Slot numbers follow the scene order saved in Inventory, so reordering cards
-there also reorders the shortcuts. Cards past the tenth have no shortcut.
+Search, saved decks and showing favorites first do not renumber these slots.
+A shortcut can still activate a scene hidden by the current filter. Reordering
+scenes in the unfiltered Inventory changes slot assignments; scenes after the
+tenth slot have no digit shortcut. Text-entry focus suppresses scene shortcuts.
 
 Settings → Scene Hotkeys chooses how the digit is pressed:
 
@@ -261,8 +284,22 @@ detailed audio card on the Mixer page. The icon appears in the card's scope
 bar, next to the scope name.
 
 Both pickers offer the same thirty icons and a "no icon" entry that clears the
-choice. Icons are stored in `registry.json` alongside scene roles and accents,
+choice. Icons are stored in the current show workspace alongside scene roles and accents,
 so they survive restarts and travel with an exported registry.
+
+### Collection-specific show workspaces
+
+SceneDeck automatically keeps curation separate for each OBS connection endpoint
+and scene collection. Switching the collection in OBS or SceneDeck loads its
+own roles, order, colors, and icons. Inventory shows loading or an error with
+Retry if the local data is unavailable. A pending save or import retains its
+original destination when you switch. YAML export contains the selected
+workspace’s registry.
+
+On upgrade, the previous registry is adopted once by the original connection’s
+first confirmed collection, and the original file is retained. Other collections
+start without assigned roles; organize them in Inventory. Manage named connections
+in Settings, and use the Decks menu on Inventory or Live for saved views.
 
 ### Stream and Record
 
@@ -307,8 +344,41 @@ Roles:
 - Debug: temporary test scene.
 - Archive: preserved scene excluded from active use.
 
+Open a scene's options menu in Inventory to mark it as a favorite or edit its
+tags. Separate tags with commas and choose **Apply tags**. Blank labels are
+removed, surrounding spaces are trimmed, and duplicate labels are combined
+without changing the spelling of the first one. The row shows the saved tags
+and favorite state. These are local settings for the selected workspace.
+
+Search on Inventory or Live matches scene names and tags without regard to
+letter case. Each word must match somewhere in the name or tags. **Favorites
+only** narrows the view further; Live shows matching favorites before other
+cards. **Show all** clears both filters. Inventory keeps the full saved order
+and enables reordering when the filters are clear.
+
+Use **Save view as deck** to give the current search and favorites filter a
+unique name, such as “Interview” or “Gaming”. The **Decks** menu applies or removes
+saved views. Removing a deck leaves the current view and scene metadata intact.
+Decks and the current view are saved separately for each connection/collection;
+they are also included in YAML exports. A deck is a dynamic filtered view, so
+new scenes with matching names or tags appear automatically.
+
 Inventory also shows stale registry entries when a locally remembered scene no
 longer exists in OBS. You can remove stale entries from this page.
+
+SceneDeck follows OBS scene UUIDs within each connection and collection. Roles,
+tags, protection flags, icons, accents and card order survive renames, including
+renames made while disconnected. A newly created scene reusing an old name does
+not inherit the old scene's metadata. When identity or destination metadata
+conflicts, Inventory shows retained entries that are not applied to a scene.
+You can export them for review or remove them. A unique retained identity can
+return automatically when its original scene reappears without conflicting
+curation. Scenes without UUID information continue to use names.
+
+Renames and inventory changes received during an import wait for its publication;
+retired sessions cannot alter the current collection. YAML imports apply named
+curation to the destination collection and rebind UUIDs there. Retained conflicts
+remain visible but cannot attach themselves using an imported UUID.
 
 The Scene Registry YAML row exports or imports the local registry as a YAML
 file. This includes scene roles, accent colors, scene order, tags, protection
@@ -400,14 +470,208 @@ and how long it stays armed. The Current Bindings row previews the result.
 Changes take effect on the next key press; scene-card badges update the next
 time the Live page is shown. See [Scene Hotkeys](#scene-hotkeys) above.
 
+## Command Palette
+
+Press **Ctrl+K** or use the header search button to find scenes and actions from
+any page. Search matches every word, ignoring case; scene tags are searchable too.
+The palette includes every Primary scene, including scenes hidden by the current
+deck or beyond the first ten digit slots. Scene actions stage Preview in Studio
+mode and switch Program in direct mode.
+
+Use the arrow keys to select a result, Enter to run it, and Escape to close.
+Page navigation works offline. OBS actions require current observations and
+supported server requests. Unavailable actions remain visible with guidance.
+Changing connection, collection or curation identity retires an open palette's
+OBS actions; close and reopen it to use the new workspace.
+
+Source actions use the complete observed input inventory and are available across
+pages. They include opening a source, muting audio, restarting media, and changing
+an observed filter. Saved media and filter bindings keep their required properties
+refreshed independently of the Sources editor. Shared inputs affect every
+scene that uses them. Save replay requires an active replay buffer. Dispatching a
+command does not confirm completion; use the existing output results and Sources
+readback to check the outcome.
+
+### Custom Action Shortcuts
+
+Open **Settings → Action shortcuts → Manage action shortcuts**. Add a binding,
+choose an action from the searchable picker, then click **Record shortcut** and
+press a key combination. Use Ctrl, Alt or Super with a character, or a function
+key such as F8. Escape cancels key recording. You can edit, disable or remove
+bindings individually. To discover media and filter actions, select an input under
+**Inspect media and filters for a source**. Its available actions appear below;
+the scene and input selected in Sources stay in place.
+Use **Refresh OBS observations** to retry an unavailable input list or property.
+
+Bindings belong to the current connection and scene collection. They work on
+any application page, remain attached to the action when decks are filtered or
+reordered, and stand down while a text field has focus. Holding a key fires it
+once until release. Desktop-wide shortcuts are an explicit opt-in below.
+
+Application keys and enabled scene-slot keys are reserved. Duplicate enabled
+bindings conflict. If later settings changes introduce a conflict, the custom
+binding remains inactive and the existing shortcut keeps its behavior. The
+manager shows the conflict so you can choose another key.
+
+Scenes and inputs use their UUID when OBS supplies one, preserving bindings
+across renames and refusing a replacement that reuses an old name. Imported YAML
+bindings start disabled and retain their identities; review them and reselect
+targets when moving to another OBS setup. Editing preserves the enabled state.
+Mute/unmute and filter enable/disable bindings apply an explicit state. Toggle
+actions derive the opposite value from a current observation. Media and filter actions
+require fresh, successful observations of their target properties. An unavailable
+shortcut requests a refresh and asks you to press again; it never queues a mutation
+for a later connection. Existing output results remain the completion evidence.
+
+
+### Desktop shortcuts (optional)
+
+In **Manage action shortcuts**, choose **Enable desktop shortcuts** after connecting
+and reviewing your enabled bindings. SceneDeck supports up to 64 bindings through
+the [XDG GlobalShortcuts portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html).
+The desktop must supply this portal; support is detected at runtime. Host/source
+builds also need SceneDeck’s `io.scenedeck.app.desktop` entry installed so the
+desktop can identify the application. A desktop
+permission/configuration dialog chooses the keys. SceneDeck shows only the
+returned assignments, including when the desktop binds none or only some actions.
+Those desktop keys replace the corresponding application keys while registered.
+The desktop controls conflicts with other applications and may choose different keys.
+
+Registration lasts until **Stop desktop shortcuts**, a connection/workspace or
+binding change, or closing the main window. Re-enable explicitly after reconnecting;
+there is no automatic registration or replay. The desktop may remember its own
+assignments; SceneDeck does not store a separate global key map. Hold/repeat events
+fire once until release. Visible SceneDeck modal dialogs suppress activation. Text editors suppress it
+while SceneDeck is the active window; switching to another application restores
+background activation. Actions still require current OBS observations and follow
+the same scope, identity and capability checks as the command palette. A revoked
+assignment or portal session cannot continue dispatching. If registration fails,
+application shortcuts remain available; check desktop portal support and retry.
+
+### Live Quick Actions
+
+At the top of Live's scene area, use **Pin action** (+) to choose a frequently used
+control. Pin a break scene, microphone mute/unmute or mute toggle, replay save,
+media restart, filter enable/disable or toggle, or a shortcut to a source. The
+picker can inspect media and filters independently of your Sources selection.
+
+Each button shows the action and a separate **Observed** state. A mute action can
+therefore show “Unmuted” until OBS reports the change. Pending, stale, missing or
+failed observations disable the relevant controls. If the displayed state changes
+before activation, refresh and try again; SceneDeck does not queue the action for
+later. Replay save completion remains in the output results, not in the pin's label.
+
+Open a pin's **Customize quick actions** menu (⋮) to enable or disable it, change its
+action, move it up or down, or remove it. Pins persist in this connection and scene
+collection, independently of scene order, search and deck views. Imported YAML
+pins start disabled and retain target identities; review or change their targets
+before enabling them. Shared inputs and filters affect every scene that uses them.
+The strip wraps on narrow windows and scrolls with the scene area.
+
+### Preflight Check
+
+Open **Preflight check** in Live's scene area before a production. Use **Configure
+preflight** to save an expected scene collection, required scenes, a microphone,
+minimum recording space, and a manual checklist. Plans belong to the actual
+connected saved connection and endpoint. Selecting another connection in Settings
+does not edit the connected production's plan. Switching OBS collections does not
+change the expected collection: a mismatch stays visible.
+
+The review shows passed, needs attention, unknown, or explicitly skipped checks.
+Scene and microphone UUIDs survive renames; a reused name does not satisfy a
+requirement for a different UUID. Missing saved targets stay in the editor so you
+can remove or replace them. Changing the expected collection resets target choices;
+to choose scenes or microphones from another collection, switch OBS to it and
+reopen Configure. This does not make SceneDeck switch OBS automatically.
+
+Speak into the selected microphone. Preflight checks that it is present, unmuted,
+and has a post-fader peak above −50 dBFS. That signal is remembered for ten seconds
+while valid meter samples continue arriving within two seconds. It is a presence
+check, not a sound-quality assessment. Missing, invalid, or stale telemetry remains
+unknown. Recording space uses OBS's free space on its recording volume in MiB,
+requires a reading no older than five seconds, and compares it with your saved
+minimum. You may explicitly skip microphone or disk checks.
+
+Manual checkmarks belong to this review only. Closing or resetting it, changing the
+plan, or changing the OBS session or collection clears them. **Refresh OBS
+observations** requests reads without starting an output or applying audio changes.
+
+Optionally enable **Review preflight before starting a stream or recording**.
+Starting then opens the review first. You may cancel or explicitly continue with
+unresolved checks; your existing output confirmation settings still apply.
+Nothing starts automatically when checks pass or a refresh finishes. A changed
+connection or collection retires the pending start.
+
+### Live Health Alerts
+
+A warning area above the main workspace stays visible across Live, Mixer, Sources
+and Stats when an incident needs attention. It shows the first warning and a count
+of any others. Use its warning button to read every incident and its suggested
+checks, or open Stats for more detail. The detached Stats window has the same
+warning area. **Live health alerts** on Live and Stats opens the report even when
+there are no active incidents.
+
+Network frame loss, rendering skips and encoder skips are separate conditions.
+Each requires at least 1% missed frames in consecutive recent intervals for five
+seconds. While recording, less than 1 GiB free on OBS's recording volume must also
+persist for five seconds before a warning appears. These warnings enter
+**Recovering** when valid readings improve, then clear after ten seconds of healthy
+observations. A brief relapse keeps the same incident visible. Missing, invalid,
+stale or reset counters do not count as recovery. **Latest readings unavailable**
+means the earlier incident cannot currently be reassessed.
+
+The status bar still shows the cumulative encoder skipped-frame count, but no
+longer colors a historical nonzero count as an ongoing problem. The warning area
+uses recent measurements.
+
+An unexpected loss of the OBS connection remains visible until reconnect or
+acknowledgement. Deliberately disconnecting or changing connections does not create
+a connection-loss warning. A stream or recording that was observed running and
+then stopped without a recent admitted SceneDeck stop command produces a stopped
+output alert. A failed command, failed status read, command acknowledgement, or
+session retirement alone does not establish that an output stopped or a file was
+saved. An already observed stopped-output incident remains visible if the
+connection subsequently drops. The recent-stop window is thirty seconds from
+command admission, measured against OBS observation time. Delayed screen updates
+do not renew it. A failed or older status read cannot override a newer observation;
+an unavailable current read does not mean the output stopped.
+
+**Acknowledge** clears only the displayed event notices. It does not restart an
+output, reconnect OBS or dismiss a newer incident that was not displayed. Sampled
+performance warnings clear through fresh recovery measurements. A new OBS
+connection begins a new incident context.
+
+
+**Audio monitoring** in the report lets you select inputs and explicitly enable
+silence and/or clipping rules for this connection and collection. Clear an input's
+selection and save to remove its rule; clear **Enabled** to pause it. Rules run
+while connected, including before streaming or recording starts. Imported rules
+are disabled for review. Preflight microphone choices do not enable monitoring.
+
+Silence means fifteen seconds of fresh readings at or below −50 dBFS after the
+fader, or a muted input with fresh meter evidence. Clipping means at least one
+channel stays at full scale before the fader for one second while unmuted. Ten
+seconds of healthy readings clear either warning. Readings more than two seconds
+old, invalid values, missing inputs and failed identity/mute reads are unavailable;
+they cannot establish silence or recovery. Selected UUIDs follow renames but never
+fall back to a reused name. Unavailable saved inputs remain editable so you can
+pause or remove them.
+
+Monitoring continues across pages and while only detached Stats remains open.
+The report lists whether each rule is disabled, monitoring, muted, missing or
+unavailable. **Refresh OBS observations** refreshes the input choices. Save errors
+remain visible; press Save again to retry. No rule changes OBS mute, gain or output
+state.
+
 ## Keyboard Shortcuts
 
+- `Ctrl+K`: open the command palette.
 - `F1`: open the Help page.
 - `Ctrl+R`: reconnect to OBS.
 - `Ctrl+,`: open Settings.
 - `Ctrl+Q`: quit SceneDeck.
-- `Ctrl+1` … `Ctrl+0` on Live: activate one of the first ten cards using the
-  current direct/Studio mode.
+- `Ctrl+1` … `Ctrl+0` on Live: activate the scene assigned to that Inventory
+  slot using the current direct/Studio mode, even if filtered out.
   The combination is configurable — see [Scene Hotkeys](#scene-hotkeys).
 
 ## Troubleshooting
@@ -436,3 +700,109 @@ If profile or collection selectors are missing:
 
 - Connect to OBS first.
 - Check for connection errors in the sidebar status and toast messages.
+
+
+## Timestamp bookmarks
+
+Open **Bookmarks** from Live, Stats, or the command palette. Enter a name and
+choose **Add bookmark** (or press Enter); an empty name gets a numbered default.
+The note records the instant you add it, the connection and collection, and the
+last observed scene. Rename or remove notes in the same window. Existing notes
+remain available when disconnected and after restarting SceneDeck.
+
+Session elapsed time starts when SceneDeck observes a connection and includes
+recording pauses. A reconnect starts a new session. Recording output time is
+shown only from an accepted OBS status sample no more than five seconds old,
+with its age and paused/running state. Missing, stale, transitioning or uncertain
+timing stays unavailable. SceneDeck does not extrapolate this sample or claim it
+is a position in a particular recorded file; file splits and reconnects can
+break that relationship. A local bookmark does not create an OBS chapter.
+
+Bookmarks save automatically to `bookmarks.json`. The window reports saving or
+failed saves and offers **Retry**. A file that cannot be read is preserved;
+correct the file or restore it from a backup, then retry loading. Up to 2,000
+notes are retained without automatic eviction. Remove notes when that limit is
+reached. Changing connection or collection disables capture in an already open
+bookmark window; reopen it to capture the new context. Older notes retain their
+original context.
+
+## Session reports and export
+
+Open **Session reports** from Stats (including its detached window) or the command
+palette. SceneDeck keeps the latest eight connection sessions in memory during
+the current app run. Reconnecting starts a separate report. Use Previous/Next to
+select one, and **Refresh snapshot** to include newly received evidence or bookmark
+edits. The view stays stable while you review or export it.
+
+Reports include scene changes, requested actions, acknowledgements, observed
+output results and OBS-host paths, health-alert changes, sampled CPU/FPS and
+other telemetry, and local bookmarks. An acknowledgement never confirms a saved
+file. A cleared warning does not by itself prove recovery. Disconnects and missing
+measurements leave uncertainty; sampled frame counters are cumulative values,
+not a computed total for this recording.
+
+Each report retains up to 4,096 events and 2,048 telemetry samples. The summary
+shows omissions, activity gaps, and sample counts; CPU peaks and minimum FPS cover
+all valid samples seen during that connection, including evicted raw samples.
+The viewer shows the newest 150 events and 50 bookmarks. JSON/CSV exports include
+all records retained in the selected snapshot. Exported bookmarks include their
+separate session elapsed time and recording-time evidence.
+
+Choose **Export JSON** or **Export CSV** and select a local file. Export runs in
+the background and reports success or failure. JSON preserves structured values;
+CSV provides event/evidence columns, telemetry columns and JSON detail cells.
+CSV text that could execute as a spreadsheet formula gets a protective leading
+apostrophe. Connection passwords and configuration are not part of reports.
+For automatic saving, open **Session history** from Settings or the report window.
+It is off by default. Enable it, choose **1–32 sessions to keep** (default eight),
+and apply the settings. This saves the current report including retained earlier
+events, then future connections. Checkpoints occur about every ten seconds and at
+session boundaries. Disabling stops new checkpoints and preserves existing files.
+Applying a smaller retention limit removes the oldest saved sessions.
+
+Saved reports reload on startup. A report without an end from a previous app run
+shows that its end time is unavailable; SceneDeck does not invent an output stop.
+**Reload and retry** preserves local report changes while rereading saved history.
+Unreadable, corrupt, unsupported or externally changed files are preserved and
+reported. History-settings save errors are also shown and can be retried.
+
+Closing the main window keeps reporting active while a detached window remains.
+Closing the last window or choosing **Quit** saves the final report before exit.
+If saving fails, choose **Cancel** to continue, **Retry** after fixing the problem,
+or **Close anyway** to explicitly leave unsaved changes behind. A cancelled or
+delayed exit resumes reporting and records the interruption; it does not stop OBS
+outputs or claim that pending output requests completed.
+
+**Clear saved history** asks before deleting saved and unsaved history. It keeps
+bookmarks and recent in-memory reports. The current connection is excluded from
+further automatic saves; the next connection is saved if history remains enabled.
+Applying enabled history settings again explicitly includes the current report.
+
+## Audio presets
+
+In **Mixer → Audio presets → Open**, select inputs, enter a name and choose
+**Save selected inputs**. The saved mute and gain values belong to the connected
+show workspace and scene collection. Capture includes the complete input inventory,
+independently of the current Mixer scene or search filter. Use **Refresh** if the
+observations are unavailable or old.
+
+Choose a saved preset to compare its values with current observations. A renamed
+input follows its UUID when OBS provides one; a replacement input with a different
+UUID appears as missing or unavailable. Shared inputs affect every scene that uses
+them. **Replace selected preset** captures the currently selected inputs again;
+missing selected inputs must be explicitly deselected before replacing the preset.
+You can rename or delete a selected preset. Save errors remain visible, and saving
+the same selection again retries after the file problem is fixed.
+
+To apply a saved preset, choose **Review changes**, then **Apply available inputs**.
+The review is held for up to 30 seconds. Apply becomes unavailable if the observed
+values change, the review expires, or OBS lacks the required requests. Refresh and
+review again to use newer observations. Missing inputs are skipped explicitly.
+
+Each input shows its own result. **Values confirmed by OBS** means readback matched
+the requested values; acknowledgement marks only mean OBS accepted those requests.
+Some inputs can succeed while others fail. SceneDeck verifies gain before unmuting
+and stops that input if gain fails or cannot be confirmed. **Stop remaining changes**
+prevents further writes and keeps completed changes. Connection or collection
+changes retire pending work without replaying it. Results remain available when
+you close and reopen the editor and are recorded in session activity/reports.

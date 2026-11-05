@@ -76,6 +76,7 @@ pub(super) fn complete_workspace(state: &mut AppState, event: WorkspaceCompletio
     }
     match result {
         Ok(mut observed) => {
+            state.merge_workspace_audio(&mut observed);
             // A workspace read may have begun before a toggle's transport echo.
             // Never animate a control back to that older readback value.
             if let Some((enabled, at)) = state.workspace.scene_control_observation {
@@ -96,19 +97,50 @@ pub(super) fn complete_workspace(state: &mut AppState, event: WorkspaceCompletio
                 state.workspace.screenshot_observed_at = Some(observed.observed_at);
             }
             if !state.workspace.dirty {
-                if let Some(status) = &observed.record_status {
-                    update_active_since(status.active, &mut state.record_active_since);
-                    state.set_record_status(status.clone());
-                }
-                if let Some(status) = &observed.stream_status {
-                    update_active_since(status.active, &mut state.stream_active_since);
-                    state.set_stream_status(status.clone());
+                use crate::domain::output::{OutputKind, OutputRunState, OutputStatus};
+                for (kind, status, at) in [
+                    (
+                        OutputKind::Stream,
+                        observed.stream_status.as_ref(),
+                        observed.stream_observed_at,
+                    ),
+                    (
+                        OutputKind::Record,
+                        observed.record_status.as_ref(),
+                        observed.record_observed_at,
+                    ),
+                ] {
+                    if !state.accept_output_observation(kind, at) {
+                        continue;
+                    }
+                    if let Some(status) = status {
+                        state.health.observe_output(kind, status, at);
+                        match kind {
+                            OutputKind::Stream => {
+                                update_active_since(status.active, &mut state.stream_active_since)
+                            }
+                            OutputKind::Record => {
+                                update_active_since(status.active, &mut state.record_active_since)
+                            }
+                        }
+                    } else {
+                        state.health.output_unobserved(kind);
+                    }
+                    let status = status
+                        .cloned()
+                        .unwrap_or_else(|| OutputStatus::new(false, OutputRunState::Unknown));
+                    match kind {
+                        OutputKind::Stream => state.set_stream_status(status),
+                        OutputKind::Record => state.set_record_status(status),
+                    }
                 }
             }
             state.workspace.snapshot = Some(observed.snapshot);
             state.workspace.detail = observed.detail;
             state.workspace.usage = observed.usage;
             state.workspace.audio = observed.audio;
+            state.workspace.input_catalog = Some(observed.input_catalog);
+            state.workspace.operator_inputs = observed.operator_inputs;
             state.workspace.observed_at = Some(observed.observed_at);
             if !state.workspace.dirty {
                 state.workspace.observe_global_controls();
@@ -185,10 +217,15 @@ mod tests {
 
     fn observation() -> Box<crate::controller::workspace::WorkspaceObservation> {
         Box::new(crate::controller::workspace::WorkspaceObservation {
+            audio_revision: 0,
+            input_catalog: Ok(Vec::new()),
+            operator_inputs: Vec::new(),
             snapshot: Default::default(),
             detail: None,
             usage: vec![],
             audio: vec![],
+            stream_observed_at: Instant::now(),
+            record_observed_at: Instant::now(),
             stream_status: Some(OutputStatus::new(
                 true,
                 crate::domain::output::OutputRunState::Active,
@@ -212,6 +249,66 @@ mod tests {
             uncertain: false,
             result: Ok(observation()),
             action: false,
+        }
+    }
+
+    #[test]
+    fn workspace_output_reads_share_event_fences_and_unknown_is_not_a_stop() {
+        use crate::{
+            controller::event::AppEvent,
+            domain::health::AlertKind,
+            domain::output::{OutputKind, OutputRunState},
+        };
+        let start = Instant::now() - std::time::Duration::from_secs(60);
+        let mut state = state();
+        state.health.connected();
+        state.apply_output_event(
+            &AppEvent::OutputStatusUpdated(
+                OutputKind::Record,
+                OutputStatus::active(),
+                start + std::time::Duration::from_secs(20),
+            ),
+            0,
+        );
+        for (second, status) in [
+            (10, Some(OutputStatus::inactive())),
+            (11, None),
+            (30, None),
+            (25, Some(OutputStatus::inactive())),
+            (40, Some(OutputStatus::inactive())),
+        ] {
+            state.workspace.dirty = false;
+            let mut event = completion(&state);
+            let read = event.result.as_mut().unwrap();
+            read.record_status = status;
+            read.record_observed_at = start + std::time::Duration::from_secs(second);
+            assert!(complete_workspace(&mut state, event));
+            match second {
+                10 | 11 => {
+                    assert!(state.record_status.active);
+                    assert_eq!(state.health.output_activity(OutputKind::Record), Some(true));
+                }
+                30 | 25 => {
+                    assert_eq!(state.record_status.state, OutputRunState::Unknown);
+                    assert_eq!(state.health.output_activity(OutputKind::Record), None);
+                }
+                40 => {
+                    assert!(!state.record_status.active);
+                    assert_eq!(
+                        state
+                            .health
+                            .alerts(Instant::now())
+                            .iter()
+                            .map(|alert| alert.kind)
+                            .collect::<Vec<_>>(),
+                        [AlertKind::RecordStopped]
+                    );
+                }
+                _ => unreachable!(),
+            }
+            if second != 40 {
+                assert!(state.health.alerts(Instant::now()).is_empty());
+            }
         }
     }
 
@@ -384,5 +481,146 @@ mod tests {
             assert_eq!(state.workspace.detail.is_some(), accepted);
             assert_eq!(state.workspace.revision(), u64::from(accepted));
         }
+    }
+
+    #[test]
+    fn operator_observations_follow_workspace_fences_and_preserve_inspection_intent() {
+        use crate::domain::{
+            operator_action::ActionTarget,
+            operator_input::{InputIdentity, InputObservation},
+        };
+        let mut state = state();
+        state.workspace.selected_input = Some("Editor".into());
+        let target = ActionTarget {
+            name: "Clip".into(),
+            uuid: Some("clip-1".into()),
+        };
+        let token = state.workspace.inspect_operator_input(target.clone());
+        let mut event = completion(&state);
+        let observed = event.result.as_mut().unwrap();
+        observed.input_catalog = Ok(vec![InputIdentity {
+            target: target.clone(),
+            kind: "media".into(),
+        }]);
+        observed.operator_inputs = vec![InputObservation {
+            target: target.clone(),
+            media: Some(Err("unavailable".into())),
+            filters: Some(Ok(Vec::new())),
+        }];
+        let mut stale = completion(&state);
+        stale.epoch += 1;
+        assert!(!complete_workspace(&mut state, stale));
+        assert!(state.workspace.input_catalog.is_none());
+        assert!(complete_workspace(&mut state, event));
+        assert!(state.workspace.input_catalog.as_ref().unwrap().is_ok());
+        assert!(state.workspace.operator_inputs[0]
+            .media
+            .as_ref()
+            .unwrap()
+            .is_err());
+        assert_eq!(state.workspace.selected_input.as_deref(), Some("Editor"));
+        assert!(
+            state.workspace.dirty && !state.workspace.can_control(),
+            "inspection added during a read still needs a fresh read"
+        );
+        state.workspace.invalidate();
+        assert!(
+            state.workspace.input_catalog.is_none() && state.workspace.operator_inputs.is_empty()
+        );
+        assert!(state.workspace.operator_inspections.is_empty());
+        let next = state.workspace.inspect_operator_input(target);
+        state.workspace.release_operator_inspection(token);
+        assert_eq!(
+            state.workspace.operator_inspections[0].0, next,
+            "retired picker cleanup cannot release a new inspection"
+        );
+    }
+
+    #[test]
+    fn workspace_readback_retains_newer_mute_and_volume_echoes_for_pins_and_sources() {
+        use crate::{
+            controller::event::AppEvent,
+            domain::{audio::AudioInput, control::SourceDetail},
+        };
+        let mut state = state();
+        state.reconcile_observation(
+            3,
+            AppEvent::InputMuteChanged {
+                input: "Mic".into(),
+                muted: true,
+            },
+        );
+        state.reconcile_observation(
+            4,
+            AppEvent::InputVolumeChanged {
+                input: "Mic".into(),
+                volume_mul: 0.5,
+                volume_db: -6.0,
+            },
+        );
+        for (revision, expected_muted, expected_db) in [(2, true, -6.0), (5, false, 0.0)] {
+            let mut event = completion(&state);
+            let observed = event.result.as_mut().unwrap();
+            observed.audio_revision = revision;
+            observed.audio = vec![AudioInput::new("Mic".into(), false, 1.0, 0.0)];
+            observed.detail = Some(SourceDetail {
+                input: "Mic".into(),
+                muted: Some(false),
+                volume_db: Some(0.0),
+                ..Default::default()
+            });
+            assert!(complete_workspace(&mut state, event));
+            assert_eq!(state.workspace.audio[0].muted, expected_muted);
+            assert_eq!(state.workspace.audio[0].volume_db, expected_db);
+            assert_eq!(
+                state.workspace.detail.as_ref().unwrap().muted,
+                Some(expected_muted)
+            );
+            assert_eq!(
+                state.workspace.detail.as_ref().unwrap().volume_db,
+                Some(expected_db)
+            );
+        }
+    }
+
+    #[test]
+    fn lost_echo_coverage_leaves_workspace_audio_unknown_and_other_controls_intact() {
+        use crate::{
+            controller::event::AppEvent,
+            domain::{audio::AudioInput, control::SourceDetail},
+        };
+        let mut state = state();
+        for index in 0..=4096 {
+            state.reconcile_observation(
+                index + 2,
+                AppEvent::InputMuteChanged {
+                    input: format!("Mic{index}"),
+                    muted: true,
+                },
+            );
+        }
+        let mut event = completion(&state);
+        let observed = event.result.as_mut().unwrap();
+        observed.audio_revision = 1;
+        observed.audio = vec![AudioInput::new("Mic0".into(), false, 1.0, 0.0)];
+        observed.detail = Some(SourceDetail {
+            input: "Mic0".into(),
+            muted: Some(false),
+            volume_db: Some(0.0),
+            ..Default::default()
+        });
+        observed.snapshot.replay_active = Some(true);
+        assert!(complete_workspace(&mut state, event));
+        assert!(state.workspace.audio.is_empty());
+        assert!(state.workspace.detail.as_ref().unwrap().muted.is_none());
+        assert!(state.workspace.detail.as_ref().unwrap().volume_db.is_none());
+        assert_eq!(
+            state.workspace.snapshot.as_ref().unwrap().replay_active,
+            Some(true)
+        );
+        assert!(state.workspace.warnings.iter().any(|warning| matches!(
+            warning,
+            crate::domain::control::WorkspaceWarning::ReadFailed { .. }
+        )));
     }
 }

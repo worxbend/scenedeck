@@ -16,7 +16,8 @@ use crate::infra::i18n::LANGUAGE_LOADER;
 /// second variant `Record`, the other `Recording` — and because neither could
 /// name the other's type, the label had to be passed between them as a bare
 /// string.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OutputKind {
     /// The stream output.
     Stream,
@@ -81,6 +82,9 @@ pub struct OutputStatus {
     pub state: OutputRunState,
     /// Optional OBS-provided detail, such as a recording path.
     pub detail: Option<String>,
+    /// OBS-reported output duration from a status read, never a file offset.
+    /// Transport events and command fallbacks do not supply timing evidence.
+    pub duration_ms: Option<u64>,
 }
 
 impl Default for OutputStatus {
@@ -96,7 +100,13 @@ impl OutputStatus {
             active,
             state,
             detail: None,
+            duration_ms: None,
         }
+    }
+
+    /// Compare operational state without treating a clock tick as a state change.
+    pub fn same_run_state(&self, other: &Self) -> bool {
+        self.active == other.active && self.state == other.state && self.detail == other.detail
     }
 
     /// Build an inactive output status with no extra detail.

@@ -17,8 +17,17 @@ use crate::storage::registry::SceneRegistry;
 use i18n_embed_fl::fl;
 use std::time::Instant;
 
+mod audio_presets;
+mod bookmarks;
+mod report_history;
+mod session_reports;
+pub(crate) use report_history::ReportHistoryState;
+pub(crate) use session_reports::{ReportExit, ReportsState};
 mod mixer;
+pub(crate) use bookmarks::{BookmarkError, BookmarksState};
+mod show_registry;
 pub use mixer::*;
+pub(crate) use show_registry::{RegistryStatus, ShowRegistryState};
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 
@@ -182,6 +191,10 @@ pub(crate) fn update_active_since(active: bool, active_since: &mut Option<Instan
 
 #[derive(Debug, Clone, Default)]
 pub struct WorkspaceState {
+    pub operator_inspections: Vec<(u64, crate::domain::operator_action::ActionTarget)>,
+    next_operator_inspection: u64,
+    pub input_catalog: Option<Result<Vec<crate::domain::operator_input::InputIdentity>, String>>,
+    pub operator_inputs: Vec<crate::domain::operator_input::InputObservation>,
     pub dirty: bool,
     pub epoch: u64,
     pub sequence: u64,
@@ -216,6 +229,21 @@ pub struct WorkspaceState {
 }
 
 impl WorkspaceState {
+    pub fn inspect_operator_input(
+        &mut self,
+        target: crate::domain::operator_action::ActionTarget,
+    ) -> u64 {
+        self.next_operator_inspection = self.next_operator_inspection.wrapping_add(1);
+        let token = self.next_operator_inspection;
+        self.operator_inspections.push((token, target));
+        self.mark_dirty();
+        token
+    }
+
+    pub fn release_operator_inspection(&mut self, token: u64) {
+        self.operator_inspections.retain(|(id, _)| *id != token);
+    }
+
     pub fn toggle_value(&self, toggle: crate::domain::control::GlobalToggle) -> Option<bool> {
         use crate::domain::control::GlobalToggle;
         let observed = match toggle {
@@ -344,6 +372,9 @@ impl WorkspaceState {
         self.detail = None;
         self.usage.clear();
         self.audio.clear();
+        self.input_catalog = None;
+        self.operator_inputs.clear();
+        self.operator_inspections.clear();
         self.observed_at = None;
         self.screenshot = None;
         self.screenshot_scene = None;
@@ -405,15 +436,23 @@ impl WorkspaceState {
 
 #[derive(Debug, Clone)]
 pub struct AppState {
+    pub(crate) preset_run: Option<crate::domain::audio_preset::PresetRun>,
+    preset_serial: u64,
+    pub report_history: ReportHistoryState,
+    pub reports: ReportsState,
+    pub bookmarks: BookmarksState,
+    pub health: crate::domain::health::HealthMonitor,
     pub workspace: WorkspaceState,
     pub session_retirements: std::collections::VecDeque<super::lifecycle::SessionRetirement>,
     pub available_requests: Vec<String>,
     pub supported_image_formats: Vec<String>,
     pub connected_endpoint: Option<String>,
+    pub connected_connection_id: Option<String>,
     /// Cached local persistence snapshots. GTK reads these values only from
     /// memory; blocking adapters update them through the background-I/O bridge.
     pub config: AppConfig,
     pub registry: SceneRegistry,
+    pub(crate) show_registry: ShowRegistryState,
     pub obs_password: Option<String>,
     pub current_page: Page,
     pub obs_status: ObsStatus,
@@ -430,6 +469,9 @@ pub struct AppState {
     pub stream_active_since: Option<Instant>,
     pub record_active_since: Option<Instant>,
     pub last_recording_path: Option<String>,
+    stream_observed_at: Option<Instant>,
+    record_observed_at: Option<Instant>,
+    record_path_observed_at: Option<Instant>,
     pub audio_inputs: Vec<AudioInput>,
     pub active_audio_status: ActiveAudioStatus,
     active_audio_revision: u64,
@@ -445,6 +487,7 @@ pub struct AppState {
     /// Latest OBS `GetStats` snapshot for the status bar. `None` until the
     /// first poll completes after connecting.
     pub obs_stats: Option<ObsStats>,
+    pub obs_stats_observed_at: Option<Instant>,
     /// Rolling stream bitrate derived from consecutive stats polls.
     pub stream_bitrate_kbps: Option<f64>,
     /// Latest `GetStreamStatus` health read, paired with `obs_stats`.
@@ -464,13 +507,21 @@ impl AppState {
     ) -> Self {
         let mixer = config.mixer.clone();
         Self {
+            preset_run: None,
+            preset_serial: 0,
+            report_history: ReportHistoryState::default(),
+            reports: ReportsState::default(),
+            bookmarks: BookmarksState::default(),
+            health: crate::domain::health::HealthMonitor::default(),
             workspace: WorkspaceState::default(),
             session_retirements: std::collections::VecDeque::new(),
             available_requests: Vec::new(),
             supported_image_formats: Vec::new(),
             connected_endpoint: None,
+            connected_connection_id: None,
             config,
             registry,
+            show_registry: ShowRegistryState::default(),
             obs_password,
             current_page: Page::Live,
             obs_status: ObsStatus::Disconnected,
@@ -487,6 +538,9 @@ impl AppState {
             stream_active_since: None,
             record_active_since: None,
             last_recording_path: None,
+            stream_observed_at: None,
+            record_observed_at: None,
+            record_path_observed_at: None,
             audio_inputs: Vec::new(),
             active_audio_status: ActiveAudioStatus::Missing,
             active_audio_revision: 0,
@@ -496,6 +550,7 @@ impl AppState {
             mixer,
             startup_notice,
             obs_stats: None,
+            obs_stats_observed_at: None,
             stream_bitrate_kbps: None,
             stream_health: None,
             stats_history: StatsHistory::default(),
@@ -514,6 +569,9 @@ impl AppState {
         now_ms: u64,
     ) {
         use crate::controller::command::AppCommand;
+        if matches!(cmd, AppCommand::Connect | AppCommand::Disconnect) {
+            self.health.connection_requested();
+        }
         let AppCommand::SetOutput { kind, active } = *cmd else {
             return;
         };
@@ -542,6 +600,43 @@ impl AppState {
         }
     }
 
+    /// Request-start/ingress time fences both transport events and readback results.
+    /// Output identity belongs to the connection, so collection changes keep this fence.
+    pub(crate) fn accept_output_observation(&mut self, kind: OutputKind, at: Instant) -> bool {
+        let latest = match kind {
+            OutputKind::Stream => &mut self.stream_observed_at,
+            OutputKind::Record => &mut self.record_observed_at,
+        };
+        if latest.is_some_and(|latest| at < latest) {
+            return false;
+        }
+        *latest = Some(at);
+        true
+    }
+
+    fn observe_recording_path(&mut self, path: &str, at: Instant, stopped: bool, now_ms: u64) {
+        if path.is_empty() {
+            return;
+        }
+        self.workspace.touch();
+        if stopped {
+            let scope = self.workflow_scope();
+            self.workspace.output_results.observe(
+                crate::domain::output_result::OutputResultKind::RecordingStop,
+                scope,
+                Some(path.to_owned()),
+                now_ms,
+            );
+        }
+        if self
+            .record_path_observed_at
+            .is_none_or(|latest| at >= latest)
+        {
+            self.record_path_observed_at = Some(at);
+            self.last_recording_path = Some(path.to_owned());
+        }
+    }
+
     /// Apply one output event. Returns its kind, or `None` for any other event.
     pub fn apply_output_event(
         &mut self,
@@ -550,27 +645,26 @@ impl AppState {
     ) -> Option<crate::domain::output::OutputKind> {
         use crate::controller::event::AppEvent;
         use crate::domain::output::OutputKind;
-        use crate::domain::output_result::OutputResultKind;
         use crate::domain::workflow::ActivityOrigin;
 
-        if let AppEvent::OutputStatusUpdated(kind, status) = event {
-            let kind = *kind;
+        if let AppEvent::OutputStatusUpdated(kind, status, at) = event {
             let previous = match kind {
                 OutputKind::Stream => &self.stream_status,
                 OutputKind::Record => &self.record_status,
             };
-            if previous != status {
-                if kind == OutputKind::Record && !status.active {
-                    if let Some(path) = status.detail.as_ref().filter(|path| !path.is_empty()) {
-                        let scope = self.workflow_scope();
-                        self.workspace.output_results.observe(
-                            OutputResultKind::RecordingStop,
-                            scope,
-                            Some(path.clone()),
-                            now_ms,
-                        );
-                    }
+            let changed = !previous.same_run_state(status);
+            // File evidence can arrive after a newer running-state echo. Preserve
+            // that fact without rolling the current output or latest path backward.
+            if *kind == OutputKind::Record {
+                if let Some(path) = &status.detail {
+                    self.observe_recording_path(path, *at, !status.active && changed, now_ms);
                 }
+            }
+            if !self.accept_output_observation(*kind, *at) {
+                return Some(*kind);
+            }
+            self.health.observe_output(*kind, status, *at);
+            if changed {
                 self.workspace.log(
                     ActivityOrigin::Observed,
                     format!("{}: {}", kind.label(), status.state.label()),
@@ -578,37 +672,48 @@ impl AppState {
                 self.workspace.mark_dirty();
             }
         }
+        match event {
+            AppEvent::OutputCommandPending(kind, status, at) => {
+                self.health.output_pending(*kind, status, *at)
+            }
+            AppEvent::OutputCommandFailed(kind, failure) => {
+                self.health.output_failed(*kind, failure.uncertain())
+            }
+            _ => {}
+        }
 
         let kind = match event {
-            AppEvent::OutputStatusUpdated(OutputKind::Stream, status) => {
+            AppEvent::RecordingStopObserved { path, command_at } => {
+                self.observe_recording_path(path, *command_at, true, now_ms);
+                OutputKind::Record
+            }
+            AppEvent::OutputStatusUpdated(OutputKind::Stream, status, _) => {
                 update_active_since(status.active, &mut self.stream_active_since);
                 self.set_stream_status(status.clone());
                 OutputKind::Stream
             }
-            AppEvent::OutputStatusUpdated(OutputKind::Record, status) => {
+            AppEvent::OutputStatusUpdated(OutputKind::Record, status, _) => {
                 update_active_since(status.active, &mut self.record_active_since);
-                // OBS sends an empty path when there is no new file, not "no recording".
-                if let Some(path) = status.detail.as_ref().filter(|path| !path.is_empty()) {
-                    self.last_recording_path = Some(path.clone());
-                }
                 self.set_record_status(status.clone());
                 OutputKind::Record
             }
-            AppEvent::OutputCommandPending(OutputKind::Stream, status) => {
+            AppEvent::OutputCommandPending(OutputKind::Stream, status, _) => {
                 update_active_since(status.active, &mut self.stream_active_since);
                 self.set_stream_command_pending(status.clone());
                 OutputKind::Stream
             }
-            AppEvent::OutputCommandPending(OutputKind::Record, status) => {
+            AppEvent::OutputCommandPending(OutputKind::Record, status, _) => {
                 update_active_since(status.active, &mut self.record_active_since);
                 self.set_record_command_pending(status.clone());
                 OutputKind::Record
             }
             AppEvent::OutputCommandSucceeded(OutputKind::Stream) => {
+                self.report_output_ack(OutputKind::Stream, now_ms);
                 self.set_stream_command_success();
                 OutputKind::Stream
             }
             AppEvent::OutputCommandSucceeded(OutputKind::Record) => {
+                self.report_output_ack(OutputKind::Record, now_ms);
                 if let Some(id) = self.workspace.recording_stop_result.take() {
                     self.workspace.output_results.acknowledge(id, now_ms);
                 }
@@ -647,15 +752,22 @@ impl AppState {
     /// A new session starts with unknown outputs until readback arrives.
     pub fn apply_connected(&mut self, info: crate::controller::event::ConnectionInfo) -> ObsStatus {
         use crate::domain::output::OutputRunState;
+        self.finish_report(&ObsStatus::Connecting.label());
+        self.health.connected();
+        self.bookmarks
+            .begin_session(Instant::now(), crate::controller::workspace::unix_ms());
+        self.invalidate_registry_selection();
         self.available_requests = info.available_requests;
         self.supported_image_formats = info.supported_image_formats;
         self.connected_endpoint = Some(info.endpoint);
+        self.connected_connection_id = Some(info.connection_id);
         self.workspace.mark_dirty();
         self.obs_status = ObsStatus::Connected {
             obs_version: info.obs_version,
         };
         self.stream_status = OutputStatus::new(false, OutputRunState::Unknown);
         self.record_status = OutputStatus::new(false, OutputRunState::Unknown);
+        self.begin_report();
         self.obs_status.clone()
     }
 
@@ -719,6 +831,9 @@ impl AppState {
     /// Local preferences and scope-bound audit history are not observations of
     /// the new collection; keep them separate from the caches cleared here.
     pub fn invalidate_collection_runtime(&mut self) {
+        self.retire_preset();
+        self.collect_report(Instant::now(), crate::controller::workspace::unix_ms());
+        self.invalidate_registry_selection();
         self.workspace.invalidate();
         self.scene_inventory = SceneInventory::default();
         self.scene_graph = SceneGraph::default();
@@ -736,14 +851,19 @@ impl AppState {
     /// Forget all observations from the retired connection, but retain local
     /// preferences and explicitly scope-bound activity/output evidence.
     pub fn reset_obs_session(&mut self, status: ObsStatus) {
+        self.collect_report(Instant::now(), crate::controller::workspace::unix_ms());
+        self.health.disconnected();
         self.invalidate_collection_runtime();
         self.workspace.log(
             crate::domain::workflow::ActivityOrigin::Connection,
             status.label(),
         );
+        self.finish_report(&status.label());
+        self.bookmarks.end_session();
         self.available_requests.clear();
         self.supported_image_formats.clear();
         self.connected_endpoint = None;
+        self.connected_connection_id = None;
         self.profiles = ObsNamedList::default();
         self.scene_collections = ObsNamedList::default();
         self.set_obs_status(status);
@@ -752,6 +872,9 @@ impl AppState {
         self.stream_active_since = None;
         self.record_active_since = None;
         self.last_recording_path = None;
+        self.stream_observed_at = None;
+        self.record_observed_at = None;
+        self.record_path_observed_at = None;
         self.clear_output_command_errors();
         self.clear_obs_stats();
     }
@@ -775,6 +898,9 @@ impl AppState {
         terminal: super::lifecycle::SessionRetirement,
         current: bool,
     ) {
+        for operation in &terminal.operations {
+            self.preset_terminal(operation);
+        }
         if current {
             let unknown = OutputStatus::new(false, crate::domain::output::OutputRunState::Unknown);
             self.set_stream_status(unknown.clone());
@@ -803,8 +929,10 @@ impl AppState {
             terminal.omitted_sessions,
             operations.join("; ")
         );
+        self.collect_report(Instant::now(), crate::controller::workspace::unix_ms());
         self.workspace
             .log(crate::domain::workflow::ActivityOrigin::Connection, audit);
+        self.report_terminal_audit(terminal.generation);
         self.session_retirements.push_back(terminal);
         while self.session_retirements.len() > 32 {
             self.session_retirements.pop_front();
@@ -812,13 +940,48 @@ impl AppState {
     }
 
     /// Store the newest volume-meter readings, replacing the previous set.
+    #[cfg(test)]
     pub fn set_audio_levels(&mut self, levels: Vec<InputLevels>) {
-        self.audio_levels.update(levels);
+        self.set_audio_levels_at(levels, Instant::now());
+    }
+
+    pub fn set_audio_levels_at(&mut self, levels: Vec<InputLevels>, at: Instant) {
+        self.audio_levels.update_at(levels, at);
     }
 
     /// Forget every metered level, so meters fall silent instead of freezing.
     pub fn clear_audio_levels(&mut self) {
         self.audio_levels.clear();
+    }
+
+    /// Evaluate only the actual, ready workspace, independent of the visible page.
+    pub(crate) fn observe_audio_health(&mut self, now: Instant) -> bool {
+        let scope = (self.show_registry.status == RegistryStatus::Ready
+            && self.desired_registry_target().as_ref() == Some(&self.show_registry.target))
+        .then_some((self.workspace.epoch, self.show_registry.generation));
+        let inputs = self
+            .workspace
+            .can_control()
+            .then_some(())
+            .and(self.workspace.input_catalog.as_ref())
+            .and_then(|inputs| inputs.as_ref().ok())
+            .map(Vec::as_slice);
+        self.health.audio.observe(
+            scope,
+            &self.registry.audio_alerts,
+            crate::domain::health::audio::AudioSnapshot {
+                inputs,
+                audio: &self.workspace.audio,
+                levels: &self.audio_levels,
+            },
+            now,
+        );
+        scope.is_some()
+            && self
+                .registry
+                .audio_alerts
+                .iter()
+                .any(|rule| rule.enabled && (rule.silence || rule.clipping))
     }
 
     /// This is the production GTK observation reducer, also used by wire tests.
@@ -860,6 +1023,13 @@ impl AppState {
             _ => {}
         }
         self.observations.reconcile(revision, event)
+    }
+
+    pub(crate) fn merge_workspace_audio(
+        &self,
+        observed: &mut super::workspace::WorkspaceObservation,
+    ) {
+        self.observations.merge_workspace_audio(observed);
     }
 
     pub fn set_current_program(&mut self, scene: String) {
@@ -970,12 +1140,33 @@ impl AppState {
         self.last_record_command_error = None;
     }
 
+    #[cfg(test)]
     pub fn set_obs_stats(
         &mut self,
         stats: ObsStats,
         bitrate_kbps: Option<f64>,
         stream: Option<StreamHealth>,
     ) {
+        self.set_obs_stats_at(stats, bitrate_kbps, stream, Instant::now());
+    }
+
+    pub fn set_obs_stats_at(
+        &mut self,
+        stats: ObsStats,
+        bitrate_kbps: Option<f64>,
+        stream: Option<StreamHealth>,
+        at: Instant,
+    ) {
+        let recording = self.health.output_activity(OutputKind::Record);
+        let streaming = self.health.output_activity(OutputKind::Stream);
+        let encoding = match (recording, streaming) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (Some(false), Some(false)) => Some(false),
+            _ => None,
+        };
+        self.health
+            .observe_stats(stats, stream, recording, encoding, at, Instant::now());
+        self.obs_stats_observed_at = Some(at);
         self.obs_stats = Some(stats);
         self.stream_bitrate_kbps = if self.stream_status.active {
             bitrate_kbps
@@ -988,6 +1179,8 @@ impl AppState {
     }
 
     pub fn clear_obs_stats(&mut self) {
+        self.health.clear_samples();
+        self.obs_stats_observed_at = None;
         self.obs_stats = None;
         self.stream_bitrate_kbps = None;
         self.stream_health = None;
@@ -1063,6 +1256,23 @@ mod tests {
 
     pub(super) fn app_state() -> AppState {
         AppState::new(AppConfig::default(), SceneRegistry::default(), None, None)
+    }
+
+    #[test]
+    fn telemetry_keeps_observation_time_through_publication_and_clears_it_on_reset() {
+        let mut state = app_state();
+        let observed_at = Instant::now() - std::time::Duration::from_secs(8);
+        state.set_obs_stats_at(obs_stats(60.0), None, None, observed_at);
+        state.set_audio_levels_at(
+            vec![InputLevels::from_mul("Mic".into(), &[[0.5; 3]])],
+            observed_at,
+        );
+        assert_eq!(state.obs_stats_observed_at, Some(observed_at));
+        assert_eq!(state.audio_levels.observed_at, Some(observed_at));
+        state.clear_obs_stats();
+        state.clear_audio_levels();
+        assert!(state.obs_stats_observed_at.is_none());
+        assert!(state.audio_levels.observed_at.is_none());
     }
 
     #[test]
@@ -1153,7 +1363,11 @@ mod tests {
         let mut state = app_state();
         let active = OutputStatus::new(true, OutputRunState::Active);
 
-        let event = AppEvent::OutputStatusUpdated(OutputKind::Stream, active.clone());
+        let event = AppEvent::OutputStatusUpdated(
+            OutputKind::Stream,
+            active.clone(),
+            std::time::Instant::now(),
+        );
         assert_eq!(
             state.apply_output_event(&event, 1),
             Some(OutputKind::Stream)
@@ -1168,14 +1382,22 @@ mod tests {
         state.apply_output_event(&event, 2);
         assert_eq!(state.workspace.activity.entries.len(), 1, "repeats are not");
         state.apply_output_event(
-            &AppEvent::OutputStatusUpdated(OutputKind::Stream, OutputStatus::inactive()),
+            &AppEvent::OutputStatusUpdated(
+                OutputKind::Stream,
+                OutputStatus::inactive(),
+                std::time::Instant::now(),
+            ),
             3,
         );
         assert!(state.stream_active_since.is_none());
 
         // A settled stop opens a ticket; success acknowledges it.
         state.apply_output_event(
-            &AppEvent::OutputStatusUpdated(OutputKind::Record, active.clone()),
+            &AppEvent::OutputStatusUpdated(
+                OutputKind::Record,
+                active.clone(),
+                std::time::Instant::now(),
+            ),
             4,
         );
         state.note_command_intent(
@@ -1194,7 +1416,7 @@ mod tests {
             ..OutputStatus::inactive()
         };
         state.apply_output_event(
-            &AppEvent::OutputStatusUpdated(OutputKind::Record, stopped),
+            &AppEvent::OutputStatusUpdated(OutputKind::Record, stopped, std::time::Instant::now()),
             7,
         );
         assert_eq!(state.last_recording_path.as_deref(), Some("/tmp/take.mkv"));
@@ -1203,7 +1425,10 @@ mod tests {
             detail: Some(String::new()),
             ..OutputStatus::new(true, OutputRunState::Active)
         };
-        state.apply_output_event(&AppEvent::OutputStatusUpdated(OutputKind::Record, empty), 8);
+        state.apply_output_event(
+            &AppEvent::OutputStatusUpdated(OutputKind::Record, empty, std::time::Instant::now()),
+            8,
+        );
         assert_eq!(state.last_recording_path.as_deref(), Some("/tmp/take.mkv"));
 
         // A rejected stop fails its ticket instead.
@@ -1250,11 +1475,279 @@ mod tests {
     }
 
     #[test]
+    fn late_recording_output_observation_keeps_file_evidence_without_undoing_a_restart() {
+        use crate::controller::event::AppEvent;
+        let start = Instant::now() - std::time::Duration::from_secs(60);
+        let mut state = app_state();
+        state.health.connected();
+        state.apply_output_event(
+            &AppEvent::OutputStatusUpdated(
+                OutputKind::Record,
+                OutputStatus::active(),
+                start + std::time::Duration::from_secs(20),
+            ),
+            20,
+        );
+        let revision = state.workspace.revision();
+        let stopped = |path: &str| OutputStatus {
+            duration_ms: None,
+            active: false,
+            state: OutputRunState::Inactive,
+            detail: Some(path.into()),
+        };
+        state.apply_output_event(
+            &AppEvent::OutputStatusUpdated(
+                OutputKind::Record,
+                stopped("first.mkv"),
+                start + std::time::Duration::from_secs(10),
+            ),
+            21,
+        );
+        assert!(state.record_status.active);
+        assert_eq!(state.health.output_activity(OutputKind::Record), Some(true));
+        assert!(state.health.alerts(Instant::now()).is_empty());
+        assert_eq!(state.last_recording_path.as_deref(), Some("first.mkv"));
+        assert!(
+            state.workspace.revision() > revision,
+            "late file evidence still refreshes result consumers"
+        );
+        assert!(state
+            .workspace
+            .output_results
+            .entries()
+            .any(|result| result.path.as_deref() == Some("first.mkv")));
+        state.apply_output_event(
+            &AppEvent::OutputStatusUpdated(
+                OutputKind::Record,
+                OutputStatus::active_with_detail("new.mkv"),
+                start + std::time::Duration::from_secs(30),
+            ),
+            30,
+        );
+        state.apply_output_event(
+            &AppEvent::OutputStatusUpdated(
+                OutputKind::Record,
+                stopped("older.mkv"),
+                start + std::time::Duration::from_secs(15),
+            ),
+            31,
+        );
+        assert_eq!(state.last_recording_path.as_deref(), Some("new.mkv"));
+        assert!(state.record_status.active);
+        state.invalidate_collection_runtime();
+        assert!(
+            !state.accept_output_observation(OutputKind::Record, start),
+            "collection retirement must retain connection-owned output ordering"
+        );
+        state.reset_obs_session(ObsStatus::Disconnected);
+        assert!(
+            state.accept_output_observation(OutputKind::Record, start),
+            "a new connection begins a new observation context"
+        );
+    }
+
+    #[test]
+    fn delayed_output_publication_uses_source_times_for_stop_correlation() {
+        use crate::{controller::event::AppEvent, domain::health::AlertKind};
+        let start = Instant::now() - std::time::Duration::from_secs(90);
+        for (stop_second, expected_incident) in [(5, false), (32, true), (0, true)] {
+            let mut state = app_state();
+            state.health.connected();
+            state.apply_output_event(
+                &AppEvent::OutputStatusUpdated(OutputKind::Record, OutputStatus::active(), start),
+                0,
+            );
+            // Both events are applied now, well after their source times.
+            state.apply_output_event(
+                &AppEvent::OutputCommandPending(
+                    OutputKind::Record,
+                    OutputStatus::new(true, OutputRunState::Stopping),
+                    start + std::time::Duration::from_secs(1),
+                ),
+                90_000,
+            );
+            state.apply_output_event(
+                &AppEvent::OutputCommandSucceeded(OutputKind::Record),
+                90_001,
+            );
+            assert!(state.health.alerts(Instant::now()).is_empty());
+            state.apply_output_event(
+                &AppEvent::OutputStatusUpdated(
+                    OutputKind::Record,
+                    OutputStatus::inactive(),
+                    start + std::time::Duration::from_secs(stop_second),
+                ),
+                90_002,
+            );
+            assert_eq!(
+                state
+                    .health
+                    .alerts(Instant::now())
+                    .iter()
+                    .any(|alert| alert.kind == AlertKind::RecordStopped),
+                expected_incident,
+                "correlation must use source times, including observations preceding admission"
+            );
+        }
+    }
+
+    #[test]
+    fn health_alerts_follow_observed_outputs_and_connection_lifecycle_not_fallbacks() {
+        use crate::{
+            controller::{
+                command::AppCommand,
+                event::{AppEvent, ConnectionInfo},
+            },
+            domain::health::AlertKind,
+        };
+        let info = || ConnectionInfo {
+            connection_id: "test".into(),
+            endpoint: "ws://fixture:4455".into(),
+            obs_version: "fixture".into(),
+            websocket_version: "fixture".into(),
+            available_requests: vec![],
+            supported_image_formats: vec![],
+        };
+        let mut state = app_state();
+        state.apply_connected(info());
+        let kinds = |state: &AppState| {
+            state
+                .health
+                .alerts(Instant::now())
+                .iter()
+                .map(|alert| alert.kind)
+                .collect::<Vec<_>>()
+        };
+        state.apply_output_event(
+            &AppEvent::OutputStatusUpdated(
+                OutputKind::Record,
+                OutputStatus::active(),
+                std::time::Instant::now(),
+            ),
+            0,
+        );
+        state.note_command_intent(
+            &AppCommand::SetOutput {
+                kind: OutputKind::Record,
+                active: false,
+            },
+            0,
+        );
+        state.apply_output_event(
+            &AppEvent::OutputStatusUpdated(
+                OutputKind::Record,
+                OutputStatus::inactive(),
+                std::time::Instant::now(),
+            ),
+            1,
+        );
+        assert_eq!(
+            kinds(&state),
+            [AlertKind::RecordStopped],
+            "a click alone does not establish command admission"
+        );
+        state.apply_output_event(
+            &AppEvent::OutputStatusUpdated(
+                OutputKind::Record,
+                OutputStatus::active(),
+                std::time::Instant::now(),
+            ),
+            2,
+        );
+        state.apply_output_event(
+            &AppEvent::OutputCommandPending(
+                OutputKind::Record,
+                OutputStatus::new(true, OutputRunState::Stopping),
+                std::time::Instant::now(),
+            ),
+            3,
+        );
+        state.apply_output_event(&AppEvent::OutputCommandSucceeded(OutputKind::Record), 4);
+        assert!(kinds(&state).is_empty());
+        assert_eq!(
+            state.record_status.state,
+            OutputRunState::Stopping,
+            "acknowledgement alone does not observe stopped state"
+        );
+        state.apply_output_event(
+            &AppEvent::OutputStatusUpdated(
+                OutputKind::Record,
+                OutputStatus::inactive(),
+                std::time::Instant::now(),
+            ),
+            5,
+        );
+        assert!(kinds(&state).is_empty());
+        state.apply_output_event(
+            &AppEvent::OutputStatusUpdated(
+                OutputKind::Record,
+                OutputStatus::active(),
+                std::time::Instant::now(),
+            ),
+            6,
+        );
+        state.apply_output_event(
+            &AppEvent::OutputCommandFailed(
+                OutputKind::Record,
+                OutputCommandFailureRecovery::with_failed_command_fallback_status(
+                    "failed".into(),
+                    OutputStatus::inactive(),
+                ),
+            ),
+            7,
+        );
+        assert!(
+            kinds(&state).is_empty(),
+            "fallback state is not observed termination"
+        );
+        assert_eq!(
+            state.health.output_activity(OutputKind::Record),
+            Some(true),
+            "fallback cannot declare the output inactive for health checks"
+        );
+        state.health.output_unobserved(OutputKind::Record);
+        assert_eq!(state.health.output_activity(OutputKind::Record), None);
+        state.apply_output_event(
+            &AppEvent::OutputStatusUpdated(
+                OutputKind::Record,
+                OutputStatus::inactive(),
+                std::time::Instant::now(),
+            ),
+            8,
+        );
+        assert_eq!(kinds(&state), [AlertKind::RecordStopped]);
+        state.note_command_intent(&AppCommand::Connect, 9);
+        state.reset_obs_session(ObsStatus::Connecting);
+        assert_eq!(
+            kinds(&state),
+            [AlertKind::RecordStopped],
+            "reconnecting does not hide an already observed stop"
+        );
+        state.apply_connected(info());
+        state.apply_output_event(
+            &AppEvent::OutputStatusUpdated(
+                OutputKind::Record,
+                OutputStatus::active(),
+                std::time::Instant::now(),
+            ),
+            10,
+        );
+        state.reset_obs_session(ObsStatus::Error("transport ended".into()));
+        assert_eq!(kinds(&state), [AlertKind::ConnectionLost]);
+        state.apply_connected(info());
+        assert!(kinds(&state).is_empty());
+        state.note_command_intent(&AppCommand::Disconnect, 11);
+        state.reset_obs_session(ObsStatus::Disconnected);
+        assert!(kinds(&state).is_empty());
+    }
+
+    #[test]
     fn connecting_resets_outputs_to_unknown_and_records_the_session() {
         use crate::domain::output::OutputRunState;
         let mut state = app_state();
         state.stream_status = OutputStatus::new(true, OutputRunState::Active);
         let status = state.apply_connected(crate::controller::event::ConnectionInfo {
+            connection_id: "default".into(),
             endpoint: "ws://obs:4455".into(),
             obs_version: "32.2.2".into(),
             websocket_version: "5.6".into(),
@@ -1460,6 +1953,7 @@ mod tests {
 
     pub(super) fn output_status(active: bool, state: OutputRunState) -> OutputStatus {
         OutputStatus {
+            duration_ms: None,
             active,
             state,
             detail: None,
@@ -2081,7 +2575,10 @@ mod tests {
         state
             .scene_inventory
             .scenes
-            .push(crate::domain::scene::Scene { id: "A".into() });
+            .push(crate::domain::scene::Scene {
+                uuid: None,
+                id: "A".into(),
+            });
         state.scene_inventory.current_id = Some("A".into());
         state.scene_inventory.previous_id = Some("Previous".into());
         state.set_topology_ready(SceneGraph {

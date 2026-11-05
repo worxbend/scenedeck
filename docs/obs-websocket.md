@@ -86,7 +86,23 @@ SceneDeck currently writes:
 Scene roles are local metadata and do not write to OBS. Inventory writes the
 local registry directly.
 
+Audio preset Apply uses `GetSceneCollectionList`, `GetInputList`, `GetInputMute`
+and `GetInputVolume` to revalidate the reviewed scope, identity and values. Its
+directional `SetInputMute` and `SetInputVolume` steps target UUIDs when available.
+Presets preserve linear gain in the protocol range 0–20, including zero, instead
+of clamping captured values to the fader's range. Each changed property is read
+back before proceeding; gain must be confirmed before unmuting. The sequential
+worker reports per-input outcomes, skips missing or changed targets, and fences
+remaining mutations on cancellation, scope changes or a retired socket. A partial
+failure does not imply rollback, and an acknowledgement is not confirmed readback.
+
 ## Events
+
+`SceneNameChanged` carries the old and new scene names through the scoped event
+channel. It invalidates scene controls and derived topology, then migrates local
+registry metadata and order without overwriting a conflicting destination.
+Registry imports defer this migration until their publication completes; retired
+session/collection callbacks cannot modify the replacement scope.
 
 SceneDeck currently handles these OBS event categories:
 
@@ -104,6 +120,7 @@ SceneDeck currently handles these OBS event categories:
 - Current scene collection changed.
 - Scene collection list changed.
 - Scene list changed.
+- Scene name changed, including the stable scene UUID.
 - Replay saves and replay/virtual-camera state changes.
 - Studio Mode, Preview and transition changes.
 - Source-filter creation/removal/reordering/name/settings/enable changes.
@@ -170,7 +187,9 @@ fresh state and perform an authoritative reread. This is not an atomic
 multi-request snapshot against another OBS operator.
 
 Selected-media detail has a bounded refresh while that detail is visible on
-Sources. Traversal retains nested paths, handles groups/cycles and limits a scan
+Sources. The progress readout uses the existing GetMediaInputStatus cursor and
+duration fields, without extrapolation or additional requests. Missing/invalid
+cursor or non-positive/unknown duration never implies completed playback. Traversal retains nested paths, handles groups/cycles and limits a scan
 to 4,096 items, reporting partial results on limits or failed reads. Native
 workspace actions require a non-dirty observation within 30 seconds; stale
 actions trigger refresh instead of replaying the old intent automatically.
@@ -250,3 +269,75 @@ Add protocol calls through `src/obs/client.rs`, map responses into domain
 values and route work through controller commands/events. Local scene metadata
 and appearance remain config/registry data. Retired workflow files are preserved
 on disk without routine loading or saving.
+
+Scene inventories retain non-nil scene UUIDs for workspace curation reconciliation.
+Names remain the display and control targets. Reconciliation is local and never
+renames or reorders scenes in OBS. Unknown UUIDs do not establish identity.
+
+Explicit palette/shortcut mutations carry a known scene or input UUID through the
+workspace request to the protocol adapter. The adapter uses `sceneUuid`,
+`inputUuid` or `sourceUuid` instead of a cached name. Studio-mode activation still
+checks the authoritative mode immediately before dispatch. The complete audio
+inventory now retains UUIDs from its existing `GetInputList` response and reads
+identified input values by UUID without an additional inventory request.
+
+The workspace retains the complete input identity catalog, including non-audio
+sources. Enabled action bindings, Live pins and temporary action pickers request
+only their required `GetMediaInputStatus` and `GetSourceFilterList` properties. Reads merge by
+identity and run with bounded concurrency; property errors remain independent.
+They share the existing workspace sequence, session, collection and freshness
+guards. A missing UUID cannot fall back to its old name, and a failed input-list
+read cannot authorize an action from cached property data. Picker inspections
+release when their dialog closes or scope changes without changing Sources
+selection. No action is deferred until a read succeeds.
+
+Mute and filter toggle intentions resolve to an explicit `SetInputMute` or
+`SetSourceFilterEnabled` value using current observed state. Live pins recheck
+their displayed state before admission. They share the same identity, freshness,
+pending-operation and controller-scope guards as explicit setters.
+
+Preflight reuses the workspace's existing `GetSceneList` membership, complete
+`GetInputList` identities, and input mute reads. `GetStats` supplies free recording
+space in MiB; volume-meter events supply post-fader signal. Stats carry monotonic
+request-start timestamps, and meter updates carry event-reader receipt timestamps,
+so time spent waiting for GTK does not make old observations appear fresh. The
+preflight refresh requests only workspace and statistics reads. No additional
+scene-list call, scene switch or output mutation is introduced by a review.
+
+Core performance/output health monitoring adds no OBS mutation or new polling request. It consumes
+existing GetStats/GetStreamStatus observations and normalized output events after
+the controller's scope/revision fences. Counter resets and gaps restart interval
+baselines. A stopped-output warning is distinct from recording/replay saved-file
+evidence and never supplies a file path or promotes an acknowledgement to a saved
+result.
+
+
+Opt-in audio health rules reuse `GetInputList`, existing input mute reads and
+`InputVolumeMeters` subscriptions. Enabled rules can trigger the existing
+read-only workspace refresh independently of the current page or main-window
+focus, with ten seconds between monitor refresh attempts. The complete catalog
+resolves saved input identities; the dependency exposes meter readings by name,
+so no meter is used without fresh, unambiguous identity and mute evidence. Invalid
+multipliers retain an invalid flag for checks rather than becoming digital silence.
+Missing or frozen meter events never establish silence or recovery. Audio health
+rules introduce no OBS mutation and never infer stream/recording completion.
+
+
+Output observations preserve transport-receipt times or the start of the specific
+`GetStreamStatus`/`GetRecordStatus` request. This includes workspace reads and failed
+readbacks. These times fence old observations after queue/GTK delays and remain
+connection-owned across collection switches. Pending output-command publication
+also belongs to the connection, independently of collection-specific snapshots.
+A reported recording path is separate evidence from whether recording is currently
+running. The StopRecord response publishes a file result only, with the command
+admission time used to order the path conservatively. It never synthesizes an
+inactive state: a delayed response cannot undo a newer observed restart. Current
+run state comes from GetRecordStatus or RecordStateChanged.
+
+
+Bookmarks retain the existing GetRecordStatus `outputDuration` response as optional
+milliseconds alongside the run state. No extra OBS request or mutation is issued
+when adding, renaming or removing a local bookmark. A timing value is a sampled
+output clock, not a saved-file claim or an encoded-file offset. RecordStateChanged
+has no duration, so that event cannot carry an earlier recording's clock forward.
+Missing/failed reads and command fallback states likewise supply no timing evidence.

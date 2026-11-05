@@ -9,6 +9,7 @@ use crate::infra::error::AppError;
 
 #[derive(Debug, Clone)]
 pub struct ConnectionInfo {
+    pub connection_id: String,
     pub endpoint: String,
     pub obs_version: String,
     pub websocket_version: String,
@@ -79,6 +80,7 @@ pub(crate) fn fallback_status_after_failed_output_command(status: &OutputStatus)
     };
 
     OutputStatus {
+        duration_ms: None,
         active: status.active,
         state: fallback_state,
         detail: status.detail.clone(),
@@ -91,6 +93,7 @@ mod tests {
 
     fn output_status(active: bool, state: OutputRunState) -> OutputStatus {
         OutputStatus {
+            duration_ms: None,
             active,
             state,
             detail: None,
@@ -130,6 +133,7 @@ mod tests {
 
         for (active, state, expected_state) in cases {
             let status = OutputStatus {
+                duration_ms: None,
                 active,
                 state,
                 detail: Some("detail".to_string()),
@@ -276,6 +280,16 @@ pub enum AppEvent {
     VirtualCameraChanged(Option<bool>),
     WorkspaceScopeChanging,
     WorkspaceAudioFailed(String),
+    PresetProgress {
+        epoch: u64,
+        run: u64,
+        index: usize,
+        outcome: crate::domain::audio_preset::PresetOutcome,
+    },
+    PresetRejected {
+        epoch: u64,
+        run: u64,
+    },
     ReplaySaved(String),
     // Connection
     Connecting,
@@ -284,6 +298,11 @@ pub enum AppEvent {
 
     // Scenes
     SceneInventoryUpdated(SceneInventory),
+    SceneRenamed {
+        uuid: Option<String>,
+        old: String,
+        new: String,
+    },
     CurrentSceneChanged(SceneId),
     ProfilesUpdated(ObsNamedList),
     SceneCollectionsUpdated(ObsNamedList),
@@ -326,15 +345,28 @@ pub enum AppEvent {
     /// High volume: OBS sends this about twenty times a second while connected.
     /// It is dropped rather than queued when the UI falls behind, so it must
     /// never be the only carrier of a state change.
-    InputLevelsUpdated(Vec<InputLevels>),
+    InputLevelsUpdated {
+        levels: Vec<InputLevels>,
+        observed_at: std::time::Instant,
+    },
 
     // Outputs
+    /// A completed StopRecord response supplies file evidence, not current run state.
+    RecordingStopObserved {
+        path: String,
+        /// Conservative file ordering: the source command may predate a restart.
+        command_at: std::time::Instant,
+    },
     OutputReadbackFailed {
         kind: crate::domain::output::OutputKind,
         error: AppError,
+        /// Request-start time; a later echo outranks this unavailable read.
+        observed_at: std::time::Instant,
     },
-    OutputStatusUpdated(OutputKind, OutputStatus),
-    OutputCommandPending(OutputKind, OutputStatus),
+    /// Monotonic request-start or transport-receipt time, before publication waits.
+    OutputStatusUpdated(OutputKind, OutputStatus, std::time::Instant),
+    /// Monotonic controller admission time, not the later GTK application time.
+    OutputCommandPending(OutputKind, OutputStatus, std::time::Instant),
     OutputCommandSucceeded(OutputKind),
     OutputCommandFailed(OutputKind, OutputCommandFailureRecovery),
 
@@ -346,6 +378,7 @@ pub enum AppEvent {
     /// sample exists to diff against, and stream output health when the
     /// `GetStreamStatus` read succeeded alongside it.
     StatsUpdated {
+        observed_at: std::time::Instant,
         stats: ObsStats,
         bitrate_kbps: Option<f64>,
         stream: Option<StreamHealth>,

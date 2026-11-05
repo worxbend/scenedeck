@@ -105,6 +105,7 @@ pub(crate) async fn refresh_obs_stats(
     tx: &EventSender,
     bitrate_sample: &BitrateSample,
 ) {
+    let observed_at = std::time::Instant::now();
     let stats = match client.get_obs_stats().await {
         Ok(stats) => stats,
         Err(e) => {
@@ -126,6 +127,7 @@ pub(crate) async fn refresh_obs_stats(
 
     let _ = tx
         .send(AppEvent::StatsUpdated {
+            observed_at,
             stats,
             bitrate_kbps,
             stream,
@@ -340,7 +342,10 @@ async fn refresh_worker(
                 .announced
                 .store(false, std::sync::atomic::Ordering::Release);
             refresh_profile_and_collection_lists(client, &scan_tx).await;
-            refresh_output_statuses(client, &scan_tx).await;
+            refresh_output_statuses(client, &scan_tx)
+                .await
+                .publish(&scan_tx)
+                .await;
             refresh_live_data_if(client, &scan_tx, audio_filter, &|| {
                 *dirty.revision.borrow() == scan_revision
             })
@@ -486,11 +491,19 @@ pub(crate) async fn run_event_loop(
             ObsEvent::ReplaySaved(path) => Some(AppEvent::ReplaySaved(path)),
             ObsEvent::StreamStatusUpdated(status) => Some(AppEvent::Observation {
                 revision: client.next_observation(),
-                event: Box::new(AppEvent::OutputStatusUpdated(OutputKind::Stream, status)),
+                event: Box::new(AppEvent::OutputStatusUpdated(
+                    OutputKind::Stream,
+                    status,
+                    std::time::Instant::now(),
+                )),
             }),
             ObsEvent::RecordStatusUpdated(status) => Some(AppEvent::Observation {
                 revision: client.next_observation(),
-                event: Box::new(AppEvent::OutputStatusUpdated(OutputKind::Record, status)),
+                event: Box::new(AppEvent::OutputStatusUpdated(
+                    OutputKind::Record,
+                    status,
+                    std::time::Instant::now(),
+                )),
             }),
             ObsEvent::CurrentProgramSceneChanged(scene) => {
                 dirty.audio_scene.send_replace(Some(scene.clone()));
@@ -516,8 +529,20 @@ pub(crate) async fn run_event_loop(
                 }),
             }),
             ObsEvent::InputLevelsUpdated(levels) => {
-                let _ = tx.fresh().try_send(AppEvent::InputLevelsUpdated(levels));
+                let _ = tx.fresh().try_send(AppEvent::InputLevelsUpdated {
+                    levels,
+                    observed_at: std::time::Instant::now(),
+                });
                 None
+            }
+            ObsEvent::SceneRenamed { uuid, old, new } => {
+                if let Some(scope) = tx.session_scope() {
+                    scope.observe_graph_revision(client.next_observation());
+                    scope.invalidate_scene_activation();
+                }
+                dirty.invalidate();
+                graph_invalidation = Some(invalidate_graph(&client, &tx.fresh()));
+                Some(AppEvent::SceneRenamed { uuid, old, new })
             }
             ObsEvent::InputsChanged | ObsEvent::SceneItemsChanged | ObsEvent::SceneListChanged => {
                 if let Some(scope) = tx.session_scope() {

@@ -1,5 +1,7 @@
 //! Focused native OBS inspector. Inspection never changes the Program scene.
 
+mod media_progress;
+
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use adw::prelude::*;
@@ -137,6 +139,8 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
                 None
             } else {
                 Some(crate::controller::workspace::WorkspaceRequest {
+                    operator_reads: Vec::new(),
+                    target_uuid: None,
                     epoch: state.workspace.epoch,
                     sequence: state.workspace.sequence,
                     scope: state.workflow_scope(),
@@ -561,6 +565,16 @@ fn update_status(root: &GtkBox, nav: &NavigationContext, local: &Rc<RefCell<Loca
             workspace.snapshot.is_some(),
         )
     };
+    media_progress::update(
+        root,
+        nav.state
+            .borrow()
+            .workspace
+            .detail
+            .as_ref()
+            .and_then(|detail| detail.media.as_ref()),
+        connected && fresh && error.is_none(),
+    );
     let show_detail = local.borrow().show_detail;
     let text_conflict = nav
         .state
@@ -1233,6 +1247,7 @@ fn build_source_detail(
         let status = text(&media.state.label());
         status.set_widget_name("sources-media-state");
         content.append(&status);
+        content.append(&media_progress::build());
         let buttons = gtk4::FlowBox::builder()
             .selection_mode(gtk4::SelectionMode::None)
             .max_children_per_line(3)

@@ -20,6 +20,14 @@ use crate::storage::registry::read_registry;
 use crate::storage::secret;
 use crate::ui;
 
+struct StartupData {
+    config: crate::storage::config::LoadedConfig,
+    registry: crate::storage::registry::SceneRegistry,
+    password: Option<String>,
+    bookmarks: Result<crate::storage::bookmarks::BookmarkArchive, String>,
+    history: Result<crate::storage::report_history::HistoryArchive, String>,
+}
+
 /// Initialize runtime state and run the GTK application.
 pub fn run() {
     // The Runtime must be created before the GTK application so that any task
@@ -32,26 +40,37 @@ pub fn run() {
     let tokio_handle = runtime.handle().clone();
     let (event_tx, event_rx) = mpsc::sync_channel::<AppEvent>(128);
     let startup = std::thread::spawn(|| {
-        (
-            read_config(),
-            read_registry(),
-            secret::get_obs_password().unwrap_or_else(|error| {
+        let config = read_config();
+        let password =
+            secret::get_obs_password(&config.config.connection_id).unwrap_or_else(|error| {
                 tracing::warn!(%error, "could not preload OBS password from keyring");
                 None
-            }),
-        )
+            });
+        StartupData {
+            config,
+            registry: read_registry(),
+            password,
+            bookmarks: crate::storage::bookmarks::read(&crate::storage::xdg::bookmarks_path())
+                .map_err(|error| error.to_string()),
+            history: crate::storage::report_history::read(
+                &crate::storage::xdg::report_history_path(),
+            )
+            .map_err(|error| error.to_string()),
+        }
     })
     .join()
     .unwrap_or_else(|_| {
         tracing::error!("startup persistence worker panicked; using defaults");
-        (
-            crate::storage::config::LoadedConfig {
+        StartupData {
+            config: crate::storage::config::LoadedConfig {
                 config: Default::default(),
                 startup_notice: None,
             },
-            Default::default(),
-            None,
-        )
+            registry: Default::default(),
+            password: None,
+            bookmarks: Err("Startup bookmark reader failed".into()),
+            history: Err("Startup session history reader failed".into()),
+        }
     });
 
     let event_rx = Rc::new(RefCell::new(Some(event_rx)));
@@ -79,6 +98,7 @@ pub fn run() {
         for window in app.windows() {
             window.set_sensitive(false);
         }
+        ui::report_history::finish_for_shutdown();
         // Shutdown can also be requested by the application Quit action, not
         // only window close. Iterate GTK until accepted writes publish results.
         let flush_loop = glib::MainLoop::new(None, false);
@@ -138,64 +158,181 @@ pub fn run() {
     runtime.shutdown_timeout(std::time::Duration::from_secs(3));
 }
 
-/// Keep accepted persistence and its GTK completion callbacks alive on normal
-/// Close/Quit. A deadline is not permission to discard a pending write.
+/// App document windows can own the last accepted edits after the shell closes.
+fn document_window(window: &gtk4::Window) -> bool {
+    window.is::<gtk4::ApplicationWindow>() || window.is::<adw::Window>()
+}
+
+fn document_windows(app: &adw::Application) -> Vec<gtk4::Window> {
+    app.windows().into_iter().filter(document_window).collect()
+}
+
+struct CloseGuard {
+    app: glib::WeakRef<adw::Application>,
+    window: glib::WeakRef<gtk4::Window>,
+    main: bool,
+    quitting: Rc<std::cell::Cell<bool>>,
+    allowed: std::cell::Cell<bool>,
+    pending: std::cell::Cell<bool>,
+    abandon: std::cell::Cell<bool>,
+    exit: RefCell<Option<ui::report_history::ExitCheckpoint>>,
+}
+
+impl CloseGuard {
+    fn exiting(&self) -> bool {
+        self.quitting.get()
+            || self
+                .app
+                .upgrade()
+                .is_none_or(|app| document_windows(&app).len() <= 1)
+    }
+
+    fn sensitivity(&self, sensitive: bool) {
+        if self.exiting() {
+            if let Some(app) = self.app.upgrade() {
+                for window in app.windows() {
+                    window.set_sensitive(sensitive);
+                }
+            }
+        } else if let Some(window) = self.window.upgrade() {
+            window.set_sensitive(sensitive);
+        }
+    }
+
+    fn prepare_exit(&self) {
+        if !self.exiting() {
+            return;
+        }
+        if self.abandon.get() {
+            ui::report_history::abandon_exit(true);
+            return;
+        }
+        let mut exit = self.exit.borrow_mut();
+        if exit.is_none() {
+            *exit = ui::report_history::ExitCheckpoint::new();
+        }
+        if let Some(exit) = exit.as_mut() {
+            exit.prepare();
+        }
+    }
+
+    fn request(self: &Rc<Self>) -> glib::Propagation {
+        if self.allowed.get() || (!self.main && !self.exiting()) {
+            return glib::Propagation::Proceed;
+        }
+        if self.pending.replace(true) {
+            return glib::Propagation::Stop;
+        }
+        self.sensitivity(false);
+        if self.exiting() {
+            self.prepare_exit();
+        } else if !self.abandon.get() {
+            ui::report_history::checkpoint_before_close();
+        }
+        self.drain();
+        glib::Propagation::Stop
+    }
+
+    fn drain(self: &Rc<Self>) {
+        let guard = self.clone();
+        ui::background_io::flush_pending(std::time::Duration::from_secs(5), move |outcome| {
+            let Some(window) = guard.window.upgrade() else {
+                return;
+            };
+            match outcome {
+                Ok(()) => {
+                    // Another document may have closed while the shell drained.
+                    guard.prepare_exit();
+                    let needs_drain = guard
+                        .exit
+                        .borrow_mut()
+                        .as_mut()
+                        .is_some_and(|exit| exit.checkpoint_again());
+                    if needs_drain {
+                        guard.drain();
+                        return;
+                    }
+                    guard.pending.set(false);
+                    guard.allowed.set(true);
+                    guard.exit.borrow_mut().take();
+                    if guard.quitting.get() {
+                        if let Some(app) = guard.app.upgrade() {
+                            app.quit();
+                        }
+                    } else {
+                        window.close();
+                    }
+                }
+                Err(error) => {
+                    guard.pending.set(false);
+                    ui::report_history::abandon_exit(false);
+                    if let Some(exit) = guard.exit.borrow_mut().take() {
+                        exit.resume();
+                    }
+                    guard.sensitivity(true);
+                    show_persistence_close_failure(&window, error, guard.clone());
+                }
+            }
+        });
+    }
+}
+
+/// Guard the shell and every last detached document; retain no shell widgets.
 fn install_persistence_close_guard(app: &adw::Application, window: &adw::ApplicationWindow) {
-    let allowed = Rc::new(std::cell::Cell::new(false));
-    let pending = Rc::new(std::cell::Cell::new(false));
     let quitting = Rc::new(std::cell::Cell::new(false));
-    window.connect_close_request({
+    let main = window.clone().upcast::<gtk4::Window>().downgrade();
+    let guarded = Rc::new(RefCell::new(Vec::<glib::WeakRef<gtk4::Window>>::new()));
+    let attach: Rc<dyn Fn(&gtk4::Window)> = Rc::new({
         let app = app.downgrade();
+        let main = main.clone();
         let quitting = quitting.clone();
         move |window| {
-            if allowed.get() {
-                return glib::Propagation::Proceed;
+            if !document_window(window) {
+                return;
             }
-            if pending.replace(true) {
-                return glib::Propagation::Stop;
+            let mut guarded = guarded.borrow_mut();
+            guarded.retain(|weak| weak.upgrade().is_some());
+            if guarded
+                .iter()
+                .any(|weak| weak.upgrade().as_ref() == Some(window))
+            {
+                return;
             }
-            window.set_sensitive(false);
-            let weak_window = window.downgrade();
-            let app = app.clone();
-            let allowed = allowed.clone();
-            let pending = pending.clone();
-            let quitting = quitting.clone();
-            ui::background_io::flush_pending(std::time::Duration::from_secs(5), move |outcome| {
-                pending.set(false);
-                let Some(window) = weak_window.upgrade() else {
-                    return;
-                };
-                window.set_sensitive(true);
-                match outcome {
-                    Ok(()) => {
-                        allowed.set(true);
-                        if quitting.get() {
-                            if let Some(app) = app.upgrade() {
-                                app.quit();
-                            }
-                        } else {
-                            window.close();
-                        }
-                    }
-                    Err(error) => show_persistence_close_failure(&window, error, quitting),
-                }
+            guarded.push(window.downgrade());
+            let guard = Rc::new(CloseGuard {
+                app: app.clone(),
+                window: window.downgrade(),
+                main: main.upgrade().as_ref() == Some(window),
+                quitting: quitting.clone(),
+                allowed: std::cell::Cell::new(false),
+                pending: std::cell::Cell::new(false),
+                abandon: std::cell::Cell::new(false),
+                exit: RefCell::new(None),
             });
-            glib::Propagation::Stop
+            window.connect_close_request(move |_| guard.request());
         }
     });
-    // Preserve the existing app.quit shortcut but route it through the same
-    // pre-quit barrier as window-manager Close, including with a Stats pop-out.
+    for window in app.windows() {
+        attach(&window);
+    }
+    app.connect_window_added(move |_, window| attach(window));
     app.remove_action("quit");
     let quit = gio::SimpleAction::new("quit", None);
-    let window = window.downgrade();
     let app_weak = app.downgrade();
     quit.connect_activate(move |_, _| {
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
         quitting.set(true);
-        if let Some(window) = window.upgrade() {
+        let windows = document_windows(&app);
+        let target = main
+            .upgrade()
+            .filter(|main| windows.contains(main))
+            .or_else(|| app.active_window().filter(document_window))
+            .or_else(|| windows.first().cloned());
+        if let Some(window) = target {
             window.close();
-        } else if let Some(app) = app_weak.upgrade() {
-            // The main window already drained and closed; a Stats pop-out may
-            // still be keeping the application alive.
+        } else {
             app.quit();
         }
     });
@@ -203,9 +340,9 @@ fn install_persistence_close_guard(app: &adw::Application, window: &adw::Applica
 }
 
 fn show_persistence_close_failure(
-    window: &adw::ApplicationWindow,
+    window: &gtk4::Window,
     error: ui::background_io::FlushError,
-    quitting: Rc<std::cell::Cell<bool>>,
+    guard: Rc<CloseGuard>,
 ) {
     let message = match error {
         ui::background_io::FlushError::TimedOut => i18n_embed_fl::fl!(
@@ -234,6 +371,7 @@ fn show_persistence_close_failure(
         "workflow-activity-failed"
     );
     let dialog = adw::MessageDialog::new(Some(window), Some(&heading), Some(&message));
+    dialog.set_widget_name("persistence-close-failure");
     dialog.add_response(
         "cancel",
         &i18n_embed_fl::fl!(
@@ -248,9 +386,6 @@ fn show_persistence_close_failure(
             "window-connect-btn-retry"
         ),
     );
-    // Panics remain evidence until informed abandonment. Normal registry
-    // failures can instead be resolved by an explicit confirmed retry, without
-    // acknowledging an unrelated panic or any newer failed operation.
     let evidence = ui::background_io::failure_evidence();
     if error == ui::background_io::FlushError::WorkerFailed {
         dialog.add_response(
@@ -264,24 +399,29 @@ fn show_persistence_close_failure(
     }
     dialog.set_default_response(Some("cancel"));
     dialog.set_close_response("cancel");
-    let window = window.downgrade();
+    let handled = std::cell::Cell::new(false);
     dialog.connect_response(None, move |dialog, response| {
+        if handled.replace(true) {
+            return;
+        }
         dialog.close();
-        if response == "retry" || response == "abandon" {
-            if response == "abandon" {
-                ui::background_io::acknowledge_failures(evidence);
-            } else {
-                // Normal registry errors retain retryable intent. Admission is
-                // synchronous, before re-entering the Close/Quit drain below.
-                ui::persist::retry_registry_writes();
+        match response {
+            "retry" | "abandon" => {
+                guard.abandon.set(response == "abandon");
+                if response == "abandon" {
+                    ui::background_io::acknowledge_failures(evidence);
+                } else {
+                    ui::persist::retry_registry_writes();
+                    ui::report_history::retry_active();
+                }
+                if let Some(window) = guard.window.upgrade() {
+                    window.close();
+                }
             }
-            if let Some(window) = window.upgrade() {
-                // Re-enter the barrier: later edits still have to finish and
-                // newer failures must receive their own informed decision.
-                window.close();
+            _ => {
+                guard.quitting.set(false);
+                guard.abandon.set(false);
             }
-        } else {
-            quitting.set(false);
         }
     });
     dialog.present();
@@ -292,23 +432,23 @@ fn build_ui(
     app: &adw::Application,
     controller: Rc<RefCell<AppController>>,
     event_rx: mpsc::Receiver<AppEvent>,
-    startup: &(
-        crate::storage::config::LoadedConfig,
-        crate::storage::registry::SceneRegistry,
-        Option<String>,
-    ),
+    startup: &StartupData,
 ) -> adw::ApplicationWindow {
-    let loaded = &startup.0;
+    let loaded = &startup.config;
     i18n::init(loaded.config.language);
     let notice = loaded.startup_notice.as_ref().map(|n| n.user_message());
 
     let state = Rc::new(RefCell::new(AppState::new(
         loaded.config.clone(),
-        startup.1.clone(),
-        startup.2.clone(),
+        startup.registry.clone(),
+        startup.password.clone(),
         notice,
     )));
 
+    state.borrow_mut().load_bookmarks(startup.bookmarks.clone());
+    state
+        .borrow_mut()
+        .load_report_history(startup.history.clone());
     let window = ui::build_main_window(app, state, controller, event_rx);
     install_persistence_close_guard(app, &window);
     window
@@ -342,6 +482,21 @@ mod tests {
         let window = adw::ApplicationWindow::builder().application(&app).build();
         install_persistence_close_guard(&app, &window);
         window.present();
+        // First-frame shader/font setup on a disposable software-rendered
+        // display can outlast the close assertion's two-second deadline.
+        // Establish a painted window before measuring persistence completion.
+        let painted = Rc::new(Cell::new(false));
+        let clock = window.frame_clock().expect("presented fixture frame clock");
+        let handler = clock.connect_after_paint({
+            let painted = painted.clone();
+            move |_| painted.set(true)
+        });
+        window.queue_draw();
+        assert!(
+            ui::test_support::pump_until(Duration::from_secs(20), || painted.get()),
+            "fixture did not paint its first frame"
+        );
+        clock.disconnect(handler);
         (app, window)
     }
 
@@ -389,6 +544,215 @@ mod tests {
         std::fs::create_dir_all(&path).unwrap();
         std::env::set_var("XDG_CONFIG_HOME", &path);
         path
+    }
+
+    fn connect_report(state: &mut AppState) {
+        state.apply_connected(crate::controller::event::ConnectionInfo {
+            connection_id: "report-fixture".into(),
+            endpoint: "fixture:4455".into(),
+            obs_version: "fixture".into(),
+            websocket_version: "5".into(),
+            available_requests: Vec::new(),
+            supported_image_formats: Vec::new(),
+        });
+    }
+
+    fn close_failure() -> Option<adw::MessageDialog> {
+        gtk4::Window::list_toplevels()
+            .into_iter()
+            .find_map(|window| {
+                window
+                    .downcast::<adw::MessageDialog>()
+                    .ok()
+                    .filter(|dialog| {
+                        dialog.is_visible() && dialog.widget_name() == "persistence-close-failure"
+                    })
+            })
+    }
+
+    #[test]
+    #[ignore = "requires isolated GTK and scratch history; no OBS/keyring"]
+    fn native_last_detached_report_close_supports_cancel_retry_and_informed_abandon() {
+        ui::test_support::native_test("app::tests::native_last_detached_report_close_supports_cancel_retry_and_informed_abandon", || {
+            let (app, main) = fixture();
+            let (nav, _stack, _runtime, _events) = ui::test_support::navigation();
+            ui::report_history::register(&nav.state);
+            nav.state.borrow_mut().configure_report_history(true, 8);
+            connect_report(&mut nav.state.borrow_mut());
+            let detached = adw::Window::builder().application(&app).build();
+            detached.present();
+            main.close();
+            iterate_until(|| !main.is_visible());
+            assert!(nav.state.borrow().reports.entries.back().unwrap().ended_unix_ms.is_none());
+            let path = crate::storage::xdg::report_history_path();
+            let backup = path.with_extension("backup");
+            std::fs::rename(&path, &backup).unwrap();
+            std::fs::create_dir(&path).unwrap();
+            detached.close();
+            iterate_until(|| close_failure().is_some());
+            assert!(detached.is_visible() && detached.is_sensitive());
+            assert!(nav.state.borrow().reports.entries.back().unwrap().ended_unix_ms.is_none(), "failed exit resumes reporting");
+            close_failure().unwrap().response("cancel");
+            assert!(detached.is_visible());
+            nav.state.borrow_mut().workspace.log(crate::domain::workflow::ActivityOrigin::Observed, "after cancelled exit".into());
+            detached.close();
+            iterate_until(|| close_failure().is_some());
+            std::fs::remove_dir(&path).unwrap();
+            std::fs::rename(&backup, &path).unwrap();
+            close_failure().unwrap().response("retry");
+            iterate_until(|| !detached.is_visible());
+            let saved = crate::storage::report_history::read(&path).unwrap();
+            assert!(saved.entries[0].ended_unix_ms.is_some());
+            assert!(serde_json::to_string(&saved).unwrap().contains("after cancelled exit"));
+
+            // A corrupt startup file with new local history needs an informed exit,
+            // even though no write can be admitted until it is reloaded/repaired.
+            let detached = adw::Window::builder().application(&app).build();
+            detached.present();
+            nav.state.borrow_mut().reset_obs_session(crate::controller::state::ObsStatus::Disconnected);
+            connect_report(&mut nav.state.borrow_mut());
+            std::fs::write(&path, b"broken history").unwrap();
+            nav.state.borrow_mut().load_report_history(Err("fixture corrupt startup history".into()));
+            detached.close();
+            iterate_until(|| close_failure().is_some());
+            assert!(detached.is_visible());
+            close_failure().unwrap().response("abandon");
+            iterate_until(|| !detached.is_visible());
+            assert_eq!(std::fs::read(&path).unwrap(), b"broken history");
+        });
+    }
+
+    fn final_stats_exit(quit: bool) {
+        use crate::controller::dependencies::{
+            AppConfigProvider, ControllerDependencies, ObsPasswordProvider,
+        };
+        struct NoServices;
+        impl AppConfigProvider for NoServices {
+            fn load_config(&self) -> crate::storage::config::AppConfig {
+                panic!("no config service in fixture")
+            }
+        }
+        impl ObsPasswordProvider for NoServices {
+            fn obs_password(
+                &self,
+                _: &str,
+            ) -> Result<Option<String>, crate::infra::error::AppError> {
+                panic!("no keyring in fixture")
+            }
+        }
+        fn find(
+            widget: &gtk4::Widget,
+            predicate: &impl Fn(&gtk4::Widget) -> bool,
+        ) -> Option<gtk4::Widget> {
+            if predicate(widget) {
+                return Some(widget.clone());
+            }
+            let mut child = widget.first_child();
+            while let Some(widget) = child {
+                child = widget.next_sibling();
+                if let Some(found) = find(&widget, predicate) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        let app = adw::Application::builder()
+            .application_id("io.github.worxbend.scenedeck.ReportExitFixture")
+            .flags(gio::ApplicationFlags::NON_UNIQUE)
+            .build();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let weak_state = Rc::new(RefCell::new(std::rc::Weak::<RefCell<AppState>>::new()));
+        let completed = Rc::new(Cell::new(false));
+        app.connect_activate({
+            let runtime = runtime.handle().clone();
+            let weak_state = weak_state.clone();
+            let completed = completed.clone();
+            move |app| {
+                let (tx, rx) = mpsc::sync_channel(128);
+                let controller = Rc::new(RefCell::new(AppController::with_dependencies(runtime.clone(), tx.clone(), ControllerDependencies::new(std::sync::Arc::new(NoServices), std::sync::Arc::new(NoServices)))));
+                let mut initial = AppState::new(Default::default(), Default::default(), None, None);
+                initial.config.onboarding.welcome_shown = true;
+                initial.configure_report_history(true, 8);
+                let state = Rc::new(RefCell::new(initial));
+                *weak_state.borrow_mut() = Rc::downgrade(&state);
+                let window = ui::window::build_main_window(app, state.clone(), controller, rx);
+                install_persistence_close_guard(app, &window);
+                connect_report(&mut state.borrow_mut());
+                let stack = find(window.upcast_ref(), &|w| w.has_css_class("scenedeck-content-stack")).unwrap().downcast::<gtk4::Stack>().unwrap();
+                stack.set_visible_child_name(crate::controller::state::Page::Stats.id());
+                let stats = stack.child_by_name(crate::controller::state::Page::Stats.id()).unwrap();
+                find(&stats, &|w| w.downcast_ref::<gtk4::Button>().is_some_and(|b| b.icon_name().as_deref() == Some("window-new-symbolic"))).unwrap().downcast::<gtk4::Button>().unwrap().emit_clicked();
+                let popout = document_windows(app).into_iter().find(|w| w != window.upcast_ref::<gtk4::Window>()).unwrap();
+                drop((stack, stats));
+                window.close();
+                assert!(ui::test_support::pump_until(Duration::from_secs(20), || !window.is_visible()));
+                assert!(state.borrow().reports.entries.back().unwrap().ended_unix_ms.is_none());
+                let weak_window = window.downgrade();
+                drop(window);
+                assert!(ui::test_support::pump_until(Duration::from_secs(3), || weak_window.upgrade().is_none()));
+                {
+                    let mut state = state.borrow_mut();
+                    state.capture_bookmark("final note", Instant::now(), 20).unwrap();
+                    let scope = state.workflow_scope();
+                    state.workspace.output_results.request(crate::domain::output_result::OutputResultKind::ReplaySave, scope, 21);
+                }
+                drop(state);
+                let (release, gate) = mpsc::channel();
+                ui::background_io::run_serialized(ui::background_io::SerialLane::ReportHistory, move || gate.recv_timeout(Duration::from_secs(5)).unwrap(), |()| {});
+                if quit { app.activate_action("quit", None); } else { popout.close(); }
+                assert!(popout.is_visible() && !popout.is_sensitive());
+                assert!(weak_state.borrow().upgrade().is_some());
+                // Keep the real application's receiver open until last-window removal.
+                let app_weak = app.downgrade();
+                let completed = completed.clone();
+                app.connect_shutdown(move |_| {
+                    let saved = crate::storage::report_history::read(&crate::storage::xdg::report_history_path()).unwrap();
+                    assert_eq!(saved.entries.len(), 1);
+                    assert!(saved.entries[0].ended_unix_ms.is_some());
+                    assert_eq!(saved.entries[0].bookmark_ids, [1]);
+                    assert!(saved.entries[0].events.iter().any(|record| matches!(&record.event, crate::domain::session_report::ReportEvent::Output(result) if result.status == crate::domain::output_result::OutputResultStatus::Unconfirmed)));
+                    assert!(app_weak.upgrade().is_some());
+                    let _ = &tx;
+                    completed.set(true);
+                });
+                release.send(()).unwrap();
+            }
+        });
+        assert_eq!(app.run_with_args::<&str>(&[]), glib::ExitCode::SUCCESS);
+        assert!(completed.get());
+        // GtkApplication::quit stops the loop without destroying its windows.
+        for window in app.windows() {
+            window.destroy();
+        }
+        drop(app);
+        assert!(
+            ui::test_support::pump_until(Duration::from_secs(3), || weak_state
+                .borrow()
+                .upgrade()
+                .is_none()),
+            "last document/save must release application state"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires isolated GTK and scratch history; no OBS/keyring"]
+    fn native_last_stats_close_saves_final_report_before_state_release() {
+        ui::test_support::native_test(
+            "app::tests::native_last_stats_close_saves_final_report_before_state_release",
+            || final_stats_exit(false),
+        );
+    }
+
+    #[test]
+    #[ignore = "requires isolated GTK and scratch history; no OBS/keyring"]
+    fn native_quit_after_shell_close_saves_final_stats_report_before_shutdown() {
+        ui::test_support::native_test(
+            "app::tests::native_quit_after_shell_close_saves_final_stats_report_before_shutdown",
+            || final_stats_exit(true),
+        );
     }
 
     #[test]
@@ -448,6 +812,7 @@ mod tests {
                     .scene_inventory
                     .scenes
                     .push(crate::domain::scene::Scene {
+                        uuid: None,
                         id: "Fixture".into(),
                     });
                 let (page, refresh) = ui::pages::inventory::build(nav);
@@ -481,6 +846,7 @@ mod tests {
                     .scene_inventory
                     .scenes
                     .push(crate::domain::scene::Scene {
+                        uuid: None,
                         id: "Fixture".into(),
                     });
                 let guard_dialog = Rc::new(RefCell::new(None::<String>));
@@ -553,6 +919,7 @@ mod tests {
                     .scene_inventory
                     .scenes
                     .push(crate::domain::scene::Scene {
+                        uuid: None,
                         id: "Fixture".into(),
                     });
                 let timed_out = Rc::new(Cell::new(false));
@@ -696,12 +1063,7 @@ mod tests {
                                 &nav,
                                 "input icon",
                                 |registry| registry.set_input_icon("Mic", Some("nf-md-microphone")),
-                                || {
-                                    crate::storage::registry::set_input_icon(
-                                        "Mic",
-                                        Some("nf-md-microphone"),
-                                    )
-                                },
+                                |registry| registry.set_input_icon("Mic", Some("nf-md-microphone")),
                             );
                         } else {
                             ui::persist::persist_registry(&nav, "scene icon", |registry| {

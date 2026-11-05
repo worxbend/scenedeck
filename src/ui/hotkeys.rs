@@ -49,11 +49,16 @@ pub(super) fn install(
     window: &adw::ApplicationWindow,
     nav: &NavigationContext,
     live: Rc<LivePageHandle>,
+    toast: &adw::ToastOverlay,
 ) {
     let resolver = Rc::new(RefCell::new(SceneHotkeyResolver::new()));
+    let pressed = Rc::new(RefCell::new(std::collections::HashSet::new()));
     let controller = gtk4::EventControllerKey::new();
     controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
     controller.connect_key_pressed({
+        let resolver = resolver.clone();
+        let pressed = pressed.clone();
+        let toast = toast.downgrade();
         let nav = nav.clone();
         let window = window.downgrade();
         let live = Rc::downgrade(&live);
@@ -61,19 +66,41 @@ pub(super) fn install(
             let (Some(window), Some(live)) = (window.upgrade(), live.upgrade()) else {
                 return glib::Propagation::Proceed;
             };
-            let hotkeys = {
-                let state = nav.state.borrow();
-                if state.current_page != Page::Live {
-                    resolver.borrow_mut().disarm();
-                    return glib::Propagation::Proceed;
-                }
-                state.config.hotkeys
-            };
-            if !hotkeys.enabled {
+            if text_input_has_focus(&window) {
                 resolver.borrow_mut().disarm();
                 return glib::Propagation::Proceed;
             }
-            if text_input_has_focus(&window) {
+            let binding =
+                crate::ui::action_shortcuts::chord(&window, keyval, keycode, modifier_state)
+                    .and_then(|key| {
+                        crate::ui::action_shortcuts::matching(&nav.state.borrow(), &key)
+                    });
+            if let Some(binding) = binding {
+                resolver.borrow_mut().disarm();
+                // The desktop owns confirmed global bindings, including while
+                // this window is focused. Never dispatch a second local copy.
+                if nav.global_shortcuts.borrow().owns(&binding) {
+                    return glib::Propagation::Stop;
+                }
+                if !pressed.borrow_mut().insert(keycode) {
+                    return glib::Propagation::Stop;
+                }
+                if !crate::ui::action_catalog::execute(
+                    &nav.scoped().registry_scoped(),
+                    &crate::ui::action_catalog::CatalogAction::Operator(binding.action),
+                ) {
+                    if let Some(toast) = toast.upgrade() {
+                        toast.add_toast(adw::Toast::new(&fl!(
+                            LANGUAGE_LOADER,
+                            "binding-unavailable"
+                        )));
+                    }
+                    crate::ui::workspace::refresh(&nav);
+                }
+                return glib::Propagation::Stop;
+            }
+            let hotkeys = nav.state.borrow().config.hotkeys;
+            if nav.state.borrow().current_page != Page::Live || !hotkeys.enabled {
                 resolver.borrow_mut().disarm();
                 return glib::Propagation::Proceed;
             }
@@ -92,6 +119,18 @@ pub(super) fn install(
             } else {
                 glib::Propagation::Proceed
             }
+        }
+    });
+    controller.connect_key_released({
+        let pressed = pressed.clone();
+        move |_, _, code, _| {
+            pressed.borrow_mut().remove(&code);
+        }
+    });
+    window.connect_is_active_notify(move |window| {
+        if !window.is_active() {
+            pressed.borrow_mut().clear();
+            resolver.borrow_mut().disarm();
         }
     });
     window.add_controller(controller);
@@ -118,7 +157,11 @@ fn apply_outcome(
         HotkeyOutcome::Activate(slot) => {
             let scene = {
                 let state = nav.state.borrow();
-                scene_for_slot(&state.scene_inventory, &state.registry, slot)
+                if state.show_registry.status == crate::controller::state::RegistryStatus::Ready {
+                    scene_for_slot(&state.scene_inventory, &state.registry, slot)
+                } else {
+                    None
+                }
             };
             match scene {
                 Some(scene_id) => {

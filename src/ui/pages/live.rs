@@ -45,6 +45,8 @@ struct OutputConfirmationDialog {
 #[derive(PartialEq, Eq)]
 struct AudioPresentation {
     epoch: u64,
+    registry_generation: u64,
+    registry_status: crate::controller::state::RegistryStatus,
     scope: crate::domain::workflow::ScopeBinding,
     language: crate::domain::appearance::Language,
     inputs: Vec<(String, String, String)>,
@@ -53,17 +55,21 @@ struct AudioPresentation {
 #[derive(PartialEq, Eq)]
 struct ScenePresentation {
     epoch: u64,
+    registry_generation: u64,
+    registry_status: crate::controller::state::RegistryStatus,
     scope: crate::domain::workflow::ScopeBinding,
     language: crate::domain::appearance::Language,
     images: bool,
     has_scenes: bool,
     hotkeys: SceneHotkeyConfig,
+    filter: crate::storage::registry::SceneFilter,
     scenes: Vec<SceneCardPresentation>,
 }
 
 #[derive(PartialEq, Eq)]
 struct SceneCardPresentation {
     id: String,
+    slot: usize,
     role: Option<crate::domain::role::SceneRole>,
     icon: Option<String>,
     accent: Option<String>,
@@ -71,7 +77,11 @@ struct SceneCardPresentation {
 
 impl AudioPresentation {
     fn same_owner(&self, other: &Self) -> bool {
-        self.epoch == other.epoch && self.scope == other.scope && self.language == other.language
+        self.epoch == other.epoch
+            && self.scope == other.scope
+            && self.language == other.language
+            && self.registry_generation == other.registry_generation
+            && self.registry_status == other.registry_status
     }
 }
 
@@ -79,6 +89,8 @@ impl AudioPresentation {
 pub(crate) struct LivePageHandle {
     pub(crate) root: Stack,
     pub(crate) scenes_box: FlowBox,
+    deck_controls: GtkBox,
+    pub(crate) quick_actions_refresh: std::rc::Rc<dyn Fn()>,
     /// Caption above the scene grid naming the active scene shortcut binding.
     pub(crate) hotkey_hint: Label,
     pub(crate) hotkey_notice_generation: crate::ui::hotkeys::NoticeGeneration,
@@ -147,6 +159,8 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
     hotkey_hint.set_xalign(0.0);
     hotkey_hint.add_css_class("caption");
     page.append(&hotkey_hint);
+    let deck_controls = GtkBox::new(Orientation::Vertical, 0);
+    page.append(&deck_controls);
     let scenes_box = FlowBox::builder()
         .selection_mode(gtk4::SelectionMode::None)
         .column_spacing(16)
@@ -158,11 +172,26 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
         .min_children_per_line(1)
         .max_children_per_line(8)
         .build();
+    let scene_content = GtkBox::new(Orientation::Vertical, 12);
+    let (quick_actions, quick_actions_refresh) = crate::ui::quick_actions::build(nav.clone());
+    let checks = FlowBox::builder()
+        .selection_mode(gtk4::SelectionMode::None)
+        .min_children_per_line(1)
+        .max_children_per_line(2)
+        .column_spacing(8)
+        .row_spacing(8)
+        .build();
+    crate::ui::insert_compact_flow_child(&checks, &crate::ui::preflight::button(nav.clone()));
+    crate::ui::insert_compact_flow_child(&checks, &crate::ui::health_alerts::button(nav.clone()));
+    crate::ui::insert_compact_flow_child(&checks, &crate::ui::bookmarks::button(nav.clone()));
+    scene_content.append(&checks);
+    scene_content.append(&quick_actions);
+    scene_content.append(&scenes_box);
     let scene_scroll = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
         .hscrollbar_policy(PolicyType::Never)
-        .child(&scenes_box)
+        .child(&scene_content)
         .build();
     page.append(&scene_scroll);
     let audio_strip = GtkBox::new(Orientation::Horizontal, 12);
@@ -256,6 +285,8 @@ pub(crate) fn build(nav: NavigationContext) -> LivePageHandle {
     LivePageHandle {
         root,
         scenes_box,
+        deck_controls,
+        quick_actions_refresh,
         hotkey_hint,
         hotkey_notice_generation: Default::default(),
         audio_box,
@@ -282,22 +313,35 @@ pub(crate) fn show_disconnected_view(handle: &LivePageHandle, message: &str) {
 /// they act on, so the behaviour lives here once and each button supplies its
 /// `OutputKind`.
 fn handle_output_toggle(button: &Button, nav: &NavigationContext, kind: OutputKind) {
-    // Both reads happen under one borrow, which ends with this block. The
-    // borrow must not still be held below: `confirm_output_action` opens a
-    // dialog and `nav.dispatch` reaches the controller, and either could try to
-    // borrow the state again.
-    let (active, should_confirm) = {
+    let active = {
         let state = nav.state.borrow();
-        let active = match kind {
+        match kind {
             OutputKind::Stream => state.stream_status.active,
             OutputKind::Record => state.record_status.active,
-        };
-        (
-            active,
-            requires_output_confirmation(kind, active, &state.config.outputs),
-        )
+        }
     };
+    if !active
+        && crate::ui::preflight::review_before_start(button, nav, kind, {
+            let button = button.downgrade();
+            let nav = nav.scoped();
+            move || {
+                if let Some(button) = button.upgrade() {
+                    finish_output_toggle(&button, &nav, kind, false);
+                }
+            }
+        })
+    {
+        return;
+    }
+    finish_output_toggle(button, nav, kind, active);
+}
 
+fn finish_output_toggle(button: &Button, nav: &NavigationContext, kind: OutputKind, active: bool) {
+    if !nav.is_current() {
+        return;
+    }
+    let should_confirm =
+        requires_output_confirmation(kind, active, &nav.state.borrow().config.outputs);
     let command = AppCommand::SetOutput {
         kind,
         active: !active,
@@ -398,7 +442,8 @@ pub(crate) fn handle_disconnect(button: &Button, nav: &NavigationContext) {
             if !matches!(state.obs_status, ObsStatus::Connected { .. }) {
                 return;
             }
-            state.stream_status == stream && state.record_status == record
+            state.stream_status.same_run_state(&stream)
+                && state.record_status.same_run_state(&record)
         };
         // Another OBS client may change outputs while this dialog is open.
         if unchanged {
@@ -562,8 +607,8 @@ fn confirm_output_action(
 ///
 /// The registry's saved display order decides the order, and therefore the
 /// shortcut slot each scene gets; scenes OBS reports but the registry has not
-/// seen yet follow in OBS order. Only live-switchable roles are listed, so slot
-/// numbering matches exactly what the page renders.
+/// seen yet follow in OBS order. Only live-switchable roles are assigned slots.
+/// Filtering and favorite display order never change these assignments.
 pub(crate) fn live_scene_order(
     inventory: &SceneInventory,
     registry: &SceneRegistry,
@@ -579,6 +624,24 @@ pub(crate) fn live_scene_order(
                 .is_some_and(|role| role.is_live_switchable())
         })
         .collect()
+}
+
+fn visible_scene_slots(
+    inventory: &SceneInventory,
+    registry: &SceneRegistry,
+) -> Vec<(usize, SceneId)> {
+    let mut scenes: Vec<_> = live_scene_order(inventory, registry)
+        .into_iter()
+        .enumerate()
+        .filter(|(_, name)| registry.scene_matches_filter(name))
+        .collect();
+    scenes.sort_by_key(|(_, name)| {
+        !registry
+            .scenes
+            .get(name)
+            .is_some_and(|entry| entry.favorite)
+    });
+    scenes
 }
 
 /// Scene bound to a shortcut slot, or `None` when that slot is empty.
@@ -598,6 +661,7 @@ pub(crate) fn rebuild_scene_cards(
     inventory: &SceneInventory,
     nav: &NavigationContext,
 ) {
+    (handle.quick_actions_refresh)();
     let (registry, hotkeys, images) = {
         let state = nav.state.borrow();
         (
@@ -606,22 +670,31 @@ pub(crate) fn rebuild_scene_cards(
             state.config.live.scene_previews,
         )
     };
-    let scene_order = live_scene_order(inventory, &registry);
+    let availability = crate::ui::persist::registry_availability_message(nav);
+    let scene_order = if availability.is_none() {
+        visible_scene_slots(inventory, &registry)
+    } else {
+        Vec::new()
+    };
     let signature = {
         let state = nav.state.borrow();
         ScenePresentation {
             epoch: state.workspace.epoch,
+            registry_generation: state.show_registry.generation,
+            registry_status: state.show_registry.status.clone(),
             scope: state.workflow_scope(),
             language: state.config.language,
             images,
             has_scenes: !inventory.scenes.is_empty(),
             hotkeys,
+            filter: registry.scene_filter.clone(),
             scenes: scene_order
                 .iter()
-                .map(|id| {
+                .map(|(slot, id)| {
                     let entry = registry.scenes.get(id);
                     SceneCardPresentation {
                         id: id.clone(),
+                        slot: *slot,
                         role: entry.and_then(|e| e.role),
                         icon: entry.and_then(|e| e.icon.clone()),
                         accent: entry.and_then(|e| e.accent_color.clone()),
@@ -630,6 +703,25 @@ pub(crate) fn rebuild_scene_cards(
                 .collect(),
         }
     };
+    let deck_owner_changed = handle
+        .scene_signature
+        .borrow()
+        .as_ref()
+        .is_none_or(|previous| {
+            previous.registry_generation != signature.registry_generation
+                || previous.registry_status != signature.registry_status
+                || previous.language != signature.language
+        });
+    if deck_owner_changed {
+        crate::ui::clear_children(&handle.deck_controls);
+        if availability.is_none() {
+            handle
+                .deck_controls
+                .append(&crate::ui::widgets::deck_controls::build(nav, || {}));
+        }
+    } else if let Some(controls) = handle.deck_controls.first_child() {
+        crate::ui::widgets::deck_controls::sync(&controls);
+    }
     handle
         .hotkey_hint
         .set_tooltip_text(crate::ui::hotkeys::scene_hint(nav, &hotkeys).as_deref());
@@ -652,8 +744,14 @@ pub(crate) fn rebuild_scene_cards(
         set_hotkey_hint(handle, None);
         let empty = GtkBox::new(Orientation::Vertical, 8);
         let hint = Label::builder()
-            .label(if inventory.scenes.is_empty() {
+            .label(if let Some(message) = availability {
+                message
+            } else if inventory.scenes.is_empty() {
                 fl!(LANGUAGE_LOADER, "live-scenes-obs-empty")
+            } else if registry.scene_filter.is_active()
+                && !live_scene_order(inventory, &registry).is_empty()
+            {
+                fl!(LANGUAGE_LOADER, "deck-no-results")
             } else {
                 fl!(LANGUAGE_LOADER, "live-scenes-no-primary-hint")
             })
@@ -675,7 +773,7 @@ pub(crate) fn rebuild_scene_cards(
 
     set_hotkey_hint(handle, None);
 
-    for (slot, scene_id) in scene_order.iter().enumerate() {
+    for (slot, scene_id) in &scene_order {
         let Some(scene) = inventory.scenes.iter().find(|scene| &scene.id == scene_id) else {
             continue;
         };
@@ -689,7 +787,7 @@ pub(crate) fn rebuild_scene_cards(
                     .unwrap_or_default(),
                 is_active: inventory.current_id.as_deref() == Some(&scene.id),
                 accent_color: registry_entry.and_then(|entry| entry.accent_color.as_deref()),
-                shortcut: shortcut_for_slot(&hotkeys, slot),
+                shortcut: shortcut_for_slot(&hotkeys, *slot),
                 icon: registry_entry.and_then(|entry| entry.icon.as_deref()),
             },
             nav.clone(),
@@ -739,6 +837,8 @@ pub(crate) fn rebuild_audio_cards(
         (
             AudioPresentation {
                 epoch: state.workspace.epoch,
+                registry_generation: state.show_registry.generation,
+                registry_status: state.show_registry.status.clone(),
                 scope: state.workflow_scope(),
                 language: state.config.language,
                 inputs: inputs
@@ -879,6 +979,124 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "requires isolated GTK; no OBS connection"]
+    fn native_preflight_continuation_honors_current_output_confirmation_once() {
+        crate::ui::test_support::native_test("ui::pages::live::tests::native_preflight_continuation_honors_current_output_confirmation_once", || {
+            use crate::ui::preflight::tests::{connected, save_plan, window};
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation(); connected(&nav);
+            save_plan(&nav, crate::domain::preflight::PreflightPlan { review_before_output: true, ..Default::default() });
+            let button = Button::with_label("Record"); let parent = adw::Window::new(); parent.set_content(Some(&button)); parent.present();
+            handle_output_toggle(&button, &nav, OutputKind::Record);
+            let review = window("preflight-review").downcast::<adw::MessageDialog>().unwrap();
+            nav.state.borrow_mut().config.outputs.confirm_start_recording = true;
+            review.response("continue");
+            let confirmation = gtk4::Window::list_toplevels().into_iter().find_map(|widget| widget.downcast::<adw::MessageDialog>().ok().filter(|dialog| dialog.is_visible() && dialog.widget_name() != "preflight-review")).expect("ordinary output confirmation after review");
+            assert!(nav.state.borrow().workspace.activity.entries.is_empty()); confirmation.response("cancel");
+            assert!(nav.state.borrow().workspace.activity.entries.is_empty());
+            handle_output_toggle(&button, &nav, OutputKind::Record);
+            let review = window("preflight-review").downcast::<adw::MessageDialog>().unwrap();
+            nav.state.borrow_mut().config.outputs.confirm_start_recording = false;
+            review.response("continue"); review.response("continue");
+            assert_eq!(nav.state.borrow().workspace.activity.entries.len(), 1);
+            {
+                let mut state = nav.state.borrow_mut(); state.record_status = OutputStatus::active(); state.config.outputs.confirm_stop_recording = false;
+            }
+            handle_output_toggle(&button, &nav, OutputKind::Record);
+            assert_eq!(nav.state.borrow().workspace.activity.entries.len(), 2, "stop retains its existing flow");
+            assert!(!gtk4::Window::list_toplevels().iter().any(|window| window.clone().downcast::<gtk4::Window>().is_ok_and(|window| window.is_visible() && window.widget_name() == "preflight-review")));
+            parent.close();
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display and isolated registry storage"]
+    fn native_live_filters_keep_search_widget_and_original_shortcut_badges() {
+        crate::ui::test_support::native_test(
+            "ui::pages::live::tests::native_live_filters_keep_search_widget_and_original_shortcut_badges",
+            || {
+                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+                let (inventory, mut registry) = live_fixture(
+                    &[("Camera", SceneRole::Primary), ("Slides", SceneRole::Primary)], &[]);
+                registry.set_scene_favorite("Slides", true);
+                nav.state.borrow_mut().registry = registry;
+                nav.state.borrow_mut().scene_inventory = inventory.clone();
+                let live = build(nav.clone());
+                fn find(root: &gtk4::Widget, matches: &impl Fn(&gtk4::Widget) -> bool) -> Option<gtk4::Widget> {
+                    if matches(root) { return Some(root.clone()); }
+                    let mut child = root.first_child();
+                    while let Some(widget) = child {
+                        if let Some(found) = find(&widget, matches) { return Some(found); }
+                        child = widget.next_sibling();
+                    }
+                    None
+                }
+                let badge = |card: &scene_card::SceneCardHandle| find(card.root.upcast_ref(), &|widget| widget.has_css_class("scene-card-hotkey"))
+                    .unwrap().downcast::<Label>().unwrap().text().to_string();
+                rebuild_scene_cards(&live, &inventory, &nav);
+                assert_eq!(live.scene_cards.borrow()[0].scene_id, "Slides");
+                assert_eq!(badge(&live.scene_cards.borrow()[0]), "2");
+                assert_eq!(badge(&live.scene_cards.borrow()[1]), "1");
+                let search = find(live.deck_controls.upcast_ref(), &|widget| widget.widget_name() == "deck-search")
+                    .unwrap().downcast::<gtk4::SearchEntry>().unwrap();
+                search.set_text("Slides");
+                search.emit_by_name::<()>("search-changed", &[]);
+                rebuild_scene_cards(&live, &inventory, &nav);
+                assert_eq!(live.scene_cards.borrow().len(), 1);
+                assert_eq!(badge(&live.scene_cards.borrow()[0]), "2");
+                search.set_text("missing");
+                search.emit_by_name::<()>("search-changed", &[]);
+                rebuild_scene_cards(&live, &inventory, &nav);
+                assert!(live.scene_cards.borrow().is_empty());
+                assert_eq!(find(live.deck_controls.upcast_ref(), &|widget| widget.widget_name() == "deck-search").unwrap(), search.clone().upcast::<gtk4::Widget>());
+                assert_eq!(scene_for_slot(&inventory, &nav.state.borrow().registry, 1).as_deref(), Some("Slides"));
+                nav.state.borrow_mut().show_registry.generation += 1;
+                nav.state.borrow_mut().registry.scene_filter.query = "Camera".into();
+                rebuild_scene_cards(&live, &inventory, &nav);
+                search.set_text("Slides");
+                search.emit_by_name::<()>("search-changed", &[]);
+                assert_eq!(nav.state.borrow().registry.scene_filter.query, "Camera");
+                assert!(crate::ui::test_support::pump_until(std::time::Duration::from_secs(5), || crate::ui::persist::registry_save_status() == crate::ui::persist::RegistrySaveStatus::Saved));
+            },
+        );
+    }
+
+    #[test]
+    fn favorite_sorting_and_deck_filters_keep_unfiltered_shortcut_slots() {
+        let (inventory, mut registry) = live_fixture(
+            &[
+                ("Camera", SceneRole::Primary),
+                ("Overlay", SceneRole::Module),
+                ("Slides", SceneRole::Primary),
+            ],
+            &[],
+        );
+        registry.set_scene_favorite("Slides", true);
+        assert_eq!(
+            visible_scene_slots(&inventory, &registry),
+            [(1, "Slides".into()), (0, "Camera".into())]
+        );
+        registry.scene_filter.favorites_only = true;
+        assert_eq!(
+            visible_scene_slots(&inventory, &registry),
+            [(1, "Slides".into())]
+        );
+        assert_eq!(
+            scene_for_slot(&inventory, &registry, 0).as_deref(),
+            Some("Camera")
+        );
+        registry.scene_filter.query = "nothing matches".into();
+        assert!(visible_scene_slots(&inventory, &registry).is_empty());
+        assert_eq!(
+            scene_for_slot(&inventory, &registry, 1).as_deref(),
+            Some("Slides")
+        );
+        assert_eq!(
+            registry.ordered_scene_ids(["Camera", "Slides"]),
+            ["Camera", "Slides"]
+        );
+    }
+
+    #[test]
     fn short_windows_collapse_audio_until_expanded() {
         assert!(audio_collapsed(true, false));
         assert!(!audio_collapsed(true, true));
@@ -963,7 +1181,7 @@ mod tests {
                 let mut state = nav.state.borrow_mut();
                 state.obs_status = ObsStatus::Connected { obs_version: "fixture".into() };
                 state.scene_collections.current = Some("Fixture".into());
-                state.scene_inventory.scenes = vec![Scene { id: "Main".into() }];
+                state.scene_inventory.scenes = vec![Scene { uuid: None, id: "Main".into() }];
                 state.scene_inventory.current_id = Some("Main".into());
                 state.registry.scenes.insert("Main".into(), SceneEntry { role: Some(SceneRole::Primary), ..Default::default() });
                 state.workspace.observed_at = Some(std::time::Instant::now());
@@ -1048,6 +1266,7 @@ mod tests {
 
     fn scene_entry(role: SceneRole) -> SceneEntry {
         SceneEntry {
+            favorite: false,
             role: Some(role),
             tags: Vec::new(),
             protected: false,
@@ -1065,6 +1284,7 @@ mod tests {
             scenes: roles
                 .iter()
                 .map(|(id, _)| Scene {
+                    uuid: None,
                     id: (*id).to_string(),
                 })
                 .collect(),
@@ -1173,6 +1393,7 @@ mod tests {
 
     fn output_status(active: bool, state: OutputRunState) -> OutputStatus {
         OutputStatus {
+            duration_ms: None,
             active,
             state,
             detail: None,

@@ -118,6 +118,8 @@ pub fn db_from_mul(mul: f32) -> f64 {
 pub struct InputLevels {
     /// Input the reading belongs to.
     pub input: InputId,
+    /// Preserve malformed transport values before display conversion maps them to silence.
+    pub valid: bool,
     /// One entry per active channel.
     pub channels: Vec<ChannelLevel>,
 }
@@ -127,6 +129,11 @@ impl InputLevels {
     pub fn from_mul(input: InputId, levels: &[[f32; 3]]) -> Self {
         Self {
             input,
+            valid: !levels.is_empty()
+                && levels
+                    .iter()
+                    .flatten()
+                    .all(|value| value.is_finite() && *value >= 0.0),
             channels: levels.iter().copied().map(ChannelLevel::from_mul).collect(),
         }
     }
@@ -160,21 +167,34 @@ impl InputLevels {
 /// of freezing on its last value.
 #[derive(Debug, Default, Clone)]
 pub struct InputLevelSnapshot {
+    /// Receipt time from the OBS event reader, not the later GTK publication.
+    pub observed_at: Option<std::time::Instant>,
     sequence: u64,
     levels: std::collections::HashMap<InputId, InputLevels>,
 }
 
 impl InputLevelSnapshot {
     /// Replace the snapshot with a fresh set of readings.
+    #[cfg(test)]
     pub fn update(&mut self, levels: Vec<InputLevels>) {
+        self.update_at(levels, std::time::Instant::now());
+    }
+
+    pub fn update_at(&mut self, levels: Vec<InputLevels>, observed_at: std::time::Instant) {
+        self.observed_at = Some(observed_at);
         self.sequence = self.sequence.wrapping_add(1);
         self.levels.clear();
-        self.levels
-            .extend(levels.into_iter().map(|entry| (entry.input.clone(), entry)));
+        for mut entry in levels {
+            if self.levels.contains_key(&entry.input) {
+                entry.valid = false;
+            }
+            self.levels.insert(entry.input.clone(), entry);
+        }
     }
 
     /// Forget every reading, e.g. when the OBS connection drops.
     pub fn clear(&mut self) {
+        self.observed_at = None;
         if self.levels.is_empty() {
             return;
         }
@@ -233,6 +253,31 @@ pub fn channel_label(channel: usize, channel_count: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn duplicate_input_names_cannot_supply_trusted_meter_evidence() {
+        let mut snapshot = InputLevelSnapshot::default();
+        snapshot.update(vec![
+            InputLevels::from_mul("Mic".into(), &[[0.0; 3]]),
+            InputLevels::from_mul("Mic".into(), &[[0.1; 3]]),
+        ]);
+        assert!(!snapshot.get("Mic").unwrap().valid);
+        snapshot.update(vec![InputLevels::from_mul("Mic".into(), &[[0.0; 3]])]);
+        assert!(snapshot.get("Mic").unwrap().valid);
+    }
+
+    #[test]
+    fn malformed_transport_readings_remain_distinct_from_digital_silence() {
+        assert!(InputLevels::from_mul("Mic".into(), &[[0.0; 3]]).valid);
+        assert!(!InputLevels::from_mul("Mic".into(), &[]).valid);
+        for value in [-1.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            for column in 0..3 {
+                let mut values = [0.0; 3];
+                values[column] = value;
+                assert!(!InputLevels::from_mul("Mic".into(), &[values]).valid);
+            }
+        }
+    }
 
     #[test]
     fn unity_is_zero_db_and_silence_is_negative_infinity() {

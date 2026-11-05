@@ -92,6 +92,7 @@ impl OutputController {
             clear_pending(&pending, kind, operation);
             return;
         };
+        let admitted_at = std::time::Instant::now();
         let scope = self.scope.clone();
         let pending_status = pending_status(active);
         let fallback = fallback_status_after_failed_output_command(&pending_status);
@@ -103,7 +104,11 @@ impl OutputController {
         self.scope.spawn_reserved(&self.runtime, async move {
             let _completion = completion;
             let _ = tx
-                .send(AppEvent::OutputCommandPending(kind, pending_status))
+                .send(AppEvent::OutputCommandPending(
+                    kind,
+                    pending_status,
+                    admitted_at,
+                ))
                 .await;
             let acknowledged = match client
                 .set_output_if(kind, active, &|| {
@@ -118,17 +123,14 @@ impl OutputController {
                 Ok(path) => {
                     evidence.acknowledge();
                     let _ = tx.send(AppEvent::OutputCommandSucceeded(kind)).await;
-                    // Stopping a recording reports the file OBS wrote.
-                    if let (OutputKind::Record, Some(path)) = (kind, path) {
+                    // The response proves the earlier stop/file, not that the
+                    // output is still inactive when a delayed response arrives.
+                    if let (OutputKind::Record, false, Some(path)) = (kind, active, path) {
                         let _ = tx
-                            .send(AppEvent::OutputStatusUpdated(
-                                OutputKind::Record,
-                                OutputStatus {
-                                    active: false,
-                                    state: OutputRunState::Inactive,
-                                    detail: Some(path),
-                                },
-                            ))
+                            .send(AppEvent::RecordingStopObserved {
+                                path,
+                                command_at: admitted_at,
+                            })
                             .await;
                     }
                     true
@@ -203,6 +205,7 @@ impl OutputController {
 
 fn pending_status(active: bool) -> OutputStatus {
     OutputStatus {
+        duration_ms: None,
         active: !active,
         state: if active {
             OutputRunState::Starting
@@ -464,8 +467,8 @@ pub(crate) async fn stop_active_outputs_before_disconnect(client: &OutputCommand
 }
 
 pub(crate) struct OutputReadbackErrors {
-    stream: Option<AppError>,
-    record: Option<AppError>,
+    stream: Option<(AppError, std::time::Instant)>,
+    record: Option<(AppError, std::time::Instant)>,
 }
 
 impl OutputReadbackErrors {
@@ -476,17 +479,21 @@ impl OutputReadbackErrors {
         };
         error
             .as_ref()
-            .map_or(Ok(()), |error| Err(error.user_message()))
+            .map_or(Ok(()), |(error, _)| Err(error.user_message()))
     }
 
-    async fn publish(self, tx: &EventSender) {
+    pub(crate) async fn publish(self, tx: &EventSender) {
         for (kind, error) in [
             (OutputKind::Stream, self.stream),
             (OutputKind::Record, self.record),
         ] {
-            if let Some(error) = error {
+            if let Some((error, observed_at)) = error {
                 let _ = tx
-                    .send(AppEvent::OutputReadbackFailed { kind, error })
+                    .send(AppEvent::OutputReadbackFailed {
+                        kind,
+                        error,
+                        observed_at,
+                    })
                     .await;
             }
         }
@@ -497,10 +504,11 @@ pub(crate) async fn refresh_output_statuses(
     client: &impl OutputStatusReader,
     tx: &EventSender,
 ) -> OutputReadbackErrors {
+    let stream_at = std::time::Instant::now();
     let stream_revision = client.next_observation();
     let stream = match tokio::time::timeout(REQUEST_BUDGET, client.read_stream_status()).await {
         Ok(Ok(status)) => {
-            let status = AppEvent::OutputStatusUpdated(OutputKind::Stream, status);
+            let status = AppEvent::OutputStatusUpdated(OutputKind::Stream, status, stream_at);
             let event = match stream_revision {
                 Some(revision) => AppEvent::Observation {
                     revision,
@@ -520,10 +528,11 @@ pub(crate) async fn refresh_output_statuses(
             Some(AppError::request(error))
         }
     };
+    let record_at = std::time::Instant::now();
     let record_revision = client.next_observation();
     let record = match tokio::time::timeout(REQUEST_BUDGET, client.read_record_status()).await {
         Ok(Ok(status)) => {
-            let status = AppEvent::OutputStatusUpdated(OutputKind::Record, status);
+            let status = AppEvent::OutputStatusUpdated(OutputKind::Record, status, record_at);
             let event = match record_revision {
                 Some(revision) => AppEvent::Observation {
                     revision,
@@ -543,7 +552,10 @@ pub(crate) async fn refresh_output_statuses(
             Some(AppError::request(error))
         }
     };
-    OutputReadbackErrors { stream, record }
+    OutputReadbackErrors {
+        stream: stream.map(|error| (error, stream_at)),
+        record: record.map(|error| (error, record_at)),
+    }
 }
 
 #[cfg(test)]
@@ -593,6 +605,126 @@ mod tests {
         .unwrap()
     }
 
+    #[tokio::test]
+    async fn late_recording_stop_response_keeps_file_evidence_after_an_observed_restart() {
+        struct DelayedStop {
+            requested: Notify,
+            release: Notify,
+        }
+        impl FakeOutputCommandClient for DelayedStop {
+            fn set_streaming(&self, _: bool) -> BoxFuture<'_, Result<(), AppError>> {
+                Box::pin(async { Ok(()) })
+            }
+            fn set_recording(
+                &self,
+                active: bool,
+            ) -> BoxFuture<'_, Result<Option<String>, AppError>> {
+                assert!(!active);
+                Box::pin(async move {
+                    self.requested.notify_one();
+                    self.release.notified().await;
+                    Ok(Some("closed.mkv".into()))
+                })
+            }
+            fn get_stream_status(&self) -> BoxFuture<'_, Result<OutputStatus, AppError>> {
+                Box::pin(async { Ok(OutputStatus::inactive()) })
+            }
+            fn get_record_status(&self) -> BoxFuture<'_, Result<OutputStatus, AppError>> {
+                Box::pin(async { Ok(OutputStatus::active()) })
+            }
+        }
+        let (tx, rx) = std::sync::mpsc::sync_channel(8);
+        let outputs = OutputController::new(Handle::current(), tx, Arc::new(Mutex::new(None)));
+        let fake = Arc::new(DelayedStop {
+            requested: Notify::new(),
+            release: Notify::new(),
+        });
+        outputs.set_client_override(OutputCommandClient::Fake(fake.clone()));
+        let mut state = crate::controller::state::AppState::new(
+            Default::default(),
+            Default::default(),
+            None,
+            None,
+        );
+        state.health.connected();
+        state.apply_output_event(
+            &AppEvent::OutputStatusUpdated(
+                OutputKind::Record,
+                OutputStatus::active(),
+                std::time::Instant::now(),
+            ),
+            0,
+        );
+        outputs.set_output(OutputKind::Record, false);
+        state.apply_output_event(&receive(&rx).await, 1);
+        fake.requested.notified().await;
+        // Another controller restarts recording while the completed stop's response is held.
+        state.apply_output_event(
+            &AppEvent::OutputStatusUpdated(
+                OutputKind::Record,
+                OutputStatus::active_with_detail("new.mkv"),
+                std::time::Instant::now(),
+            ),
+            2,
+        );
+        fake.release.notify_one();
+        let ack = receive(&rx).await;
+        assert!(matches!(
+            ack,
+            AppEvent::OutputCommandSucceeded(OutputKind::Record)
+        ));
+        state.apply_output_event(&ack, 3);
+        let file = receive(&rx).await;
+        assert!(matches!(file, AppEvent::RecordingStopObserved { .. }));
+        state.apply_output_event(&file, 4);
+        assert!(
+            state.record_status.active,
+            "a response to the earlier stop is not current inactive state"
+        );
+        assert_eq!(state.health.output_activity(OutputKind::Record), Some(true));
+        assert!(state.health.alerts(std::time::Instant::now()).is_empty());
+        assert_eq!(state.last_recording_path.as_deref(), Some("new.mkv"));
+        assert!(state
+            .workspace
+            .output_results
+            .entries()
+            .any(|result| result.path.as_deref() == Some("closed.mkv")));
+        for now_ms in 5..=6 {
+            state.apply_output_event(&receive(&rx).await, now_ms);
+        }
+        assert!(state.record_status.active);
+        outputs.scope.retire();
+        outputs.scope.quiesce().await;
+    }
+
+    #[tokio::test]
+    async fn output_admission_timestamp_precedes_executor_and_publication_backlog() {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        tx.send(AppEvent::GraphInvalidated).unwrap();
+        let outputs = OutputController::new(Handle::current(), tx, Arc::new(Mutex::new(None)));
+        let fake = Arc::new(GatedOutput {
+            writes: AtomicUsize::new(0),
+            reading: Notify::new(),
+            release: Notify::new(),
+        });
+        outputs.set_client_override(OutputCommandClient::Fake(fake));
+        outputs.set_output(OutputKind::Record, false);
+        let admitted_before = std::time::Instant::now();
+        assert!(matches!(receive(&rx).await, AppEvent::GraphInvalidated));
+        let AppEvent::OutputCommandPending(OutputKind::Record, status, admitted_at) =
+            receive(&rx).await
+        else {
+            panic!("missing admitted stop")
+        };
+        assert_eq!(status.state, OutputRunState::Stopping);
+        assert!(
+            admitted_at <= admitted_before,
+            "waiting for the executor or UI must not refresh admission time"
+        );
+        outputs.scope.retire();
+        outputs.scope.quiesce().await;
+    }
+
     #[test]
     fn retired_output_completion_cannot_release_a_new_operation() {
         let pending = Arc::new(Mutex::new(OutputPending::default()));
@@ -622,13 +754,14 @@ mod tests {
         outputs.set_output(OutputKind::Stream, true);
         assert!(matches!(
             receive(&rx).await,
-            AppEvent::OutputCommandPending(OutputKind::Stream, _)
+            AppEvent::OutputCommandPending(OutputKind::Stream, _, _)
         ));
         assert!(matches!(
             receive(&rx).await,
             AppEvent::OutputCommandSucceeded(OutputKind::Stream)
         ));
         fake.reading.notified().await;
+        let read_started_before = std::time::Instant::now();
         assert!(
             rx.try_recv().is_err(),
             "ack arrived while readback remains gated"
@@ -636,15 +769,20 @@ mod tests {
         fake.release.notify_one();
         assert!(matches!(
             receive(&rx).await,
-            AppEvent::OutputStatusUpdated(OutputKind::Record, _)
+            AppEvent::OutputStatusUpdated(OutputKind::Record, _, _)
         ));
-        assert!(matches!(
-            receive(&rx).await,
-            AppEvent::OutputReadbackFailed {
-                kind: OutputKind::Stream,
-                ..
-            }
-        ));
+        let AppEvent::OutputReadbackFailed {
+            kind: OutputKind::Stream,
+            observed_at,
+            ..
+        } = receive(&rx).await
+        else {
+            panic!("missing failed readback")
+        };
+        assert!(
+            observed_at <= read_started_before,
+            "failed read preserves request-start time"
+        );
         assert_eq!(fake.writes.load(Ordering::SeqCst), 1);
         outputs.scope.retire();
         outputs.scope.quiesce().await;

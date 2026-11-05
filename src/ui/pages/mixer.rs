@@ -28,6 +28,22 @@ use crate::ui::widgets::audio_card;
 use crate::ui::{index_of, insert_compact_flow_child, string_list};
 use i18n_embed_fl::fl;
 
+type MixerBinding = (
+    u64,
+    crate::domain::workflow::ScopeBinding,
+    u64,
+    crate::controller::state::RegistryStatus,
+);
+
+fn mixer_binding(state: &crate::controller::state::AppState) -> MixerBinding {
+    (
+        state.workspace.epoch,
+        state.workflow_scope(),
+        state.show_registry.generation,
+        state.show_registry.status.clone(),
+    )
+}
+
 type MixerRefreshTracker = Rc<MixerPageHandle>;
 
 /// Stable visible cards. Audio echoes never replace controls or their draft state.
@@ -36,7 +52,7 @@ pub(crate) struct MixerPageHandle {
     nav: NavigationContext,
     requested_scene: RefCell<Option<String>>,
     signature: RefCell<Option<String>>,
-    binding: RefCell<Option<(u64, crate::domain::workflow::ScopeBinding)>>,
+    binding: RefCell<Option<MixerBinding>>,
     cards: RefCell<BTreeMap<String, audio_card::AudioCardHandle>>,
     controls_signature: RefCell<Option<String>>,
     groups: RefCell<Vec<glib::WeakRef<PreferencesGroup>>>,
@@ -51,8 +67,7 @@ impl MixerPageHandle {
         matches!(
             state.obs_status,
             crate::controller::state::ObsStatus::Connected { .. }
-        ) && self.binding.borrow().as_ref()
-            == Some(&(state.workspace.epoch, state.workflow_scope()))
+        ) && self.binding.borrow().as_ref() == Some(&mixer_binding(&state))
     }
 
     /// Apply an OBS mute echo to the existing visible input card.
@@ -94,7 +109,7 @@ impl MixerPageHandle {
         };
         let state = self.nav.state.borrow();
         self.update_summary(&state);
-        let binding = (state.workspace.epoch, state.workflow_scope());
+        let binding = mixer_binding(&state);
         let loading = matches!(
             state.visible_mixer_render_source(),
             MixerVisibleRenderSource::Scene {
@@ -130,7 +145,7 @@ impl MixerPageHandle {
             }
             return;
         }
-        let binding = (state.workspace.epoch, state.workflow_scope());
+        let binding = mixer_binding(&state);
         drop(state);
         let view = MixerViewState::capture(&root);
         self.cards.borrow_mut().clear();
@@ -186,7 +201,11 @@ fn mixer_structure(state: &crate::controller::state::AppState) -> String {
     );
     format!(
         "{:?}{:?}{:?}{:?}{selection:?}{source:?}{inputs:?}",
-        state.workspace.epoch,
+        (
+            state.workspace.epoch,
+            state.show_registry.generation,
+            state.show_registry.status.clone()
+        ),
         state.workflow_scope(),
         state.obs_status,
         (
@@ -411,6 +430,23 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
         refresh_tracker.controls.set(Some(&controls));
         controls.add(&mode_row);
         controls.add(&scene_row);
+        let presets = adw::ActionRow::builder()
+            .use_markup(false)
+            .title(fl!(LANGUAGE_LOADER, "preset-title"))
+            .build();
+        let open = Button::with_label(&fl!(LANGUAGE_LOADER, "preset-open"));
+        open.set_widget_name("mixer-audio-presets");
+        open.set_valign(Align::Center);
+        open.connect_clicked({
+            let nav = nav.clone();
+            move |button| {
+                if let Some(parent) = button.root().and_downcast::<gtk4::Window>() {
+                    crate::ui::audio_presets::show(&parent, &nav);
+                }
+            }
+        });
+        presets.add_suffix(&open);
+        controls.add(&presets);
         page.add(&controls);
         let options = PreferencesGroup::new();
         let options_row = adw::ExpanderRow::builder()
@@ -1771,7 +1807,7 @@ mod layout_tests {
                 let mut state = nav.state.borrow_mut();
                 state.obs_status = crate::controller::state::ObsStatus::Connected { obs_version: "fixture".into() };
                 state.scene_collections.current = Some("Fixture".into());
-                state.scene_inventory.scenes = vec![Scene { id: "Main".into() }];
+                state.scene_inventory.scenes = vec![Scene { uuid: None, id: "Main".into() }];
                 state.scene_inventory.current_id = Some("Main".into());
                 state.apply_active_audio(Some("Main".into()), Ok(vec![audio_input("Mic"), audio_input("Music")]));
             }
@@ -1897,8 +1933,8 @@ mod layout_tests {
                         };
                         state.scene_collections.current = Some("Fixture".into());
                         state.scene_inventory.scenes = vec![
-                            Scene { id: "Program".into() },
-                            Scene { id: "Inspected".into() },
+                            Scene { uuid: None, id: "Program".into() },
+                            Scene { uuid: None, id: "Inspected".into() },
                         ];
                         state.scene_inventory.current_id = Some("Program".into());
                         state.mixer.mode = mode;
@@ -1933,6 +1969,7 @@ mod layout_tests {
         let mut state = AppState::new(Default::default(), Default::default(), None, None);
         state.scene_inventory = SceneInventory {
             scenes: vec![Scene {
+                uuid: None,
                 id: "Main".to_string(),
             }],
             current_id: Some("Main".to_string()),

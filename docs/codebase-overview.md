@@ -147,11 +147,23 @@ or:
 $HOME/.config/scenedeck/config.json
 ```
 
-The scene registry file is:
+Connected scene curation is stored in
+`$XDG_CONFIG_HOME/scenedeck/show-workspaces.json`, keyed by saved connection,
+endpoint and scene collection. Legacy `registry.json` is retained and adopted
+once into the original setup. The scoped registry includes scene metadata, deck
+views, action bindings, quick actions, preflight rules, audio-health selections
+and audio presets.
 
-```text
-$XDG_CONFIG_HOME/scenedeck/registry.json
-```
+Bookmarks live in `$XDG_CONFIG_HOME/scenedeck/bookmarks.json`. Optional bounded
+session history lives in `$XDG_STATE_HOME/scenedeck/session-history.json` (normally
+`~/.local/state/scenedeck/session-history.json`). These files do not include OBS
+passwords. Each connection's password lives in Secret Service. See
+[configuration](configuration.md) for schema, migration and persistence rules.
 
-The OBS password is not stored in either JSON file. It is stored in the system
-Secret Service keyring.
+The newer feature modules follow the same boundaries: `domain::{health,
+preflight,audio_preset,session_report,action_shortcut,operator_action}` define
+rules/evidence; `controller/state/` owns live state and reports;
+`controller/workspace/audio_presets.rs` owns scoped sequential writes; storage
+modules own files. Palette, shortcut, preflight, health, preset and report UI
+modules use NavigationContext. `ui/global_shortcuts/portal.rs` is an asynchronous
+GIO desktop-portal adapter and never talks to OBS directly.

@@ -25,15 +25,50 @@ pub(crate) struct Observations {
 }
 
 impl Observations {
+    pub(crate) fn merge_workspace_audio(
+        &self,
+        observed: &mut super::workspace::WorkspaceObservation,
+    ) {
+        let revision = observed.audio_revision;
+        if revision < self.discarded_before {
+            observed.audio.clear();
+            if let Some(detail) = &mut observed.detail {
+                detail.muted = None;
+                detail.volume_db = None;
+            }
+            observed
+                .warnings
+                .push(crate::domain::control::WorkspaceWarning::ReadFailed {
+                    detail: fl!(LANGUAGE_LOADER, "controller-audio-changed"),
+                });
+            return;
+        }
+        self.merge(revision, &mut observed.audio);
+        if let Some(detail) = &mut observed.detail {
+            if let Some(echo) = self.inputs.get(&detail.input) {
+                if let Some((_, muted)) = echo.muted.filter(|(at, _)| *at > revision) {
+                    if detail.muted.is_some() {
+                        detail.muted = Some(muted);
+                    }
+                }
+                if let Some((_, _, db)) = echo.volume.filter(|(at, _, _)| *at > revision) {
+                    if detail.volume_db.is_some() {
+                        detail.volume_db = Some(db);
+                    }
+                }
+            }
+        }
+    }
+
     pub(crate) fn reconcile(&mut self, revision: u64, mut event: AppEvent) -> Option<AppEvent> {
         match &mut event {
-            AppEvent::OutputStatusUpdated(OutputKind::Stream, _) => {
+            AppEvent::OutputStatusUpdated(OutputKind::Stream, _, _) => {
                 if revision < self.stream_revision {
                     return None;
                 }
                 self.stream_revision = revision;
             }
-            AppEvent::OutputStatusUpdated(OutputKind::Record, _) => {
+            AppEvent::OutputStatusUpdated(OutputKind::Record, _, _) => {
                 if revision < self.record_revision {
                     return None;
                 }

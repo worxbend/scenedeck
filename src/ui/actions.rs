@@ -45,6 +45,16 @@ pub(super) fn install(
         let nav = nav.clone();
         move || nav.switch_to_page(Page::Help)
     });
+
+    register_simple_action(&app, "command-palette", Some("<Primary>k"), {
+        let nav = nav.clone();
+        let window = window.downgrade();
+        move || {
+            if let Some(window) = window.upgrade() {
+                super::command_palette::show(&window, &nav);
+            }
+        }
+    });
 }
 
 /// Present the About window.

@@ -4,14 +4,26 @@
 //! Reusable leaf widgets live under `ui::widgets`.  `ui::navigation` owns the
 //! `NavigationContext` type shared by all pages.
 
+mod action_catalog;
+mod action_shortcuts;
 pub(crate) mod actions;
+mod audio_presets;
 pub(crate) mod background_io;
+mod bookmarks;
+mod command_palette;
 mod event_pump;
 mod event_reconciliation;
+mod global_shortcuts;
+mod health_alerts;
 mod hotkeys;
 pub(crate) mod navigation;
+mod operator_picker;
 pub(crate) mod pages;
 pub(crate) mod persist;
+mod preflight;
+mod quick_actions;
+pub(crate) mod report_history;
+mod session_reports;
 mod sidebar;
 pub(crate) mod theme;
 pub(crate) mod widgets;

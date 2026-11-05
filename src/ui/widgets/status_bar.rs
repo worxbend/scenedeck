@@ -243,7 +243,8 @@ pub(crate) fn set_stats(
     handle
         .dropped_label
         .set_text(&format_dropped(dropped_frames));
-    set_dropped_alert_class(&handle.dropped_label, dropped_frames > 0);
+    // This count is cumulative. Current incidents are shown in the health area.
+    set_dropped_alert_class(&handle.dropped_label, false);
     update_health_context(handle);
 }
 

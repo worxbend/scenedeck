@@ -1,19 +1,22 @@
 //! Bounded output evidence. An OBS observation is never assigned to a requester.
 
 use crate::domain::workflow::ScopeBinding;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 const LIMIT: usize = 24;
 const CONFIRMATION_TIMEOUT_MS: u64 = 30_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OutputResultKind {
     ReplaySave,
     RecordingStop,
     RecordingSplit,
     RecordingChapter,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OutputResultStatus {
     Requested,
     Acknowledged,
@@ -21,7 +24,7 @@ pub enum OutputResultStatus {
     Failed,
     Unconfirmed,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutputResult {
     pub id: u64,
     pub kind: OutputResultKind,

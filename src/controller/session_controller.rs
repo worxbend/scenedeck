@@ -269,7 +269,7 @@ impl SessionRunner for ObsSessionRunner {
         Box::pin(async move {
             let settings = tokio::task::spawn_blocking(move || {
                 let config = dependencies.load_config();
-                let password = dependencies.obs_password()?;
+                let password = dependencies.obs_password(&config.connection_id)?;
                 Ok::<_, AppError>((config, password))
             })
             .await;
@@ -305,6 +305,7 @@ impl SessionRunner for ObsSessionRunner {
                     return;
                 }
             };
+            let client = client.with_connection_id(config.connection_id);
             if !scope.install(client.clone()) {
                 return;
             }
@@ -334,6 +335,7 @@ mod tests {
                 runs.fetch_add(1, Ordering::SeqCst);
                 let _ = tx
                     .send(AppEvent::Connected(ConnectionInfo {
+                        connection_id: "default".into(),
                         endpoint: "test:4455".to_string(),
                         obs_version: "fake-obs".to_string(),
                         websocket_version: "fake-websocket".to_string(),

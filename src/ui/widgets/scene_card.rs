@@ -103,8 +103,9 @@ impl SceneCardHandle {
         self.pending.set_opacity(if pending { 1.0 } else { 0.0 });
         self.root
             .update_state(&[gtk4::accessible::State::Busy(pending)]);
-        self.root
-            .set_sensitive(state.workspace.scene_action(&self.scene_id).is_some());
+        self.root.set_sensitive(
+            nav.registry_is_current() && state.workspace.scene_action(&self.scene_id).is_some(),
+        );
         let hint = scene_action_hint(studio);
         self.root.set_tooltip_text(Some(&format!(
             "{}\n{}",
@@ -263,7 +264,7 @@ pub(crate) fn build(model: SceneCardModel<'_>, nav: NavigationContext) -> SceneC
         card.add_css_class("scene-card-preview");
     }
     let id = scene_id.clone();
-    let nav = nav.scoped();
+    let nav = nav.scoped().registry_scoped();
     card.connect_clicked(move |_| nav.dispatch(AppCommand::SwitchPrimaryScene(id.clone())));
     SceneCardHandle {
         root: card,

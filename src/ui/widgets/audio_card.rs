@@ -16,7 +16,6 @@ use crate::domain::audio::AudioInput;
 use crate::domain::workflow::ScopeBinding;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::audio_service::{AudioService, VolumeChangeDebouncer, VOLUME_SLIDER_DEBOUNCE};
-use crate::storage::registry as registry_storage;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::widgets::{icon_picker, volume_meter};
 
@@ -508,16 +507,20 @@ pub(crate) fn build(input: &AudioInput, nav: NavigationContext) -> AudioCardHand
         &fl!(LANGUAGE_LOADER, "mixer-input-icon-tooltip"),
         icon_picker::PickerDisplay::Fixed(OVERFLOW_ICON),
         {
-            let nav = nav.clone();
+            let nav = nav.registry_scoped();
             let input_id = input_id.clone();
             let scope_icon_slot = scope_icon_slot.clone();
             move |icon| {
+                if !nav.registry_is_current() {
+                    return;
+                }
                 set_scope_icon(&scope_icon_slot, icon.as_deref());
                 set_input_icon(&nav, &input_id, icon.as_deref());
             }
         },
     );
 
+    icon_button.set_sensitive(nav.registry_is_current());
     let fine_controls = build_fine_controls(input, &controls, &nav);
 
     let overflow = control_row(
@@ -644,7 +647,7 @@ fn set_input_icon(nav: &NavigationContext, input_id: &str, icon: Option<&str>) {
         nav,
         "audio source icon",
         |registry| registry.set_input_icon(input_id, icon),
-        move || registry_storage::set_input_icon(&owned_id, owned_icon.as_deref()),
+        move |registry| registry.set_input_icon(&owned_id, owned_icon.as_deref()),
     );
 }
 

@@ -95,6 +95,19 @@ before GTK publication, using a 64-item handoff plus one selected publication;
 overflow retires the connection and reports incomplete evidence instead of
 stalling safety invalidation or growing the queue. Workspace state reconciliation lives separately in
 `ui::event_reconciliation`; shell effects follow accepted state publication.
+Operator actions share the workspace's complete input identity catalog. Enabled
+bindings and scoped action pickers contribute deduplicated media/filter read
+requirements, separate from Sources selection and drafts. The OBS adapter retains
+per-property failures; the catalog resolves actions only against current identity,
+capability and freshness. Temporary picker leases retire on close or scope change,
+and an inspection selected during an existing read leaves the workspace dirty for
+a subsequent read. None of these refreshes queue a later mutation. Live pins use
+the same catalog and property-read requirements. Their buttons and menus survive
+ordinary observations, while changed pin lists or scope ownership rebuild the
+strip. Mute echoes update pin state directly without invalidating unrelated
+controls. The bounded audio-echo journal also merges newer mute/volume events over
+workspace readbacks; lost journal coverage leaves audio unknown without discarding
+unrelated media, scene or output observations.
 Doctor similarly separates pure typed findings from localized presentation,
 while preserving the existing `DoctorService::run` contract.
 
@@ -145,6 +158,10 @@ mapped to domain types before crossing into the controller or UI.
 events into GTK-side updates. Runtime dependencies such as config loading and
 OBS password retrieval are injected through `controller::dependencies`; the
 default production adapters still use local storage and the system keyring.
+Password retrieval takes the selected immutable connection ID from the same
+configuration snapshot used for its endpoint. The live client carries that ID
+into connection observations, so later Settings selections cannot change the
+identity of an already connected session.
 Stream and recording command guards, status refreshes, fake-client injection,
 and graceful shutdown are isolated in `controller::output_controller` rather
 than growing the main application controller.
@@ -163,7 +180,8 @@ checks, graph edge classification, live-switch validation, scene-hotkey
 resolution, and volume-meter ballistics. Services consume
 domain-facing snapshots and policies instead of storage adapter structs.
 
-`src/storage/` owns local persistence: config JSON, scene registry JSON,
+`src/storage/` owns local persistence: config JSON, collection-specific show
+workspaces, legacy registry JSON,
 XDG paths, and keyring integration. The scene registry storage type remains the
 serde representation for JSON/YAML, and converts to `SceneRegistrySnapshot`
 before application services use it.
@@ -285,6 +303,10 @@ polling pauses while a native popover is open; an already-in-flight media-only
 reply preserves that popup when its binding is unchanged. Scope, full-read,
 pending, error and freshness changes still invalidate it immediately. Structural
 path expansion and named path focus survive ordinary detail refreshes.
+The media timing readout updates in place through the existing status refresher.
+It derives progress and remaining time only from valid observed cursor/duration
+pairs, rejects stale workspace evidence, and does not introduce another timer or
+OBS request. Seek editors remain separate from observed playback values.
 
 ## Scene thumbnails
 
@@ -340,3 +362,223 @@ Stats samples and activity records use local Unix-millisecond times. Charts
 remain sample-spaced; event interpolation rejects long gaps, backwards clocks
 and out-of-window events. An activity marker is contextual evidence. Stats and
 its popout keep independent local marker selections.
+
+### Preflight readiness
+
+`domain::preflight` evaluates scoped scene/input identities, mute, recent signal,
+and recording-space evidence. Missing and stale observations remain unknown.
+Saved expectations live in configuration by actual connection ID and endpoint,
+independent of the active collection; volatile checklist and signal evidence lives
+only in the review window and is retired on plan or workspace-epoch changes.
+`ui::preflight` and its editor use read-only workspace/statistics commands and the
+ordered configuration persistence lane. The optional output-start continuation is
+explicit, single-use and bound to the original OBS session/collection, and then
+uses the existing output confirmation flow.
+
+### Live health incidents
+
+`domain::health::HealthMonitor` belongs to AppState and consumes scoped statistics
+with monotonic observation times. Per-condition state requires sustained bad
+intervals and a longer recovery cooldown; invalid, stale, duplicate, out-of-order
+or reset counters cannot manufacture an incident or prove recovery. Rendering,
+encoding and network counters retain separate baselines. The monitor's observed
+output activity, rather than command fallback status, gates recording-space and
+encoder checks.
+
+Connection/output incident tracking is in `domain::health::events`. Connection
+intent distinguishes deliberate retirement from loss. Output stop expectations
+start at controller admission (`OutputCommandPending`), expire, and are retired on
+definite failure or session change. Only actual output observations establish an
+unexpected stop; acknowledgements and synthetic fallback states do not. Latched
+incidents carry monotonically assigned IDs so stale dialog responses cannot
+acknowledge a replacement incident.
+
+`ui::health_alerts` presents the main-window cross-page summary and read-only detail
+window. Its shell refresh source belongs to WindowSources, and details release their
+weak widget timer when closed. Performance incident data is volatile; durable
+optional session history on disk retains alert transitions as described below.
+
+
+Selected-input checks live in `domain::health::audio`. `AudioRule` is persisted in
+the scoped registry, while `AudioMonitor` owns volatile per-rule observations.
+Workspace epoch, registry generation or rule changes reset that evidence. Current
+complete input identities and mute reads resolve the target before name-keyed OBS
+meters are consumed. Malformed multipliers and duplicate meter names preserve an
+invalid flag even though visual meters still decay/display silence. A repeated
+receipt timestamp cannot advance failure or recovery; stale/missing/invalid data
+retains already raised incidents as unobserved.
+
+The application event-pump tick evaluates audio health independently of shell
+visibility. When enabled rules need inventory/mute evidence, it requests existing
+read-only workspace observations with a ten-second retry interval, respecting
+pending/loading work. The main shell and detached Stats each own a health summary;
+closing/removing the detached window destroys its summary source. The application
+pump remains until the last application window closes. Audio-rule editors fence
+scope and their saved baseline, retain missing inputs, and use the registry's
+ordered persistence/retry lane. Portable imports disable all audio rules.
+
+
+Output admission, transport-receipt and read-request times travel with their
+events, before executor/queue/GTK delays. Workspace snapshots retain separate
+request-start times for stream and record reads, rather than dating those values
+at the start or end of a larger workspace scan. AppState fences current output
+observations and failed reads by those per-output monotonic times; the fences
+survive collection changes and reset on connection retirement. Normal resync
+output-read failures also publish unavailable evidence, with repeated identical
+failure notices coalesced. A missing workspace output read is Unknown, not stopped.
+
+Admitted output intent is connection-owned, so a collection change cannot discard
+its pending event while allowing the output operation to proceed. Session fences
+still retire it on connection replacement. The thirty-second stop-correlation
+window uses source times; GTK backlog cannot renew it. File facts remain distinct
+from current run state: a late reported recording path is retained as evidence,
+while an older state cannot undo a newer restart or replace a newer latest path.
+A completed StopRecord response emits `RecordingStopObserved` file evidence only,
+not an inactive status. Its command-admission time conservatively orders the path
+behind any later recording observation; current state comes from status reads or
+transport events.
+
+
+## Bookmark timing and persistence
+
+`domain::bookmark` distinguishes local operator notes from recording/chapter
+commands. `AppState` starts a local observation-session clock on Connected and
+retires it on connection reset, preserving existing notes across collection and
+connection changes. Capture requires a current connection and keeps original
+context. OBS duration is retained from GetRecordStatus only; transport events and
+fallback statuses carry no timing. Duration advancement is excluded from run-state
+change logging and disconnect-confirmation comparisons.
+
+Bookmark capture uses the accepted output observation timestamp. A sample older
+than five seconds, a future timestamp, uncertain/transitioning output, missing
+duration or pending workspace mutation yields unavailable recording time. No local
+extrapolation occurs. The captured sample age remains with the note.
+
+`storage::bookmarks` validates version, count, IDs, names and file size, and uses
+bounded regular-file reads and atomic writes. `ui::bookmarks` queues full snapshots
+on its own background-I/O lane and exposes saved/error/retry state. Full snapshots
+cover earlier edits; only a successful covering snapshot resolves their failure
+evidence. Reading failure disables edits, and retry loading preserves the original
+connection clock. Dialog capture is scope-bound; editing a historical note uses
+its stable ID independently of current OBS scope. Closed/detached callbacks cannot
+modify notes.
+
+### Session reports and explicit exports
+
+`domain::session_report` defines bounded report records and sanitized telemetry
+samples. `controller::state::session_reports` collects accepted evidence after each
+app-owned event-pump publication and health tick, independently of open pages.
+The activity log has a receipt cursor so ring-buffer gaps are measurable. Output
+result snapshots retain Requested/Acknowledged/Observed/Failed/Unconfirmed as
+separate immutable evidence. An old result does not become a new session's result.
+
+Connection reset collects final evidence before clearing caches and ends the
+report without claiming output termination. A connection-generation mapping routes
+late terminal audits to their original retained report. The recent memory archive
+holds eight sessions; each retains 4,096 events and 2,048 samples, with omission
+counts and aggregates over all valid samples. Samples retain request-start time,
+not a synthesized measurement at the UI tick. Nonfinite and negative measurements
+become unavailable before JSON serialization. Bookmarks are references resolved
+against the current separate archive, so renames and deletions remain effective.
+
+`ui::session_reports` presents an explicitly refreshed review snapshot; Stats and
+the command palette both open it. `storage::report_export` writes the selected
+snapshot atomically to the exact FileDialog target on a dedicated FIFO lane.
+CSV quotes cells and neutralizes formula prefixes; JSON retains exact structured
+values. Returned errors participate in shutdown failure reporting, and a successful
+explicit export retry resolves its own target/report failure. `controller::state::report_history` holds desired and observed disk archives
+separately, plus eligible session IDs and bounded checkpoint admission state.
+`ui::report_history` admits at most one history operation at a time; a forced
+checkpoint during a pending write chains the latest snapshot before the existing
+shutdown barrier can complete. Ordinary checkpoints are spaced by ten seconds,
+with earlier writes for session boundaries. Per-report omissions remain explicit.
+
+`storage::report_history` validates a versioned 64 MiB/32-session archive, uses a
+regular-file advisory lock and compares expected contents before atomic writes.
+Startup loads history off GTK. Reports without a stored end become interrupted
+in the local view without an invented timestamp. Reload merges locally owned
+report intent; clear intent survives retry. Settings and history saves retain
+separate failure tickets. Connection generation routes late terminal audit to a
+retained disk-history report even after it has left the eight-session memory ring.
+
+The main shell closes through a checkpoint barrier. Closing the last document
+window, including detached Stats, or choosing Quit finalizes the observation
+session before draining writes. A temporary `ExitCheckpoint` owns application
+state until final publication without retaining shell widgets; the application
+event pump may release its state on last-window removal. Pending output requests
+are copied into the report as unconfirmed without mutating live request tickets.
+A failed or timed-out drain resumes the same observation session if its connection
+still exists, records the interruption, and offers Cancel/Retry/informed abandon.
+Retry reloads conflicting history before saving local intent; explicit abandon
+suppresses additional automatic history writes during that exit attempt. A
+second checkpoint check includes connection/terminal evidence delivered while the
+first write ran. The shutdown hook remains a fallback for non-window shutdown.
+None of these paths changes OBS or claims output termination. The
+history settings window uses an explicit Apply action, so changing the retention
+draft cannot delete reports. Clear requires its own confirmation and excludes the
+current connection until another explicit opt-in or the next connection.
+
+### Audio presets
+
+`domain::audio_preset` contains bounded named input snapshots. `PresetGain` has a
+private finite 0–20 multiplier with checked deserialization, allowing the registry
+to retain its equality contract without NaN or lossy decimal quantization.
+`SceneRegistry::audio_presets` is scoped and persisted with existing curation.
+`ui::audio_presets` captures from the fresh complete workspace input catalog/audio
+snapshot, not the active-scene audio cards. It resolves UUIDs before capture,
+preserves missing selections until the operator removes them, previews current and
+saved values, and rejects retired scopes or concurrent preset edits. Explicit
+save/replace reuses ordered registry persistence and same-value retries. Window
+callbacks hold weak editor references; the bounded refresh source releases state
+when the window closes.
+
+`domain::audio_preset::run` separates immutable reviewed intent from per-input
+results. The UI admits one fresh review through NavigationContext/AppCommand;
+`controller::workspace::audio_presets` owns one sequential session-scoped worker.
+It resolves current identities and checks previewed values before writing. Mute
+precedes gain when muting; gain is acknowledged and read back before unmuting.
+The adapter writes the saved linear multiplier without routing it through the
+fader's narrower dB range. Each property has a lifecycle operation lease carrying
+run, epoch, input identity and property; late terminal evidence preserves known
+acknowledgements without asserting readback or crossing replacement runs.
+
+Cancellation, topology and collection fences are checked at mutation admission.
+An explicit scene-collection switch also cancels remaining preset work before
+dispatching the switch. Network operations retain the normal ten-second budget;
+publication into the bounded GTK queue is outside that deadline. A timed-out
+socket cannot send later input mutations. AppState owns progress after editor
+close, logs it for session reports, and retires unfinished rows on scope changes.
+Results distinguish missing/changed inputs, acknowledgements, confirmed readback,
+failure and uncertainty. Presets are not atomic OBS transactions and never replay.
+
+
+### Desktop portal shortcuts
+
+`ui::global_shortcuts` owns an explicit registration session per main-window
+NavigationContext. It uses the existing asynchronous GIO bus API; no new runtime
+or dependency is introduced. `portal.rs` checks the GlobalShortcuts version,
+subscribes before request calls, verifies predicted request/session paths and
+pins session calls/signals to the portal's unique bus owner. A dedicated D-Bus
+peer calls [host Registry.Register](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.host.portal.Registry.html)
+with `io.scenedeck.app` before any other portal method, so earlier GTK portal use
+cannot lock in an unidentified peer. Older registries and sandbox-provided
+identities can reject registration; CreateSession still decides admission. Bus
+address lookup runs on GIO's blocking pool, and peer cleanup flushes close messages
+then closes the private connection. Portal restart retires the session; a new
+explicit Enable uses a newly registered peer. Request and session
+handles close on drop, including cancellation while permission is pending.
+Method calls have ten-second deadlines; human interaction is bounded to two
+minutes. Portal loss, Closed, Stop, window removal and scope retirement end the
+session. A watchdog runs throughout permission requests and active registration.
+
+Only enabled, non-conflicting application bindings are offered (maximum 64).
+SHA-256 IDs encode connection/endpoint/collection and the operator intention,
+using UUID identity independently of display name, ordering or local key choice.
+Duplicate action intentions share one desktop registration. BindShortcuts and
+ShortcutsChanged provide the accepted subset and actual trigger descriptions;
+unknown IDs are ignored. Activation rechecks scoped navigation and the captured
+binding list before using the existing action catalog. Held keys dispatch once,
+visible modals and active-window text editing suppress execution, and confirmed desktop bindings suppress
+local copies. Stopping restores local handling. No persistent opt-in, background
+registration, reconnect replay or global-key support claim for every desktop is
+made. Tests use a fake portal on the native runner's disposable D-Bus session.

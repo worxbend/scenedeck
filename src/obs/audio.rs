@@ -23,14 +23,47 @@ pub(super) fn is_non_audio(error: &Error) -> bool {
 impl ObsClient {
     /// Return a complete usable audio snapshot, or an explicit observation error.
     /// Only a definite non-audio rejection can silently omit an input.
+    #[cfg(test)]
     pub async fn get_all_audio_inputs(&self) -> Result<Vec<AudioInput>, AppError> {
-        let sources = self
+        let inventory = self.get_input_catalog().await?;
+        self.get_audio_for_catalog(&inventory).await
+    }
+
+    /// One complete identity read, shared by audio and targeted operator reads.
+    pub(crate) async fn get_input_catalog(
+        &self,
+    ) -> Result<Vec<crate::domain::operator_input::InputIdentity>, AppError> {
+        use crate::domain::{operator_action::ActionTarget, operator_input::InputIdentity};
+        let inputs = self
             .request(self.inner.inputs().list(None))
             .await
-            .map_err(AppError::request)?
+            .map_err(AppError::request)?;
+        if inputs.len() > MAX_INSPECTED_ITEMS {
+            return Err(AppError::request(
+                "Input inventory exceeds inspection budget",
+            ));
+        }
+        Ok(inputs
             .into_iter()
+            .map(|input| InputIdentity {
+                target: ActionTarget {
+                    uuid: (!input.id.uuid.is_nil()).then(|| input.id.uuid.to_string()),
+                    name: input.id.name,
+                },
+                kind: input.kind,
+            })
+            .collect())
+    }
+
+    pub(crate) async fn get_audio_for_catalog(
+        &self,
+        inventory: &[crate::domain::operator_input::InputIdentity],
+    ) -> Result<Vec<AudioInput>, AppError> {
+        let sources = inventory
+            .iter()
             .map(|input| AudioInputSource {
-                name: input.id.name,
+                uuid: input.target.uuid.clone(),
+                name: input.target.name.clone(),
                 scope: AudioSourceScope::Global,
                 parent_scene_path: Vec::new(),
             })
@@ -51,6 +84,7 @@ impl ObsClient {
         for name in self.get_global_audio_input_names().await? {
             if seen_inputs.insert(name.clone()) {
                 sources.push(AudioInputSource {
+                    uuid: None,
                     name,
                     scope: AudioSourceScope::Global,
                     parent_scene_path: Vec::new(),
@@ -99,6 +133,7 @@ impl ObsClient {
                         }
                         if seen_inputs.insert(item.source_name.clone()) {
                             sources.push(AudioInputSource {
+                                uuid: None,
                                 name: item.source_name,
                                 scope,
                                 parent_scene_path: path.clone(),
@@ -156,10 +191,14 @@ impl ObsClient {
         }
         let inputs =
             collect_bounded_ordered(sources, MAX_CONCURRENT_OBS_REQUESTS, |source| async move {
-                let muted = match self
-                    .request(self.inner.inputs().muted(InputId::Name(&source.name)))
-                    .await
-                {
+                let input = source
+                    .uuid
+                    .as_deref()
+                    .map(|uuid| uuid.parse().map(InputId::Uuid))
+                    .transpose()
+                    .map_err(AppError::request)?
+                    .unwrap_or(InputId::Name(&source.name));
+                let muted = match self.request(self.inner.inputs().muted(input)).await {
                     Ok(muted) => muted,
                     Err(error) if is_non_audio(&error) => return Ok(None),
                     Err(error) => {
@@ -170,7 +209,7 @@ impl ObsClient {
                     }
                 };
                 let volume = self
-                    .request(self.inner.inputs().volume(InputId::Name(&source.name)))
+                    .request(self.inner.inputs().volume(input))
                     .await
                     .map_err(|error| {
                         AppError::request(format!("{} volume unavailable: {error}", source.name))
@@ -188,7 +227,8 @@ impl ObsClient {
                         f64::from(volume.mul),
                         f64::from(volume.db),
                     )
-                    .with_source_context(source.scope, source.parent_scene_path),
+                    .with_source_context(source.scope, source.parent_scene_path)
+                    .with_identity(source.uuid),
                 ))
             })
             .await?;
@@ -198,6 +238,7 @@ impl ObsClient {
 
 struct AudioInputSource {
     name: String,
+    uuid: Option<String>,
     scope: AudioSourceScope,
     parent_scene_path: Vec<String>,
 }

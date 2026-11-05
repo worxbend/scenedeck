@@ -48,7 +48,9 @@ within the current connection and scene collection.
 Input details expose supported controls:
 
 - Existing filter enable/disable.
-- Media play, pause, stop, restart, previous/next and seek.
+- Media play, pause, stop, restart, previous/next and seek, with observed position,
+  duration, remaining time and progress. Missing or indefinite timing is explicit;
+  no local playback clock is extrapolated. Polling preserves seek edits.
 - Built-in FreeType/GDI+ text with explicit Save and Cancel. A conflicting
   external edit is preserved. File-backed text stays an OBS-host file operation.
 - Audio monitor mode, signed sync offset, balance and six-track routing.
@@ -108,11 +110,14 @@ independent. Sources does not have a standalone still monitor.
 An image failure does not invalidate control freshness. See
 [OBS integration](obs-websocket.md) for current bounds.
 
-The retired rehearsal, setup-expectation and cue interfaces have no replacement
-page. Existing `workflows.json` files are left on disk and are not read or
-written by routine application operation. Scene metadata stays in
-`registry.json`; preferences stay in `config.json`; passwords stay in Secret
-Service. See [configuration](configuration.md).
+The retired rehearsal and cue interfaces remain removed. The new preflight,
+health and session-report tools use their own scoped models; they do not import
+retired setup expectations. Existing `workflows.json` files remain untouched.
+Connection/collection curation lives in `show-workspaces.json`, with one-time
+adoption of the legacy `registry.json`. Preferences and saved connections live
+in `config.json`; per-connection passwords stay in Secret Service. Bookmarks and
+optional report history have separate stores. See [configuration](configuration.md)
+and the [user guide](user-guide.md) for the complete show workflow.
 
 ## Implementation map
 

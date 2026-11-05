@@ -252,6 +252,8 @@ fn binding(client: &ObsClient) -> ScopeBinding {
 }
 fn request(client: &ObsClient) -> WorkspaceRequest {
     WorkspaceRequest {
+        operator_reads: Vec::new(),
+        target_uuid: None,
         epoch: 1,
         sequence: 1,
         scope: binding(client),
@@ -457,6 +459,38 @@ async fn graph_ready(rx: &mpsc::Receiver<AppEvent>) {
             return;
         }
     }
+}
+
+#[tokio::test]
+async fn scene_rename_publishes_identity_and_refreshes_topology() {
+    let mut mock = mock(Plan::default()).await;
+    let (tx, rx) = mpsc::sync_channel(128);
+    let task = pump(&mut mock, tx);
+    graph_ready(&rx).await;
+    mock.signal(Signal::Event(
+        "SceneNameChanged", 4,
+        json!({"oldSceneName":"A", "sceneName":"Guest", "sceneUuid":"00000000-0000-0000-0000-000000000001"}),
+    )).await;
+    let mut renamed = false;
+    let mut refreshed = false;
+    while !renamed || !refreshed {
+        let event = match peel(receive(&rx).await) {
+            AppEvent::Observation { event, .. } => *event,
+            event => event,
+        };
+        match event {
+            AppEvent::SceneRenamed { uuid, old, new } => {
+                assert!(uuid.is_some());
+                assert_eq!((old.as_str(), new.as_str()), ("A", "Guest"));
+                renamed = true;
+            }
+            AppEvent::GraphUpdated(_) => refreshed = true,
+            _ => {}
+        }
+    }
+    task.abort();
+    let _ = task.await;
+    mock.stop().await;
 }
 
 #[tokio::test]
@@ -1252,7 +1286,7 @@ impl crate::controller::dependencies::AppConfigProvider for ConfigProvider {
 }
 struct NoPassword;
 impl crate::controller::dependencies::ObsPasswordProvider for NoPassword {
-    fn obs_password(&self) -> Result<Option<String>, AppError> {
+    fn obs_password(&self, _connection_id: &str) -> Result<Option<String>, AppError> {
         panic!("wire fixtures must never access keyring")
     }
 }
@@ -1829,6 +1863,7 @@ async fn output_status_snapshot_cannot_undo_a_newer_transport_echo() {
     let (tx, rx) = mpsc::sync_channel(128);
     let task = pump(&mut mock, tx);
     mock.wait("GetStreamStatus", 1).await;
+    let request_seen = std::time::Instant::now();
     mock.signal(Signal::Event(
         "StreamStateChanged",
         64,
@@ -1836,13 +1871,18 @@ async fn output_status_snapshot_cannot_undo_a_newer_transport_echo() {
     ))
     .await;
     let mut state = state();
+    state.health.connected();
     loop {
         if let AppEvent::Observation { revision, event } = receive(&rx).await {
-            if let Some(AppEvent::OutputStatusUpdated(OutputKind::Stream, status)) =
+            if let Some(event @ AppEvent::OutputStatusUpdated(OutputKind::Stream, _, _)) =
                 state.reconcile_observation(revision, *event)
             {
+                let AppEvent::OutputStatusUpdated(_, status, observed_at) = &event else {
+                    unreachable!()
+                };
                 assert!(status.active);
-                state.set_stream_status(status);
+                assert!(*observed_at >= request_seen);
+                state.apply_output_event(&event, 0);
                 break;
             }
         }
@@ -1850,13 +1890,25 @@ async fn output_status_snapshot_cannot_undo_a_newer_transport_echo() {
     mock.signal(Signal::Release).await;
     loop {
         if let AppEvent::Observation { revision, event } = receive(&rx).await {
-            if matches!(*event, AppEvent::OutputStatusUpdated(OutputKind::Stream, _)) {
+            if matches!(
+                *event,
+                AppEvent::OutputStatusUpdated(OutputKind::Stream, _, _)
+            ) {
+                let AppEvent::OutputStatusUpdated(_, _, observed_at) = &*event else {
+                    unreachable!()
+                };
+                assert!(
+                    *observed_at <= request_seen,
+                    "readback time must precede its wait and publication"
+                );
                 assert!(state.reconcile_observation(revision, *event).is_none());
                 break;
             }
         }
     }
     assert!(state.stream_status.active);
+    assert_eq!(state.health.output_activity(OutputKind::Stream), Some(true));
+    assert!(state.health.alerts(std::time::Instant::now()).is_empty());
     mock.client.retire();
     task.await.unwrap();
     mock.stop().await;

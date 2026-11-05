@@ -9,6 +9,7 @@ mod lifetime_tests;
 
 pub(crate) mod audio_card;
 pub(crate) mod chart;
+pub(crate) mod deck_controls;
 pub(crate) mod icon_picker;
 pub(crate) mod operating_panel;
 pub(crate) mod scene_card;

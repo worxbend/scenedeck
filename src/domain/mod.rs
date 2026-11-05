@@ -1,20 +1,28 @@
 //! Pure application concepts, free of GTK and of the OBS protocol.
 
+pub(crate) mod action_shortcut;
 pub mod appearance;
 pub mod audio;
+pub(crate) mod audio_preset;
+pub(crate) mod bookmark;
 pub mod control;
 pub mod diagnostic;
 pub mod graph;
+pub(crate) mod health;
 pub mod hotkey;
 pub mod icon;
 pub mod meter;
 pub mod mixer;
 pub mod obs;
+pub(crate) mod operator_action;
+pub(crate) mod operator_input;
 pub mod output;
 pub mod output_result;
+pub(crate) mod preflight;
 pub mod registry;
 pub mod role;
 pub mod scene;
+pub(crate) mod session_report;
 pub mod stats;
 pub mod workflow;
 

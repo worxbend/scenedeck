@@ -1,6 +1,12 @@
 //! Scene role registry — the local metadata layer that augments the raw OBS
 //! scene list with roles, tags, and protection flags.
 
+mod decks;
+mod identity;
+
+pub(crate) use decks::SceneFilter;
+pub(crate) use identity::RetainedScene;
+
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -13,14 +19,47 @@ use crate::domain::role::SceneRole;
 use crate::storage::xdg;
 
 /// Root `registry.json` payload.
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SceneRegistry {
     /// Per-scene metadata keyed by OBS scene name.
     #[serde(default)]
     pub scenes: HashMap<String, SceneEntry>,
+    /// Last confirmed UUID for each named scene in this workspace.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub(crate) scene_uuids: HashMap<String, String>,
+    /// Curation withheld after name reuse or an ambiguous rename.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) retained_scenes: Vec<RetainedScene>,
     /// User-defined display order for Inventory and Live scene cards.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scene_order: Vec<String>,
+    /// Current view shared by Inventory and Live in this workspace.
+    #[serde(default)]
+    pub(crate) scene_filter: SceneFilter,
+    /// Named views kept separately for every workspace.
+    #[serde(
+        default,
+        deserialize_with = "decks::deserialize_decks",
+        skip_serializing_if = "std::collections::BTreeMap::is_empty"
+    )]
+    pub(crate) decks: std::collections::BTreeMap<String, SceneFilter>,
+    /// Explicit actions keep their bindings when scene cards are reordered.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) action_bindings: Vec<crate::domain::action_shortcut::ActionBinding>,
+    /// Ordered Live controls, independent of scene order and keyboard bindings.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) quick_actions: Vec<crate::domain::operator_action::OperatorPin>,
+    /// Audio expectations are opt-in and scoped to this production's inputs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) audio_alerts: Vec<crate::domain::health::AudioRule>,
+    /// Named gain/mute snapshots belonging only to this connection/collection.
+    #[serde(
+        default,
+        deserialize_with = "crate::domain::audio_preset::deserialize_presets",
+        skip_serializing_if = "std::collections::BTreeMap::is_empty"
+    )]
+    pub(crate) audio_presets:
+        std::collections::BTreeMap<String, crate::domain::audio_preset::AudioPreset>,
     /// Per-audio-input metadata keyed by OBS input name.
     ///
     /// Audio inputs have no roles or ordering, only presentation, so they get
@@ -32,15 +71,25 @@ pub struct SceneRegistry {
     pub rules: RuleConfig,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SceneRenameResult {
+    Unchanged,
+    Renamed,
+    Conflict,
+}
+
 /// Serialized metadata for one OBS scene.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SceneEntry {
     /// Local classification used by Live, Graph, and Doctor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<SceneRole>,
-    /// Free-form labels reserved for user workflows and future filters.
+    /// Free-form labels used to organize and find scenes.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Whether the operator has marked this scene as a favorite.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub favorite: bool,
     /// Protected scenes are expected to be building blocks, not live switches.
     #[serde(default)]
     pub protected: bool,
@@ -55,7 +104,7 @@ pub struct SceneEntry {
 }
 
 /// Serialized metadata for one OBS audio input.
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InputEntry {
     /// Optional icon key from `domain::icon`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -63,7 +112,7 @@ pub struct InputEntry {
 }
 
 /// Graph dependency rules evaluated by the Doctor.
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuleConfig {
     /// Role keys that Primary scenes may depend on without warning.
     #[serde(default)]
@@ -101,6 +150,7 @@ pub enum RegistryStorageError {
 
 /// Typed failures while mutating the persisted registry.
 #[derive(Debug, Error)]
+#[cfg(test)]
 pub enum RegistryMutationError {
     /// The existing registry could not be loaded safely.
     #[error(transparent)]
@@ -115,6 +165,52 @@ pub enum RegistryMutationError {
 }
 
 impl SceneRegistry {
+    /// Follow an observed OBS rename without replacing another scene's metadata.
+    /// Repeated delivery is harmless; the old card's position survives even if
+    /// the destination name has a stale order entry.
+    pub(crate) fn rename_scene(
+        &mut self,
+        old: &str,
+        new: &str,
+        uuid: Option<&str>,
+    ) -> SceneRenameResult {
+        if old == new || old.is_empty() || new.is_empty() {
+            return SceneRenameResult::Unchanged;
+        }
+        if uuid.is_some_and(|uuid| self.scene_uuids.get(old).is_some_and(|known| known != uuid)) {
+            return SceneRenameResult::Unchanged;
+        }
+        if self.scenes.contains_key(old) && self.scenes.contains_key(new) {
+            return SceneRenameResult::Conflict;
+        }
+        let identity = self.scene_uuids.remove(old);
+        let metadata = self.scenes.remove(old);
+        let ordered = self.scene_order.iter().any(|name| name == old);
+        let changed = metadata.is_some() || ordered || identity.is_some();
+        if changed {
+            if let Some(uuid) = uuid.map(str::to_owned).or(identity) {
+                self.scene_uuids.insert(new.to_owned(), uuid);
+            }
+        }
+        if let Some(metadata) = metadata {
+            self.scenes.insert(new.to_owned(), metadata);
+        }
+        if ordered {
+            self.scene_order.retain(|name| name != new);
+            for name in &mut self.scene_order {
+                if name == old {
+                    *name = new.to_owned();
+                }
+            }
+            self.set_scene_order(self.scene_order.clone());
+        }
+        if changed {
+            SceneRenameResult::Renamed
+        } else {
+            SceneRenameResult::Unchanged
+        }
+    }
+
     /// Return known scene IDs in persisted order, appending IDs not yet stored.
     pub fn ordered_scene_ids<'a>(
         &self,
@@ -289,9 +385,55 @@ impl SceneEntry {
     pub(crate) fn is_empty(&self) -> bool {
         self.role.is_none()
             && self.tags.is_empty()
+            && !self.favorite
             && !self.protected
             && self.accent_color.is_none()
             && self.icon.is_none()
+    }
+}
+
+impl SceneRegistry {
+    /// Trim tags and keep the first spelling of each case-insensitive label.
+    /// Clearing tags preserves every other scene field.
+    pub(crate) fn set_scene_tags(
+        &mut self,
+        scene: &str,
+        tags: impl IntoIterator<Item = String>,
+    ) -> bool {
+        let mut seen = std::collections::HashSet::new();
+        let tags: Vec<_> = tags
+            .into_iter()
+            .map(|tag| tag.trim().to_owned())
+            .filter(|tag| !tag.is_empty() && seen.insert(tag.to_lowercase()))
+            .collect();
+        if self
+            .scenes
+            .get(scene)
+            .map(|entry| entry.tags.as_slice())
+            .unwrap_or_default()
+            == tags
+        {
+            return false;
+        }
+        let entry = self.scenes.entry(scene.to_owned()).or_default();
+        entry.tags = tags;
+        if entry.is_empty() {
+            self.scenes.remove(scene);
+        }
+        true
+    }
+
+    /// Mark or unmark a scene without removing its other curation.
+    pub(crate) fn set_scene_favorite(&mut self, scene: &str, favorite: bool) -> bool {
+        if self.scenes.get(scene).is_some_and(|entry| entry.favorite) == favorite {
+            return false;
+        }
+        let entry = self.scenes.entry(scene.to_owned()).or_default();
+        entry.favorite = favorite;
+        if entry.is_empty() {
+            self.scenes.remove(scene);
+        }
+        true
     }
 }
 
@@ -334,16 +476,10 @@ impl SceneRegistry {
 }
 
 /// Persist one scene icon to the registry in the XDG config directory.
+#[cfg(test)]
 pub fn set_scene_icon(scene_id: &str, icon: Option<&str>) -> Result<bool, RegistryMutationError> {
     mutate_registry(&xdg::registry_path(), |registry| {
         registry.set_scene_icon(scene_id, icon)
-    })
-}
-
-/// Persist one audio-input icon to the registry in the XDG config directory.
-pub fn set_input_icon(input_id: &str, icon: Option<&str>) -> Result<bool, RegistryMutationError> {
-    mutate_registry(&xdg::registry_path(), |input_registry| {
-        input_registry.set_input_icon(input_id, icon)
     })
 }
 
@@ -351,6 +487,7 @@ pub fn set_input_icon(input_id: &str, icon: Option<&str>) -> Result<bool, Regist
 ///
 /// Load failures are returned rather than coerced to an empty registry, so a
 /// hand-edited but temporarily invalid file is never overwritten.
+#[cfg(test)]
 fn mutate_registry(
     path: &Path,
     change: impl FnOnce(&mut SceneRegistry) -> bool,
@@ -482,11 +619,6 @@ pub fn read_registry_from_path(path: &Path) -> Result<SceneRegistry, RegistrySto
     }
 }
 
-/// Write registry JSON to the XDG config directory.
-pub fn write_registry(registry: &SceneRegistry) -> io::Result<()> {
-    write_registry_to_path(&xdg::registry_path(), registry)
-}
-
 #[cfg(test)]
 fn set_scene_role_from_path(
     path: &Path,
@@ -523,7 +655,26 @@ pub fn write_registry_to_path(path: &Path, registry: &SceneRegistry) -> io::Resu
 pub fn read_registry_yaml_from_path(path: &Path) -> io::Result<SceneRegistry> {
     let raw =
         crate::storage::small_file::read_to_string(path, crate::storage::small_file::YAML_LIMIT)?;
-    serde_saphyr::from_str(&raw).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+    let mut registry: SceneRegistry = serde_saphyr::from_str(&raw)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    // YAML is portable named intent. Identities from another connection must
+    // never redirect it or revive detached conflicts in this workspace.
+    registry.scene_uuids.clear();
+    for retained in &mut registry.retained_scenes {
+        retained.uuid = None;
+    }
+    // Keep stable identities as evidence, but never activate imported key
+    // bindings automatically in another production. Users review/rebind them.
+    for binding in &mut registry.action_bindings {
+        binding.enabled = false;
+    }
+    for pin in &mut registry.quick_actions {
+        pin.enabled = false;
+    }
+    for rule in &mut registry.audio_alerts {
+        rule.enabled = false;
+    }
+    Ok(registry)
 }
 
 /// Write a YAML registry export to an explicit path, creating parents as needed.
@@ -541,6 +692,102 @@ pub fn write_registry_yaml_to_path(path: &Path, registry: &SceneRegistry) -> io:
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn tags_normalize_without_erasing_other_curation_and_favorites_survive_clearing() {
+        let mut registry = SceneRegistry::default();
+        assert!(!registry.set_scene_tags("Main", [" ".into()]));
+        assert!(!registry.set_scene_favorite("Main", false));
+        assert!(registry.scenes.is_empty());
+        registry.set_scene_icon("Main", Some("camera"));
+        assert!(registry.set_scene_tags(
+            "Main",
+            [" Podcast ", "", "podcast", "Київ"].map(str::to_owned)
+        ));
+        assert_eq!(registry.scenes["Main"].tags, ["Podcast", "Київ"]);
+        assert!(!registry.set_scene_tags("Main", ["Podcast", "Київ"].map(str::to_owned)));
+        assert!(registry.set_scene_favorite("Main", true));
+        assert!(!registry.set_scene_favorite("Main", true));
+        assert!(registry.set_scene_tags("Main", []));
+        registry.set_scene_icon("Main", None);
+        assert!(registry.scenes["Main"].favorite);
+        let restored: SceneRegistry =
+            serde_json::from_str(&serde_json::to_string(&registry).unwrap()).unwrap();
+        assert_eq!(restored, registry);
+        assert!(registry.set_scene_favorite("Main", false));
+        assert!(registry.scenes.is_empty());
+    }
+
+    #[test]
+    fn scene_rename_preserves_all_curation_and_original_card_position() {
+        let mut registry = SceneRegistry::default();
+        let entry = SceneEntry {
+            role: Some(SceneRole::Primary),
+            tags: vec!["podcast".into()],
+            favorite: true,
+            protected: true,
+            accent_color: Some("#112233".into()),
+            icon: Some("camera".into()),
+        };
+        let expected = serde_json::to_value(&entry).unwrap();
+        registry.scenes.insert("Camera".into(), entry);
+        registry.scene_order = vec![
+            "Intro".into(),
+            "Camera".into(),
+            "End".into(),
+            "Guest".into(),
+        ];
+        assert_eq!(
+            registry.rename_scene("Camera", "Guest", None),
+            SceneRenameResult::Renamed
+        );
+        assert!(!registry.scenes.contains_key("Camera"));
+        assert_eq!(
+            serde_json::to_value(&registry.scenes["Guest"]).unwrap(),
+            expected
+        );
+        assert_eq!(registry.scene_order, ["Intro", "Guest", "End"]);
+        assert_eq!(
+            registry.rename_scene("Camera", "Guest", None),
+            SceneRenameResult::Unchanged
+        );
+    }
+
+    #[test]
+    fn scene_rename_conflict_leaves_both_entries_and_order_untouched() {
+        let mut registry = SceneRegistry::default();
+        registry.set_scene_icon("Camera", Some("camera"));
+        registry.set_scene_icon("Guest", Some("person"));
+        registry.scene_order = vec!["Camera".into(), "Guest".into()];
+        let before = serde_json::to_value(&registry).unwrap();
+        assert_eq!(
+            registry.rename_scene("Camera", "Guest", None),
+            SceneRenameResult::Conflict
+        );
+        assert_eq!(serde_json::to_value(&registry).unwrap(), before);
+    }
+
+    #[test]
+    fn scene_rename_updates_order_without_creating_empty_metadata() {
+        let mut registry = SceneRegistry {
+            scene_order: vec!["Camera".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            registry.rename_scene("Camera", "Guest", None),
+            SceneRenameResult::Renamed
+        );
+        assert_eq!(registry.scene_order, ["Guest"]);
+        assert!(registry.scenes.is_empty());
+        assert_eq!(
+            registry.rename_scene("Guest", "Guest", None),
+            SceneRenameResult::Unchanged
+        );
+        assert_eq!(
+            registry.rename_scene("Guest", "", None),
+            SceneRenameResult::Unchanged
+        );
+    }
 
     #[test]
     fn oversized_registry_and_yaml_writes_preserve_existing_targets() {
@@ -716,12 +963,141 @@ mod tests {
     }
 
     #[test]
+    fn explicit_bindings_round_trip_locally_but_import_disabled_with_identity_intact() {
+        use crate::domain::{
+            action_shortcut::{ActionBinding, ActionShortcut},
+            hotkey::Modifiers,
+            operator_action::{ActionTarget, OperatorAction},
+        };
+        let mut registry = SceneRegistry::default();
+        registry.action_bindings.push(ActionBinding {
+            shortcut: ActionShortcut {
+                key: "F8".into(),
+                modifiers: Modifiers::NONE,
+            },
+            action: OperatorAction::Scene {
+                target: ActionTarget {
+                    name: "Camera".into(),
+                    uuid: Some("scene-1".into()),
+                },
+            },
+            enabled: true,
+        });
+        let json = serde_json::to_string(&registry).unwrap();
+        assert_eq!(
+            serde_json::from_str::<SceneRegistry>(&json).unwrap(),
+            registry
+        );
+        assert!(serde_json::from_str::<SceneRegistry>("{}")
+            .unwrap()
+            .action_bindings
+            .is_empty());
+        let path = unique_temp_path("action-bindings", "yaml");
+        write_registry_yaml_to_path(&path, &registry).unwrap();
+        let imported = read_registry_yaml_from_path(&path).unwrap();
+        assert!(!imported.action_bindings[0].enabled);
+        assert_eq!(
+            imported.action_bindings[0].action,
+            registry.action_bindings[0].action
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn audio_expectations_round_trip_locally_and_require_review_after_import() {
+        use crate::domain::{health::AudioRule, operator_action::ActionTarget};
+        assert!(serde_json::from_str::<SceneRegistry>("{}")
+            .unwrap()
+            .audio_alerts
+            .is_empty());
+        let registry = SceneRegistry {
+            audio_alerts: vec![AudioRule {
+                target: ActionTarget {
+                    name: "Mic".into(),
+                    uuid: Some("mic-one".into()),
+                },
+                enabled: true,
+                silence: true,
+                clipping: false,
+            }],
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&registry).unwrap();
+        assert_eq!(
+            serde_json::from_str::<SceneRegistry>(&json).unwrap(),
+            registry
+        );
+        let path = unique_temp_path("audio-alerts", "yaml");
+        write_registry_yaml_to_path(&path, &registry).unwrap();
+        let imported = read_registry_yaml_from_path(&path).unwrap();
+        assert!(!imported.audio_alerts[0].enabled);
+        assert_eq!(
+            imported.audio_alerts[0].target,
+            registry.audio_alerts[0].target
+        );
+        assert!(imported.audio_alerts[0].silence);
+        assert!(!imported.audio_alerts[0].clipping);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn live_pins_keep_order_and_identity_locally_but_import_disabled() {
+        use crate::domain::operator_action::{ActionTarget, OperatorAction, OperatorPin};
+        assert!(serde_json::from_str::<SceneRegistry>("{}")
+            .unwrap()
+            .quick_actions
+            .is_empty());
+        let registry = SceneRegistry {
+            quick_actions: vec![
+                OperatorPin {
+                    action: OperatorAction::SetMuted {
+                        target: ActionTarget {
+                            name: "Old name".into(),
+                            uuid: Some("mic-1".into()),
+                        },
+                        muted: true,
+                    },
+                    enabled: true,
+                },
+                OperatorPin {
+                    action: OperatorAction::SaveReplay,
+                    enabled: false,
+                },
+            ],
+            ..Default::default()
+        };
+        let encoded = serde_json::to_string(&registry).unwrap();
+        assert_eq!(
+            serde_json::from_str::<SceneRegistry>(&encoded).unwrap(),
+            registry
+        );
+        let path = unique_temp_path("quick-actions", "yaml");
+        write_registry_yaml_to_path(&path, &registry).unwrap();
+        let imported = read_registry_yaml_from_path(&path).unwrap();
+        assert!(imported.quick_actions.iter().all(|pin| !pin.enabled));
+        assert_eq!(
+            imported
+                .quick_actions
+                .iter()
+                .map(|pin| &pin.action)
+                .collect::<Vec<_>>(),
+            registry
+                .quick_actions
+                .iter()
+                .map(|pin| &pin.action)
+                .collect::<Vec<_>>()
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn yaml_registry_round_trips() {
         let path = unique_temp_path("registry-round-trip", "yaml");
         let mut registry = SceneRegistry::default();
         registry.scenes.insert(
             "Main".into(),
             SceneEntry {
+                favorite: false,
                 role: Some(SceneRole::Primary),
                 tags: vec!["live".into()],
                 protected: true,
@@ -912,6 +1288,7 @@ rules:
         registry.scenes.insert(
             "Main".to_string(),
             SceneEntry {
+                favorite: false,
                 role: Some(SceneRole::Module),
                 tags: vec!["camera".to_string()],
                 protected: true,
@@ -934,6 +1311,7 @@ rules:
         registry.scenes.insert(
             "Main".to_string(),
             SceneEntry {
+                favorite: false,
                 role: Some(SceneRole::Primary),
                 tags: Vec::new(),
                 protected: false,
@@ -953,6 +1331,7 @@ rules:
         registry.scenes.insert(
             "Main".to_string(),
             SceneEntry {
+                favorite: false,
                 role: Some(SceneRole::Primary),
                 tags: Vec::new(),
                 protected: false,
@@ -975,6 +1354,7 @@ rules:
         registry.scenes.insert(
             "Main".into(),
             SceneEntry {
+                favorite: false,
                 role: Some(SceneRole::Module),
                 tags: vec!["camera".into()],
                 protected: true,
@@ -1018,6 +1398,7 @@ rules:
         registry.scenes.insert(
             "Main".into(),
             SceneEntry {
+                favorite: false,
                 role: Some(SceneRole::Primary),
                 tags: vec!["live".into()],
                 protected: false,
@@ -1028,6 +1409,7 @@ rules:
         registry.scenes.insert(
             "Camera".into(),
             SceneEntry {
+                favorite: false,
                 role: Some(SceneRole::Raw),
                 tags: vec!["source".into()],
                 protected: true,

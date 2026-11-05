@@ -1,14 +1,16 @@
 //! Scene inventory state normalized from OBS.
 
-/// Stable identifier for an OBS scene.  Matches `sceneName`.
+/// Current name used for OBS scene controls. Matches `sceneName`.
 pub type SceneId = String;
 
 /// OBS scene identity. The id is the user-visible name OBS reports
 /// (`sceneName`); OBS has no separate display name for scenes.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Scene {
-    /// Stable OBS scene identifier.
+    /// Current OBS scene name.
     pub id: SceneId,
+    /// Persistent OBS identity, when the server supplies a non-nil UUID.
+    pub uuid: Option<String>,
 }
 
 /// Full scene list plus the currently active scene.

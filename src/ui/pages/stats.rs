@@ -126,6 +126,17 @@ fn build_content(
     page.add_css_class("stats-page");
 
     page.append(&build_header(header_trailing));
+    let tools = gtk4::FlowBox::builder()
+        .selection_mode(gtk4::SelectionMode::None)
+        .min_children_per_line(1)
+        .max_children_per_line(2)
+        .row_spacing(6)
+        .column_spacing(6)
+        .build();
+    crate::ui::insert_compact_flow_child(&tools, &crate::ui::health_alerts::button(nav.clone()));
+    crate::ui::insert_compact_flow_child(&tools, &crate::ui::bookmarks::button(nav.clone()));
+    crate::ui::insert_compact_flow_child(&tools, &crate::ui::session_reports::button(nav.clone()));
+    page.append(&tools);
 
     let gauges = build_gauges(nav);
     page.append(&gauges.row);
@@ -206,6 +217,8 @@ fn open_popout(
 
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&adw::HeaderBar::new());
+    let (health, health_tick) = crate::ui::health_alerts::build(nav.clone());
+    toolbar.add_top_bar(&health);
     toolbar.set_content(Some(&scroll));
 
     let window = adw::Window::builder()
@@ -214,6 +227,17 @@ fn open_popout(
         .default_height(720)
         .content(&toolbar)
         .build();
+    if let Some(source) = glib::MainContext::default().find_source_by_id(&health_tick) {
+        window.connect_destroy({
+            let source = source.clone();
+            move |_| source.destroy()
+        });
+        window.connect_notify_local(Some("application"), move |window, _| {
+            if window.application().is_none() {
+                source.destroy();
+            }
+        });
+    }
 
     // Best-effort: keep the pop-out under the same application so it shares
     // the app's lifecycle. Nothing relies on this if it is ever unavailable.
