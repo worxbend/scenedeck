@@ -1,13 +1,3 @@
-//! Fitness tests for the module boundaries described in `CLAUDE.md`.
-//!
-//! Each boundary here was written down before it was checked, and at least
-//! one of them had already been broken while the documentation still said
-//! otherwise. Nothing failed when that happened, because a documented rule
-//! that no check enforces is a suggestion. These tests turn the prose into
-//! something that can be violated only on purpose.
-
-#![cfg(test)]
-
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use syn::parse::discouraged::Speculative;
@@ -15,7 +5,7 @@ use syn::parse::{ParseStream, Parser};
 use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
 
-fn src_root() -> PathBuf {
+pub(super) fn src_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
 }
 
@@ -50,7 +40,7 @@ fn source_files() -> Vec<PathBuf> {
     files.into_iter().collect()
 }
 
-fn module_files(path: &Path, syntax: &syn::File) -> Vec<PathBuf> {
+pub(super) fn module_files(path: &Path, syntax: &syn::File) -> Vec<PathBuf> {
     let parent = path
         .parent()
         .expect("source has a parent directory")
@@ -76,8 +66,33 @@ struct ModuleFiles {
     files: Vec<PathBuf>,
 }
 
+/// How a boundary names a dependency it refuses.
+#[derive(Clone, Copy)]
+pub(super) enum Forbidden<'a> {
+    /// The path starts with this `::` prefix. A trailing `::` is ignored.
+    PathPrefix(&'a str),
+    /// Any segment of the path is exactly this name.
+    AnySegment(&'a str),
+}
+
+impl Forbidden<'_> {
+    fn matches(self, segments: &[String]) -> bool {
+        match self {
+            Self::PathPrefix(prefix) => {
+                let prefix: Vec<_> = prefix.trim_end_matches("::").split("::").collect();
+                segments
+                    .iter()
+                    .map(String::as_str)
+                    .take(prefix.len())
+                    .eq(prefix)
+            }
+            Self::AnySegment(name) => segments.iter().any(|segment| segment == name),
+        }
+    }
+}
+
 struct BoundaryVisitor<'a> {
-    forbidden: &'a [&'a str],
+    forbidden: &'a [Forbidden<'a>],
     lines: BTreeSet<usize>,
 }
 
@@ -203,15 +218,11 @@ impl BoundaryVisitor<'_> {
     }
 
     fn check_path(&mut self, segments: &[String], span: proc_macro2::Span) {
-        if self.forbidden.iter().any(|forbidden| {
-            let prefix: Vec<_> = forbidden.trim_end_matches("::").split("::").collect();
-            segments
-                .iter()
-                .map(String::as_str)
-                .take(prefix.len())
-                .eq(prefix)
-                || *forbidden == "AppController" && segments.iter().any(|s| s == "AppController")
-        }) {
+        if self
+            .forbidden
+            .iter()
+            .any(|forbidden| forbidden.matches(segments))
+        {
             self.lines.insert(span.start().line);
         }
     }
@@ -328,7 +339,7 @@ impl<'ast> Visit<'ast> for BoundaryVisitor<'_> {
     }
 }
 
-fn source_violations(source: &str, forbidden: &[&str]) -> Vec<(usize, String)> {
+pub(super) fn source_violations(source: &str, forbidden: &[Forbidden<'_>]) -> Vec<(usize, String)> {
     let syntax = syn::parse_file(source).expect("architecture scanner requires valid Rust");
     let mut visitor = BoundaryVisitor {
         forbidden,
@@ -346,13 +357,23 @@ fn source_violations(source: &str, forbidden: &[&str]) -> Vec<(usize, String)> {
 /// Report every production line under `scope` that names a forbidden term.
 ///
 /// `scope` is a path prefix relative to `src/`; an empty prefix means the
-/// whole crate. `exempt` lists files allowed to break the rule, which is
-/// how a boundary names its own gateway.
-fn violations(scope: &str, forbidden: &[&str], exempt: &[&str]) -> Vec<String> {
+/// whole crate. `exempt_prefixes` are path prefixes, also relative to
+/// `src/`, for the gateway files a boundary is allowed to name. An exact
+/// file matches itself. `Path::starts_with` uses whole components, so
+/// `inventory.rs` is not covered by the prefix `inventory`.
+pub(super) fn violations(
+    scope: &str,
+    forbidden: &[Forbidden<'_>],
+    exempt_prefixes: &[&str],
+) -> Vec<String> {
     source_files()
         .into_iter()
         .filter(|path| path.starts_with(scope))
-        .filter(|path| !exempt.iter().any(|allowed| path == Path::new(allowed)))
+        .filter(|path| {
+            !exempt_prefixes
+                .iter()
+                .any(|prefix| path.starts_with(prefix))
+        })
         .flat_map(|path| {
             let source =
                 std::fs::read_to_string(src_root().join(&path)).expect("source should be readable");
@@ -364,318 +385,34 @@ fn violations(scope: &str, forbidden: &[&str], exempt: &[&str]) -> Vec<String> {
         .collect()
 }
 
-#[test]
-fn scanner_resumes_after_test_only_syntax() {
-    let cases = [
-        (
-            "import",
-            "#[cfg(test)]\nuse crate::fixture;\nuse obws::Client;",
-        ),
-        (
-            "field",
-            "struct State {\n#[cfg(test)]\nfixture: usize,\nproduction: obws::Client,\n}",
-        ),
-        (
-            "module",
-            "#[cfg(test)]\nmod tests { use obws::Fixture; }\nuse obws::Client;",
-        ),
-        (
-            "impl helper",
-            "impl State {\n#[cfg(test)]\nfn fixture() {}\nfn production(_: obws::Client) {}\n}",
-        ),
-    ];
-    let missed: Vec<_> = cases
+/// Count literal `pattern` matches under `scope`.
+///
+/// A file over its ceiling fails. A file with matches and no ceiling fails
+/// too: a new file must be added to the list on purpose. Zero matches are
+/// not a new file, so a count that falls to zero is allowed. This counts
+/// source text, not lines and not syntax.
+pub(super) fn ratchet(scope: &str, pattern: &str, ceilings: &[(&str, usize)]) -> Vec<String> {
+    assert!(!pattern.is_empty(), "ratchet pattern must not be empty");
+    source_files()
         .into_iter()
-        .filter(|(_, source)| source_violations(source, &["obws"]).len() != 1)
-        .map(|(name, _)| name)
-        .collect();
-    assert!(
-        missed.is_empty(),
-        "missed production after test-only syntax: {missed:?}"
-    );
-}
-
-#[test]
-fn scanner_exempts_only_cfgs_that_cannot_ship_without_tests() {
-    let source = r#"
-#[cfg(all(test, feature = "fixtures"))]
-use obws::Fixture;
-#[cfg(any(test, all(test, unix)))]
-use obws::OtherFixture;
-#[cfg(not(not(test)))]
-use obws::ThirdFixture;
-#[cfg(not(test))]
-use obws::Production;
-#[cfg(any(test, feature = "production"))]
-use obws::OptionalProduction;
-#[cfg_attr(test, allow(dead_code))]
-use obws::AlsoProduction;
-#[cfg(unix)]
-use obws::PlatformProduction;
-"#;
-    let lines: Vec<_> = source_violations(source, &["obws"])
-        .into_iter()
-        .map(|(line, _)| line)
-        .collect();
-    assert_eq!(lines, [9, 11, 13, 15]);
-}
-
-#[test]
-fn scanner_checks_visible_macro_paths_but_not_macro_literals() {
-    let cases = [
-        "fn build() { callback!(crate::obs::connect()); }",
-        "fn build() { log!(error = %crate::obs::status(), \"failed\"); }",
-        "macro_rules! build { () => {{ crate::obs::connect() }}; }",
-        "items! { use crate::{obs::client::ObsClient as Backend}; }",
-    ];
-    for source in cases {
-        assert_eq!(
-            source_violations(source, &["crate::obs"]).len(),
-            1,
-            "{source}"
-        );
-    }
-    let fixtures = r##"
-items! { #[cfg(test)] use crate::obs::Fixture; }
-fn explain() { log!("crate::obs::connect()", r#"obws::Client"#); }
-"##;
-    assert!(source_violations(fixtures, &["crate::obs", "obws"]).is_empty());
-}
-
-#[test]
-fn scanner_exempts_nested_test_expressions_and_preserves_production_locations() {
-    let source =
-        "fn build() {\n#[cfg(test)]\n{ crate::obs::fixture(); }\ncrate::obs::connect();\n}";
-    assert_eq!(
-        source_violations(source, &["crate::obs"]),
-        [(4, "crate::obs::connect();".to_string())]
-    );
-}
-
-#[test]
-fn scanner_expands_grouped_imports_before_checking_aliases() {
-    let cases = [
-        ("obws", "use obws::{self as protocol, Client as Backend};"),
-        ("gtk4", "use gtk4::{self as toolkit, Widget};"),
-        ("adw::", "use adw::{self as toolkit, Application};"),
-        ("glib::", "use glib::{self as toolkit, MainContext};"),
-        ("gio::", "use gio::{self as toolkit, Action};"),
-        ("crate::storage", "use crate::{domain::Scene, storage::{self as disk, config::AppConfig}};"),
-        ("AppController", "use crate::{controller::{app_controller::AppController as Controller}, domain::Scene};"),
-        ("crate::obs", "use crate::{domain::obs::ObsNamedList, obs::{self as backend, client::ObsClient as Client}};"),
-        ("crate::obs", "use crate::{obs::*};"),
-        ("crate::obs", "fn connect() { crate::obs::client::ObsClient::new(); }"),
-    ];
-    for (forbidden, source) in cases {
-        assert_eq!(
-            source_violations(source, &[forbidden]),
-            [(1, source.to_string())],
-            "{source}"
-        );
-    }
-    assert!(source_violations("use crate::domain::obs::ObsNamedList;", &["crate::obs"]).is_empty());
-}
-
-#[test]
-fn scanner_does_not_treat_comments_or_literals_as_dependencies_or_cfgs() {
-    let source = r##"
-/* use obws::Client;
-   crate::storage::AppConfig */
-/// AppController and obws::Client are described here.
-const HELP: &str = "#[cfg(test)] use obws::Client; crate::obs::connect()";
-const BYTES: &[u8] = br#"gtk4::Widget and adw::Application"#;
-fn obws_status() {}
-use obws::Client; // This import, not the text above, violates the rule.
-"##;
-    let offenders = source_violations(
-        source,
-        &[
-            "obws",
-            "crate::storage",
-            "AppController",
-            "crate::obs",
-            "gtk4",
-            "adw::",
-        ],
-    );
-    assert_eq!(
-        offenders,
-        [(
-            8,
-            "use obws::Client; // This import, not the text above, violates the rule.".to_string()
-        )]
-    );
-}
-
-#[test]
-fn scanner_exempts_test_only_imports_fields_variants_and_associated_items() {
-    let fixtures = r#"
-#[cfg(test)] use obws::Client;
-#[cfg(test)] extern crate obws as protocol;
-struct State { #[cfg(test)] client: obws::Client }
-enum StateKind { #[cfg(test)] Fixture(obws::Client), Production }
-impl State { #[cfg(test)] fn fixture(_: obws::Client) {} }
-trait Factory { #[cfg(test)] fn fixture() -> obws::Client; }
-#[cfg(test)] impl obws::Fixture for State {}
-#[cfg(test)] mod tests { use obws::Client; }
-fn production() {}
-"#;
-    assert!(source_violations(fixtures, &["obws"]).is_empty());
-    assert!(source_violations("#![cfg(test)]\nuse obws::Client;", &["obws"]).is_empty());
-}
-
-#[test]
-fn scanner_module_discovery_skips_test_only_out_of_line_fixtures() {
-    let source = r#"
-#[cfg(test)] #[path = "fixture.rs"] mod tests;
-#[path = "production.rs"] mod production;
-mod nested {
-    #[cfg(test)] mod fixture;
-    #[path = "worker.rs"] mod worker;
-}
-"#;
-    let parent = src_root().join("ui");
-    let syntax = syn::parse_file(source).unwrap();
-    assert_eq!(
-        module_files(&parent.join("page.rs"), &syntax),
-        [
-            parent.join("production.rs"),
-            parent.join("page/nested/worker.rs"),
-        ]
-    );
-}
-
-#[test]
-fn ui_never_reaches_the_obs_adapter_directly() {
-    let offenders = violations("ui", &["crate::obs"], &[]);
-    assert!(
-        offenders.is_empty(),
-        "UI must dispatch an AppCommand through NavigationContext, not call src/obs/ directly:\n{}",
-        offenders.join("\n")
-    );
-}
-
-/// The OBS WebSocket library stays inside the OBS adapter.
-///
-/// Keeping `obws` in one module is what makes the protocol replaceable and
-/// keeps protocol details out of code that decides what the app should do.
-/// This had already been broken once: the controller's event loop matched
-/// raw `obws` event variants and carried its own copy of the mapping that
-/// `obs/mapper.rs` already owned.
-#[test]
-fn only_the_obs_adapter_imports_obws() {
-    let offenders = violations("", &["obws"], &[]);
-    let offenders: Vec<String> = offenders
-        .into_iter()
-        .filter(|hit| !hit.starts_with("  obs/"))
-        .collect();
-
-    assert!(
-        offenders.is_empty(),
-        "`obws` may only be used inside src/obs/. Wrap it in `ObsClient`, \
-         `ObsEventStream`, or a `mapper` function and hand a domain type \
-         across the boundary instead:\n{}",
-        offenders.join("\n")
-    );
-}
-
-/// Domain types stay free of GTK and of the OBS protocol.
-///
-/// `src/domain/` holds what the app is about — scenes, roles, audio levels,
-/// output state. If a widget type or a protocol type reaches in there, the
-/// concepts stop being testable without a display or a running OBS, and
-/// the app's own vocabulary starts being shaped by its dependencies.
-#[test]
-fn domain_types_depend_on_neither_gtk_nor_obs() {
-    let offenders = violations("domain", &["gtk4", "adw::", "glib::", "gio::", "obws"], &[]);
-
-    assert!(
-        offenders.is_empty(),
-        "src/domain/ must not depend on GTK or on `obws`; convert at the \
-         adapter boundary instead:\n{}",
-        offenders.join("\n")
-    );
-}
-
-/// Services stay free of GTK.
-///
-/// `src/services/` is pure logic over domain snapshots — dB conversion,
-/// graph edge classification, the Doctor's checks. Keeping GTK out is what
-/// lets those rules be tested by calling them, with no display, no main
-/// loop, and no widget tree to assemble first.
-#[test]
-fn services_hold_no_gtk() {
-    let offenders = violations("services", &["gtk4", "adw::", "glib::", "gio::"], &[]);
-
-    assert!(
-        offenders.is_empty(),
-        "src/services/ must not depend on GTK. A service decides what is \
-         true; a widget decides how to show it:\n{}",
-        offenders.join("\n")
-    );
-}
-
-/// Neither the domain nor the services know how anything is stored.
-///
-/// `src/storage/` owns the serde representations, the file layout, and the
-/// keyring. Its types convert to domain snapshots at the boundary. If the
-/// dependency ran the other way, changing the shape of `config.json` would
-/// mean editing the rules of the application.
-#[test]
-fn domain_and_services_do_not_reach_into_storage() {
-    let mut offenders = violations("domain", &["crate::storage"], &[]);
-    offenders.extend(violations("services", &["crate::storage"], &[]));
-
-    assert!(
-        offenders.is_empty(),
-        "src/domain/ and src/services/ must not depend on src/storage/. \
-         Convert a storage type into a domain snapshot and pass that \
-         instead:\n{}",
-        offenders.join("\n")
-    );
-}
-
-/// Pages and widgets reach the controller only through `NavigationContext`.
-///
-/// `NavigationContext` exposes exactly two things: switch to a page, and
-/// dispatch a command. That narrow surface is what keeps the pages from
-/// growing their own opinions about connection lifecycles or OBS calls.
-///
-/// `window.rs` and `navigation.rs` are exempt because they are where the
-/// application is assembled: one builds the controller, the other wraps it.
-#[test]
-fn pages_reach_the_controller_only_through_navigation() {
-    let offenders = violations(
-        "ui",
-        &["AppController"],
-        &["ui/window.rs", "ui/navigation.rs"],
-    );
-
-    assert!(
-        offenders.is_empty(),
-        "UI pages and widgets must go through `NavigationContext` \
-         (`switch_to_page` / `dispatch`) rather than naming \
-         `AppController` directly:\n{}",
-        offenders.join("\n")
-    );
-}
-
-/// Background layers stay off GTK.
-///
-/// Controller, storage and OBS code run on Tokio or the blocking pool. GTK
-/// objects are main-thread only, so a widget or `glib` handle here is a
-/// threading bug waiting for a caller. Results cross back as `AppEvent`.
-#[test]
-fn background_layers_hold_no_gtk_or_ui() {
-    let forbidden = ["gtk4", "adw::", "glib::", "gio::", "crate::ui"];
-    let mut offenders = violations("controller", &forbidden, &[]);
-    offenders.extend(violations("storage", &forbidden, &[]));
-    offenders.extend(violations("obs", &forbidden, &[]));
-
-    assert!(
-        offenders.is_empty(),
-        "src/controller/, src/storage/ and src/obs/ must not depend on GTK \
-         or src/ui/. Send an `AppEvent` and let the GTK thread apply it:\n{}",
-        offenders.join("\n")
-    );
+        .filter(|path| path.starts_with(scope))
+        .filter_map(|path| {
+            let source =
+                std::fs::read_to_string(src_root().join(&path)).expect("source should be readable");
+            let count = source.matches(pattern).count();
+            if count == 0 {
+                return None;
+            }
+            let key = path.to_str().expect("source path is utf-8");
+            match ceilings.iter().find(|(name, _)| *name == key) {
+                Some((_, ceiling)) if count <= *ceiling => None,
+                Some((_, ceiling)) => Some(format!(
+                    "  {key}: {count} occurrences of {pattern:?}, ceiling {ceiling}"
+                )),
+                None => Some(format!(
+                    "  {key}: {count} occurrences of {pattern:?}, no ceiling"
+                )),
+            }
+        })
+        .collect()
 }
