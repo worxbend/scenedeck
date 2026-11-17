@@ -1,0 +1,802 @@
+{
+  "reviewer": "ui-widgets-theme",
+  "skills": [
+    "frontend-design",
+    "clean-code-guard",
+    "code-complete",
+    "frontend-ui-engineering"
+  ],
+  "verifier_skills": [
+    "code-review",
+    "doubt-driven-development"
+  ],
+  "summary": "I reviewed the ui-widgets-theme scope with the frontend-design, clean-code-guard, code-complete and frontend-ui-engineering checklists. I read these files in full: operating_panel.rs, audio_card.rs, theme.rs, action_catalog.rs, action_shortcuts.rs, global_shortcuts.rs, persist.rs, background_io.rs, audio_presets.rs and operator_picker.rs. I skimmed the outlines of the other widgets (chart, volume_meter, deck_controls, scene_card, status_bar, studio_controls, transport_bar) and diffed resources/themes/*.css.\n\nMain problems, worst first:\n\n1. **operating_panel.rs is a whole page filed as a widget.** It is the Sources inspector (2361 lines, about 1613 production), and the 9-line src/ui/pages/sources.rs only forwards to it. `populate` is about 418 lines and `build_source_detail` about 394. It finds its own widgets again by walking the whole tree and matching names built with `format!`. Some of those names contain translated text, so they change with the locale.\n2. **Rules that are not UI code live in ui/.** action_catalog.rs decides whether an operator action is allowed (`resolve_with_inputs`). action_shortcuts.rs owns shortcut conflict rules. audio_presets.rs owns preset validation and plan building. persist.rs owns the legacy-registry migration rule. global_shortcuts/portal.rs is a D-Bus client that touches no widgets.\n3. **OBS request names leak into the UI as raw strings.** There are about 60 literals such as \"SetInputMute\", checked by three separate helpers (`supported`, `supports`, `capable`). The obs/ boundary should turn these into a typed value instead.\n4. **persist.rs and background_io.rs each pile 4-5 jobs into one file**, held together by thread-local globals. Every background job polls on its own 20 ms timer, and there is production `.expect` (one in persist.rs, five lock expects in background_io.rs).\n5. **theme.rs is less bad than its size suggests.** About 60% of its 1553 lines are tests. The production part still mixes the theme list, the custom-CSS security check, CSS provider handling and desktop integration. Adding a theme means editing four places.\n6. **The charts and level meters hard-code their colours.** They ignore the theme tokens, so the High Contrast theme cannot reach them, and \"good\" is blue in charts but green everywhere else.\n7. **Many dialogs redraw on a 250 ms or 1 s timer** instead of reacting to state changes.\n8. **Small helpers are copied around.** A `text()` label builder exists in 7 files, and the app's page list exists in 3 places that disagree with each other.\n\nThe proposed splits keep the existing native GTK tests and unit tests as the safety net. Each split moves code without changing behaviour first. Pure logic (source drafts, the registry write journal, the action resolver, shortcut conflict checks, preset rules) comes out into units that can be tested without GTK. Replacing widget-name lookups with typed handles changes behaviour, so it is a separate later step.\n\nWhat I did not check: I ran no tests or builds (the review was read-only), and I only scanned the remaining widget files rather than reading them line by line. Some of these findings depend on other reviewers' work: the AppState revision counter belongs to the window.rs/state.rs reviewer, and moving the portal client into infra/ needs a check against architecture_tests.rs.\n\nVERIFIER: every finding re-checked against source at HEAD 31d512f. Findings: adjusted 11, confirmed 11. Key corrections: uiw-04/action_catalog split must not move resolve into src/domain (it reads storage SceneRegistry and controller RegistryStatus; architecture_tests would fail) - use src/controller/state/action_resolution.rs; uiw-05 OBS protocol names belong in obs/mapper.rs, not domain; uiw-11 volume meter colours are deliberately fixed (volume_meter.rs:60-64); uiw-08 lock-poison risk is near-unreachable and futures_util::channel needs a feature flag; uiw-13 domain type is SceneHotkeyConfig and ActionShortcut::conflict already exists; uiw-21 ids persist, so display-name renames need no aliases. No finding fully refuted.",
+  "findings": [
+    {
+      "id": "uiw-01",
+      "severity": "high",
+      "category": "god-file",
+      "file": "src/ui/widgets/operating_panel.rs",
+      "lines": "1-1613 (prod), 678-1096, 1098-1492, 94-269",
+      "title": "Sources page lives in widgets/ as a 2361-line god file with 400-line routines",
+      "evidence": "operating_panel::build is the entire Sources page (root CSS class 'sources-page' line 101; only caller src/ui/pages/sources.rs:8 is a 9-line shim plus lifetime_tests.rs:83). populate() spans 678-1096 (~418 lines: heading, status line, scene selector, source list, search, split view, breakpoint, detail). build_source_detail() spans 1098-1492 (~394 lines: filters, text editor, media, advanced audio). The build() refresh closure (162-252) mixes content diffing, focus capture, scroll restore and idle re-focus. Tests span 1614-2361.",
+      "recommendation": "Move to src/ui/pages/sources/ (see proposed_splits). Delete the shim src/ui/pages/sources.rs and drop `pub(crate) mod operating_panel` from src/ui/widgets/mod.rs:14. Split populate into browser.rs::build_browser(...) -> SourceBrowserHandle and detail/mod.rs::build_detail(...) -> DetailHandle. Split build_source_detail into one module per section: detail/filters.rs, detail/text_editor.rs, detail/media.rs, detail/audio.rs. Each section function stays under ~80 lines.",
+      "risk": "Any edit to Sources touches a 2.3k-line file. Merge conflicts and missed edge cases in the 400-line routines.",
+      "effort": "L",
+      "smell": "Large Class / Long Method / Divergent Change",
+      "verdict": "confirmed",
+      "verifier_note": "Verified: pages/sources.rs is a 9-line shim forwarding to operating_panel::build (line 8); root class 'sources-page' at 101; populate 678-1096, build_source_detail 1098-1492, tests from 1614. Other callers: widgets/lifetime_tests.rs:3,83 and widgets/mod.rs:14. Moving under ui/pages/ does not trip architecture_tests (pages_reach_the_controller_only_through_navigation forbids only `AppController`). Native test child names embed module paths and must be renamed on the move: operating_panel.rs:1620, 1760 and operating_panel/media_progress.rs:147."
+    },
+    {
+      "id": "uiw-02",
+      "severity": "high",
+      "category": "code-smell",
+      "file": "src/ui/widgets/operating_panel.rs",
+      "lines": "271-312, 363-402, 414-503, 548-651, 450, 1541, 1601-1612",
+      "title": "Widget-name string registry and full-tree visit() used as data binding (locale-dependent keys)",
+      "evidence": "Updates locate widgets by recomputing names: update_media_values compares widget_name to format!(\"control-focus-seek-position-{}\", input) for every visited widget (279). update_observed_controls builds HashMaps keyed by format!(\"control-focus-item-{owner}-{item_id}-{path}\") (372-376). update_detail_values keys spin buttons by format!(\"control-focus-number-{title}\"), where title is the localized fl!(\"control-audio-sync\") (430-450, matching add_numeric_apply 1541). expand() marks the media section by comparing its translated title: `if title == fl!(LANGUAGE_LOADER, \"control-media\")` (1608). update_status walks the whole tree on every refresh and every 1 s tick (591-650).",
+      "recommendation": "Return typed handles at build time, as AudioCardHandle already does (audio_card.rs:42-53). Proposed shapes: `struct SourceRowHandle { check: CheckButton, hidden_parent: Label }` keyed by `SourceItemKey { owner, item_id, path }`. `struct DetailHandles { text: Option<TextEditorHandle>, media: Option<MediaHandle>, audio: Option<AudioHandle>, filters: HashMap<String, CheckButton> }`. `struct StatusHandles { loading, error, result, age, stale: Label, refresh: Button, split: NavigationSplitView }`. Keep widget names only as test and focus anchors, built from ids, never from translated text. Replace `expand(.., _expanded)` with `section(parent, title) -> GtkBox` and set the media marker at the call site.",
+      "risk": "In a locale where two labels translate the same, the widget-name keys collide. Each pass walks the whole tree and formats a string per widget. Renaming a translation can silently break updates.",
+      "effort": "L",
+      "depends_on": [
+        "uiw-01"
+      ],
+      "smell": "Primitive Obsession / Stringly-typed lookup",
+      "verdict": "confirmed",
+      "verifier_note": "Verified: format!(\"control-focus-seek-position-{}\") at 279; item/hidden-parent keys at 372-376; numeric keys built from fl!(\"control-audio-sync\"/\"control-audio-balance\") at 430-450 and matched against add_numeric_apply's set_widget_name(format!(\"control-focus-number-{label}\")) at 1541 (the apply button is also named from the label at 1544); expand() compares the translated title to fl!(\"control-media\") at 1608. Locale collision itself is speculative (needs two identical translations); the real defect is that names derive from translated text. Note tests locate widgets by these names (e.g. named() helper ~1780), so the behaviour-changing step must keep id-based names as test anchors."
+    },
+    {
+      "id": "uiw-03",
+      "severity": "high",
+      "category": "ddd",
+      "file": "src/ui/widgets/operating_panel.rs",
+      "lines": "16-92, 1225-1232, 1318-1322, 1457-1461, 1494-1529",
+      "title": "Draft-editing state is an anemic struct whose maps are edited from outside with magic field keys",
+      "evidence": "LocalState mixes view flags (query, show_detail, usage_expanded, syncing) with draft state: text_drafts/text_origins, numeric_drafts: HashMap<(String,String),f64> keyed by the literals \"seek\"/\"sync\"/\"balance\", and track_drafts: HashMap<String,[bool;6]>. Callers reach into the maps directly: cancel does `local.borrow_mut().text_drafts.remove(&input)` and `text_origins.remove` (1231-1232). Seek does `numeric_drafts.remove(&(input.clone(), \"seek\".into()))` (1320-1321). Track toggles do `track_drafts.entry(input.clone()).or_insert(observed)[index] = ...` (1457-1461).",
+      "recommendation": "Create src/ui/pages/sources/drafts.rs with `enum NumericField { Seek, SyncOffset, Balance }` and `struct AudioTracks([bool; 6])`. Add `struct SourceDrafts` with intent methods: text_draft, edit_text, discard_text(input), text_conflict, numeric(input, field, observed), set_numeric_text, commit_numeric(input, field), tracks(input, observed), toggle_track(input, index, observed), reset_for_epoch(epoch). Keep view flags in a separate `SourcesViewState { query, show_detail, usage_expanded }`. Make the fields private. Move the unit tests at 2275-2345 next to it and add one test per NumericField.",
+      "risk": "Draft invariants (origin tracking for conflict detection) can be broken by any call site that forgets to clear the paired map.",
+      "effort": "M",
+      "depends_on": [
+        "uiw-01"
+      ],
+      "smell": "Data Clumps / Primitive Obsession / Inappropriate Intimacy",
+      "verdict": "confirmed",
+      "verifier_note": "Verified: LocalState 17-29 mixes view flags with drafts; external map edits at 1231-1232 (text_drafts/text_origins), 1320-1321 (numeric_drafts and numeric_text keyed by (input, \"seek\")), 1457-1461 (track_drafts.entry). Add numeric_text to SourceDrafts too (reviewer omitted it). Unit tests at 2276-2345 exist as cited."
+    },
+    {
+      "id": "uiw-04",
+      "severity": "high",
+      "category": "boundary",
+      "file": "src/ui/action_catalog.rs",
+      "lines": "66-145, 153-287, 99-104, 207-215, 647-655",
+      "title": "Operator-action permission rules (resolve/observed_label) live in ui/ and repeat the target match three times",
+      "evidence": "resolve_with_inputs (158-287) decides whether a pinned or shortcut action may run. It checks connection, scope, registry readiness, scene role is_live_switchable, freshness via can_control, capability and ambiguous identity. It has no GTK at all and only reads AppState. observed_label (66-145) is the same rule pattern returning localized strings. The OperatorAction to ActionTarget match is written three times (99-104, 207-215, 647-655). action_shortcuts.rs, global_shortcuts.rs, operator_picker.rs and quick actions all reach this rule set through ui::action_catalog.",
+      "recommendation": "(1) Add `impl OperatorAction { pub fn target(&self) -> Option<&ActionTarget> }` in src/domain/operator_action.rs and replace the three matches. (2) Move the rules into src/domain/operator_action/resolution.rs: `pub enum ResolvedAction { Control(ControlAction), OpenSource(String) }`, `pub fn resolve(ctx: &ActionContext<'_>, action: &OperatorAction) -> Option<ResolvedAction>`, and `pub fn observed_state(ctx, action) -> Option<ObservedActionState>`, where ObservedActionState is an enum (Active/Inactive/Program/Preview/Ready/Muted/Unmuted/FilterOn/FilterOff/Media(MediaState)) and the UI maps it to fl! keys. (3) Build `ActionContext<'a>` (borrowed scenes, registry roles, inputs, audio, operator_inputs, capabilities, readiness flags) via `AppState::action_context()` in a new src/controller/state/action_context.rs, not in the already-huge state.rs. (4) Leave entries/binding_entries/execute in ui/action_catalog/.",
+      "risk": "The safety rule that decides whether a live action may run is hard to find and is bound to the UI module. Other front ends (hotkeys, a future CLI) would copy it.",
+      "effort": "L",
+      "smell": "Feature Envy / Misplaced Responsibility / Duplicate Code",
+      "verdict": "adjusted",
+      "verifier_note": "Rules are GTK-free (confirmed, 158-287 and 66-145). Two corrections. (1) The three matches are NOT identical: 99-104 and 207-215 list OpenSource/SetMuted/ToggleMuted/RestartMedia/SetFilterEnabled/ToggleFilter (no Scene); 647-655 lists Scene but not OpenSource. So OperatorAction::target() must return the target for every target-carrying variant and each call site keeps its own variant filter; it is not a drop-in replacement. (2) Moving resolve into src/domain/ would break architecture_tests::domain_and_services_do_not_reach_into_storage and the domain-depends-on-nothing rule: resolve reads state.registry (crate::storage::registry::SceneRegistry, controller/state.rs:16,454), state.show_registry.status (controller::state::RegistryStatus, controller/state/show_registry.rs:11) and WorkspaceState (controller). Corrected recommendation: put the rule in src/controller/state/action_resolution.rs as `impl AppState { pub(crate) fn resolve_action(&self, action) -> Option<ResolvedAction>; pub(crate) fn observed_action_state(&self, action) -> Option<ObservedActionState> }` (controller may use storage+domain and has no GTK). Only the pure enums ResolvedAction/ObservedActionState go in src/domain/operator_action.rs. A domain-level ActionContext is only viable if every field is flattened to domain types/bools; do not borrow SceneRegistry/RegistryStatus there."
+    },
+    {
+      "id": "uiw-05",
+      "severity": "high",
+      "category": "ddd",
+      "file": "src/ui/widgets/operating_panel.rs",
+      "lines": "1560-1562; transport_bar.rs:219-225; audio_presets.rs:118-134; action_catalog.rs:168",
+      "title": "Raw OBS protocol request names spread through the UI with three different capability helpers",
+      "evidence": "About 60 literal OBS request names in ui (non-test): operating_panel.rs 22 (e.g. \"SetSceneItemEnabled\" 816, \"SetInputAudioTracks\" 1471), action_catalog.rs 14, transport_bar.rs 11, studio_controls.rs 6, audio_presets.rs 6. They are checked by three look-alike helpers: operating_panel::supported(caps: &[String], &str), transport_bar::supports(&AppState, &str) and audio_presets::capable (an array .all()), plus a closure in action_catalog:168. AppState.available_requests is Vec<String> (controller/state.rs:447).",
+      "recommendation": "Add src/domain/obs_capability.rs with `pub enum ObsCapability { SetSceneItemEnabled, SetSourceFilterEnabled, SetInputSettings, TriggerMediaInputAction, SetMediaInputCursor, SetInputAudioMonitorType, SetInputAudioSyncOffset, SetInputAudioBalance, SetInputAudioTracks, SetInputMute, SetInputVolume, SaveReplayBuffer, SetCurrentPreviewScene, SetCurrentProgramScene, ... }` and `pub struct CapabilitySet(BTreeSet<ObsCapability>)` with `supports(cap)` and `supports_all(&[cap])`. src/obs/mapper.rs converts the OBS request-name list into a CapabilitySet (unknown names are dropped). Change AppState.available_requests to CapabilitySet. Delete the three helpers. Add a domain test that round-trips every variant's protocol name.",
+      "risk": "OBS vocabulary bypasses the obs/ boundary. A typo in a literal silently disables a control. Shotgun Surgery when OBS renames a request.",
+      "effort": "M",
+      "smell": "Primitive Obsession / Shotgun Surgery / Duplicate Code",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed in substance: AppState.available_requests: Vec<String> (controller/state.rs:447), helpers operating_panel::supported (1560), transport_bar::supports (219), audio_presets::capable (118-134), closure action_catalog:168. Also missed: studio_controls.rs:214 closure and previews.rs:84 inline scan, so 5+ copies. A grep for Set*/Save*/Trigger* literals finds ~46 non-test hits (21 operating_panel, 14 action_catalog, 5 studio_controls...); Start*/Stop*/Get* bring it near the claimed ~60. Corrections: (a) protocol strings are OBS vocabulary, so the variant<->\"SetInputMute\" mapping must live in src/obs/mapper.rs (ACL), with the round-trip test in obs/, and src/domain/obs_capability.rs holds only the enum + CapabilitySet with no protocol names. (b) The raw list also flows through controller/event.rs:16 and is built in fixtures (app.rs:555, session_reports.rs:490, bookmarks.rs:464); before dropping unknown names, check whether session reports/diagnostics display the raw list - if so keep a separate raw Vec for reports. Unverified: whether any Doctor check reads available_requests."
+    },
+    {
+      "id": "uiw-06",
+      "severity": "high",
+      "category": "god-file",
+      "file": "src/ui/persist.rs",
+      "lines": "23-205, 207-271, 273-287, 289-354, 380-455, 457-589, 317",
+      "title": "persist.rs mixes a write journal, an import transaction gate, scope selection with migration policy, i18n messages and config saves",
+      "evidence": "(a) A registry write journal state machine (RegistryWrites, confirm_*, registry_write_finished, submit_registry_write_to, retry_registry_writes; 23-205) held in a thread_local. (b) An import gate with RAII guard and deferred job queue (REGISTRY_IMPORTING, AFTER_REGISTRY_IMPORT, RegistryImportGuard, begin_registry_import; 207-271) plus import_registry_to_target (416-455). (c) Presentation: registry_availability_message returns fl! strings (273-287). (d) select_registry_scope (291-354) contains the legacy-registry migration rule: compare config.legacy_registry_endpoint (or host:port) with key.endpoint and key.connection == \"default\" (318-328). (e) Config persistence (463-497). There is a production panic at 317: `begin_registry_import().expect(\"deferred registry jobs run outside the gate\")`.",
+      "recommendation": "Split into src/ui/persist/ (see proposed_splits). Move the legacy-source decision into storage as `RegistryTarget::legacy_source(&self, config: &AppConfig) -> Option<PathBuf>` in src/storage/show_workspaces.rs, unit-tested there. Move registry_availability_message to src/ui/registry_status.rs. Replace the .expect at 317 with `let Some(guard) = begin_registry_import() else { tracing::error!(...); failed finish_registry_load(...); return; }`.",
+      "risk": "Five reasons to change one file. The migration rule sits in a GTK callback, and a broken gate invariant panics the GTK thread.",
+      "effort": "M",
+      "smell": "Divergent Change / Large Class / Global State",
+      "verdict": "confirmed",
+      "verifier_note": "Verified: journal 23-205 with thread_local at 42, import gate thread_local 207 + guard 233-259, registry_availability_message 273, select_registry_scope 291-354 with the legacy rule at 318-328 (legacy_registry_endpoint or host:port, key.connection == \"default\"), .expect at 317. RegistryTarget is in storage/show_workspaces.rs:19, so RegistryTarget::legacy_source(&AppConfig) there is boundary-correct (storage may read storage::config)."
+    },
+    {
+      "id": "uiw-07",
+      "severity": "medium",
+      "category": "test",
+      "file": "src/ui/persist.rs",
+      "lines": "69-120, 591-1032",
+      "title": "Pure journal-confirmation logic is only tested through subprocess, file system and GTK main-loop tests",
+      "evidence": "confirm_registry_through, confirm_registry_target_through and the take_while(succeeded) successor rule in registry_write_finished (83-120) are pure BTreeMap logic. Every test (e.g. 597, 701, 774, 823, 884, 936) runs through background_io::isolated_test_child (a spawned subprocess with a 30 s deadline), real temp files and glib::MainLoop drains.",
+      "recommendation": "Extract `pub(crate) struct RegistryJournal { revision, operations: BTreeMap<u64, Op>, failures, error, retrying }` into src/ui/persist/registry_journal.rs. Give it methods admit(target, write) -> u64, finished(revision, covers_snapshot, Result) -> Option<FailureTicket>, begin_retry() -> Option<RetryBatch>, finish_retry(revision, ok, failure_count) and status() -> RegistrySaveStatus. Write 6-10 fast unit tests: per-target confirmation, a failed predecessor holding back successful successors, a retry resolving only its own failures. Keep the existing isolated tests as integration coverage.",
+      "risk": "Slow, flaky-prone coverage for the logic that protects against data loss. Regressions get noticed late.",
+      "effort": "M",
+      "depends_on": [
+        "uiw-06"
+      ],
+      "smell": "Untestable design (logic coupled to I/O)",
+      "verdict": "confirmed",
+      "verifier_note": "Verified: confirm_* 69-81 and registry_write_finished 83-120 are BTreeMap logic; persist.rs uses background_io::isolated_test_child 6 times; isolated_test_child (background_io.rs:379-) re-execs the test binary. Extraction to a pure RegistryJournal is sound."
+    },
+    {
+      "id": "uiw-08",
+      "severity": "medium",
+      "category": "performance",
+      "file": "src/ui/background_io.rs",
+      "lines": "99-113, 161-243, 318-345, 347-376, 164/183/187/199/221",
+      "title": "Each background job runs a 20 ms polling timer and an unbounded thread; config lock uses expect",
+      "evidence": "run() calls std::thread::spawn for every job (106) and deliver_on_main_thread adds a glib::timeout_add_local(20ms) per job (356). run_config_snapshot adds another 20 ms timer per batch (220), and flush_pending adds a third (324). N in-flight jobs means N wakeups at 50 Hz. The config slot uses `slot.lock().expect(\"config snapshot lock\")` five times (164, 183, 187, 199, 221). A poisoned lock (e.g. a panic while it is held) panics the GTK thread inside the timer. The file also mixes four concerns: spawn and deliver, FIFO lanes (13-85, 121-138), config coalescing (140-243) and the failure ledger and close barrier (245-345).",
+      "recommendation": "(1) Replace the poll loop with a wake-up: deliver through `glib::MainContext::default().spawn_local(async move { let v = rx.recv().await; ... })` using an async oneshot (futures_util::channel::oneshot is already a dependency via futures_util), or use `gio::spawn_blocking(work).await` inside spawn_local for run() (pattern already used in global_shortcuts/portal.rs:68). (2) Use `lock().unwrap_or_else(PoisonError::into_inner)` for ConfigBatch, since the data is a plain flag and slot. (3) Split the file per proposed_splits. Keep the panic-to-Disconnected semantics: a dropped oneshot sender gives Canceled, which maps to record_failure().",
+      "risk": "Idle CPU wakeups grow with pending I/O. A lock poisoning becomes a crash on the UI thread.",
+      "effort": "M",
+      "smell": "Busy-wait polling / Divergent Change",
+      "verdict": "adjusted",
+      "verifier_note": "Polling confirmed: thread::spawn per job 106, 20 ms timers at 220, 324, 356. Lock claim overstated: only 199 and 221 run on the GTK thread; 164, 183, 187 run on the serial Config worker. The lock is never held while user work runs (work is taken out at 164-178 and catch_unwind wraps it outside the guard), so poisoning is practically unreachable - downgrade the lock part to low; unwrap_or_else(PoisonError::into_inner) is still a fine hardening. Delivery rewrite correction: futures-util is declared as plain \"0.3\" (Cargo.toml:21); futures_util::channel needs the `channel` feature, which I did not verify is enabled - either enable it explicitly or use futures-channel/async-channel. gio::spawn_blocking only fits run(); run_serialized jobs execute on dedicated lane threads (background_io.rs:38) and still need a oneshot back to spawn_local."
+    },
+    {
+      "id": "uiw-09",
+      "severity": "medium",
+      "category": "god-file",
+      "file": "src/ui/theme.rs",
+      "lines": "15-24, 42-96, 128-275, 277-318, 320-398, 400-475, 477-527, 529-614, 616-1553",
+      "title": "theme.rs mixes theme catalog, CSS security policy, provider registry, desktop integration and motion generation (60% of the file is tests)",
+      "evidence": "Production (~615 lines) holds: eight thread_local globals (15-24); the BuiltInTheme catalog and localization (42-96, 529-614); the ThemeManager orchestration (128-275); the custom-CSS security validator using cssparser (277-307); generation-guarded async reads (309-318); desktop signal and native color-scheme/motion overrides (320-398); motion CSS generation (400-451); effective_variant (463-475); CSS provider install and clear (477-527). Tests (616-1553) mix base-stylesheet string assertions, WCAG contrast math (1487-1552), native GTK pixel sampling (1154-1348) and validator cases.",
+      "recommendation": "Split into src/ui/theme/{mod.rs, catalog.rs, custom_css.rs, providers.rs, desktop.rs, motion.rs} plus tests in theme/{contrast_tests.rs, stylesheet_tests.rs, native_tests.rs} (see proposed_splits). custom_css::validate is the trust-boundary check for user CSS. Keep it pure and fully unit-tested, and keep the second check at install time (apply_with_custom_css 245-254).",
+      "risk": "A change to motion or desktop handling risks the security validator through shared globals, and changes get reviewed in a file mostly made of tests.",
+      "effort": "M",
+      "smell": "Divergent Change / Global State",
+      "verdict": "confirmed",
+      "verifier_note": "Verified: 8 thread_locals 14-24, catalog 42-96 and 529-614, validator 279-307, desktop 320-398, motion 434-451, providers 477-527, tests from 616 (~60% of the file). Line 277 vs 279 is a doc-comment offset, harmless."
+    },
+    {
+      "id": "uiw-10",
+      "severity": "medium",
+      "category": "code-smell",
+      "file": "src/ui/theme.rs",
+      "lines": "42-96, 529-614",
+      "title": "Adding a built-in theme takes four separate edits; English name/description fields are dead fallbacks",
+      "evidence": "BuiltInTheme carries name and description (English) that are only reached through the `_ =>` arms of localized_name (60-76) and localized_description (79-95). Both matches list the same 12 id literals already in BUILT_IN_THEMES (529-614). A new theme needs: an array entry, a match arm in localized_name, a match arm in localized_description, plus FTL keys in every locale.",
+      "recommendation": "Replace the fields with function pointers so the fl! literal checks stay at compile time: `pub(crate) struct BuiltInTheme { id: &'static str, name: fn() -> String, description: fn() -> String, light_css, dark_css }`, each entry `name: || fl!(LANGUAGE_LOADER, \"theme-nord-name\")`. Delete localized_name/localized_description and the English fields, so callers use `(theme.name)()`. Add a test that ids are unique. CLAUDE.md 'New built-in theme' then becomes a single edit plus CSS and FTL.",
+      "risk": "A theme added without match arms silently shows untranslated English. Shotgun Surgery.",
+      "effort": "S",
+      "depends_on": [
+        "uiw-09"
+      ],
+      "smell": "Shotgun Surgery / Dead Code / Switch Statements",
+      "verdict": "confirmed",
+      "verifier_note": "Verified: localized_name 60-76 and localized_description 79-95 duplicate the 12 ids with `_ =>` English fallbacks; name/description fields are read nowhere else in src/ui (grep). Non-capturing closures coerce to fn pointers inside the const array, and fl! keeps compile-time key checks, so the fn-pointer design works. Keep #[derive(Debug, Clone, Copy)] (fn pointers satisfy all three)."
+    },
+    {
+      "id": "uiw-11",
+      "severity": "medium",
+      "category": "ui-a11y",
+      "file": "src/ui/widgets/chart.rs",
+      "lines": "77-84, 88-119; volume_meter.rs:65-70, 388-404",
+      "title": "Cairo charts and meters hard-code colours, bypassing theme tokens (High Contrast cannot reach them)",
+      "evidence": "chart::Severity::color returns fixed RGB values (Good = Color(0.20,0.60,0.95) blue; Warning, Critical and Unknown also fixed). Palette::for_current_theme switches between two hard-coded sets on adw::StyleManager::is_dark (96-119). volume_meter hard-codes NOMINAL/WARNING/ERROR bright and dim tuples (65-70) and neutral() black/white ink (401-404). Themes define @scenedeck_success/@scenedeck_warning/@scenedeck_error and are contrast-tested (theme.rs:1440-1485), but these widgets never read them. 'Good' is blue in charts and green (@scenedeck_success) everywhere else.",
+      "recommendation": "Add src/ui/theme/tokens.rs. It gives `ThemeColors { fg, muted_fg, success, warning, error, accent, surface, border }`, parsed once from the active theme's @define-color lines on apply (parse_theme_colors already exists in tests at theme.rs:1487; promote it to production with error handling) and kept in a thread_local snapshot together with ACTIVE_PREFERENCE. chart::Palette::for_current_theme() and volume_meter::zone_rgba read ThemeColors::current(). Map Severity::Good to success. Keep the meter's dim variants as alpha on the token. Extend the contrast tests to cover chart tokens on scenedeck_card.",
+      "risk": "Inconsistent meaning of colour. Users of the High Contrast theme get the low-contrast default meter and chart colours.",
+      "effort": "M",
+      "depends_on": [
+        "uiw-09"
+      ],
+      "smell": "Magic Numbers / Duplicated design knowledge",
+      "verdict": "adjusted",
+      "verifier_note": "Chart part confirmed: chart.rs Severity::color 76-81 (Good = blue 0.20,0.60,0.95) and Palette::for_current_theme 96-119 keyed on is_dark. Volume meter part REFUTED: volume_meter.rs:60-64 documents a deliberate decision that zone colours stay fixed to match OBS meter semantics ('a theme that recoloured them would be lying about the level'). Keep meter zones fixed; at most route neutral() ink (401-404) through fg tokens. Restrict tokens.rs consumers to chart.rs."
+    },
+    {
+      "id": "uiw-12",
+      "severity": "medium",
+      "category": "god-struct",
+      "file": "src/ui/audio_presets.rs",
+      "lines": "95-116, 284-465, 44-66, 135-144, 225-252, 483-497, 75-88, 249",
+      "title": "Audio preset Editor is an 18-field god struct with a 180-line render(); preset rules live in the UI",
+      "evidence": "Editor holds 18 fields (95-116): widgets, baseline, selection, review plan and flags. render() (284-465) computes enablement for 6 buttons, a 6-branch status ladder, results text, row captions, the save label, preview text and save-status notice, and re-runs every 250 ms (699). Preset rules are written in the UI: snapshot() (44-66), review_matches (135-144), save validation (name validity, uniqueness, PRESET_LIMIT; 240-244) and plan construction (483-497). value() re-implements dB formatting with 20*log10 (81-86) instead of services::audio_service::AudioService::format_db. `next.insert(name.clone(), preset.unwrap())` (249) depends on an earlier guard.",
+      "recommendation": "Domain: add `PresetLibrary` (wrapping BTreeMap<String, AudioPreset>) to src/domain/audio_preset.rs with `save(name, inputs, replacing: Option<&str>) -> Result<(), PresetError>`, `rename`, `delete`, and `plan(name, inputs, epoch, scope) -> Option<PresetPlan>`. Also add `PresetPlan::still_matches(&[PresetInput])`. UI: split into src/ui/audio_presets/{mod.rs (show/wiring), editor.rs (Editor actions), view.rs (render_actions, render_rows, render_preview, render_notice, each <40 lines)}. Use AudioService::format_db. Replace the unwrap with `let Some(preset) = preset else { ... }`.",
+      "risk": "Preset safety rules (the review-then-apply guarantee) are only testable through GTK, and dB text can disagree with the mixer.",
+      "effort": "M",
+      "smell": "Large Class / Long Method / Feature Envy / Duplicate Code",
+      "verdict": "adjusted",
+      "verifier_note": "Editor has 20 fields (95-116), not 18. render 284-465 and 250 ms timer at 699 confirmed. valid_name and PRESET_LIMIT already live in domain/audio_preset.rs:10,51; only their combination (240-244) is in the UI, so PresetLibrary::save wraps existing domain rules. value() (75-88) vs AudioService::format_db (services/audio_service.rs:30-38) differ: 2 vs 1 decimals, \"−∞\" vs \"-inf dB\", and format_db floors at MIN_VOLUME_DB - switching is a visible behaviour change, ship it as its own commit and update audio_presets/tests.rs expectations. unwrap at 249 confirmed guarded by is_none_or at 241."
+    },
+    {
+      "id": "uiw-13",
+      "severity": "medium",
+      "category": "god-file",
+      "file": "src/ui/action_shortcuts.rs",
+      "lines": "20-63, 65-95, 97-132, 143-377, 383-561",
+      "title": "action_shortcuts.rs mixes key normalization, shortcut conflict rules, a manager window and an editor dialog",
+      "evidence": "chord() turns GDK keys into ActionShortcut (20-63). label() formats a shortcut for display (65-95). conflict()/matching() are pure rules over AppState (97-132) and are also used by global_shortcuts::eligible (global_shortcuts.rs:57). show() builds the binding manager, with its refresh closure spanning 209-353 (~145 lines including per-row enable/edit/remove persistence). editor() builds the record dialog (383-561) with three more closures.",
+      "recommendation": "Move conflict/matching into src/domain/action_shortcut.rs as `pub fn matching_binding<'a>(hotkeys: &HotkeyConfig, bindings: &'a [ActionBinding], shortcut: &ActionShortcut) -> Option<&'a ActionBinding>` and `pub fn binding_conflict(hotkeys, bindings, shortcut, original: Option<&ActionBinding>) -> Option<ShortcutConflict>`. Move test only_unique_enabled_nonconflicting_bindings_can_match (582-604) with them. Split the UI into src/ui/action_shortcuts/{mod.rs, chord.rs, manager.rs, editor.rs}. In manager.rs, extract `fn binding_row(nav, index, item) -> GtkBox`.",
+      "risk": "The binding-conflict rule is reached through a GTK module from another GTK module. Long closures hide state handling.",
+      "effort": "M",
+      "smell": "Divergent Change / Long Method / Feature Envy",
+      "verdict": "adjusted",
+      "verifier_note": "Structure confirmed (chord 20-63, label 65-95, conflict/matching 97-132, manager timer 367, editor 383-561; used by global_shortcuts.rs:57). Correction: the domain already has ActionShortcut::conflict(&self, slots: &SceneHotkeyConfig, others) at domain/action_shortcut.rs:55; the type is SceneHotkeyConfig (domain/hotkey.rs:345), not HotkeyConfig. The new free functions in domain/action_shortcut.rs take (&SceneHotkeyConfig, &[ActionBinding], ...) - callers pass &state.config.hotkeys and &state.registry.action_bindings, so the domain never touches storage types."
+    },
+    {
+      "id": "uiw-14",
+      "severity": "medium",
+      "category": "performance",
+      "file": "src/ui/action_shortcuts.rs",
+      "lines": "367-376, 551-560; global_shortcuts.rs:399-405; audio_presets.rs:699-709; widgets/output_results_tray.rs:25; widgets/operating_panel.rs:107-160",
+      "title": "Dialogs and widgets redraw on fixed 250 ms or 1 s timers instead of on state changes",
+      "evidence": "The binding manager and editor rebuild items every 250 ms. Each tick calls action_catalog::binding_entry per binding, and each call clones the input list via inputs(state) (action_catalog.rs:524) and runs fl! lookups (232-247). global_shortcuts::controls, audio_presets::show and output_results_tray poll the same way. operating_panel runs two separate 1 s timers that each walk the full widget tree (107, 118). ui/ has 12+ such 250 ms pollers.",
+      "recommendation": "Add an AppState change signal. Either a monotonically increasing `AppState::revision: u64` bumped by window.rs after each applied AppEvent and each local mutation, so pollers early-return when the revision is unchanged (a cheap first step), or a `NavigationContext::connect_state_changed(Fn())` that window.rs fires once per drained event batch (event_pump.rs) and pages call instead of glib::timeout_add_local. Merge operating_panel's two timers into one tick. Keep a 1 s tick only where elapsed-time labels need it (sources-status-age).",
+      "risk": "Constant CPU wakeups and string building while dialogs are open, on a live-production machine.",
+      "effort": "M",
+      "smell": "Busy-wait polling",
+      "verdict": "confirmed",
+      "verifier_note": "Verified 250 ms timers at action_shortcuts.rs:367, 551, global_shortcuts.rs:399, audio_presets.rs:699, output_results_tray.rs:25; grep finds 23 250 ms timers in src/ui (non-test). operating_panel has two separate 1 s timers (107, 118). binding_entry calls inputs(state) which clones the catalog (action_catalog.rs:35-43, 524). The revision/state-changed signal is owned by the window.rs/state.rs reviewer - coordinate."
+    },
+    {
+      "id": "uiw-15",
+      "severity": "medium",
+      "category": "boundary",
+      "file": "src/ui/global_shortcuts.rs",
+      "lines": "3, 164-307, 196-197, 302-304, 68, 79, 81; global_shortcuts/portal.rs:1-323",
+      "title": "D-Bus portal client lives in ui/; raw English errors reach the user; 143-line start()",
+      "evidence": "portal.rs is a gio-only XDG GlobalShortcuts client with no widgets (BUS/PATH/INTERFACE consts, OwnedConnection, RemoteHandle, Session). It is infrastructure. start() (164-307) nests an async operation with an event-listener closure (203-255), a watchdog and abort handling. Errors are plain English strings: map_err(|_| \"Portal connection timed out\".to_string()) (197) and portal.rs returning \"GlobalShortcuts portal is unavailable\". They are shown via `manager.status = format!(\"{}\\n{error}\", fl!(...\"global-unavailable\"))` (303), which breaks the CLAUDE.md rule that all user-facing strings go through fl!. specs() uses three .expect calls on serialization and checksum (68, 79, 81).",
+      "recommendation": "Move portal.rs to src/infra/portal/global_shortcuts.rs (first check that src/architecture_tests.rs allows gio in infra) with `pub enum PortalError { Timeout, Unavailable, Bus(String), Denied }`. Map it to fl! keys (global-error-timeout, etc., added to every locale) in ui/global_shortcuts/status.rs, and log the raw detail with tracing only. Split start() into session.rs: `async fn run_session(ctx: Rc<Context>, entries: Vec<Spec>) -> Result<(), PortalError>` plus `fn handle_event(ctx, entries, state, event)`. Move the stable-id derivation in specs() (66-81) into a pure `fn shortcut_id(connection, scope, action) -> Option<String>` that returns None on serialization failure.",
+      "risk": "Untranslated error text, infrastructure code inside the UI module, and a panic path on a GTK future.",
+      "effort": "M",
+      "smell": "Long Method / Misplaced Responsibility",
+      "verdict": "adjusted",
+      "verifier_note": "English error strings confirmed (global_shortcuts.rs:197, portal.rs:119, 121, map_err(to_string) at 73/82/113/184/240) and surfaced at 303. architecture_tests restricts only domain/services/controller/storage/obs; infra has no gio ban, so moving portal.rs to src/infra/portal/ is allowed. The three expects (68, 79, 81) are effectively infallible (serde of a derived enum, SHA256 always available) - low risk, keep the fix but rank it low."
+    },
+    {
+      "id": "uiw-16",
+      "severity": "medium",
+      "category": "code-smell",
+      "file": "src/ui/widgets/audio_card.rs",
+      "lines": "306-323, 863-864, 113-127, 138-159, 867-883, 551-565, 599-613, 25-37",
+      "title": "audio_card mutates AppState directly, has a test hook in production code, and repeats fader-reset and handle construction",
+      "evidence": "The lock toggle writes `state.mixer.locked_inputs.insert/remove` through nav.state.borrow_mut() (312-319) instead of an intent method. dispatch_volume calls `#[cfg(test)] tests::observe_gain_dispatch(...)` inside production flow (863-864). set_available (118-124) and update_volume (154-158) each copy the block_signal/set_value/unblock/format_db sequence that update_visible_volume (867-883) already does. build (551-565) and build_compact (599-613) repeat the AudioCardHandle literal, including the observed_volume sanitize block. OBS_FADER_MARKS_DB carries dB values that production never reads (only labels at 691).",
+      "recommendation": "Add `MixerSelection::set_locked(&mut self, input: &str, locked: bool)` (domain/mixer.rs) and call it. Remove the cfg(test) hook. Observe dispatches through test_support::navigation()'s event receiver or a recording NavigationContext dispatcher. Route set_available/update_volume through `update_visible_volume(scale, label, Some(signal), mul)`. Add `AudioCardHandle::new(root, input, mute, controls: VolumeControls)` to remove the repeated literal. Make the ruler data `&[&str]`, or use the dB values to position labels.",
+      "risk": "The production code path differs between test and release builds. Duplicated signal-blocking logic can drift and echo volume back to OBS.",
+      "effort": "S",
+      "smell": "Duplicate Code / Inappropriate Intimacy / Test logic in production",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed: lock toggle mutates state.mixer.locked_inputs directly (312-319; field at domain/mixer.rs:120); #[cfg(test)] hook at 863-864; set_available/update_volume repeat the block/set/unblock/format_db sequence (113-159). Correction: OBS_FADER_MARKS_DB dB values are not dead - tests assert them at 1111-1114 - but production only reads labels (691). Either drop the dB column with its test or use it for label placement; minor."
+    },
+    {
+      "id": "uiw-17",
+      "severity": "medium",
+      "category": "code-smell",
+      "file": "src/ui/widgets/operating_panel.rs",
+      "lines": "128-154, 549-567, 797-798",
+      "title": "Widget builds a controller request DTO and repeats the 30 s freshness rule",
+      "evidence": "The media poll timer builds crate::controller::workspace::WorkspaceRequest field by field from AppState (141-152) after a 5-clause readiness check (130-137). The freshness rule `observed_at.is_some_and(|t| t.elapsed().as_secs() <= 30) && !dirty` is written at 553-556 and again at 797, while WorkspaceState::can_control() already holds the controller's version of readiness.",
+      "recommendation": "Add pure methods on the workspace state in src/controller/state/ (not state.rs itself): `WorkspaceState::is_fresh(&self) -> bool` and `AppState::media_refresh_request(&self) -> Option<WorkspaceRequest>`, each with a unit test. The widget timer becomes `if let Some(r) = nav.state.borrow().media_refresh_request() { nav.dispatch(...) }`.",
+      "risk": "The freshness window can drift between Sources and the action catalog, causing inconsistent enablement.",
+      "effort": "S",
+      "smell": "Feature Envy / Duplicate Code",
+      "verdict": "confirmed",
+      "verifier_note": "Verified: WorkspaceRequest built field by field 141-152 after the check at 130-137; freshness rule duplicated at 553-556 and 797, while WorkspaceState::can_control (controller/state.rs:319-328) embeds the same 30 s rule. Note WorkspaceState is defined in controller/state.rs itself; put is_fresh in the same impl and have can_control call it, and add media_refresh_request in a new controller/state/workspace_requests.rs impl block to avoid growing state.rs."
+    },
+    {
+      "id": "uiw-18",
+      "severity": "medium",
+      "category": "code-smell",
+      "file": "src/ui/action_catalog.rs",
+      "lines": "289-461, 513-616, 291-301, 619-640",
+      "title": "Action labels written twice, a third copy of the page list, and an unreachable!() control flow",
+      "evidence": "entries() builds labels per action kind (346-358 scene, 380-385 open, 390-402 mute, 418-422 restart, 433-447 filter). binding_entry() (536-609) recomputes the same fl! keys for the same variants. The page list (291-301, 9 pages incl. Sources) differs from sidebar::NAV_PAGES (sidebar.rs:22-31, 8 pages, different order) and from Page itself (controller/state.rs:35-47). execute() unpacks CatalogAction with nested let-else plus unreachable!() (634-637).",
+      "recommendation": "Add one `fn action_label(state: &AppState, action: &OperatorAction, display_name: &str) -> String` in src/ui/action_catalog/labels.rs and use it in both builders. Add `Page::ALL: [Page; 9]` (or `Page::navigable()`) next to the enum and derive NAV_PAGES and the palette list from it with explicit filters. Rewrite execute as a single `match action { Reports => ..., Bookmarks => ..., Page(p) => ..., Operator(a) => ... }`.",
+      "risk": "Label text drifts between the palette and the binding editor. A new Page can be missing from the palette.",
+      "effort": "S",
+      "depends_on": [
+        "uiw-04"
+      ],
+      "smell": "Duplicate Code / Shotgun Surgery",
+      "verdict": "adjusted",
+      "verifier_note": "Duplicated labels (entries vs binding_entry 536-609) and unreachable!() at 634-637 confirmed. Page lists: action_catalog 291-301 (9 incl. Sources), sidebar.rs:22-31 (8, no Sources), Page enum controller/state.rs:35-47. Sidebar omitting Sources is likely intentional (Sources is reached by inspecting a source), so this is a missing single source of truth, not a bug: add Page::ALL and derive both lists with explicit filters as recommended."
+    },
+    {
+      "id": "uiw-19",
+      "severity": "low",
+      "category": "code-smell",
+      "file": "src/ui/widgets/operating_panel.rs",
+      "lines": "1585-1600; audio_presets.rs:27-42; bookmarks.rs:81; health_alerts.rs:18; preflight.rs:48; quick_actions.rs:18; report_history.rs:310; action_shortcuts.rs:162; operator_picker.rs:31; global_shortcuts.rs:309",
+      "title": "Seven-plus copies of the wrapped-label and button helpers with drifting properties",
+      "evidence": "`fn text(value: &str) -> Label` is defined in 7 files. Variants differ: width_chars(1) in bookmarks, health_alerts, preflight, quick_actions and report_history but not operating_panel or audio_presets; selectable(true) only in operating_panel; hexpand(true) only in audio_presets. More near-copies: action_shortcuts::literal, operator_picker::label, global_shortcuts::button and audio_presets::button. src/ui/mod.rs already holds shared helpers (string_list:40, clear_children:182, insert_compact_flow_child:197).",
+      "recommendation": "Create src/ui/kit/mod.rs with labels.rs (`wrapped_label(text)`, `caption(text)`, `heading(text)`) and buttons.rs (`wrapped_button(text, name)` that sets the accessible label). Move string_list, clear_children, rebuild_page, insert_compact_flow_child and a single `visit_widgets(widget, f)` (currently operating_panel.rs:661, mixer.rs:230, plus test copies) there. Replace the local copies file by file.",
+      "risk": "Wrapping and layout differ between dialogs (width_chars affects minimum width at large font sizes), so the design is inconsistent.",
+      "effort": "S",
+      "smell": "Duplicate Code",
+      "verdict": "confirmed",
+      "verifier_note": "Verified 7 `fn text` copies: bookmarks.rs:81, quick_actions.rs:18, health_alerts.rs:18, preflight.rs:48, report_history.rs:310, audio_presets.rs:27, operating_panel.rs:1591. visit copies: operating_panel.rs:661, mixer.rs:230 (visit_mixer). ui/mod.rs helpers at 40, 114, 182, 197 confirmed. Unifying properties (width_chars, selectable) changes layout; review visually."
+    },
+    {
+      "id": "uiw-20",
+      "severity": "low",
+      "category": "performance",
+      "file": "src/ui/widgets/operating_panel.rs",
+      "lines": "162-176, 1601-1612",
+      "title": "Redundant status passes and a dead flag parameter",
+      "evidence": "The refresh closure calls update_status at 167 and again at 173 on the same-structure path, with no state change between them. Each call walks the full tree. expand(parent, title, content, _expanded: bool) takes a flag that is ignored and always false (call sites 1134-1139, 1238-1243, 1334-1339, 1485-1490).",
+      "recommendation": "Drop the second update_status call (173). Remove the _expanded parameter, and rename expand to section, since no Expander is involved.",
+      "risk": "Wasted work each refresh, and a misleading API.",
+      "effort": "S",
+      "depends_on": [
+        "uiw-01"
+      ],
+      "smell": "Dead Code / Flag Argument",
+      "verdict": "adjusted",
+      "verifier_note": "Dead flag confirmed: all four expand calls pass false (1134-1139, 1238-1243, 1334-1339, 1485-1490). Second update_status (173) follows update_observed_controls (172), which writes widget values but not AppState; update_status reads AppState only, so the call is very likely redundant - but update_status also sets sensitivity on widgets update_observed_controls may touch. Remove it only with the native tests green; mark unverified."
+    },
+    {
+      "id": "uiw-21",
+      "severity": "low",
+      "category": "ui-a11y",
+      "file": "src/ui/theme.rs",
+      "lines": "537-550, 579-585; resources/themes/*.css",
+      "title": "Theme family names contradict their variants; themes differ only in accent and surfaces",
+      "evidence": "The 'SceneDeck Dark', 'SceneDeck Light' and 'Solarized Dark' families each ship a light and a dark variant (scenedeck-dark-light.css, scenedeck-light-dark.css, solarized-dark-light.css). Picking 'SceneDeck Light' while in Dark mode gives a dark palette. A diff across resources/themes shows program, preview and image_scrim identical in all 12 dark variants and scenedeck_fg identical in 10 of 12. Families really differ only in accent plus 5 surface tokens, so the catalog reads as 12 near-duplicates.",
+      "recommendation": "Rename the families to mode-neutral names (e.g. 'SceneDeck Console', 'SceneDeck Paper', 'Solarized'). Keep the old ids as aliases in domain::appearance::ThemeId parsing so saved configs keep working, and add a migration test. Optionally move the shared tokens (tally, image, status) into assets/scenedeck.css defaults, so each theme file overrides only what differs (keep the per-theme contrast tests). Update docs/custom-themes.md and the site copy if theme names appear there.",
+      "risk": "Users get confused (a 'Light' theme rendering dark), and editing 24 files to change one shared token.",
+      "effort": "S",
+      "depends_on": [
+        "uiw-10"
+      ],
+      "smell": "Inconsistent naming / Duplicate data",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed variants follow mode, not family name: scenedeck-light-dark.css defines scenedeck_fg #f4f4f4 (dark palette) and scenedeck-dark-light.css scenedeck_fg #1d242e (light palette); solarized-dark-light.css likewise. Correction: config persists theme ids, and only display names come from FTL (theme-*-name). Renaming display names needs no id aliases or migration test; keep ids unchanged. I did not re-run the cross-file token diff (identical program/preview/image_scrim across 12 dark variants) - unverified."
+    },
+    {
+      "id": "uiw-22",
+      "severity": "low",
+      "category": "error-handling",
+      "file": "src/ui/operator_picker.rs",
+      "lines": "43-56; deck_controls.rs:308-312",
+      "title": "Production unwrap/expect in list factories and action activation",
+      "evidence": "The dropdown factory callbacks call `item.downcast_ref::<gtk4::ListItem>().unwrap()` (45, 49). deck_controls::sync calls `.expect(\"deck controls sync action\")` on activate_action (311), which panics if the widget is not under the 'deck' action group.",
+      "recommendation": "Use `let Some(item) = item.downcast_ref::<gtk4::ListItem>() else { return };` in the factories. Make sync return early with tracing::warn! when activate_action fails, or keep a typed DeckControlsHandle { refresh: Rc<dyn Fn()> } instead of a stringly-named GAction.",
+      "risk": "A GTK-thread panic on unexpected widget wiring.",
+      "effort": "S",
+      "smell": "Swallowed invariants / panic in UI path",
+      "verdict": "confirmed",
+      "verifier_note": "Verified unwraps at operator_picker.rs:45 and 49 in factory callbacks and .expect(\"deck controls sync action\") at deck_controls.rs:311. Factory unwraps are effectively infallible in GTK4 (setup/bind always receive ListItem), so severity low is right."
+    }
+  ],
+  "proposed_splits": [
+    {
+      "file": "src/ui/widgets/operating_panel.rs",
+      "current_lines": 2361,
+      "rationale": "A full page (Sources inspector) filed as a widget. It mixes page orchestration, content diffing, draft state, browser list, four editor sections, status rendering and focus/scroll preservation. populate is ~418 lines and build_source_detail ~394.",
+      "target_modules": [
+        {
+          "path": "src/ui/pages/sources/mod.rs",
+          "responsibility": "Page entry: build(nav) -> (Widget, Rc<dyn Fn()>), refresh orchestration, single tick timer, map handler",
+          "moves": "build() 94-269 (minus focus and content helpers), media poll timer 116-160 (calls AppState::media_refresh_request)"
+        },
+        {
+          "path": "src/ui/pages/sources/content.rs",
+          "responsibility": "Pure snapshot used to decide rebuild vs value update",
+          "moves": "SourcesContent + same_structure 314-361, sources_content/sources_content_from_state 505-543, test sources_content_ignores_publication_metadata_but_tracks_control_content 1693-1747"
+        },
+        {
+          "path": "src/ui/pages/sources/drafts.rs",
+          "responsibility": "SourceDrafts (text, numeric, track drafts with conflict origins) and SourcesViewState",
+          "moves": "LocalState 16-92 reshaped (NumericField enum, AudioTracks), tests 2275-2345"
+        },
+        {
+          "path": "src/ui/pages/sources/focus.rs",
+          "responsibility": "Capture and restore focus, cursor and scroll across a structural rebuild",
+          "moves": "focus/scroll logic 178-250 as fn capture(root) -> RebuildMemento and fn restore(root, memento)"
+        },
+        {
+          "path": "src/ui/pages/sources/status.rs",
+          "responsibility": "Status line and sensitivity updates via StatusHandles",
+          "moves": "update_status 548-651, mapped_popover 653-659, media_visible 670-676"
+        },
+        {
+          "path": "src/ui/pages/sources/browser.rs",
+          "responsibility": "Scene selector, search, source rows (SourceRowHandle), warnings",
+          "moves": "populate 769-950 (scene selector, search, item rows, no-matches, scroll)"
+        },
+        {
+          "path": "src/ui/pages/sources/detail/mod.rs",
+          "responsibility": "Detail pane, usage expander, split view and breakpoint assembly",
+          "moves": "populate 951-1094, build_source_detail dispatch, section() (ex-expand 1601-1612), action_button 1563-1576, mark_mutation 1554-1558"
+        },
+        {
+          "path": "src/ui/pages/sources/detail/filters.rs",
+          "responsibility": "Filter toggles",
+          "moves": "build_source_detail 1105-1140"
+        },
+        {
+          "path": "src/ui/pages/sources/detail/text_editor.rs",
+          "responsibility": "Text source editor with conflict detection",
+          "moves": "build_source_detail 1141-1244, observed_text 404-412"
+        },
+        {
+          "path": "src/ui/pages/sources/detail/media.rs",
+          "responsibility": "Media transport and seek",
+          "moves": "build_source_detail 1245-1340, update_media_values 271-312"
+        },
+        {
+          "path": "src/ui/pages/sources/detail/media_progress.rs",
+          "responsibility": "Observed media timing",
+          "moves": "src/ui/widgets/operating_panel/media_progress.rs (unchanged)"
+        },
+        {
+          "path": "src/ui/pages/sources/detail/audio.rs",
+          "responsibility": "Monitor, sync, balance and track editors",
+          "moves": "build_source_detail 1341-1491, bind_numeric_draft 1494-1529, add_numeric_apply 1531-1553, update_detail_values 414-503 (audio part)"
+        },
+        {
+          "path": "src/ui/kit/mod.rs",
+          "responsibility": "Shared GTK construction helpers",
+          "moves": "row/column/text/string_selector/visit 1577-1600, 661-668"
+        }
+      ],
+      "order": "1) Create src/ui/kit and move row/column/text/string_selector/visit (pure move, operating_panel imports kit). 2) Move the file as-is to src/ui/pages/sources/mod.rs (with media_progress.rs), delete the src/ui/pages/sources.rs shim and the widgets/mod.rs entry, update lifetime_tests.rs:3,83. 3) Extract content.rs and drafts.rs with their unit tests. 4) Extract focus.rs and status.rs. 5) Extract the detail/* sections one per commit, then browser.rs. 6) As a separate behaviour-affecting PR, replace widget-name lookups with typed handles (uiw-02). Run cargo test plus tools/test-native.py after every step.",
+      "safety_net": "Existing: native_visibility_and_filter_readback_retain_widgets_without_echoing_commands (1618), native_long_usage_paths_fit_without_hiding_the_editor (1750), unit tests 1694 and 2275-2345, lifetime_tests.rs. Add before step 6: a unit test per NumericField draft path, a test for AppState::media_refresh_request, and a native test that switches locale (or stubs the fl! title) and asserts sync/balance spin values still update.",
+      "verdict": "confirmed",
+      "verifier_note": "Line ranges check out. Add to step 2: rename embedded native test paths at operating_panel.rs:1620, 1760 and media_progress.rs:147. src/ui/kit is new; alternatively extend existing ui/mod.rs helpers. No cycles: pages/sources depends on ui::workspace, navigation, domain, controller types already used today."
+    },
+    {
+      "file": "src/ui/theme.rs",
+      "current_lines": 1553,
+      "rationale": "Five production concerns sharing eight thread_locals. 60% of the file is tests of three different kinds (string assertions, WCAG math, native pixel sampling).",
+      "target_modules": [
+        {
+          "path": "src/ui/theme/mod.rs",
+          "responsibility": "ThemeManager facade, ThemeVariant, ThemeApplyReport, generation guard",
+          "moves": "26-40, 98-126, 128-275, 309-318, ACTIVE_PREFERENCE/REQUEST_GENERATION"
+        },
+        {
+          "path": "src/ui/theme/catalog.rs",
+          "responsibility": "Built-in theme data (fn-pointer localized names)",
+          "moves": "BuiltInTheme 42-96, BUILT_IN_THEMES 529-614, find_theme/built_in_themes"
+        },
+        {
+          "path": "src/ui/theme/custom_css.rs",
+          "responsibility": "Trust-boundary policy and loading of user CSS",
+          "moves": "CustomCssLoad 106-112, load_custom_css 178-213, validate_custom_css 277-307, tests 875-930 and 972-992"
+        },
+        {
+          "path": "src/ui/theme/providers.rs",
+          "responsibility": "GTK CssProvider stack",
+          "moves": "ACTIVE_PROVIDERS, clear_active_providers 477-488, install_css_provider 490-527"
+        },
+        {
+          "path": "src/ui/theme/desktop.rs",
+          "responsibility": "Desktop signals, native colour scheme and motion overrides",
+          "moves": "DESKTOP_SIGNALS_INSTALLED/NATIVE_*/UPDATING_* thread_locals, install_desktop_signals 320-336, apply_native_color_scheme 340-365, apply_native_motion 370-385, refresh_desktop_theme 387-398, desktop_allows_animation 459-461, effective_variant 463-475"
+        },
+        {
+          "path": "src/ui/theme/motion.rs",
+          "responsibility": "Motion override stylesheet generation",
+          "moves": "MOTION_ANIMATED_SELECTORS/MOTION_TRANSITION_SELECTORS 400-426, motion_css 434-451, tests 797-854"
+        },
+        {
+          "path": "src/ui/theme/tokens.rs",
+          "responsibility": "ThemeColors snapshot for Cairo widgets (uiw-11)",
+          "moves": "parse_theme_colors/parse_hex_color promoted from tests 1487-1516"
+        },
+        {
+          "path": "src/ui/theme/contrast_tests.rs",
+          "responsibility": "WCAG token contrast tests",
+          "moves": "tests 1005-1050, 1440-1485, helpers 1518-1552"
+        },
+        {
+          "path": "src/ui/theme/stylesheet_tests.rs",
+          "responsibility": "BASE_CSS structural assertions",
+          "moves": "tests 676-795, 856-873"
+        },
+        {
+          "path": "src/ui/theme/native_tests.rs",
+          "responsibility": "Native GTK theme tests",
+          "moves": "tests 640-674, 932-970, 1052-1438"
+        }
+      ],
+      "order": "1) Convert theme.rs to theme/mod.rs (pure rename). 2) Move tests into the three test modules (update native_test names in tools/test-native.py if it lists paths). 3) Extract motion.rs, then custom_css.rs, then providers.rs, then desktop.rs, then catalog.rs. 4) Apply uiw-10 (fn-pointer names). 5) Add tokens.rs (uiw-11).",
+      "safety_net": "All current theme tests, including the ignored native ones via tools/test-native.py. Native test names embed module paths (e.g. \"ui::theme::tests::native_...\" at 644, 936, 1062, 1373) and must be renamed to match the new paths. Add a unit test that every BUILT_IN_THEMES id has non-empty name/description in en.",
+      "verdict": "confirmed",
+      "verifier_note": "Ranges verified. tools/test-native.py discovers tests from the listing (prefix 'ui::'), so no list edit is needed there; only the embedded child test names inside theme tests need renaming."
+    },
+    {
+      "file": "src/ui/action_catalog.rs",
+      "current_lines": 1155,
+      "rationale": "Operator-action permission rules (domain or application policy) mixed with palette entry building, label formatting and execution. The rules are pure over AppState.",
+      "target_modules": [
+        {
+          "path": "src/domain/operator_action/resolution.rs",
+          "responsibility": "ResolvedAction, ObservedActionState, resolve(ctx, action), observed_state(ctx, action)",
+          "moves": "Resolved 147-151, resolve/resolve_with_inputs 153-287, observed_label logic 66-145 (returning an enum), observed_input/observed_mute 45-63"
+        },
+        {
+          "path": "src/controller/state/action_context.rs",
+          "responsibility": "AppState::action_context() -> ActionContext<'_> read model",
+          "moves": "inputs() 35-43 plus the readiness flags read in 67-72 and 163-171"
+        },
+        {
+          "path": "src/ui/action_catalog/mod.rs",
+          "responsibility": "CatalogAction, Entry, entries, binding_entries",
+          "moves": "10-33, 289-510"
+        },
+        {
+          "path": "src/ui/action_catalog/labels.rs",
+          "responsibility": "action_label and observed-state-to-fl! mapping",
+          "moves": "binding_entry label match 536-609, fl! parts of observed_label"
+        },
+        {
+          "path": "src/ui/action_catalog/execute.rs",
+          "responsibility": "Dispatch admitted actions",
+          "moves": "execute 619-665"
+        },
+        {
+          "path": "src/controller/state/test_fixtures.rs",
+          "responsibility": "Shared connected() AppState fixture (cfg(test))",
+          "moves": "tests::connected 678-759, used by action_shortcuts, global_shortcuts, operator_picker"
+        }
+      ],
+      "order": "1) Add OperatorAction::target() and replace the three matches. 2) Move the connected() fixture to controller/state/test_fixtures.rs and update the 4 callers. 3) Introduce ActionContext and move resolve with its tests 794-1044 and 1108-1154 to the domain, keeping a thin ui wrapper. 4) Convert observed_label to observed_state plus a UI mapping. 5) Split labels.rs and execute.rs and remove the duplicated label code.",
+      "safety_net": "Unit tests 770-1154 must pass unchanged at each step (they run without GTK). The native picker and shortcut tests in operator_picker.rs and action_shortcuts.rs cover execute().",
+      "verdict": "adjusted",
+      "verifier_note": "Move target corrected: resolution cannot go to src/domain/operator_action/resolution.rs because it reads storage::registry::SceneRegistry and controller RegistryStatus/WorkspaceState (architecture_tests domain_and_services_do_not_reach_into_storage). Use src/controller/state/action_resolution.rs (AppState methods) for resolve/observed_state; keep only ResolvedAction/ObservedActionState enums in domain/operator_action.rs. Drop the separate action_context.rs unless a flattened domain context is wanted. Step 1 must account for the non-identical variant sets (see uiw-04)."
+    },
+    {
+      "file": "src/ui/widgets/audio_card.rs",
+      "current_lines": 1123,
+      "rationale": "Production code (~884 lines) is reasonably decomposed but mixes scope binding, volume debouncing and dispatch, part construction and two layouts in one file.",
+      "target_modules": [
+        {
+          "path": "src/ui/widgets/audio_card/mod.rs",
+          "responsibility": "AudioCardHandle (+ new()), build, build_compact, set_compact_expanded",
+          "moves": "42-61, 110-160, 452-624"
+        },
+        {
+          "path": "src/ui/widgets/audio_card/scope.rs",
+          "responsibility": "AudioTargetScope binding",
+          "moves": "69-99, test audio_callbacks_reject_another_session_collection_and_endpoint 1078-1107"
+        },
+        {
+          "path": "src/ui/widgets/audio_card/volume.rs",
+          "responsibility": "VolumeControls, VolumeChangeContext, debounce and immediate dispatch",
+          "moves": "63-67, 101-108, 346-450, 753-883"
+        },
+        {
+          "path": "src/ui/widgets/audio_card/parts.rs",
+          "responsibility": "Mute, lock, name label, scope bar, ruler, fine controls, styles",
+          "moves": "162-344, 626-751"
+        },
+        {
+          "path": "src/ui/widgets/audio_card/tests.rs",
+          "responsibility": "Native echo/debounce tests",
+          "moves": "885-1076, 1109-1122"
+        }
+      ],
+      "order": "1) Convert to a directory module and move tests. 2) Extract scope.rs, then volume.rs, then parts.rs. 3) Apply the uiw-16 fixes (MixerSelection::set_locked, remove the cfg(test) hook, AudioCardHandle::new) in a follow-up commit.",
+      "safety_net": "native_multiple_outstanding_same_input_echoes_preserve_dispatched_gain (910), native_same_input_delayed_echo_preserves_pending_gain_and_timer (1012), lifetime_tests.rs. Native test names embed paths, so update them. Before removing observe_gain_dispatch, add an equivalent assertion on the test_support event receiver.",
+      "verdict": "confirmed",
+      "verifier_note": "Plausible pure move; native test names embed paths and need renaming. Replace observe_gain_dispatch only after an equivalent receiver-based assertion exists."
+    },
+    {
+      "file": "src/ui/persist.rs",
+      "current_lines": 1033,
+      "rationale": "Write journal, import transaction gate, scope selection with migration rule, i18n message and config persistence in one file built on thread-local globals.",
+      "target_modules": [
+        {
+          "path": "src/ui/persist/mod.rs",
+          "responsibility": "Public re-exports (persist_config, persist_registry, persist_registry_field, registry_save_status, ...)",
+          "moves": "module docs 1-12"
+        },
+        {
+          "path": "src/ui/persist/config.rs",
+          "responsibility": "Config snapshot and transactional writes",
+          "moves": "persist_config 463-470, persist_config_with 478-497"
+        },
+        {
+          "path": "src/ui/persist/registry_journal.rs",
+          "responsibility": "Pure RegistryJournal and RegistrySaveStatus (no GTK/IO)",
+          "moves": "RegistryOperation/RegistryWrites 23-40, RegistrySaveStatus 47-52, confirm_* 69-81, the decision part of registry_write_finished 83-120"
+        },
+        {
+          "path": "src/ui/persist/registry_writer.rs",
+          "responsibility": "Submitting, retrying and editing registry writes on SerialLane::Registry",
+          "moves": "REGISTRY_WRITES thread_local, submit_registry_write(_to) 122-155, retry_registry_writes 160-205, persist_registry 511-537, persist_registry_field 552-589"
+        },
+        {
+          "path": "src/ui/persist/registry_import.rs",
+          "responsibility": "Exclusive import gate and deferred jobs",
+          "moves": "207-271 (REGISTRY_IMPORTING, after_registry_import, RegistryImportGuard, begin_registry_import, registry_edit_allowed, registry_import_busy), import_registry 383-404, import_registry_to_target 416-455"
+        },
+        {
+          "path": "src/ui/persist/registry_scope.rs",
+          "responsibility": "Select and load the workspace registry, reconcile identities",
+          "moves": "select_registry_scope 291-354 (legacy rule delegated to RegistryTarget::legacy_source), reconcile_registry 358-378"
+        },
+        {
+          "path": "src/ui/registry_status.rs",
+          "responsibility": "Localized registry availability message",
+          "moves": "registry_availability_message 273-287"
+        }
+      ],
+      "order": "1) Convert to a directory module with mod.rs re-exporting the current API (no caller changes). 2) Extract config.rs. 3) Extract registry_import.rs. 4) Extract registry_journal.rs as a pure struct with new unit tests, and keep registry_writer.rs as the thread_local wrapper. 5) Extract registry_scope.rs and move the legacy rule to storage with a unit test. 6) Move registry_availability_message and replace the .expect at 317.",
+      "safety_net": "All tests 596-1032 (isolated child-process tests; update the isolated_test_child names that embed \"ui::persist::tests::...\"). New pure RegistryJournal unit tests before step 4. A storage unit test for RegistryTarget::legacy_source covering default connection, matching endpoint, mismatched endpoint and a non-default connection.",
+      "verdict": "confirmed",
+      "verifier_note": "Ranges verified; legacy_source on storage RegistryTarget is boundary-correct. Six isolated_test_child names embed 'ui::persist::tests::' and must be renamed."
+    },
+    {
+      "file": "src/ui/background_io.rs",
+      "current_lines": 894,
+      "rationale": "Spawn/deliver, FIFO lanes, config coalescing and the failure ledger/close barrier are separate concerns. Polling delivery is costly.",
+      "target_modules": [
+        {
+          "path": "src/ui/background_io/mod.rs",
+          "responsibility": "run(), deliver to the GTK thread (async oneshot instead of a 20 ms poll)",
+          "moves": "run 99-113, deliver_on_main_thread 347-376"
+        },
+        {
+          "path": "src/ui/background_io/lanes.rs",
+          "responsibility": "SerialQueue, SerialLane, run_serialized",
+          "moves": "13-85, 121-138, tests 821-893"
+        },
+        {
+          "path": "src/ui/background_io/config_batch.rs",
+          "responsibility": "Replaceable config snapshot batching",
+          "moves": "140-243, tests 425-662"
+        },
+        {
+          "path": "src/ui/background_io/ledger.rs",
+          "responsibility": "PendingJob counter, FailureEvidence, record/resolve/acknowledge",
+          "moves": "245-303, test 664-700"
+        },
+        {
+          "path": "src/ui/background_io/flush.rs",
+          "responsibility": "Close barrier",
+          "moves": "FlushError 305-309, flush_pending 318-345, tests 702-771"
+        },
+        {
+          "path": "src/ui/background_io/test_isolation.rs",
+          "responsibility": "cfg(test) isolated_test_child",
+          "moves": "378-404"
+        }
+      ],
+      "order": "1) Convert to a directory module, keeping the public API. 2) Move ledger.rs, flush.rs and test_isolation.rs. 3) Move lanes.rs, then config_batch.rs. 4) In a separate PR, replace polling delivery with a spawn_local plus oneshot, and use poison-tolerant locks.",
+      "safety_net": "All isolated tests 425-893 (they drive real main loops and are the guard for the delivery rewrite). Add a test that a worker panic still yields FlushError::WorkerFailed after the oneshot rewrite (Canceled maps to record_failure).",
+      "verdict": "adjusted",
+      "verifier_note": "Step 4 caveat: futures_util::channel needs the `channel` feature (Cargo.toml:21 declares futures-util \"0.3\" default features, not verified enabled); serial lanes run on dedicated threads, so gio::spawn_blocking only replaces run(). Poison-tolerant locks are low priority since the guard is never held across user work."
+    },
+    {
+      "file": "src/ui/action_shortcuts.rs",
+      "current_lines": 798,
+      "rationale": "Key normalization, conflict rules, manager window and editor dialog in one file. Rules are reused by global_shortcuts.",
+      "target_modules": [
+        {
+          "path": "src/domain/action_shortcut.rs",
+          "responsibility": "matching_binding / binding_conflict pure rules",
+          "moves": "conflict 97-118, matching 121-132, test 581-604"
+        },
+        {
+          "path": "src/ui/action_shortcuts/chord.rs",
+          "responsibility": "GDK key to ActionShortcut, display label, conflict text",
+          "moves": "chord 20-63, label 65-95, conflict_text 134-141"
+        },
+        {
+          "path": "src/ui/action_shortcuts/manager.rs",
+          "responsibility": "Settings group and binding manager window",
+          "moves": "settings_group 143-160, show 173-377 (extract binding_row)"
+        },
+        {
+          "path": "src/ui/action_shortcuts/editor.rs",
+          "responsibility": "Record/edit dialog",
+          "moves": "editor 383-561, conflict_for_enable 379-381"
+        }
+      ],
+      "order": "1) Move conflict/matching into the domain with its test and update global_shortcuts::eligible. 2) Convert to a directory module and split chord, manager and editor. 3) Extract binding_row from show's refresh closure.",
+      "safety_net": "only_unique_enabled_nonconflicting_bindings_can_match plus native tests 652-797 via tools/test-native.py (update their embedded module paths).",
+      "verdict": "adjusted",
+      "verifier_note": "src/domain/action_shortcut.rs already exists with ActionShortcut::conflict(&SceneHotkeyConfig, ...); add matching_binding/binding_conflict there taking &SceneHotkeyConfig and &[ActionBinding] (not HotkeyConfig, not AppState)."
+    },
+    {
+      "file": "src/ui/audio_presets.rs",
+      "current_lines": 713,
+      "rationale": "18-field Editor with a 180-line render, and preset rules inside the UI.",
+      "target_modules": [
+        {
+          "path": "src/domain/audio_preset.rs",
+          "responsibility": "PresetLibrary (save/rename/delete validation), PresetPlan::still_matches, plan construction",
+          "moves": "save validation 240-244, rename checks 262, review_matches 135-144, plan build 483-497"
+        },
+        {
+          "path": "src/ui/audio_presets/mod.rs",
+          "responsibility": "show(): window construction and signal wiring",
+          "moves": "show 526-710"
+        },
+        {
+          "path": "src/ui/audio_presets/editor.rs",
+          "responsibility": "Editor state and actions",
+          "moves": "Editor 95-116, current/add_rows/choose/picker/replace/save/rename/delete/review/apply 146-283, 466-523, snapshot 44-66, capable 118-134"
+        },
+        {
+          "path": "src/ui/audio_presets/view.rs",
+          "responsibility": "render split into render_actions/render_rows/render_preview/render_notice",
+          "moves": "render 284-465, value 75-88 (use AudioService::format_db)"
+        }
+      ],
+      "order": "1) Add PresetLibrary and PresetPlan::still_matches in the domain with unit tests. 2) Switch Editor to the domain methods. 3) Split the files and break render into four functions.",
+      "safety_net": "src/ui/audio_presets/tests.rs (149 lines) plus new domain unit tests for name validity, duplicates, PRESET_LIMIT, rename collision and plan-drift detection.",
+      "verdict": "adjusted",
+      "verifier_note": "valid_name and PRESET_LIMIT are already in domain/audio_preset.rs; PresetLibrary composes them. Using AudioService::format_db changes displayed text (decimals, -inf form) - separate commit with updated tests. Editor has 20 fields."
+    },
+    {
+      "file": "src/ui/global_shortcuts.rs",
+      "current_lines": 456,
+      "rationale": "Below 600 lines but mixed: the D-Bus portal client (portal.rs, 323 lines) is infrastructure, and start() is a 143-line async routine.",
+      "target_modules": [
+        {
+          "path": "src/infra/portal/global_shortcuts.rs",
+          "responsibility": "XDG GlobalShortcuts client with a typed PortalError",
+          "moves": "src/ui/global_shortcuts/portal.rs and portal/tests.rs"
+        },
+        {
+          "path": "src/ui/global_shortcuts/session.rs",
+          "responsibility": "Session lifecycle, event handling, watchdog",
+          "moves": "Context 92-134, update_bound 136-162, start 164-307 split into run_session and handle_event"
+        },
+        {
+          "path": "src/ui/global_shortcuts/mod.rs",
+          "responsibility": "Manager and controls UI",
+          "moves": "Manager 20-43, controls 321-407, button 309-319 (to ui/kit)"
+        },
+        {
+          "path": "src/ui/global_shortcuts/specs.rs",
+          "responsibility": "Eligible bindings and stable desktop ids",
+          "moves": "Spec 45-50, eligible 52-60, specs 62-90, test 418-455"
+        }
+      ],
+      "order": "1) Check that src/architecture_tests.rs allows gio in infra. 2) Move portal.rs to infra and add PortalError plus fl! keys in every locale. 3) Extract specs.rs. 4) Split session.rs.",
+      "safety_net": "desktop_ids_follow_uuid_renames_but_never_cross_connections_or_collections, portal/tests.rs, every_translation_has_the_same_messages_as_english for the new error keys.",
+      "verdict": "confirmed",
+      "verifier_note": "infra has no gio restriction in architecture_tests, so the move is allowed; new fl! keys must be added to every locale (every_translation_has_the_same_messages_as_english)."
+    },
+    {
+      "file": "src/ui/widgets/chart.rs",
+      "current_lines": 682,
+      "rationale": "Low priority. Production is ~570 lines mixing colour policy, scale math, series drawing and the gauge. The scale helpers are pure and reusable.",
+      "target_modules": [
+        {
+          "path": "src/ui/widgets/chart/mod.rs",
+          "responsibility": "Chart, ChartOptions, ChartKind, chart()",
+          "moves": "120-254"
+        },
+        {
+          "path": "src/ui/widgets/chart/palette.rs",
+          "responsibility": "Severity and theme-token-backed Palette",
+          "moves": "28-119 (switch to ThemeColors per uiw-11)"
+        },
+        {
+          "path": "src/ui/widgets/chart/draw.rs",
+          "responsibility": "PlotArea, grid, area and bar series",
+          "moves": "256-403"
+        },
+        {
+          "path": "src/ui/widgets/chart/gauge.rs",
+          "responsibility": "GaugeReading, Gauge, gauge(), draw_gauge",
+          "moves": "405-521"
+        },
+        {
+          "path": "src/ui/widgets/chart/scale.rs",
+          "responsibility": "series_max, nice_upper_bound, clamp_fraction",
+          "moves": "523-568 with their unit tests"
+        }
+      ],
+      "order": "1) Convert to a directory module. 2) Extract scale.rs with its tests. 3) Extract gauge.rs and draw.rs. 4) Switch palette.rs to theme tokens after uiw-11.",
+      "safety_net": "Existing chart tests 570-682, plus a native render smoke test for both themes.",
+      "verdict": "confirmed",
+      "verifier_note": "Low priority as stated; palette switch to tokens applies to chart only (volume meter colours are deliberately fixed, see uiw-11)."
+    }
+  ]
+}

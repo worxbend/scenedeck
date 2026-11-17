@@ -1,0 +1,549 @@
+{
+ "reviewer": "ui-shell",
+ "skills": [
+  "rust-linux-apps",
+  "refactoring-guru",
+  "code-perfection",
+  "frontend-ui-engineering",
+  "verifier:code-review",
+  "verifier:doubt-driven-development"
+ ],
+ "summary": "Adversarial verification of ui-shell. 24 findings: 12 confirmed, 12 adjusted, 0 refuted outright; the refuted sub-steps are recorded inside adjusted items. Key corrections: (1) ui-shell-01 holds, but module_path!() carries the 'scenedeck::' crate prefix while libtest names do not, so use type_name_of_val on a local fn, or just assert '1 passed' in child stdout. No literal drifts today (91 call sites scanned). (2) Do not move NavigationContext, scope or connection helpers into ui/shell. Pages depend on them and shell depends on pages, so that creates a pages<->shell cycle; keep them in ui/ as the port. (3) ui-shell-04 is a real, reachable divergence: OutputReadbackFailed and command-pending set active=false without clearing active_since, so the clock shows elapsed time after the event label hid it. Severity is medium, not high. (4) ui-shell-05: update() must keep panic semantics, not silently drop mutations. Shortcut stopping stays in ui. The controller's SwitchPrimaryScene arm becomes bypassable. (5) ui-shell-08: lazy password needs a Loading/Loaded tri-state, or Settings can delete the stored secret. (6) ui-shell-14: WINDOW_ACTIONS must exclude 'quit' (close guard). (7) ui-shell-15: keep per-event report collection (ActivityLog ring of 200 versus a 128-event batch); severity low. (8) ui-shell-18: ObsStatus::label is used by controller report text (state.rs:859-861) and cannot move to a ui presenter; only css_class can. (9) test-native.py prefix classification ('ui::' / 'app::tests::native_') constrains where moved tests may live.\n\nOriginal reviewer summary:\nReviewer ui-shell. Scope: src/ui/window.rs (2698 lines: 1582 prod, about 1116 tests), src/app.rs (1345: 456 prod, 889 tests), src/ui/sidebar.rs (800: 547 prod), src/ui/event_pump.rs (81), src/ui/navigation.rs (284), src/lib.rs, src/main.rs. Skills applied: rust-linux-apps, refactoring-guru, code-perfection, frontend-ui-engineering.\n\nMain diagnosis:\n1. window.rs is four things in one file: the composition root (build_main_window, 63-272), the page registry plus a 200 ms workspace and registry poller (add_pages, 281-408), header and streaming chrome (513-600, 1455-1496), and the AppEvent applier. The applier is apply_event at 664-1248: a 585-line exhaustive match over about 45 variants. Each arm mixes three things: AppState reduction (domain logic such as OutputReadbackFailed at 939-969), persistence policy (SceneRenamed writes the registry at 1013-1058), and GTK projection. Every arm repeats `if let Some(ui) = ui`. The file has 153 `borrow()`/`borrow_mut()` calls.\n2. app.rs mixes four responsibilities: the composition root, synchronous startup I/O (including a Secret Service read that blocks the GTK thread before the first frame), runtime and controller shutdown, and a close/quit persistence barrier (CloseGuard, 170-428). That barrier is GTK UI code and belongs under ui/. It is a 5-flag implicit state machine.\n3. navigation.rs claims a two-method surface (switch_to_page, dispatch). In practice it exposes `pub(crate) state`, which is the root of the crate's borrow_mut sprawl. It also exposes global_shortcuts, two scope-binding systems, and business routing inside dispatch (SwitchPrimaryScene is redirected to ui::workspace).\n4. sidebar.rs also holds HeaderSelectors, which is header chrome, and depends on pages::live for disconnect policy.\n5. Split hazard: native GTK tests address themselves by string literal (\"ui::window::tests::...\"). ui/mod.rs native_test re-runs the test binary with `--exact <name>`. A moved test whose literal is not updated makes the child run 0 tests and exit with success, a vacuous pass. Fix this before any split.\n\nTarget shape:\n- A new src/ui/shell/ bounded context: window, header, split_view, lifecycle, page_registry, ticks, sidebar, header_selectors, navigation, event_pump, close_guard.\n- src/ui/shell/events/ split per bounded context: session, output, scene_catalog, obs_scope, audio, workspace, topology, telemetry, feedback.\n- A reduce/project split: AppState methods return a UiEffects value object, and a single projector applies it to widgets. Reduction then becomes unit-testable without GTK.\n- app.rs becomes src/app/{mod,startup,runtime,activation}.rs, and the close guard moves to ui/shell/close_guard.rs.\n\nOrder of work: fix the native-test naming hazard (ui-shell-01) first. Then do the mechanical moves, then the reduce/project split, then the AppEvent sub-enums, which need the controller reviewer.",
+ "findings": [
+  {
+   "id": "ui-shell-01",
+   "severity": "high",
+   "category": "test",
+   "file": "src/ui/mod.rs",
+   "lines": "258-299 (native_test); callers src/ui/window.rs:1596,1621,...; src/app.rs:576,744,753,...; src/ui/sidebar.rs:557,609; src/ui/navigation.rs:224",
+   "title": "Native GTK tests are addressed by string literal; moving a test during a split yields a vacuous green",
+   "evidence": "native_test(name, f) spawns current_exe with [\"--exact\", name, \"--ignored\"] and asserts only output.status.success(). Every caller hard-codes its own path, e.g. \"ui::window::tests::native_assembled_window_releases_shell_sources_while_stats_popout_survives\". Moving that test to ui::shell::tests without editing the literal makes libtest match 0 tests and exit 0, so the parent passes without running the body. Every proposed split of window.rs, app.rs and sidebar.rs moves these tests.",
+   "recommendation": "Before any file move: (1) add `macro_rules! native_test { ($body:expr) => { $crate::ui::test_support::native_test(concat!(module_path!(), \"::\", <fn name>), $body) } }`, or pass `module_path!()` plus the fn name through a helper so the path cannot drift. Rust has no fn-name macro, so the alternative is an assertion. (2) In native_test, assert the child's stdout contains \"test result: ok. 1 passed\" and fail on \"0 passed\". (3) Have tools/test-native.py cross-check the listing count against the executed count.",
+   "risk": "Without this, the restructuring PRs can silently drop roughly 100 native regression tests.",
+   "effort": "S",
+   "smell": "Primitive Obsession (stringly-typed test identity)",
+   "verdict": "confirmed",
+   "verifier_note": "Verified src/ui/mod.rs:258-299. native_test compares SCENEDECK_NATIVE_TEST_CHILD with the literal, spawns current_exe with --exact <literal> --ignored, and asserts only status.success(). tools/test-native.py runs the outer process with the real discovered name, so the outer body runs native_test, and the child gets the stale literal: 0 tests run, exit 0, vacuous pass. A scan of all 91 native_test call sites in src/ found no drift today; every literal's last segment matches its enclosing fn. The hazard is purely future moves. Fix to recommendation (1): module_path!() includes the crate prefix ('scenedeck::ui::window::tests'), but libtest names omit it, so concat!(module_path!(),...) would be wrong without stripping. A working pattern: in the test body `fn here(){}` then `std::any::type_name_of_val(&here)` -> 'scenedeck::ui::window::tests::<test_fn>::here'. Strip the 'scenedeck::' prefix and the '::here' suffix; that also yields the fn name, so no literal is needed. Wrap it in a macro_rules! native_test!(|| {...}). Recommendation (2) is the cheap, sufficient guard on its own: require child stdout to contain 'running 1 test' and '1 passed'. Also note that test-native.py only accepts names starting with 'ui::' or 'app::tests::native_' (native_tests()), so moved tests must keep one of those prefixes; see the app.rs split note."
+  },
+  {
+   "id": "ui-shell-02",
+   "severity": "high",
+   "category": "god-file",
+   "file": "src/ui/window.rs",
+   "lines": "664-1248",
+   "title": "apply_event is a 585-line switch over about 45 AppEvent variants mixing reduction, persistence and widget projection",
+   "evidence": "One match handles sessions (668-720, 906-932, 1121-1147), audio (721-738, 1149-1217), workspace (739-905), topology (766-783, 1219-1225), outputs (934-983), scene catalog (985-1119) and telemetry (1227-1246). Arms mutate AppState directly: OutputReadbackFailed (939-969) re-implements per-kind error bookkeeping; `show_registry.generation += 1` at 1028. Arms persist: SceneRenamed (1013-1058) calls persist_registry. Arms dispatch commands: WorkspaceScopeChanging calls nav.dispatch(CancelWorkspace) at 862. Arms recurse: CommandFailed calls apply_event(WorkspaceScopeChanging) at 755; SessionEvent and Observation also recurse. Every arm repeats `if let Some(ui) = ui`, and GraphFailed (776-782) and CurrentSceneChanged (1111-1118) test it twice in a row.",
+   "recommendation": "Phase A (mechanical, no behavior change): create src/ui/shell/events/mod.rs holding the exhaustive `match`. Each arm becomes a one-line call into a per-context module: events/session.rs (SessionRetired, SessionEvent, Connecting, Disconnected, Connected, Error, show_no_session_ui); events/output.rs (OutputReadbackFailed, RecordingStopObserved, OutputStatusUpdated, OutputCommand*, refresh_output_status_bar, sync_output_indicators); events/scene_catalog.rs (SceneInventoryUpdated, SceneRenamed, CurrentSceneChanged, refresh_scene_inventory_views); events/obs_scope.rs (ProfilesUpdated, SceneCollectionsUpdated, WorkspaceScopeChanging, CommandFailed); events/audio.rs (ActiveAudio*, MixerAudioInputs*, InputMute/Volume/LevelsChanged, update_live_audio_card, apply_mixer_audio_transition); events/workspace.rs (Workspace*, Preset*, ReplaySaved, StudioModeChanged, VirtualCameraChanged); events/topology.rs (Graph*); events/telemetry.rs (StatsUpdated, ThumbnailLoaded); events/feedback.rs (report_failure, command_failure_message). Keep the match exhaustive, as the doc comment at 657-663 requires. Phase B: see ui-shell-03.",
+   "risk": "Every new AppEvent variant edits this function (Divergent Change), and no arm is unit-testable without GTK.",
+   "effort": "L",
+   "smell": "Switch Statements, Long Method, Divergent Change",
+   "depends_on": [
+    "ui-shell-01"
+   ],
+   "verdict": "confirmed",
+   "verifier_note": "Read window.rs:664-1248. Line anchors check out: CommandFailed recursion into apply_event(WorkspaceScopeChanging) at ~755; nav.dispatch(AppCommand::CancelWorkspace) inside WorkspaceScopeChanging at ~862; `show_registry.generation += 1` at ~1028 inside the SceneRenamed closure; GraphFailed and CurrentSceneChanged each have two consecutive `if let Some(ui) = ui`. SessionEvent and Observation recurse. The Phase A mechanical split is safe: the arms only call free fns in the same module plus ui::* helpers, so moving them into submodules of the router creates no new crate-level dependency. Keep apply_event's recursion going through the router (events::apply), not into sibling modules, so session.rs does not call scene_catalog.rs directly. Adjustment: put the router at src/ui/shell/events/mod.rs only if the ui/shell module is adopted; see the split note about keeping navigation outside shell."
+  },
+  {
+   "id": "ui-shell-03",
+   "severity": "high",
+   "category": "ddd",
+   "file": "src/ui/window.rs",
+   "lines": "664-1356, 1499-1572",
+   "title": "State reduction and UI projection are interleaved; introduce a UiEffects value object so AppState reduction is pure and testable",
+   "evidence": "Each arm borrows AppState mutably, then reads widget handles from Option<&EventUiContext>. Native tests must drive apply_event through GTK. Examples: native_output_read_failure_cannot_replace_newer_evidence_or_invent_a_stop at 1595-1614 needs a GTK display only to assert AppState health. The repeated projection vocabulary is: rebuild scene cards, rebuild audio cards, call_visible_among(&[pages]), call_if_visible, toast, refresh_output_status_bar(kind), sync_output_indicators, header_selectors.update_*.",
+   "recommendation": "Define `struct UiEffects { scene_cards: bool, audio_cards: bool, pages: PageSet, stats: bool, outputs: SmallVec<OutputKind>, indicators: bool, toasts: Vec<Toast>, selectors: Option<SelectorUpdate>, live_view: Option<LiveView> }` in src/ui/shell/events/effects.rs, with PageSet as a bitset over Page. Move each arm's state work into an AppState method under controller/state/* that returns its effects, or a domain result that window maps to effects. Examples: AppState::apply_output_readback_failure(kind, error, at) -> Option<OutputFailureOutcome>, and AppState::apply_current_scene(scene). Then write one `project(ui: &EventUiContext, nav, effects)` in events/project.rs. Convert the GTK-only native tests whose assertions touch only AppState into plain #[test] on the reducer.",
+   "risk": "Without the split, roughly 30 native tests stay the only guard for state logic; they are slow and need xvfb and dbus.",
+   "effort": "XL",
+   "smell": "Feature Envy (window arms envy AppState), Shotgun Surgery",
+   "depends_on": [
+    "ui-shell-02"
+   ],
+   "verdict": "adjusted",
+   "verifier_note": "The direction is sound and the cited test is accurate: native_output_read_failure_cannot_replace_newer_evidence_or_invent_a_stop (window.rs:1595-1614) passes ui=None and asserts only AppState, so it needs GTK only because apply_event takes &NavigationContext. Corrections: (a) 'roughly 30 native tests' is overstated. window.rs has 8 native tests (1595, 1619, 1746, 1913, 1997, 2228, 2284, 2364); only some are state-only. (b) Drop the SmallVec in UiEffects: smallvec is not a dependency (Cargo.toml), and a [bool; 2] or an OutputKind bitset works. Avoid adding dependencies. (c) Some arms have ordering-sensitive interleaving that a pure effects value cannot express as-is. WorkspaceScopeChanging clears previews before state invalidation (window.rs ~858-866). show_no_session_ui clears previews before reset_obs_session (~1282-1285). SessionRetired calls show_no_session_ui, then apply_terminal_evidence, then refreshes the status bar. UiEffects therefore needs pre/post phases, or those arms keep explicit sequencing. (d) Cheaper first step: change apply_event's state access to take `&Rc<RefCell<AppState>>` plus Option<&EventUiContext>. The state-only tests then build an AppState without navigation(); still GTK-free once the arm no longer calls nav.dispatch. Do this per arm before inventing UiEffects."
+  },
+  {
+   "id": "ui-shell-04",
+   "severity": "high",
+   "category": "correctness",
+   "file": "src/ui/window.rs",
+   "lines": "475-507 vs 1317-1338",
+   "title": "Two different formatters write the same status-bar slot; the 1 s clock overwrites the event-driven label",
+   "evidence": "install_output_clock writes the stream and record slots with keys window-stream-status-line/window-record-status-line (\"Stream: { $state }{ $elapsed }\", ftl:249-250). Its elapsed suffix comes from elapsed_suffix(active_since), which shows elapsed time whenever active_since is Some, regardless of status.active. refresh_output_status_bar writes the same slots via pages::live::output_label with live-output-label / live-output-label-with-elapsed (ftl:320-321), which shows elapsed only when status.active. Each event renders format B, then within 1 s the clock renders format A. The two diverge when active_since is Some and active is false, and whenever translators render the two keys differently.",
+   "recommendation": "Create src/ui/shell/ticks/output_clock.rs. The clock calls the same `refresh_output_status_bar(kind)` used by events, which removes elapsed_suffix and the two window-*-status-line keys from all locales. Move format_elapsed and output_label into one presenter, src/ui/presenters/output_status.rs, and have pages::live import it. Add a unit test showing that clock and event render identical labels for (active, active_since) in {(true,Some),(false,Some),(false,None)}.",
+   "risk": "Visible label flicker and inconsistent elapsed display on the output status line during live shows.",
+   "effort": "S",
+   "smell": "Duplicate Code (divergent copies)",
+   "verdict": "confirmed",
+   "verifier_note": "Verified window.rs:475-507 (the clock uses window-*-status-line keys plus elapsed_suffix(active_since), i.e. elapsed whenever Some) against window.rs:1317-1338 plus pages/live.rs:500-522 (output_label shows elapsed only `if status.active`). active_since Some with active=false is reachable in production. update_active_since (controller/state.rs:182-188) only runs on status-update paths (state.rs:691-706). The OutputReadbackFailed arm (window.rs ~952-961) sets status to OutputStatus::new(false, Unknown) via set_*_status without clearing active_since, and so do set_*_command_pending and set_*_command_failure_with_recovery (state.rs:1086-1136). Concrete trigger: a record readback fails while recording; the event renders 'Record: Unknown', and within 1 s the clock renders 'Record: Unknown \u00b7 12:34'. Also, the clock hard-codes 'Stream:'/'Record:' in the ftl, while output_label uses kind.label(). Severity high is a stretch (cosmetic flicker, misleading elapsed time); medium is fairer. The recommendation is correct. The presenter path ui/presenters/ does not exist yet; creating it is fine. Existing test live.rs:1528 output_label_shows_elapsed_time_only_while_active guards the target semantics. Remove window-stream-status-line/window-record-status-line from every i18n/*/scenedeck.ftl in the same commit, or the parity test still passes but leaves dead keys.",
+   "severity_verified": "medium"
+  },
+  {
+   "id": "ui-shell-05",
+   "severity": "high",
+   "category": "god-struct",
+   "file": "src/ui/navigation.rs",
+   "lines": "18-32, 52-213",
+   "title": "NavigationContext is advertised as a two-method surface but exposes raw AppState, shortcuts, scope bindings and business routing",
+   "evidence": "`pub(crate) state: Rc<RefCell<AppState>>` (line 20) gives every page unrestricted borrow_mut. This is the source of the 559 borrow_mut calls noted in the initial review, 112 of them via nav.state in window.rs alone. Other exposed surface: `pub(super) global_shortcuts`, parent_window, scoped/is_current (NavigationBinding), registry_scoped/registry_is_current (a raw tuple `(RegistryTarget, u64)` at line 31), and accepts_session_event. dispatch (180-212) embeds policy: SwitchPrimaryScene is diverted to ui::workspace::act/refresh, Connect/Disconnect/SetCurrentSceneCollection stop global shortcuts, and registry_import_busy() is checked twice (185, and inside registry_is_current at 114). The architecture-test docstring (architecture_tests.rs:640-646) asserts the two-method contract that the code no longer has.",
+   "recommendation": "(1) Make `state` private. Add `fn read<R>(&self, f: impl FnOnce(&AppState)->R)->R` and `fn update<R>(&self, f: impl FnOnce(&mut AppState)->R)->R`, with update using try_borrow_mut plus tracing::error and a debug panic naming the call site (#[track_caller]) so re-entrancy is diagnosable. Migrate callers file by file. (2) Extract src/ui/shell/scope.rs with value objects `SessionBinding {epoch, scope}` (the renamed NavigationBinding) and `RegistryBinding {target, generation}` replacing the tuple; NavigationContext holds Option<SessionBinding> and Option<RegistryBinding>. (3) Move the SwitchPrimaryScene diversion into `ui::workspace::switch_primary_scene(nav, scene)` called by the pages, and move shortcut-stopping into a CommandIntent hook on AppState::note_command_intent or the controller. dispatch then only checks currency and forwards. (4) Remove the duplicate registry_import_busy check.",
+   "risk": "Runtime BorrowMutError panics on re-entrancy; policy hidden in a transport type.",
+   "effort": "L",
+   "smell": "Large Class, Inappropriate Intimacy, Primitive Obsession (tuple binding)",
+   "verdict": "adjusted",
+   "verifier_note": "Facts verified: navigation.rs:20 `pub(crate) state`, :21 `pub(super) global_shortcuts`, the tuple registry_binding (~31, built at 100-108), the dispatch policy at 180-212, the redundant registry_import_busy (registry_is_current at 114 already checks it, then 185 checks again), and the architecture_tests.rs:639-646 docstring. The window.rs nav.state count is 110, not 112. Recommendation fixes: (1) Do NOT make update() swallow a failed try_borrow_mut in release with only tracing::error. That silently drops a state mutation (fake success, contrary to clean-code-guard). Keep panic semantics, but with #[track_caller] and a message naming the caller (or use RefCell::borrow_mut under #[track_caller], which already reports the location). The value of read/update is that closures cannot hold a borrow across GTK calls. (3) SwitchPrimaryScene has exactly two production dispatchers: ui/hotkeys.rs:170 and ui/widgets/scene_card.rs:268 (plus window.rs tests 2138, 2149). Moving the diversion to ui::workspace::switch_primary_scene is feasible. Note that controller/app_controller.rs:148 still handles AppCommand::SwitchPrimaryScene. After the move, any dispatch() of that variant would bypass workspace policy and hit the controller path. Either remove the controller arm or keep a debug_assert in dispatch. Moving shortcut stopping into AppState::note_command_intent would put a GTK/portal side effect (global_shortcuts::Manager is UI) into controller state, which violates the layering. Keep it in the UI layer, e.g. a tiny ui::command_hooks::before_dispatch(nav, &cmd). (2) Put scope.rs at src/ui/scope.rs (next to navigation), not under shell; see the split note."
+  },
+  {
+   "id": "ui-shell-06",
+   "severity": "high",
+   "category": "god-file",
+   "file": "src/app.rs",
+   "lines": "32-159, 161-428, 431-455",
+   "title": "app.rs mixes composition root, startup I/O, runtime shutdown and a 260-line GTK close/quit persistence barrier",
+   "evidence": "run() (32-159) builds the runtime, performs startup I/O on a thread it immediately joins, sets SNAP flags, installs a shutdown flush with a nested MainLoop (97-115), sets up activation singleton logic, and joins the controller with timeouts. CloseGuard, install_persistence_close_guard and show_persistence_close_failure (161-428) are pure GTK/adw UI code, the persistence close barrier, sitting in the bootstrap module. About 890 test lines (457-1345) are almost all close-guard and persistence tests, not bootstrap tests.",
+   "recommendation": "Create src/app/mod.rs containing run() only: build runtime, load startup, build app, connect activate/shutdown, run, shut down; about 60 lines. Add src/app/startup.rs (StartupData plus load_startup() -> StartupData and the fallback), src/app/runtime.rs (build_runtime, shutdown_controller(runtime, controller) with the 3 s timeouts as named consts), and src/app/activation.rs (the connect_activate closure, window WeakRef and controller slot). Move CloseGuard, install_persistence_close_guard, show_persistence_close_failure, document_window(s) and the app.connect_shutdown flush to src/ui/shell/close_guard.rs and src/ui/shell/shutdown.rs, with their native tests, and update the test-name literals per ui-shell-01. app/mod.rs calls `ui::shell::install_persistence_close_guard`.",
+   "risk": "Bootstrap edits keep colliding with persistence UX edits, and the 1345-line file hides the composition root.",
+   "effort": "M",
+   "smell": "Divergent Change, Large Module",
+   "depends_on": [
+    "ui-shell-01"
+   ],
+   "verdict": "adjusted",
+   "verifier_note": "Verified app.rs: run() 32-159; startup spawn+join 42-74; connect_shutdown nested MainLoop 97-115; CloseGuard 170-278; install_persistence_close_guard 281-340; show_persistence_close_failure 342-428; build_ui 431-455; tests 457-1345, almost all close/persistence native tests (names at 575-1305). Adjustments: (a) tools/test-native.py native_tests() rejects any ignored test not prefixed 'ui::' or 'app::tests::native_'. Tests moved into app/startup.rs or app/activation.rs would be named app::startup::tests::* and fail classification, so update the prefix tuple in test-native.py in the same commit. Close-guard tests moved under ui::* are fine. (b) The close-guard native tests use app-level fixtures (fixture() 476, inventory role helpers 503-539, final_stats_exit 625 building ControllerDependencies). They move with the tests; keep them in a #[cfg(test)] support module, not duplicated. (c) The connect_shutdown flush (97-115) is a single closure; moving it to its own ui/shell/shutdown.rs file is optional. A fn install_shutdown_drain inside close_guard.rs avoids a 20-line file."
+  },
+  {
+   "id": "ui-shell-07",
+   "severity": "medium",
+   "category": "code-smell",
+   "file": "src/app.rs",
+   "lines": "170-278",
+   "title": "CloseGuard is an implicit state machine encoded in five boolean Cells",
+   "evidence": "Fields main, quitting (shared Rc<Cell<bool>>), allowed, pending and abandon are combined ad hoc in request() (220-233), drain() (238-276) and the dialog response handler (403-425, which mutates guard.quitting and guard.abandon from outside the type). Invalid combinations such as allowed && pending are representable, and the transitions live in three functions.",
+   "recommendation": "Replace Type Code with State: `enum CloseState { Idle, Draining { abandon: bool }, AwaitingDecision, Allowed }` plus a separate `QuitIntent` shared Cell. Give CloseGuard methods begin_close(), drain_finished(Result), decide(Decision::{Cancel,Retry,Abandon}). Have show_persistence_close_failure call guard.decide(..) instead of writing fields. Extract the transition function `fn next(state, input) -> (state, Effect)` as pure code and unit-test it without GTK.",
+   "risk": "Shutdown data-loss paths are hard to reason about; the regression tests are all native.",
+   "effort": "M",
+   "smell": "Primitive Obsession (boolean flags), Temporary Field",
+   "depends_on": [
+    "ui-shell-06"
+   ],
+   "verdict": "adjusted",
+   "verifier_note": "Verified app.rs:170-179. The state is 4 Cells (quitting is a shared Rc<Cell<bool>>, plus allowed, pending, abandon); main is an immutable bool, and exit is a RefCell<Option<ExitCheckpoint>> that is itself part of the state machine. The dialog handler (403-425) writes guard.abandon and guard.quitting from outside the type, confirmed. The CloseState enum must also model drain re-entry (checkpoint_again -> drain again at 247-253) and the exit checkpoint lifecycle; otherwise the enum is incomplete. quitting is shared across all guards (one per document window) and the quit action sets it (318). It must stay a shared cell outside the per-window enum, as the reviewer says."
+  },
+  {
+   "id": "ui-shell-08",
+   "severity": "medium",
+   "category": "performance",
+   "file": "src/app.rs",
+   "lines": "42-74",
+   "title": "Startup reads config, registry, bookmarks, history and the Secret Service password synchronously before the first frame",
+   "evidence": "std::thread::spawn(...).join() blocks the main thread until every read finishes, so the thread provides panic isolation only, not concurrency with GTK. secret::get_obs_password goes through D-Bus Secret Service, which can block on keyring unlock or a slow daemon, delaying window creation. CLAUDE.md says Secret Service access from the controller runs on the blocking pool. The fallback error strings (71-72) are untranslated English Strings, and bookmark and history errors are flattened to String.",
+   "recommendation": "In app/startup.rs, keep only config and registry synchronous; the window needs them. Load the password lazily: ControllerDependencies already has ObsPasswordProvider (used in tests at window.rs:2370-2376), and AppState.obs_password can be filled by a background_io::run completion. Load bookmarks and history via background_io after the window presents, with AppState::load_bookmarks/load_report_history as completions. Replace Result<_, String> with typed StartupLoadError mapped through user_message() and fl! keys.",
+   "risk": "Slow or hung first launch when the keyring is locked; untranslated error text.",
+   "effort": "M",
+   "smell": "Primitive Obsession (String errors)",
+   "depends_on": [
+    "ui-shell-06"
+   ],
+   "verdict": "adjusted",
+   "verifier_note": "Verified app.rs:42-74: spawn(...).join() gives no overlap with GTK, and get_obs_password runs before the window exists. Fallback strings at 71-72 are English String errors, confirmed. Recommendation risk: AppState.obs_password (controller/state.rs:456) feeds the Settings connection editor (ui/pages/settings/connections.rs:113 set_text(obs_password.unwrap_or(\"\")), and 146/156/249 write it back). Lazy loading with Option<String> conflates 'not yet loaded' with 'no password'. If the user opens Settings and saves before the load completes, the empty field could delete the stored secret (connections.rs:34-35 delete_obs_password when None). Model it as a tri-state enum PasswordCache { Loading, Loaded(Option<String>) } and disable the password row while Loading. The 'ObsPasswordProvider already exists' claim is correct (controller/dependencies.rs:17-68), and the controller reads the password on connect independently, so connect does not need the preload. Bookmarks and history load via background_io: the session-report and bookmark UIs must tolerate an initial empty/'loading' state. Check load_bookmarks/load_report_history semantics before moving."
+  },
+  {
+   "id": "ui-shell-09",
+   "severity": "medium",
+   "category": "code-smell",
+   "file": "src/ui/window.rs",
+   "lines": "296-375",
+   "title": "The 200 ms poller embeds workspace-refresh policy as a 20-line boolean expression inside page assembly",
+   "evidence": "add_pages installs a timeout that (a) detects registry generation changes and rebuilds Live cards plus the visible registry page, (b) expires output results and touches the workspace, and (c) computes `refresh` from mapped/visible state, operator_inspections, enabled action_bindings and window.is_active(), combined with dirty, observed_at older than 10 s, !loading, !pending and Connected (340-359). That is domain policy evaluated on every tick in a widget-assembly function. In one tick it can call rebuild_scene_cards twice, at 321 and 368.",
+   "recommendation": "Move the poller to src/ui/shell/ticks/workspace_tick.rs. Extract `AppState::workspace_refresh_due(&self, visibility: SurfaceVisibility, now: Instant) -> bool` into controller/state (or controller/workspace) with `struct SurfaceVisibility { live_mapped, sources_mapped, window_active }`, and unit-test it as a truth table. Make WORKSPACE_STALE_AFTER (10 s) and WORKSPACE_TICK (200 ms) named consts. Coalesce the two rebuild_scene_cards calls into one with a `needs_cards` flag.",
+   "risk": "Untested policy, duplicate rebuilds per tick, hidden coupling of the page factory to workspace.",
+   "effort": "M",
+   "smell": "Long Method, Feature Envy, Magic Numbers",
+   "verdict": "confirmed",
+   "verifier_note": "Verified window.rs:296-375: the generation check rebuilds scene cards at ~321, and the revision check rebuilds them again at ~368. Both can fire in the same tick (a registry generation bump usually also changes the workspace revision), giving two rebuilds. The refresh boolean at ~340-359 mixes GTK facts (root.is_mapped, sources mapped, window.is_active) with state policy, confirmed. SurfaceVisibility needs a fourth input, window_active, which is evaluated only when action_bindings are enabled. Keep the GTK query lazy, or always compute it (is_active is cheap). The magic 10 s and 200 ms are confirmed."
+  },
+  {
+   "id": "ui-shell-10",
+   "severity": "medium",
+   "category": "code-smell",
+   "file": "src/ui/window.rs",
+   "lines": "1492-1572",
+   "title": "PageRefreshers is a closure-per-field struct with a match in call(); adding a page is shotgun surgery",
+   "evidence": "Fields stats, mixer, graph, inventory, doctor, settings, help and sources, each a RefreshFn, plus mixer_handle and stats_popout. call(page) (1559-1571) maps Page to field. add_pages (281-408) lists pages in three places: build calls, the stack insertion array (377-391) and the struct literal (394-405). registry_refreshers (300-305) is a fourth list. CLAUDE.md's 'New page' recipe does not mention window.rs, so following it leaves the page without event refreshes.",
+   "recommendation": "Create src/ui/shell/page_registry.rs with `struct PageRegistry { refresh: EnumMap<Page, Option<RefreshFn>> }`, or a `[Option<RefreshFn>; Page::COUNT]` indexed by `page as usize`, built from one `const PAGE_ORDER` plus a `PageBuild { widget, refresh }` returned by each page builder. Keep the typed handles (Rc<MixerPageHandle>, StatsPopoutSlot, Rc<LivePageHandle>) as separate named fields of EventUiContext, not of the registry. call_if_visible/call_visible_among/refresh_stats move unchanged. Update CLAUDE.md's 'New page' recipe in the docs PR.",
+   "risk": "A page added later silently never refreshes from events.",
+   "effort": "M",
+   "smell": "Switch Statements, Shotgun Surgery",
+   "verdict": "adjusted",
+   "verifier_note": "Verified PageRefreshers (window.rs:1499-1512), call() (1559-1571), the add_pages lists (281-408), registry_refreshers (300-305), and the CLAUDE.md 'New page' recipe omitting window.rs. Adjustment: neither enum-map nor strum is a dependency, and Page has no COUNT. Use a plain array keyed by an exhaustive `const fn index(self) -> usize` match on Page (compile error on a new variant), or keep the match in call() but generate the stack order from NAV_PAGES (ui/sidebar.rs:22). Note that the stack insertion order at 377-391 differs from NAV_PAGES (Stats is last in the stack; it is not in NAV_PAGES' 8 entries). Do not assume one PAGE_ORDER fits both. Do not add a crate dependency for this."
+  },
+  {
+   "id": "ui-shell-11",
+   "severity": "medium",
+   "category": "code-smell",
+   "file": "src/ui/window.rs",
+   "lines": "939-969, 1317-1338, 475-507",
+   "title": "Stream/record data clump forces per-kind match duplication in every output path",
+   "evidence": "AppState carries stream_status/record_status, stream_active_since/record_active_since and last_stream_command_error/last_record_command_error as parallel fields. window.rs matches on OutputKind to pick fields at 945-948, 952-961 and 1320-1336, and duplicates the stream and record blocks in install_output_clock (484-503).",
+   "recommendation": "Coordinate with the controller/state reviewer: introduce `struct OutputSlot { status: OutputStatus, active_since: Option<Instant>, last_command_error: Option<String> }` and `outputs: OutputSlots` with `fn get(&self, OutputKind) -> &OutputSlot` / get_mut, in controller/state/output.rs or domain/output.rs. Then refresh_output_status_bar becomes `let slot = state.outputs.get(kind)`, the OutputReadbackFailed arm moves into `OutputSlots::record_readback_failure(kind, msg) -> bool changed`, and the clock iterates `OutputKind::ALL`.",
+   "risk": "Asymmetric fixes between stream and record; this matches the existing pattern of copied blocks drifting (see the comment at 1269-1271).",
+   "effort": "M",
+   "smell": "Data Clumps, Duplicate Code",
+   "depends_on": [
+    "ui-shell-02"
+   ],
+   "verdict": "confirmed",
+   "verifier_note": "Parallel fields confirmed at controller/state.rs:469-470 (active_since) plus last_*_command_error and the paired setters at 1086-1136. Per-kind matches in window.rs confirmed (OutputReadbackFailed arm, refresh_output_status_bar 1320-1336, install_output_clock 484-503). The cited 'copied blocks drifting' comment is the show_no_session_ui doc comment (~1266-1271), confirmed. This belongs to the controller/state reviewer's work. The ui-shell side only consumes slot.get(kind)."
+  },
+  {
+   "id": "ui-shell-12",
+   "severity": "medium",
+   "category": "boundary",
+   "file": "src/ui/window.rs",
+   "lines": "985-1058, 1067-1094",
+   "title": "The event applier owns registry persistence and reconciliation policy (storage concern in the UI event path)",
+   "evidence": "SceneInventoryUpdated calls persist::reconcile_registry and after_registry_import (992-1010). SceneRenamed imports crate::storage::registry::SceneRenameResult, calls persist_registry with a closure that mutates the registry, and bumps `show_registry.generation += 1` directly (1021-1029). SceneCollectionsUpdated calls persist::select_registry_scope (1080). The window module therefore knows storage result types and registry generation semantics.",
+   "recommendation": "Move these flows to src/ui/shell/events/scene_catalog.rs, delegating to an application-service function in ui/persist (or a new ui/registry_sync.rs): `registry_sync::on_inventory(nav, done)`, `registry_sync::on_scene_renamed(nav, uuid, old, new) -> RenameOutcome`, `registry_sync::on_collection_changed(nav, done)`. Have show_registry expose `bump_generation()` instead of public field arithmetic. Window code then never names crate::storage.",
+   "risk": "Storage types leak into the shell; rename-conflict behavior can only be tested natively.",
+   "effort": "M",
+   "smell": "Feature Envy, Inappropriate Intimacy",
+   "depends_on": [
+    "ui-shell-02"
+   ],
+   "verdict": "confirmed",
+   "verifier_note": "Verified window.rs:985-1058 (SceneInventoryUpdated -> persist::after_registry_import/reconcile_registry; SceneRenamed `use crate::storage::registry::SceneRenameResult`, persist_registry, generation += 1 on scoped.state) and SceneCollectionsUpdated -> persist::select_registry_scope (~1080). No architecture test forbids ui -> storage, so this is a smell, not a test break. registry_sync as a ui-level application service is reasonable. bump_generation() must live on the ShowRegistry state type in controller/state."
+  },
+  {
+   "id": "ui-shell-13",
+   "severity": "medium",
+   "category": "code-smell",
+   "file": "src/ui/window.rs",
+   "lines": "977-983, 1340-1356",
+   "title": "Output events are re-dispatched by runtime check with debug_assert!(false) instead of a typed sub-enum",
+   "evidence": "apply_event forwards five variants to apply_output_event, which calls AppState::apply_output_event(&event) -> Option<OutputKind> and treats None as unreachable via `debug_assert!(false, \"non-output event routed to output handler\")`. In release builds a misroute is silently ignored.",
+   "recommendation": "Controller-side, coordinated with the controller reviewer: group variants into `AppEvent::Output(OutputEvent)` with `enum OutputEvent { StatusUpdated, CommandPending, CommandSucceeded, CommandFailed, RecordingStopObserved, ReadbackFailed }`. AppState::apply_output_event then takes &OutputEvent and returns OutputKind (non-Option). Apply the same grouping to Session(SessionEvent), Audio(AudioEvent), Workspace(WorkspaceEvent) and Topology(TopologyEvent), which makes the shell's events/mod.rs match 8 arms long.",
+   "risk": "A routing bug is invisible in release builds.",
+   "effort": "M",
+   "smell": "Switch Statements, Refused Bequest",
+   "depends_on": [
+    "ui-shell-02"
+   ],
+   "verdict": "confirmed",
+   "verifier_note": "Verified window.rs:977-983 and 1340-1356, including debug_assert!(false, ...) with a silent return in release. The sub-enum change touches controller/event.rs and every producer, so it is controller-owned, as stated. Note that OutputCommandFailed is special-cased for a toast before the reducer (1341-1343); preserve that in the typed version."
+  },
+  {
+   "id": "ui-shell-14",
+   "severity": "medium",
+   "category": "god-file",
+   "file": "src/ui/window.rs",
+   "lines": "63-272",
+   "title": "build_main_window is a 210-line Long Method that assembles the split view, wires teardown and hard-codes app action names",
+   "evidence": "One function builds the stack, pages, sidebar, status bar, toast overlay, event polling, header, breakpoint and sidebar toggle (175-219, plus three separate connect_row_selected/activated handlers at 116, 201, 211), outer toolbar, hotkeys and actions, window_removed and destroy teardown (237-265), and the welcome dialog. Line 251 hard-codes [\"about\",\"reconnect\",\"settings\",\"help\",\"command-palette\"], duplicating the names registered in ui/actions.rs:22-49; adding an action there leaks it here. The `expect(\"static breakpoint\")` at 176 is a production expect.",
+   "recommendation": "Split into src/ui/shell/window.rs (orchestrator, about 80 lines) plus: src/ui/shell/split_view.rs (`fn build_split(sidebar_page, content_page, header, list) -> adw::NavigationSplitView` plus the breakpoint and toggle wiring, merging the two row_selected handlers into one); src/ui/shell/lifecycle.rs (WindowSources, `install_teardown(app, window, sources, event_ui)`); ui/actions.rs exporting `pub(super) const WINDOW_ACTIONS: &[&str]` used by both register and teardown; src/ui/shell/welcome.rs (maybe_show_welcome_dialog). Make the breakpoint condition a const built with BreakpointCondition::new_length instead of parse().expect.",
+   "risk": "Every shell change touches one 200-line function; the action list drifts.",
+   "effort": "M",
+   "smell": "Long Method, Shotgun Surgery (action names)",
+   "depends_on": [
+    "ui-shell-01"
+   ],
+   "verdict": "adjusted",
+   "verifier_note": "Verified build_main_window 63-272, row handlers at 116/201/211, the literal action list at ~251, and expect(\"static breakpoint\") at ~176. Correction: ui/actions.rs registers six actions including 'quit' (actions.rs ~22). The teardown list deliberately omits 'quit', because the close guard replaces quit (app.rs:316-337). WINDOW_ACTIONS must therefore exclude quit, or the shared constant must be split into APP_ACTIONS and WINDOW_ACTIONS. A naive single list would remove the close-guarded quit action when the shell closes while a detached Stats window survives. The expect on a static literal is effectively infallible; replacing it with BreakpointCondition::new_length(BreakpointConditionLengthType::MaxWidth, 850.0, LengthUnit::Sp) is fine but low value."
+  },
+  {
+   "id": "ui-shell-15",
+   "severity": "medium",
+   "category": "performance",
+   "file": "src/ui/window.rs",
+   "lines": "412-469",
+   "title": "The event pump closure does three AppState borrow_mut calls and deep-clones EventUiContext per event, up to 128 events per tick",
+   "evidence": "Per event: collect_report before (428-430) and after (440-442), each a borrow_mut. Snapshot comparisons read stats_history.latest() and workspace.revision() twice. `event_ui.upgrade().and_then(|slot| slot.borrow().clone())` (431) clones EventUiContext, which clones PageRefreshers (about 10 Rc increments) plus 6 GObject refs. The tick closure calls collect_report again (462-465). InputLevelsUpdated meter traffic is the hottest path and pays all of this.",
+   "recommendation": "Store `Rc<EventUiContext>` in the slot, so each event costs one refcount. Call collect_report once per batch: give event_pump::install an optional `before_batch`/`after_batch` hook, or move the call into tick(). Compute the popout-changed snapshot per batch, not per event. Name the batch limit `pub(super) const EVENT_BATCH_LIMIT: usize = 128` in event_pump.rs and reference it from the doc comment at window.rs:410-411. app.rs:41 uses the same literal 128 for channel capacity; give that its own const, APP_EVENT_CHANNEL_CAPACITY.",
+   "risk": "Main-loop jank under meter bursts (128 events times 3 borrow_mut times report collection).",
+   "effort": "S",
+   "smell": "Magic Numbers (128 in three places)",
+   "verdict": "adjusted",
+   "verifier_note": "Verified window.rs:412-469 and event_pump.rs. Per event: 2 collect_report borrow_mut (before and after), 2 snapshot borrows, and one EventUiContext clone (PageRefreshers = 8 Rc RefreshFn + StatsPopoutSlot + Rc<MixerPageHandle>, plus ToastOverlay, HeaderSelectors, SidebarControls, StatusBarHandle, StreamingChromeRef). InputLevelsUpdated adds a third borrow_mut inside apply_event. Recommendation correction: do NOT collapse collect_report to once per batch without proof. ActivityLog is a ring of LIMIT=200 (domain/workflow.rs:36), and collect_report copies new entries out of it (controller/state/session_reports.rs:271-296). A 128-event batch where some events log more than one activity can evict entries before collection and inflate activity_gaps. Safe change: drop the 'before' collect for events 2..N of a batch (it duplicates the previous 'after'), and keep the per-event 'after'. collect_report also returns early when no report is active (session_reports.rs:273-275), so the cost outside a recorded session is small. Downgrade severity to low. Rc<EventUiContext> in the slot is a correct, cheap win. The named consts for 128 are fine (event_pump.rs:52 and app.rs:41).",
+   "severity_verified": "low"
+  },
+  {
+   "id": "ui-shell-16",
+   "severity": "medium",
+   "category": "god-file",
+   "file": "src/ui/window.rs",
+   "lines": "1587-2698",
+   "title": "About 1100 lines of tests in window.rs, mostly cross-context native scenarios (registry, workspace, inventory) unrelated to the shell",
+   "evidence": "native_scene_identity_reconciles_load_import_and_retired_editors (1619-1745), native_workspace_switch_isolates_edits_and_imports (1746-1912) and native_scene_rename_preserves_imported_curation_and_rejects_retired_scope (1913-1969) exercise storage::registry and show_workspaces. native_audio_events_and_background_reads_do_not_blink_pages (1997-2227) covers pages. Ten mixer_input_event_* unit tests (2549-2698) test should_rebuild_visible_mixer_for_input_event, which is pure AppState logic.",
+   "recommendation": "Move the tests with their subject: scene/registry scenarios to src/ui/shell/events/scene_catalog_tests.rs (via #[path]); workspace scenarios to events/workspace_tests.rs; audio/pages blink tests to events/audio_tests.rs; the assembled-window leak test to shell/window_tests.rs. Move should_rebuild_visible_mixer_for_input_event (1378-1401) to `impl AppState { pub(crate) fn mixer_shows_input(&self, input: &str) -> bool }` in src/controller/state/mixer.rs, taking its 10 unit tests with it. Update every native_test name literal (ui-shell-01).",
+   "risk": "The split cannot land while tests stay pinned to the old module path.",
+   "effort": "M",
+   "smell": "Large Class (test module)",
+   "depends_on": [
+    "ui-shell-01",
+    "ui-shell-02"
+   ],
+   "verdict": "adjusted",
+   "verifier_note": "Test anchors verified (1595, 1619, 1746, 1913, 1970, 1997, 2228, 2284, 2364). There are 11 mixer_input_event_* tests at 2549-2698, not 10. They use helpers in window.rs's tests module (MixerMode, AudioInput imports at 1590-1591), so move the helpers too. Moving should_rebuild_visible_mixer_for_input_event to impl AppState in controller/state/mixer.rs is valid: it uses only AppState and controller types, and the only callers are window.rs (grep shows no other users). Moving to controller removes a pub(crate) UI fn. #[path] test files are fine but change the module path, so update the native_test literals (ui-shell-01)."
+  },
+  {
+   "id": "ui-shell-17",
+   "severity": "medium",
+   "category": "boundary",
+   "file": "src/ui/sidebar.rs",
+   "lines": "19, 33-239, 322-334, 422-425",
+   "title": "sidebar.rs holds header selectors (header chrome) and depends on pages::live for disconnect policy",
+   "evidence": "HeaderSelectors and NamedSelector (33-239) build a header MenuButton popover; window.rs packs it into the content header (565). They have nothing to do with the sidebar. SidebarControls and the connect button call live::handle_disconnect (329), live::disconnect_label and live::disconnect_stops_outputs (422-425), so the shell depends on a page module's internals. The connect handler branches on ObsStatus in the widget closure (323-332).",
+   "recommendation": "Split into src/ui/shell/header_selectors.rs (HeaderSelectors, NamedSelector, native_selector_readbacks_retain_model_rows, native_obs_setup_popover_follows_the_selected_palette) and src/ui/shell/sidebar.rs (NAV_PAGES, build, SidebarControls, brand). Move disconnect_label, disconnect_stops_outputs and handle_disconnect out of pages/live.rs into src/ui/shell/connection.rs (or a domain helper `OutputStatus::disconnect_impact(stream, record) -> DisconnectImpact` in domain/output.rs) so both Live and the sidebar import a neutral module. Extract `ObsStatus::connect_action(&self) -> ConnectAction {Connect, ConfirmDisconnect, Cancel}` and unit-test it.",
+   "risk": "Shell-to-page coupling makes the Live page impossible to split independently.",
+   "effort": "S",
+   "smell": "Divergent Change, Inappropriate Intimacy",
+   "verdict": "confirmed",
+   "verifier_note": "Verified sidebar.rs:19 `use crate::ui::pages::live`, HeaderSelectors at 34-124 (not 33), NamedSelector 127-239, connect handler 318-334, and the live::disconnect_* calls at 422-425. live.rs defines disconnect_stops_outputs (380), disconnect_label (385) and handle_disconnect (394), which live itself also uses (429, 452), so a neutral module is right. Prefer the domain helper for the pure parts (disconnect_stops_outputs and the label choice as a DisconnectImpact over two OutputStatus values, in domain/output.rs). handle_disconnect shows an adw dialog, so it must stay in ui (ui/connection.rs)."
+  },
+  {
+   "id": "ui-shell-18",
+   "severity": "medium",
+   "category": "ddd",
+   "file": "src/controller/state.rs",
+   "lines": "115-122 (used by src/ui/sidebar.rs:257,449,474-479)",
+   "title": "CSS class names live on the controller's ObsStatus; presentation leaks into the orchestration layer",
+   "evidence": "ObsStatus::css_class returns \"obs-disconnected\" and similar. sidebar.rs set_status_class iterates status_bar::CONNECTION_CSS_CLASSES to clear classes. The test every_connection_css_class_is_cleared_before_replacement (sidebar.rs:783-799) exists only because the two lists live in different layers. ObsStatus::label also calls fl! from controller/state.",
+   "recommendation": "Move css_class and label into a UI presenter, src/ui/presenters/connection.rs: `fn connection_css_class(&ObsStatus) -> &'static str` and `const CONNECTION_CSS_CLASSES`, both defined from one `const TABLE: [(discriminant, class)]` so the two cannot drift. Delete the cross-layer test once the table is the single source.",
+   "risk": "The ubiquitous language of the controller is polluted by styling tokens.",
+   "effort": "S",
+   "smell": "Feature Envy (presentation on domain type)",
+   "verdict": "adjusted",
+   "verifier_note": "Verified controller/state.rs:105-123: ObsStatus::label uses fl!, and css_class returns style tokens. css_class callers are only ui (sidebar.rs:449,794; status_bar.rs:206-207), so moving css_class to a ui presenter is safe. Moving label is NOT safe as stated: controller/state.rs:859-861 uses status.label() to write report text (finish_report(&status.label())). Controller code cannot import a ui presenter (layering: controller must not depend on ui). Move css_class plus CONNECTION_CSS_CLASSES (status_bar.rs:19-24, also used at status_bar.rs:202) into ui/presenters/connection.rs. Leave label in place, or move it to domain with a non-GTK fl! key, since infra::i18n is allowed in controller."
+  },
+  {
+   "id": "ui-shell-19",
+   "severity": "low",
+   "category": "ui-a11y",
+   "file": "src/ui/window.rs",
+   "lines": "181-183, 593-600; src/ui/sidebar.rs 65-70",
+   "title": "Icon-only header buttons rely on tooltip text, while the palette button sets an explicit accessible label",
+   "evidence": "header_button (593-600) sets only tooltip_text; so do sidebar_toggle (181-182) and the setup MenuButton at build time (sidebar.rs:65-70; it gets a Label only after update_context runs). The palette button (576-582) explicitly calls update_property(Label). That inconsistency shows the authors know the tooltip is not sufficient. (Plausible: GTK may derive the name from the tooltip on some versions; verify with Accerciser or GTK_A11Y=test.)",
+   "recommendation": "In header_button, call `button.update_property(&[gtk4::accessible::Property::Label(&tooltip)])` and route sidebar_toggle through header_button. Call update_context() once at the end of HeaderSelectors::build. Add a native test asserting that every Button in the content header has an accessible label.",
+   "risk": "Screen-reader users hear unnamed buttons.",
+   "effort": "S",
+   "verdict": "confirmed",
+   "verifier_note": "Verified header_button (window.rs:593-600; tooltip only), sidebar_toggle (~181-182; tooltip only), the palette button with an explicit Label (~576-582), and the HeaderSelectors MenuButton (sidebar.rs:65-70; tooltip only, and build does not call update_context; Label set only in update_context at 82-108). Whether GTK 4.10+ uses the tooltip as the accessible name fallback is unverified here; the reviewer flagged that, and it stays a plausible low-severity issue. Note: native_test children already run with GTK_A11Y=test (ui/mod.rs:265), which helps a test assert accessible properties."
+  },
+  {
+   "id": "ui-shell-20",
+   "severity": "low",
+   "category": "ui-a11y",
+   "file": "src/ui/window.rs",
+   "lines": "611-640; src/app.rs 373",
+   "title": "Deprecated adw::MessageDialog used for the welcome and close-failure dialogs",
+   "evidence": "Cargo.toml pins libadwaita 0.9 with feature v1_4. adw::MessageDialog is deprecated upstream in favor of adw::AlertDialog (libadwaita 1.5+). The welcome dialog and close-failure dialog both use MessageDialog, and the close-failure tests downcast to MessageDialog (app.rs:560-571, 776, 868, ...).",
+   "recommendation": "Track this as a follow-up gated on raising the feature to v1_5. Wrap dialog creation in src/ui/widgets/alert.rs (`fn decision_dialog(parent, heading, body, responses) -> DecisionDialog`) so the migration touches one file, and make the tests find dialogs by widget_name instead of by concrete type.",
+   "risk": "Future libadwaita removal; test brittleness to dialog type.",
+   "effort": "S",
+   "verdict": "adjusted",
+   "verifier_note": "Cargo.toml:8 confirms libadwaita 0.9 with v1_4. Correction: AlertDialog arrived in libadwaita 1.5, and MessageDialog was deprecated in 1.6, not 1.5. Scope is larger than two dialogs: there are 37 MessageDialog references across src/ (grep), so a wrapper in ui/widgets/alert.rs pays off more than stated. Raising the feature floor to v1_5 drops distros shipping libadwaita 1.4; check the release targets (snap/flatpak runtime) first. Finding stays low."
+  },
+  {
+   "id": "ui-shell-21",
+   "severity": "low",
+   "category": "code-smell",
+   "file": "src/app.rs",
+   "lines": "369-388",
+   "title": "The close-failure dialog borrows i18n keys from unrelated contexts",
+   "evidence": "Heading uses \"workflow-activity-failed\", Cancel uses \"inventory-dialog-cancel-label\", Retry uses \"window-connect-btn-retry\". A translator adjusting the Inventory cancel label or the connect-button retry label would change the shutdown dialog.",
+   "recommendation": "Add dedicated keys app-close-failure-heading, app-close-failure-cancel and app-close-failure-retry to every locale under i18n/*/scenedeck.ftl; the parity test enforces completeness. Do this when moving the dialog to ui/shell/close_guard.rs.",
+   "risk": "Wrong wording after unrelated translation changes.",
+   "effort": "S",
+   "smell": "Inappropriate Intimacy (shared message ids)",
+   "depends_on": [
+    "ui-shell-06"
+   ],
+   "verdict": "confirmed",
+   "verifier_note": "Verified app.rs:367-388: heading 'workflow-activity-failed', 'inventory-dialog-cancel-label', 'window-connect-btn-retry'. The recommendation is correct; the parity test every_translation_has_the_same_messages_as_english enforces all locales."
+  },
+  {
+   "id": "ui-shell-22",
+   "severity": "low",
+   "category": "code-smell",
+   "file": "src/ui/window.rs",
+   "lines": "116-130, 201-218",
+   "title": "Sidebar selection handler rebuilds Live scene cards inline and is wired in three separate closures",
+   "evidence": "connect_row_selected at 116 switches page and, for Live, rebuilds scene cards from a cloned inventory. A second connect_row_selected at 201 shows content in the split view, and connect_row_activated at 211 does the same. NavigationContext::switch_to_page re-selects the row, so this handler runs twice for programmatic navigation (as documented at navigation.rs:144-148).",
+   "recommendation": "In shell/sidebar.rs expose `fn on_page_chosen(list, impl Fn(Page))` that maps row index to NAV_PAGES once. In shell/window.rs, use one closure that calls nav.switch_to_page(page) and split.set_show_content(true). Move the Live rebuild into the Live page's own `map` handler, or into PageRegistry via the Live entry, instead of the shell.",
+   "risk": "Duplicate rebuilds and scattered navigation behavior.",
+   "effort": "S",
+   "smell": "Duplicate Code",
+   "verdict": "adjusted",
+   "verifier_note": "Three closures confirmed (window.rs:116-130, 201-210, 211-218). Correction on the mechanism: for programmatic navigation, switch_to_page runs twice (once from the caller, once from the row-selected handler after select_sidebar_row), but the handler itself runs once. GTK does not re-emit row-selected for an already selected row (navigation.rs:143-148). The Live rebuild therefore happens once per programmatic switch to Live, not twice. The duplication is wiring, not double work. Moving the rebuild to the Live page's map handler is plausible, but map also fires on window re-show and un-minimize. Confirm that is acceptable, since rebuild_scene_cards is not trivially cheap."
+  },
+  {
+   "id": "ui-shell-23",
+   "severity": "low",
+   "category": "boundary",
+   "file": "src/architecture_tests.rs",
+   "lines": "640-660",
+   "title": "Architecture test exempts ui/window.rs by path and documents a NavigationContext contract the code no longer has",
+   "evidence": "pages_reach_the_controller_only_through_navigation exempts [\"ui/window.rs\", \"ui/navigation.rs\"] by literal path. Moving these to ui/shell/ will either fail the test or tempt a broad exemption. The docstring claims NavigationContext exposes exactly two things, which contradicts navigation.rs:20-21 and 53-177.",
+   "recommendation": "When creating src/ui/shell/, change the exemption to the narrowest files that name AppController (ui/shell/window.rs, ui/shell/navigation.rs), not the whole directory. Add a new architecture test: no module under ui/pages or ui/widgets names `nav.state` once ui-shell-05 lands (or count-limit it as a ratchet), plus a file-size ratchet that fails if any src/ui/shell/** file exceeds 600 lines.",
+   "risk": "Boundaries erode silently during restructuring.",
+   "effort": "S",
+   "depends_on": [
+    "ui-shell-02",
+    "ui-shell-05"
+   ],
+   "verdict": "confirmed",
+   "verifier_note": "Verified architecture_tests.rs:638-660 and violations() (351-365), which compares exact relative paths (path == Path::new(allowed)). Moving window.rs or navigation.rs therefore fails the test until the exemption is updated, a loud failure, so not silent. The narrow-exemption and ratchet recommendations are sound. Fix the docstring at 639-646 in the same PR as ui-shell-05."
+  },
+  {
+   "id": "ui-shell-24",
+   "severity": "low",
+   "category": "code-smell",
+   "file": "src/ui/window.rs",
+   "lines": "1455-1496, 111, 585-588",
+   "title": "StreamingChrome is published into an Rc<RefCell<Option<_>>> slot even though it is created synchronously during assembly",
+   "evidence": "streaming_chrome is created as None at 111, filled inside build_content_header at 585-588, and read via borrow().as_ref().cloned() in sync_streaming_chrome (1470). The Option is never None after build_main_window returns; the RefCell exists only because the header is built after EventUiContext.",
+   "recommendation": "Build the header before EventUiContext and return a `HeaderChrome { header, live_icon, selectors }` struct from src/ui/shell/header.rs. Store it by value in EventUiContext and delete StreamingChromeRef. Have sync_streaming_chrome become HeaderChrome::set_streaming(bool).",
+   "risk": "Needless interior mutability and a silent no-op path.",
+   "effort": "S",
+   "smell": "Temporary Field, Speculative Generality",
+   "verdict": "confirmed",
+   "verifier_note": "Verified: streaming_chrome is created as None (~111), filled in build_content_header (585-588), and read in sync_streaming_chrome (1469-1490). build_content_header needs only window, nav and header_selectors, all available before EventUiContext is built (~133), so the reorder is valid. Events are polled only on 50 ms main-loop ticks, after build_main_window returns, so the None path is unreachable in practice."
+  }
+ ],
+ "proposed_splits": [
+  {
+   "file": "src/ui/window.rs",
+   "current_lines": 2698,
+   "rationale": "Four responsibilities: shell composition root, page registry plus 200 ms poller, header/streaming chrome, and the 585-line AppEvent applier across 7 contexts. About 1100 test lines, mostly cross-context.",
+   "target_modules": [
+    {
+     "path": "src/ui/shell/mod.rs",
+     "moves": "pub use window::build_main_window, apply_color_scheme"
+    },
+    {
+     "path": "src/ui/shell/window.rs",
+     "moves": "build_main_window (63-272) as orchestrator; DEFAULT_WIDTH/HEIGHT; apply_color_scheme (1574-1581)"
+    },
+    {
+     "path": "src/ui/shell/lifecycle.rs",
+     "moves": "WindowSources (42-61); teardown closures (237-265) as install_teardown(); WINDOW_ACTIONS from ui/actions.rs (must exclude 'quit')"
+    },
+    {
+     "path": "src/ui/shell/split_view.rs",
+     "moves": "170-219 plus merged row handlers (116-130, 201-218)"
+    },
+    {
+     "path": "src/ui/shell/header.rs",
+     "moves": "build_content_header (513-591), header_button (593-600), StreamingChrome as HeaderChrome (1492-1496), sync_streaming_chrome (1469-1490)"
+    },
+    {
+     "path": "src/ui/shell/page_registry.rs",
+     "moves": "add_pages minus poller (281-295, 377-407), PageRefreshers (1498-1512, 1525-1572)"
+    },
+    {
+     "path": "src/ui/shell/ticks/workspace_tick.rs",
+     "moves": "poller closure 296-375; policy to AppState::workspace_refresh_due"
+    },
+    {
+     "path": "src/ui/shell/ticks/output_clock.rs",
+     "moves": "install_output_clock (475-507) reusing refresh_output_status_bar; elapsed_suffix deleted; format_elapsed (1409-1419) to a presenter"
+    },
+    {
+     "path": "src/ui/shell/ticks/event_wiring.rs",
+     "moves": "install_event_polling (412-469)"
+    },
+    {
+     "path": "src/ui/shell/welcome.rs",
+     "moves": "maybe_show_welcome_dialog (602-640)"
+    },
+    {
+     "path": "src/ui/shell/events/{mod,session,output,scene_catalog,obs_scope,audio,workspace,topology,telemetry,feedback}.rs",
+     "moves": "apply_event router (664-667) plus EventUiContext (1514-1523); arms per ui-shell-02; show_no_session_ui (1266-1309); refresh_output_status_bar (1311-1338); apply_output_event (1340-1356); report_failure/command_failure_message (1421-1453) with test 1970-1995"
+    },
+    {
+     "path": "src/controller/state/mixer.rs",
+     "moves": "should_rebuild_visible_mixer_for_input_event (1378-1401) as AppState::mixer_shows_input plus the 11 mixer_input_event_* tests (2549-2698) and their helper imports"
+    }
+   ],
+   "order": "1) ui-shell-01 guard. 2) git mv window.rs -> ui/shell/window.rs, update architecture_tests exemption and the 'ui::window::tests::' literals, run cargo test plus tools/test-native.py. 3) Pure helpers (feedback, format_elapsed, mixer_shows_input). 4) header, split_view, lifecycle, welcome, one commit each. 5) page_registry plus ticks. 6) events/* arm by arm. 7) ui-shell-04 behavior fix with its test. 8) Reducer extraction per context. 9) Collapse the router after the controller sub-enums land.",
+   "safety_net": "ui-shell-01 guard; test-native.py after each step; characterization test for the clock/event label; truth-table tests for workspace_refresh_due; clippy -D warnings plus architecture_tests every commit.",
+   "verdict": "adjusted",
+   "verifier_note": "Line ranges verified against window.rs. Adjustments: (1) Keep NavigationContext at src/ui/navigation.rs (and scope.rs beside it), NOT inside ui/shell. Pages, widgets, hotkeys and actions all depend on NavigationContext, and shell depends on pages to compose them. Putting navigation inside shell makes ui::pages -> ui::shell -> ui::pages a module-level cycle. That compiles in one crate, but it defeats the 'shell is a bounded context' goal. Navigation is the port; shell is the composition root. (2) There are 11 mixer tests, not 10, and their range starts at 2549 (the original split said 2527). (3) Stack insertion order (377-391, Stats last) differs from NAV_PAGES (8 entries, no Stats), so page_registry must not derive both from one list. (4) WINDOW_ACTIONS must exclude 'quit' (see ui-shell-14). (5) The events/ split makes each module small, but every module still needs &NavigationContext plus EventUiContext; define EventUiContext in events/mod.rs as pub(super) so the submodules share it without widening visibility."
+  },
+  {
+   "file": "src/app.rs",
+   "current_lines": 1345,
+   "rationale": "The bootstrap module hosts the GTK persistence close/quit barrier (about 260 prod lines) and about 890 lines of its native tests.",
+   "target_modules": [
+    {
+     "path": "src/app/mod.rs",
+     "moves": "run() (32-159) slimmed"
+    },
+    {
+     "path": "src/app/startup.rs",
+     "moves": "StartupData (23-29), load block plus fallback (42-74), initial_state from build_ui (437-451)"
+    },
+    {
+     "path": "src/app/runtime.rs",
+     "moves": "runtime builder (35-38), controller shutdown (146-158) with named consts"
+    },
+    {
+     "path": "src/app/activation.rs",
+     "moves": "WeakRef, controller_slot, connect_activate (117-142), build_ui (431-455)"
+    },
+    {
+     "path": "src/ui/shell/close_guard.rs",
+     "moves": "document_window(s) (161-168), CloseGuard (170-278), install_persistence_close_guard (281-340), show_persistence_close_failure (342-428), shutdown drain closure (97-115) as install_shutdown_drain, plus close/persistence native tests (575-1344) and their fixtures (463-571)"
+    }
+   ],
+   "order": "1) ui-shell-01 guard. 2) git mv app.rs app/mod.rs. 3) Move the close guard plus tests to ui/shell/close_guard.rs; update literals; test-native.py. 4) startup.rs, runtime.rs. 5) activation.rs. 6) Lazy password with a tri-state cache (ui-shell-08). 7) CloseState enum (ui-shell-07).",
+   "safety_net": "native_close_waits_for_accepted_save_and_gtk_publication (1198), native_quit_action_obeys_the_pre_quit_save_barrier (1305), native_save_worker_failure_keeps_window_open_and_offers_cancel (1222), native_last_stats_close_saves_final_report_before_state_release (742), native_quit_timeout_preserves_role_edits_until_explicit_retry (907), all verified to exist; plus pure transition-table tests before replacing the Cells.",
+   "verdict": "adjusted",
+   "verifier_note": "All cited tests exist at the listed lines. Adjustments: (1) tools/test-native.py classifies ignored tests by prefix ('ui::' or 'app::tests::native_'). Any native test left under app::startup/activation must have that tuple extended in the same commit, or the runner raises 'unclassified ignored tests'. (2) A separate ui/shell/shutdown.rs for one 18-line closure is speculative; fold it into close_guard.rs. (3) Activation actually spans 92-142 (WeakRef/controller_slot declared at 92-95, closure at 117-142); connect_shutdown at 97-115 sits between them, so extract in that order to avoid borrow-of-moved errors with tokio_handle/event_tx captures. (4) If the ui/shell module is not adopted, use src/ui/close_guard.rs; the code has no shell dependency."
+  },
+  {
+   "file": "src/ui/sidebar.rs",
+   "current_lines": 800,
+   "rationale": "Navigation sidebar, OBS profile/collection header selectors, and connection presentation that reaches into pages::live.",
+   "target_modules": [
+    {
+     "path": "src/ui/shell/sidebar.rs",
+     "moves": "NAV_PAGES (22-31), SidebarControls (241-275), build (277-387), build_brand (510-528), sidebar_button/button_content/set_button_label (481-546)"
+    },
+    {
+     "path": "src/ui/shell/header_selectors.rs",
+     "moves": "HeaderSelectors (34-124), NamedSelector (127-239), native tests at 555 and 607"
+    },
+    {
+     "path": "src/ui/connection.rs (presenter) + domain/output.rs (DisconnectImpact)",
+     "moves": "SidebarButtonModel/SidebarConnectionModel/sidebar_connection_model/apply_button_model/set_status_class (390-479) plus unit tests (715-799); live::disconnect_stops_outputs/disconnect_label as domain DisconnectImpact; live::handle_disconnect to ui/connection.rs"
+    }
+   ],
+   "order": "1) ui-shell-01. 2) header_selectors.rs out. 3) connection model plus tests. 4) Move the live::disconnect_* helpers with a temporary re-export, then remove it. 5) Move the rest to shell/sidebar.rs.",
+   "safety_net": "connection_model_covers_every_state (715), connected_button_names_only_running_outputs (753), every_connection_css_class_is_cleared_before_replacement (784), the two native selector tests; test-native.py after steps 2 and 4.",
+   "verdict": "adjusted",
+   "verifier_note": "Line anchors adjusted (HeaderSelectors starts at 34, SidebarControls at 241). Recommend ui/connection.rs rather than ui/shell/connection.rs, because pages::live also imports it. A page depending on ui::shell would reintroduce the pages -> shell edge (see the window.rs split note). NAV_PAGES is pub(super) and passed into nav.attach_sidebar; moving it under shell needs pub(in crate::ui) visibility. Fine."
+  },
+  {
+   "file": "src/ui/navigation.rs",
+   "current_lines": 284,
+   "rationale": "Transport, page switching, raw state exposure, two binding schemes, shortcut lifecycle and SwitchPrimaryScene routing in one type.",
+   "target_modules": [
+    {
+     "path": "src/ui/navigation.rs (stays)",
+     "moves": "NavigationContext: new, attach_sidebar, switch_to_page, select_sidebar_row, dispatch (stripped), parent_window; private state plus read()/update() with #[track_caller] panicking semantics"
+    },
+    {
+     "path": "src/ui/scope.rs",
+     "moves": "NavigationBinding -> SessionBinding (34-44) plus test dynamic_navigation_rejects_reconnect_and_another_target_scope; RegistryBinding {target, generation} replacing the tuple; scoped/is_current/registry_scoped/registry_is_current"
+    },
+    {
+     "path": "src/ui/workspace.rs",
+     "moves": "SwitchPrimaryScene diversion (184-201) as switch_primary_scene(nav, scene); callers hotkeys.rs:170, widgets/scene_card.rs:268"
+    }
+   ],
+   "order": "1) scope.rs plus RegistryBinding. 2) switch_primary_scene and its 2 callers; remove or guard controller app_controller.rs:148. 3) read()/update() beside the field; migrate pages first. 4) Make state private, plus an architecture ratchet. (No move into ui/shell.)",
+   "safety_net": "native_navigation_does_not_retain_its_stack_or_sidebar, dynamic_navigation_rejects_reconnect_and_another_target_scope; a unit test that update() reports the caller location on nested borrow.",
+   "verdict": "adjusted",
+   "verifier_note": "Refuted sub-step: moving navigation.rs into ui/shell (creates a pages -> shell dependency; navigation is the port all pages use). Refuted sub-detail: update() must not silently skip on BorrowMutError in release (lost mutation). Shortcut stopping must stay in ui, not AppState::note_command_intent (global_shortcuts::Manager is a UI/portal object). The rest is confirmed against navigation.rs:18-212."
+  }
+ ]
+}

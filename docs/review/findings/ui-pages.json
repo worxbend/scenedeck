@@ -1,0 +1,744 @@
+{
+ "reviewer": "ui-pages",
+ "skills": [
+  "frontend-ui-engineering",
+  "frontend-dev-guidelines",
+  "code-perfection",
+  "refactoring-guru",
+  "verifier:code-review",
+  "verifier:doubt-driven-development"
+ ],
+ "summary": "ui-pages review of src/ui/pages/** (10.4k LOC, 11 files). I read every production section in full (live, mixer, inventory, stats, graph, settings, settings/connections, doctor, help) and skimmed the test modules. Skills applied: frontend-ui-engineering, frontend-dev-guidelines (its React/MUI stack does not apply here; only the principles carried over), code-perfection and refactoring-guru. Five problems dominate: (1) the page boundary leaks; (2) domain policy lives in GTK files; (3) four god files mix view, presenter, controller and IO; (4) copy-paste across pages; (5) concrete defects (unescaped StatusPage markup, name-based DFS widget lookup with unwraps, per-frame tick callbacks and 100 ms polling, SpinRow writing config on every step). Splits move pure logic first, then each page becomes a <page>/ directory, then NavigationContext.state becomes private with an architecture test. Caveats: inventory.rs has an include_str!(\"inventory.rs\") self-scan test; native tests must run through python3 tools/test-native.py; reviewer ran no tests; a11y tooltip-as-name claims marked PLAUSIBLE. || VERIFIER: 10 confirmed, 14 adjusted, 1 refuted of 25 findings; splits: 1 confirmed, 6 adjusted. Key corrections: NavigationContext.state is used by ~40 non-page ui files, so privatizing it is a separate epic (scope the architecture test to ui/pages); domain cannot import storage and SceneRegistrySnapshot lacks order/filter/favorite, so deck projection needs a new domain input; inventory does not share the live-switchable slot list; ui-pages-17 refuted (config writes already coalesce via run_config_snapshot, and debounce is explicitly rejected in its doc); keep eprintln for SCENEDECK_MIXER_INSPECT (manual test plan relies on raw lines); stats vs health disagreement comes from cumulative vs windowed ratios, not constants; inventory reconcile cost is linear not quadratic; include_str test breaks loudly at compile time after git mv. No tests were run by the verifier.",
+ "findings": [
+  {
+   "id": "ui-pages-01",
+   "severity": "high",
+   "category": "boundary",
+   "file": "src/ui/navigation.rs",
+   "lines": "19-20 (and call sites in pages)",
+   "title": "NavigationContext exposes the raw Rc<RefCell<AppState>>; pages read and mutate AppState fields directly, contrary to the documented page contract",
+   "evidence": "`pub(crate) state: Rc<RefCell<AppState>>` (navigation.rs:20). Pages write fields directly: mixer.rs:585-586 `state.mixer.mode = mode`, 631-635 (selected_scene plus the pinned-scene rule), 676 grouping, 705 search, 837 `invalidate_active_audio()`; settings.rs:48 `startup_notice.take()`, 131 `set_theme_mode`, 781-783 `update(&mut state.config.outputs, active)`; connections.rs:121, 146, 156, 249 `obs_password = ...`; doctor.rs:107 `begin_topology_refresh(&mut nav.state.borrow_mut())`. Production line counts: mixer 17 borrow_mut, live 9, stats 7, connections 7; inventory 16 state.borrow. CLAUDE.md says pages expose only switch_to_page/dispatch. architecture_tests.rs:647-661 only checks the token `AppController`, so nothing enforces the contract.",
+   "recommendation": "1) Add intent methods on AppState in src/controller/state/mixer.rs: `select_mixer_mode(MixerMode)`, `select_mixer_scene(SceneId)` (owns the pinned rule now at mixer.rs:633), `set_mixer_grouping`, `set_mixer_search(&str)`. In src/controller/state.rs add `set_output_confirmation(OutputKind, OutputAction, bool)`. 2) Add `NavigationContext::read<R>(&self, f: impl FnOnce(&AppState)->R)->R` and `update<R>(&self, f: impl FnOnce(&mut AppState)->R)->R`. 3) Migrate one page per PR. 4) Make `state` private (crate-visible only to ui/window.rs and ui/event_pump.rs) and add architecture test `pages_do_not_borrow_app_state_mutably` grepping src/ui/pages/** production code for `.state.borrow_mut()`.",
+   "risk": "559 borrow_mut sites crate-wide make re-entrancy panics possible when a signal fires during a build. The page layer cannot be reasoned about separately from the controller state.",
+   "smell": "Inappropriate Intimacy / Leaky Abstraction",
+   "effort": "L",
+   "verdict": "adjusted",
+   "verifier_note": "Evidence confirmed: navigation.rs:20 `pub(crate) state`; mixer.rs:585-586, 631-635, 676, 705, 837; settings.rs:48, 781-783; connections.rs:121/146/156/249; doctor.rs:107. Counts re-measured on production sections: mixer 17 borrow_mut, live 9, stats 7, connections 7 (match); inventory has 3 borrow_mut + 10 `state.borrow()` (not 16). settings.rs:131 already calls an AppState intent method (set_theme_mode), so it is not a direct field write. Step 4 is infeasible as written: `nav.state` is read by ~40 non-page files under src/ui (widgets/*, hotkeys.rs, persist.rs, preflight*, sidebar.rs, command_palette.rs, quick_actions.rs, action_catalog.rs, ...), so privatizing the field to window.rs/event_pump.rs breaks the crate. Adjusted step 4: add `NavigationContext::read/update` first, migrate pages, then add architecture test `pages_do_not_borrow_app_state_mutably` scoped to `ui/pages` only (via `violations(\"ui/pages\", &[\".state.borrow_mut()\"], &[])` — check the scanner handles method-call tokens, it matches substrings per line). Making the field private is a separate, later epic covering all of src/ui. Also note CLAUDE.md text ('exposing only switch_to_page() and dispatch()') is already inaccurate; update the doc in the same PR as the test."
+  },
+  {
+   "id": "ui-pages-02",
+   "severity": "high",
+   "category": "security",
+   "file": "src/ui/pages/mixer.rs",
+   "lines": "398-403, 736-745, 798-806, 815-824, 933-938",
+   "title": "Mixer StatusPage descriptions interpolate OBS scene names and error messages without markup escaping",
+   "evidence": "AdwStatusPage `description` is Pango markup. inventory.rs:340 and graph.rs:81 wrap their text in `glib::markup_escape_text`. Mixer passes `fl!(\"mixer-error-description\", scene, message)` (818-823), `mixer-no-audio-sources-description` with `scene = scene_label` (740-744) and `mixer-loading-description` with `scene` (937) unescaped. A scene named `Q&A` or an error containing `<` fails markup parsing; GTK logs a warning and the description renders empty or garbled.",
+   "recommendation": "Add `src/ui/widgets/status_page.rs` with `pub(crate) fn status_page(icon:&str, title:&str, literal_description:&str) -> adw::StatusPage` that always calls markup_escape_text and adds `app-status-page`. Replace all 7 StatusPage::builder sites (mixer 398, 799, 815; inventory 337, 362; graph 78, 88). Add a native regression test with scene id `Q&A <b>` mirroring graph.rs:820.",
+   "risk": "Users see no error text exactly when OBS fails. Translator- or OBS-controlled markup injection is possible.",
+   "smell": "Duplicate Code (inconsistent copies)",
+   "effort": "S",
+   "verdict": "confirmed",
+   "verifier_note": "Verified: mixer.rs:799-806 append_mixer_status passes `description` raw; callers at 736-745 (scene_label) and 933-938 (scene) interpolate OBS scene names; 815-824 interpolates scene + OBS error message. inventory.rs:340 and graph.rs:81 escape. AdwStatusPage description is markup. 7 builder sites in pages, none elsewhere in src/ui. mixer.rs:398 uses only a static Fluent string (low risk) but should still go through the helper. Recommendation sound; Fluent args are inserted with Unicode isolation marks (FSI/PDI) by fluent by default — the regression test should compare after stripping \\u{2068}/\\u{2069} or check `contains`."
+  },
+  {
+   "id": "ui-pages-03",
+   "severity": "high",
+   "category": "god-file",
+   "file": "src/ui/pages/inventory.rs",
+   "lines": "1-1504 (prod), 1506-2126 (tests)",
+   "title": "inventory.rs is a 2126-line god module: presenter, reconciler, row view, popover editor, drag and drop, YAML dialogs, save-status poller and focus preservation",
+   "evidence": "InventoryPresentation::read (75-129); build plus reconciler (131-190); update_rows (213-326); populate (330-457); preserve_breakpoint_focus (462-524); build_registry_save_status 100 ms poll (528-572); build_scene_row (598-695); build_role_cell (697-749); build_scene_options (751-892); accent controls (898-952, 1171-1212); install_scene_reordering (960-1010); build_stale_group (1019-1104); reorder logic (1120-1169); YAML import/export (1214-1504). 15 production unwrap/expect.",
+   "recommendation": "Follow proposed_splits[inventory]: pure parts first (presentation.rs, registry rules per ui-pages-05), then view pieces (scene_row.rs, scene_options.rs, reorder.rs, stale.rs, yaml_transfer.rs, save_status.rs), finally a typed InventoryView (ui-pages-04).",
+   "risk": "Every inventory change touches one 2k-line file; merge conflicts and regressions in unrelated features are likely.",
+   "smell": "Large Class / Divergent Change",
+   "effort": "L",
+   "depends_on": [
+    "ui-pages-04",
+    "ui-pages-05"
+   ],
+   "verdict": "confirmed",
+   "verifier_note": "Function map verified via grep: read 76, build 131, update_rows 213, populate 330, preserve_breakpoint_focus 462, build_registry_save_status 528, build_scene_row 598, build_role_cell 697, build_scene_options 751, build_accent_controls 898, install_scene_reordering 960, build_stale_group 1019, reorder_scenes 1120, yaml 1214-1504, tests from 1506. 15 unwrap/expect in production confirmed."
+  },
+  {
+   "id": "ui-pages-04",
+   "severity": "high",
+   "category": "correctness",
+   "file": "src/ui/pages/inventory.rs",
+   "lines": "198-211, 213-326, 1106-1118, 1474-1477",
+   "title": "Incremental inventory reconciliation finds widgets by string widget-name through recursive tree walks and unwraps each lookup",
+   "evidence": "`inventory_widget(container, \"inventory-scenes\").unwrap().downcast::<gtk4::ListBox>().unwrap()` (222-225); `widget.downcast::<gtk4::ListBoxRow>().unwrap()` (257); role DropDown lookup unwraps (280-283); `options.parent().unwrap().downcast::<GtkBox>().unwrap()` (299-300); `inventory-content` unwrap (312-315). Each lookup is a full DFS (198-211), so one refresh costs O(rows x subtree). A renamed widget panics the GTK main loop.",
+   "recommendation": "Add `inventory/view.rs`: `struct SceneRowHandle { row, role: DropDown, curation: Label, drag: Image, options_slot: GtkBox }` and `struct InventoryView { list, content, empty, reorder_hint, deck_controls, rows: RefCell<HashMap<SceneId, SceneRowHandle>> }`. build_scene_row returns a SceneRowHandle; update_rows becomes `InventoryView::reconcile(&self, previous, next)` with no name lookups and no unwrap. Guard with native tests at 1766 and 1804.",
+   "risk": "GTK thread can panic on a structural UI change; refresh cost is quadratic on large scene collections.",
+   "smell": "Primitive Obsession / Message Chains",
+   "effort": "M",
+   "verdict": "adjusted",
+   "verifier_note": "Code confirmed at inventory.rs:198-211 (recursive DFS by widget_name) and unwraps at 222-225, 257, 280-283, 297-300, 312-315 (10 unwrap calls on that path). Complexity claim is wrong: per-row lookups search only that row's subtree (`inventory_widget(&row, ...)`), and container-level lookups are a constant count, so one refresh is O(total widget tree), not quadratic. Downgrade the perf part of the risk; the panic-on-restructure risk stands (severity medium-high rather than high). Recommendation (typed SceneRowHandle/InventoryView) is sound; widget names must be kept because native tests use `find(root, name)` (inventory.rs:1872)."
+  },
+  {
+   "id": "ui-pages-05",
+   "severity": "high",
+   "category": "ddd",
+   "file": "src/ui/pages/inventory.rs",
+   "lines": "84-114, 1025-1047, 1086-1090, 1120-1169, 1315-1318, 1384-1431",
+   "title": "Scene-registry business rules are implemented inside GTK closures instead of on the registry aggregate",
+   "evidence": "`registry.retained_scenes.retain(|entry| entry != record)` (1086-1090); `registry.scenes.remove(entry_name).is_some()` (1317); `reordered_scene_ids` and the filter guard in the page (1139-1169) with an `insert_after: bool` flag; stale set computed twice (107-114, 1025-1047); export calls `write_registry_yaml_to_path` directly (1415) while import goes via `ui::persist::import_registry` (1468); page imports storage::registry types (16-18).",
+   "recommendation": "Add to SceneRegistry: `remove_retained(&RetainedScene)->bool`, `remove_stale_entry(&str)->bool`, `move_scene(inventory_ids, source, target, Placement)->bool` with `enum Placement { Before, After }` and the filter guard inside, `stale_entries(&SceneInventory)->Vec<StaleEntry>`. Coordinate with storage/domain reviewer on moving aggregate behaviour into src/domain/registry.rs. Add `ui::persist::export_registry(nav, path, on_done)`. Move reorder tests (2094-2126) next to SceneRegistry::move_scene.",
+   "risk": "Invariants like 'no reorder while filtered' can be bypassed by another UI caller; persistence paths differ between import and export.",
+   "smell": "Feature Envy / Flag Argument",
+   "effort": "M",
+   "verdict": "adjusted",
+   "verifier_note": "Confirmed: retain at 1086-1090, remove at 1317, filter guard at 1139-1141, reordered_scene_ids 1152-1169 with `insert_after: bool`, stale computed twice (107-114 presentation; 1025-1047 group), export writes via `write_registry_yaml_to_path` at 1414 while import uses persist::import_registry at 1468. Corrections: imports at 16-18 are `parse_scene_accent, scene_accent_hex, write_registry_yaml_to_path, SceneEntry, SceneRegistry` — RetainedScene is referenced by full path at 1029 and SceneFilter is not imported here. The two stale computations differ in shape (presentation omits retained entries) — `stale_entries` must return both and the presentation must compare the same data. Methods go on storage::registry::SceneRegistry now (domain must not import storage per architecture_tests.rs:625-640, so a later move to domain/registry.rs means moving the type, not referencing it)."
+  },
+  {
+   "id": "ui-pages-06",
+   "severity": "high",
+   "category": "ddd",
+   "file": "src/ui/pages/live.rs",
+   "lines": "606-654",
+   "title": "Deck slot projection lives in the Live GTK page and is consumed by hotkeys and window code",
+   "evidence": "`live_scene_order`, `visible_scene_slots`, `scene_for_slot` (612-654) decide slot assignment from SceneInventory plus storage::registry::SceneRegistry. ui/hotkeys.rs:145 imports `pages::live::scene_for_slot`. inventory.rs:84-94 recomputes the same ordered-and-filtered list. Pure tests in live.rs:1307-1392.",
+   "recommendation": "Create `src/domain/deck.rs` with `DeckSlot { slot, scene: SceneId, favorite }`, `deck_projection(&SceneInventory, &SceneRegistrySnapshot) -> Vec<DeckSlot>` and `scene_for_slot`, taking the domain snapshot, not storage::SceneRegistry. Move the pure tests; re-export from live temporarily; migrate hotkeys.rs, live, inventory; delete re-export.",
+   "risk": "Slot assignment can diverge between Live cards, the hotkey dispatcher and Inventory order.",
+   "smell": "Feature Envy / Misplaced Responsibility",
+   "effort": "S",
+   "verdict": "adjusted",
+   "verifier_note": "Code confirmed at live.rs:612-654 and hotkeys.rs:145/161. Two errors: (a) inventory.rs:84-94 is NOT the same list — inventory shows all ordered+filtered scenes while live_scene_order filters to `is_live_switchable()` roles, so inventory must not switch to deck_projection. (b) domain/registry.rs::SceneRegistrySnapshot (lines 114-117) holds only `scenes: HashMap<SceneId, SceneMetadata>` and `graph_policy`; it has no saved order, filter or favourite data, while the projection needs `ordered_scene_ids`, `scene_matches_filter` (storage/registry/decks.rs:55) and `entry.favorite`. domain/ cannot import storage (architecture_tests.rs:625). Adjusted: introduce a domain `DeckInput { order: Vec<SceneId>, live_roles: HashMap<SceneId, SceneRole>, favorites: HashSet<SceneId>, filter matches }` (or extend SceneRegistrySnapshot with order/favorite) built by storage, then `domain/deck.rs` computes slots. Effort S -> M."
+  },
+  {
+   "id": "ui-pages-07",
+   "severity": "high",
+   "category": "boundary",
+   "file": "src/ui/pages/live.rs",
+   "lines": "310-604",
+   "title": "Output start/stop and disconnect flows (~300 lines) live in the Live page but are owned by the sidebar and transport bar",
+   "evidence": "handle_output_toggle ... confirm_output_action (315-604). External callers: sidebar.rs:329, 422, 425; transport_bar.rs:87/91, 264; window.rs:32. Policy reads storage::config::OutputConfig (19, 361, 524). Two near-identical adw::MessageDialog builders (414-432, 583-595).",
+   "recommendation": "(a) Pure policy into src/domain/output.rs: OutputAction, OutputSafety domain value (storage converts OutputConfig), requires_output_confirmation, requires_disconnect_confirmation, disconnect_stops_outputs. (b) GTK flow into src/ui/output_flow.rs. (c) src/ui/dialogs.rs::confirm(parent, ConfirmSpec, on_confirm) used by both flows. Tests at live.rs:1220-1530 move with the policy.",
+   "risk": "Shotgun surgery: changing stop-stream confirmation requires editing the Live page.",
+   "smell": "Feature Envy / Divergent Change / Duplicate Code",
+   "effort": "M",
+   "verdict": "confirmed",
+   "verifier_note": "Verified all callers: sidebar.rs:329/422/425, transport_bar.rs:87/91/264, window.rs:32; storage OutputConfig import at live.rs:19 used at 361 and 524; dialogs at 414-432 and 583-595 are near-identical. OutputAction is page-local (live.rs:27), not in domain/output.rs yet. OutputSafety-as-domain-value is required because domain cannot import storage. Moving output_label to ui/output_flow.rs is fine (no cycle concern within a single crate)."
+  },
+  {
+   "id": "ui-pages-08",
+   "severity": "high",
+   "category": "code-smell",
+   "file": "src/ui/pages/live.rs",
+   "lines": "659-802, 830-967",
+   "title": "rebuild_scene_cards (144 lines) and rebuild_audio_cards (138 lines, four early exits, unwrap) mix presentation, diffing, placeholders and reconciliation",
+   "evidence": "rebuild_scene_cards refreshes quick actions, clones SceneRegistry, builds ScenePresentation, rebuilds deck controls, tooltips, diffs, clears FlowBox, picks among four empty messages, builds cards, restores previews. rebuild_audio_cards: loading-keep (862-878), in-place (879-890), placeholder (893-912), reconcile (913-966); `previous.as_ref().unwrap()` in retain (921) safe only via `same_owner &&` short-circuit. AudioPresentation.inputs is `Vec<(String,String,String)>` (52).",
+   "recommendation": "Split into live/scene_deck.rs and live/audio_strip.rs. Pure `ScenePresentation::read` returning `SceneDeckBody { Unavailable, ObsEmpty, NoResults, NoLiveRoles, Cards }`. AudioStripView methods show_refreshing/update_in_place/show_placeholder/reconcile. Replace unwrap with `previous.as_ref().filter(|p| p.same_owner(&presentation)).map(|p| &p.inputs)`. Introduce `AudioInputIdentity { id, name, display_name }`.",
+   "risk": "Hard-to-verify on-air surface; a future edit to the short-circuit makes the unwrap panic.",
+   "smell": "Long Method / Primitive Obsession",
+   "effort": "M",
+   "depends_on": [
+    "ui-pages-06"
+   ],
+   "verdict": "confirmed",
+   "verifier_note": "Verified: AudioPresentation.inputs `Vec<(String,String,String)>` at live.rs:52; branches at 862-878, 879-890, 893-912, 913+; `previous.as_ref().unwrap()` at 921 guarded only by `same_owner &&`. Function bounds 659-802 and 830-967 match grep (rebuild_scene_cards 659, shortcut_for_slot 804, rebuild_audio_cards 830, clear_audio_cards 969)."
+  },
+  {
+   "id": "ui-pages-09",
+   "severity": "medium",
+   "category": "code-smell",
+   "file": "src/ui/pages/mixer.rs",
+   "lines": "31-45, 173-221, 370-376",
+   "title": "The presentation-owner tuple is duplicated across pages, and Mixer detects changes with Debug-formatted strings",
+   "evidence": "(epoch, scope, registry_generation, registry_status, language) hand-assembled in live.rs:46-61, 78-85, 706-714; mixer.rs:31-45 (4-field MixerBinding); inventory.rs:60-66, 152-160; graph.rs:43-55; doctor.rs:36-48. 20 production occurrences of `show_registry.generation` in src/ui. Mixer signature is `format!(\"{:?}...\")` (202-220) plus `controls_key` (370-376).",
+   "recommendation": "Add `#[derive(Clone, PartialEq, Eq)] PresentationOwner { epoch, scope, registry_generation, registry_status, language }` with `AppState::presentation_owner()` in controller/state.rs, embed in every page presentation. Replace mixer strings with typed `MixerPresentation` and `MixerControlsKey`.",
+   "risk": "A new ownership dimension will be missed by one page, leaving stale controls bound to the wrong workspace.",
+   "smell": "Data Clumps / Duplicate Code / Primitive Obsession",
+   "effort": "M",
+   "verdict": "adjusted",
+   "verifier_note": "Verified: MixerBinding 4-tuple (no language) at mixer.rs:31-45; Debug-format signature 202-220; controls_key 370-376 (epoch, scope, language, scene ids — no registry generation/status); 20 production occurrences of show_registry.generation across src/ui (pages are 8 of them, rest in action_shortcuts, navigation, operator_picker, persist, quick_actions, deck_controls, window). Caution: the tuples are NOT identical — MixerBinding omits language, controls_key omits registry fields, doctor/graph keys omit registry_generation. A single PresentationOwner changes rebuild/request semantics at each site (e.g. adding language to MixerBinding resets request tracking on language change). Implementers must decide per site and add a test per page that pins which dimensions trigger rebuild."
+  },
+  {
+   "id": "ui-pages-10",
+   "severity": "medium",
+   "category": "god-struct",
+   "file": "src/ui/pages/mixer.rs",
+   "lines": "50-62, 1116-1194, 290-313, 941-1049",
+   "title": "MixerPageHandle combines view handles, presenter signatures and the request-dedupe tracker; debug inspection lives in the page",
+   "evidence": "MixerPageHandle holds WeakRefs next to requested_scene, signature, binding, controls_signature (50-62). Request dedupe (1116-1194) decides AppCommand::RefreshMixerSceneAudio with state in a widget handle. emit_mixer_inspection reads `std::env::var(MIXER_INSPECT_ENV)` on every populate and uses eprintln! (947-952). ~110 lines of JSON formatting (955-1049).",
+   "recommendation": "Move tracker and decision into controller/state/mixer.rs: `MixerState::requested_scene` and `AppState::claim_mixer_scene_request(intent)`; port the 13 tests (1622-1786). Move inspection to mixer/inspection.rs; cache env flag in `static INSPECT: OnceLock<bool>`; emit through `tracing::info!(target: \"scenedeck::mixer_inspect\")` keeping the line format.",
+   "risk": "Dedupe state is lost whenever the page is rebuilt, which can cause duplicate OBS requests.",
+   "smell": "Large Class / Divergent Change",
+   "effort": "M",
+   "verdict": "adjusted",
+   "verifier_note": "Structure confirmed (handle fields 50-62; dedupe 1116-1194; env read every call 946; eprintln). Two corrections: (1) Risk overstated — duplicate OBS requests are already prevented by AppState status: `should_request_mixer_scene_audio` returns false for Loading/Loaded, and request_mixer_scene_audio sets `set_mixer_audio_loading` in AppState before dispatch; the page tracker only guards the Error+Automatic loop. (2) Do NOT switch to `tracing::info!`: docs/manual-test-plan.md:361-365 and 406-410 document capturing the raw structured lines from SCENEDECK_MIXER_INSPECT=1 on stderr; tracing adds prefixes and is subject to RUST_LOG filtering. Keep eprintln, cache the flag in OnceLock, move code to mixer/inspection.rs. Moving the tracker into controller/state/mixer.rs is fine (plain Option<String>, no GTK)."
+  },
+  {
+   "id": "ui-pages-11",
+   "severity": "medium",
+   "category": "code-smell",
+   "file": "src/ui/pages/mixer.rs",
+   "lines": "355-558",
+   "title": "mixer::populate is 204 lines, holds an AppState borrow across widget construction and signal wiring, and needs a manual drop(state)",
+   "evidence": "`let state = nav.state.borrow();` at 360 held through controls build (380-486); `drop(state)` at 528 before request_visible_mixer_scene_audio which borrow_muts (1150). Test at 1923 exists to catch that panic. Comment 356-359 calls the long borrow deliberate.",
+   "recommendation": "Compute a pure `enum MixerBody { NoScenes, MissingScene, Loading, Error, NeedsRequest, Loaded{..} }` inside one short `nav.read(...)`, render via controls::ensure and body::render, dispatch NeedsRequest after rendering outside any borrow.",
+   "risk": "Any new synchronous signal emission during build raises BorrowMutError.",
+   "smell": "Long Method / Temporal Coupling",
+   "effort": "M",
+   "depends_on": [
+    "ui-pages-10"
+   ],
+   "verdict": "confirmed",
+   "verifier_note": "Verified populate at mixer.rs:355, borrow at 360 with deliberate comment 356-359, `drop(state)` at 528 before request_visible_mixer_scene_audio, which borrow_muts in request_mixer_scene_audio (set_mixer_audio_loading). Native test at 1923 exists. Recommendation is sound; note the long borrow was chosen to avoid cloning AppState — the MixerBody must borrow or clone only the visible inputs, not the whole state."
+  },
+  {
+   "id": "ui-pages-12",
+   "severity": "medium",
+   "category": "code-smell",
+   "file": "src/ui/pages/mixer.rs",
+   "lines": "488-525, 757-792, 894-913",
+   "title": "Duplicate group-by blocks and pure filtering in the mixer view, with repeated full AudioInput clones",
+   "evidence": "MixerGrouping::Scope (764-775) and ScenePath (776-791) are identical BTreeMap group-bys differing only in key fn, both clone inputs. filter_inputs (894-913) is pure. `inputs.to_vec()` at 489 and 524 clones the snapshot each rebuild.",
+   "recommendation": "Add to src/domain/mixer.rs: `filter_inputs<'a>(&'a [AudioInput], &str) -> Vec<&'a AudioInput>` and `group_inputs<'a>(&[&'a AudioInput], MixerGrouping, global_label) -> Vec<(String, Vec<&'a AudioInput>)>`; append_group takes `&[&AudioInput]`. Unit tests for both groupings and empty search.",
+   "risk": "Low correctness risk; cuts duplication and allocations.",
+   "smell": "Duplicate Code / Feature Envy",
+   "effort": "S",
+   "verdict": "confirmed",
+   "verifier_note": "Verified identical group-bys at mixer.rs:764-775 and 776-791 with input.clone(); filter_inputs 894-913 pure; to_vec at 489 and 524. Since populate holds the borrow for the whole build, references can replace clones. domain/mixer.rs already owns MixerGrouping (line 62); keep the Fluent fallback label as a parameter as proposed."
+  },
+  {
+   "id": "ui-pages-13",
+   "severity": "medium",
+   "category": "code-smell",
+   "file": "src/ui/pages/settings.rs",
+   "lines": "102-141, 147-183, 386-444, 572-593; mixer.rs 560-599, 650-683",
+   "title": "The enum-backed ComboRow pattern is copy-pasted 7 times; the colour-scheme row keeps a hand-written index table",
+   "evidence": "Each site: labels, string_list, ComboRow::builder().use_markup(false)..., add_css_class(\"scenedeck-combo-row\"), connect_selected_notify with ALL.get(row.selected()). settings.rs:109-113 and 126-130 encode ThemeMode as 0/1/2 match arms.",
+   "recommendation": "Add src/ui/widgets/enum_combo.rs: `enum_combo_row<T: Copy + PartialEq + Default + 'static>(title, subtitle, all: &'static [T], label, selected, on_change) -> adw::ComboRow`; generic `enum_at`; add `ThemeMode::ALL`. Migrate mixer mode/grouping and settings scheme, motion, language, hotkey style, leader rows.",
+   "risk": "New enum variants can desync labels and indices.",
+   "smell": "Duplicate Code / Switch Statements",
+   "effort": "S",
+   "verdict": "confirmed",
+   "verifier_note": "Verified 9 ComboRow builders (mixer 567/613/660; settings 114/158/315/399/576/586); 7 are enum-backed as stated (mixer scene row and settings theme-family row are data-driven). ThemeMode 0/1/2 tables at settings.rs:109-113 and 126-130. appearance.rs has ALL for other enums (63, 230) but not ThemeMode."
+  },
+  {
+   "id": "ui-pages-14",
+   "severity": "medium",
+   "category": "code-smell",
+   "file": "src/ui/pages/doctor.rs",
+   "lines": "28-55, 119-132; graph.rs 36-62, 74-85",
+   "title": "Doctor and Graph duplicate the topology presentation key and the notice chain, cloning the whole graph and registry on every refresh",
+   "evidence": "Both stateful_page key closures build epoch, language, scene ids, scene_graph.edges.clone(), registry.snapshot(), show_registry.status.clone(), topology_status.clone() (doctor 33-49, graph 41-56); doctor adds obs-connected. Both chain topology_status.notice().or_else(registry_availability_message).",
+   "recommendation": "Add src/ui/pages/topology.rs with `TopologyPresentation { owner: PresentationOwner, topology_generation: u64, connected: bool }` (requires a generation counter on topology_status or scene_graph) and `topology_notice(nav)`.",
+   "risk": "Drift between the two pages; O(graph) clones per refresh while either page is mapped.",
+   "smell": "Duplicate Code",
+   "effort": "S",
+   "depends_on": [
+    "ui-pages-09"
+   ],
+   "verdict": "adjusted",
+   "verifier_note": "Duplication confirmed (doctor.rs:33-49 vs graph.rs:41-56 nearly identical; notice chains doctor 119-124, graph 74-77). The generation-counter recommendation is risky: the current keys compare content (edges, registry.snapshot()), which catches registry edits that no generation counter tracks today (show_registry.generation is a workspace/registry-target binding, not an edit counter). Adjusted step 1: extract `fn topology_key(state:&AppState) -> TopologyKey` (same content comparison) and `topology_notice(nav)` into src/ui/pages/topology.rs; only replace content with generations after adding a counter bumped on every scene_graph/registry/topology mutation, with tests. stateful_page (ui/mod.rs:57-93) recomputes the key on every refresh, so the clone cost claim is right."
+  },
+  {
+   "id": "ui-pages-15",
+   "severity": "medium",
+   "category": "ddd",
+   "file": "src/ui/pages/stats.rs",
+   "lines": "32-54, 846-899",
+   "title": "Stream-health thresholds and severity policy are defined in the Stats page and duplicate domain/health.rs",
+   "evidence": "FPS_*/FRAME_TIME_*/DROPPED_*/CONGESTION_* constants (43-54); fps_target, frame_budget_ms, fps_severity, frame_time_severity, dropped_severity (852-899) return chart::Severity. domain/health.rs:27 defines SKIPPED_RATIO = 0.01 separately.",
+   "recommendation": "Create src/domain/stats/health.rs (or extend domain/health.rs): HealthLevel, StatsHealthPolicy, fps_level, frame_time_level, dropped_level, congestion_level, frame_budget_ms; health.rs::SKIPPED_RATIO references the same constant; `impl From<HealthLevel> for chart::Severity`; move tests 1074-1157.",
+   "risk": "Green gauge while an alert fires, or the reverse, after only one threshold is tuned.",
+   "smell": "Duplicate Code / Feature Envy",
+   "effort": "S",
+   "verdict": "adjusted",
+   "verifier_note": "Constants and functions confirmed at stats.rs:43-54 and 852-899. The 'disagree' claim is mis-attributed: the stats gauge uses a cumulative ratio (`s.dropped_ratio()` / `output_skipped_ratio()`, stats.rs:413-416) while domain/health.rs:150-159 uses a per-interval delta between samples. They can disagree even with identical constants; a test asserting both share one constant proves little. Adjusted: move thresholds/severity into domain (e.g. domain/stats.rs or domain/health/thresholds.rs — domain/health/ dir already exists) as HealthLevel + From impl in chart.rs; share the 1% constant by name; document the cumulative-vs-windowed difference instead of claiming equivalence. fps_target currently takes &AppState; the domain version must take `Option<&StatsSample>` (domain/stats.rs:98)."
+  },
+  {
+   "id": "ui-pages-16",
+   "severity": "medium",
+   "category": "performance",
+   "file": "src/ui/pages/live.rs",
+   "lines": "137-152, 270-284; inventory.rs 528-572",
+   "title": "Per-frame tick callbacks on Live and a 100 ms poll for registry save status",
+   "evidence": "live.rs adds two add_tick_callback closures returning Continue forever, reading window height and toggling classes/spacing/margins/visibility/orientation every frame. inventory.rs:570 `glib::timeout_add_local(100ms, refresh)`, a new timer per non-incremental rebuild, running until WeakRefs die.",
+   "recommendation": "Live: one adw::Breakpoint `max-height: 700px` with setters (or connect_default_height_notify). Save status: `ui::persist::subscribe_registry_save_status(Fn(RegistrySaveStatus)) -> SubscriptionGuard` push model.",
+   "risk": "Constant wakeups and layout invalidation on the main stream-control surface.",
+   "smell": "Busy-wait polling",
+   "effort": "M",
+   "verdict": "confirmed",
+   "verifier_note": "Verified two add_tick_callback closures at live.rs:137-152 and 270-284 returning Continue (tick callbacks keep the frame clock updating while mapped). inventory.rs:570 `timeout_add_local(100ms)` per build_registry_save_status call, stopping only when WeakRefs fail. window.rs:175 already uses an adw::Breakpoint (max-width), so a max-height breakpoint on the window is a known pattern here."
+  },
+  {
+   "id": "ui-pages-17",
+   "severity": "medium",
+   "category": "performance",
+   "file": "src/ui/pages/settings.rs",
+   "lines": "671-679",
+   "title": "The hotkey leader-timeout SpinRow writes config.json on every value-notify",
+   "evidence": "`timeout_row.connect_value_notify(move |row| { persist_config(&nav, |config| config.hotkeys.leader_timeout_ms = millis); refresh(); })`. Holding an arrow key issues one background write per step.",
+   "recommendation": "Update AppState immediately and debounce persistence with a 400 ms glib::timeout_add_local_once, or persist on focus-leave; optional ui::persist::DebouncedConfigWrite helper.",
+   "risk": "Write amplification and IO-lane backlog.",
+   "smell": "Chatty IO",
+   "effort": "S",
+   "verdict": "refuted",
+   "verifier_note": "persist_config (ui/persist.rs:463-470) routes through background_io::run_config_snapshot (background_io.rs:193-207), which coalesces: each call replaces `batch.latest` and only starts a worker if none is running. Rapid steps produce at most one in-flight write plus one pending latest snapshot, no backlog. The doc comment there says 'Admit a replaceable whole Config snapshot now, never via a debounce timer' — the proposed 400 ms debounce contradicts a deliberate design (Close/Quit must see pending intent). AppState is already updated synchronously inside persist_config. No change needed."
+  },
+  {
+   "id": "ui-pages-18",
+   "severity": "medium",
+   "category": "boundary",
+   "file": "src/ui/pages/settings.rs",
+   "lines": "25, 446-497",
+   "title": "Settings owns connections' PasswordWrites (with a poisoning lock().expect) and imports window.rs upward",
+   "evidence": "PasswordWrites (456-497) used only by settings/connections.rs:54, 147, 157, 381 via super::. `confirmed.lock().expect(\"password confirmation lock\")` (484). `use super::super::window::apply_color_scheme;` (25). `fn build_obs_group(nav, _cfg)` (448-450) unused param, forwards to connections::build.",
+   "recommendation": "Move PasswordWrites to settings/connections/password_writes.rs; replace expect with `.lock().unwrap_or_else(PoisonError::into_inner)`. Move apply_color_scheme from ui/window.rs:1574 to ui/theme.rs. Delete build_obs_group.",
+   "risk": "A poisoned lock bricks password saving; page-to-window dependency blocks splitting window.rs.",
+   "smell": "Feature Envy / Middle Man / Speculative Parameter",
+   "effort": "S",
+   "verdict": "adjusted",
+   "verifier_note": "Confirmed: import at settings.rs:25, build_obs_group 448-450 with unused `_cfg`, PasswordWrites 456-497 used only by connections via super::, apply_color_scheme at window.rs:1574. Poisoning risk overstated: the lock is taken after `work(&password)` returns and the critical section only assigns/clones an Option<String>, so a panic while held is practically impossible; keep the fix (unwrap_or_else(PoisonError::into_inner)) as hygiene, severity low. Note connections.rs also depends on settings' `report_save_failure`, `obs_status_text`, `with_entry_icon` via super:: (170, 330, 364-366); after converting connections.rs to connections/mod.rs `super` still resolves to settings, so those paths keep working; password_writes.rs inside connections/ will need `super::super` or a `pub(super)` re-export."
+  },
+  {
+   "id": "ui-pages-19",
+   "severity": "medium",
+   "category": "ddd",
+   "file": "src/ui/pages/settings/connections.rs",
+   "lines": "188-234",
+   "title": "OBS endpoint validation is primitive-typed UI logic with a post-check unwrap and a single generic error",
+   "evidence": "save_fields parses port with `.parse::<u16>().ok().filter(|p| *p > 0)`, checks name/host emptiness, shows `settings-connection-invalid`, then `port.unwrap()` (214). Page builds storage SavedConnection/ObsConfig directly.",
+   "recommendation": "Add `ObsEndpoint { host, port: NonZeroU16 }` with `parse(host, port) -> Result<Self, EndpointError>` (EmptyHost, InvalidPort, EmptyName) in src/domain/obs.rs; one Fluent message per variant in every locale; storage converts ObsEndpoint into ObsConfig; unit tests for whitespace, 0, 65536, IPv6.",
+   "risk": "Validation duplicated wherever connections are edited (command palette, import); poor error messages.",
+   "smell": "Primitive Obsession",
+   "effort": "S",
+   "verdict": "adjusted",
+   "verifier_note": "Code confirmed at connections.rs:188-216 (port.unwrap() at 214, storage SavedConnection/ObsConfig built in page). Risk claim 'validation duplicated wherever connections are edited (command palette, import)' is unverified: the only production ObsConfig construction in src/ui is connections.rs:212. Keep the value object for distinct error messages and to remove the unwrap; drop the duplication claim. domain/obs.rs exists (ObsNamedList) and is a fine home. New Fluent ids must be added to every locale (i18n parity test)."
+  },
+  {
+   "id": "ui-pages-20",
+   "severity": "medium",
+   "category": "ui-a11y",
+   "file": "src/ui/pages/live.rs",
+   "lines": "219-266; graph.rs 129-133, 186-193; doctor.rs 92-97; inventory.rs 738-742, 909-920, 1071-1075; stats.rs 177-182",
+   "title": "Icon-only controls lack explicit accessible labels and states; a focusable canvas does nothing; an accessible name is concatenated outside Fluent",
+   "evidence": "Live audio expand ToggleButton never calls update_state(Expanded). Graph reset, doctor rerun, inventory clear-accent, stale remove, stats pop-out are icon-only with tooltip only; stale remove buttons share one tooltip. graph.rs:193 focusable DrawingArea with no key controller and no label. inventory.rs:738-741 `format!(\"{} — {scene_id}\", ...)`. PLAUSIBLE: tooltip fallback to accessible name varies by GTK version.",
+   "recommendation": "`ui::widgets::a11y::icon_button(icon, label)` setting tooltip and Property::Label; contextual Fluent `inventory-remove-stale-named`; toggle `update_state(State::Expanded)`; graph set_focusable(false) or label + key nudging; Fluent `inventory-role-for-scene` in every locale.",
+   "risk": "Screen-reader users cannot tell destructive row actions apart; dead focus stop on graph.",
+   "smell": "Inconsistent abstraction",
+   "effort": "S",
+   "verdict": "adjusted",
+   "verifier_note": "Confirmed icon-only tooltip-only buttons at graph.rs:129-133, doctor.rs:92-96, stats.rs:177-182, inventory.rs:909-920, 1071-1075; graph.rs:193 set_focusable(true) with no EventControllerKey or Property::Label in the file; inventory.rs:738-742 format! concatenation. Correction: gtk4::ToggleButton already exposes its pressed state (GTK_ACCESSIBLE_STATE_PRESSED) automatically, so `State::Expanded` is optional polish, not a defect. GTK 4 uses the tooltip as accessible description, so explicit labels are still the safe fix (remains PLAUSIBLE)."
+  },
+  {
+   "id": "ui-pages-21",
+   "severity": "medium",
+   "category": "god-file",
+   "file": "src/ui/pages/stats.rs",
+   "lines": "169-286, 722-844",
+   "title": "Stats mixes the pop-out window lifecycle, activity timeline, gauges, charts and cards; activity marker logic is duplicated",
+   "evidence": "open_popout (202-286) wires notify::application and close handlers and destroys the health tick source. build_activity (724-844) is 120 lines. Marker-status update appears in refresh (766-775) and in each entry click handler (829-837). Gauge closures borrow state and build GaugeReading by hand (361-450).",
+   "recommendation": "Follow proposed_splits[stats]. Extract `apply_marker(charts, status, fraction, selected)`. Move PopoutSlot/open_popout to stats/popout.rs with a single PopoutLifecycle on_closed closure.",
+   "risk": "Pop-out lifetime leaks already need two native tests (919, 979); lifecycle spread across three handlers.",
+   "smell": "Long Method / Duplicate Code",
+   "effort": "M",
+   "depends_on": [
+    "ui-pages-15"
+   ],
+   "verdict": "confirmed",
+   "verifier_note": "Verified open_popout at 202 with destroy/notify(application)x2/close-request handlers; build_activity 724-844; duplicated marker code at 766-775 and 829-837 (identical set_marker + label match)."
+  },
+  {
+   "id": "ui-pages-22",
+   "severity": "low",
+   "category": "ui-a11y",
+   "file": "src/ui/pages/graph.rs",
+   "lines": "548-786",
+   "title": "The graph canvas hard-codes its palette, uses the cairo toy text API, and ellipsizes in O(n^2) on every draw",
+   "evidence": "Palette::for_current_theme (765-785), edge colours (601-605), role_color (736-746) are literal RGB ignoring theme CSS. `select_font_face(\"Sans\")` + show_text (684-696) bypasses fontconfig fallback and Pango shaping. fitted_text pops one char at a time measuring each (711-728). Color duplicated with ui/widgets/chart.rs:79. 9 `let _ = ctx.fill()/stroke()`.",
+   "recommendation": "Move drawing to graph/canvas.rs; use pangocairo create_layout with EllipsizeMode::End; cache labels in GraphNode; derive colours from widget style and shared tokens in ui/widgets/canvas_palette.rs used by chart.rs too.",
+   "risk": "Theme inconsistency, broken non-Latin labels, jank when dragging large graphs.",
+   "smell": "Duplicate Code / Magic Numbers",
+   "effort": "M",
+   "verdict": "adjusted",
+   "verifier_note": "Confirmed palette literals (765-785), toy text API (684-696), char-pop fitted_text (711-728), 9 `let _ = ctx...`. Corrections: duplicated Color is at ui/widgets/chart.rs:30 (not 79). pangocairo is not a direct dependency in Cargo.toml; adding it requires a Cargo.toml change and passing `cargo deny`. O(n^2) is per label length (bounded by NODE_WIDTH), so jank claim is minor. Keep as low."
+  },
+  {
+   "id": "ui-pages-23",
+   "severity": "low",
+   "category": "code-smell",
+   "file": "src/ui/pages/help.rs",
+   "lines": "128-385, 399-466",
+   "title": "Help topics are hand-coded through a 7-argument topic() function about 20 times; the link row does not wrap",
+   "evidence": "topic(nav, icon, title, subtitle, body, links, state) (399-407) called ~20 times (128-385). ExpanderRow built without `.use_markup(false)` (408-412). Link pills in a horizontal GtkBox (444-448) cannot wrap.",
+   "recommendation": "`struct TopicSpec { icon, title: fn()->String, subtitle, body, links: &'static [Page], expanded }` + const table per group; set use_markup(false); FlowBox (or adw::WrapBox with v1_7) for links.",
+   "risk": "Low; maintenance noise and '&' in help strings is a potential rendering bug.",
+   "smell": "Long Parameter List / Data Clumps",
+   "effort": "S",
+   "verdict": "confirmed",
+   "verifier_note": "Verified topic() 7 params (399-407), 22 call sites, ExpanderRow without use_markup(false) (408-412; AdwPreferencesRow default use-markup=true), horizontal links box (444-448). Correction: links are `Vec<TopicLink { label, page }>`, so TopicSpec.links must carry label fns, not `&'static [Page]`. Cargo.toml pins adw feature v1_4, so WrapBox (1.7) needs a feature bump; prefer FlowBox."
+  },
+  {
+   "id": "ui-pages-24",
+   "severity": "low",
+   "category": "correctness",
+   "file": "src/ui/pages/settings.rs",
+   "lines": "48-56, 731-761",
+   "title": "The Settings builder consumes the startup notice as a side effect; the status text re-borrows state inside a match on a borrowed temporary",
+   "evidence": "`if let Some(notice) = nav.state.borrow_mut().startup_notice.take()` during construction (48), so a rebuild drops the notice. obs_status_text matches on `nav.state.borrow().obs_status.clone()`; the scrutinee Ref lives for the whole match while the Connected arm borrows again (736).",
+   "recommendation": "Keep startup_notice until dismissed (`AppState::dismiss_startup_notice()`) or move to a window-level adw::Banner. obs_status_text takes &AppState, called inside one nav.read.",
+   "risk": "Users lose a startup warning such as a config-migration failure.",
+   "smell": "Side Effect in Constructor / Temporal Coupling",
+   "effort": "S",
+   "verdict": "adjusted",
+   "verifier_note": "Code confirmed (settings.rs:48 take; obs_status_text 731-761 re-borrows in Connected arm). Risk is speculative in production: settings::build runs only from window.rs add_pages (line 100) once per window; other add_pages calls (2044, 2250, 2310) are in window.rs test code (after #[cfg(test)] at 1583), and app.rs connect_activate re-presents the existing window. The notice stays rendered for the session once built. Keep as low hygiene: make obs_status_text pure over &AppState; startup-notice persistence optional."
+  },
+  {
+   "id": "ui-pages-25",
+   "severity": "low",
+   "category": "test",
+   "file": "src/ui/pages/inventory.rs",
+   "lines": "1506-2126 (esp. 1852-1869); live.rs 977-1554; mixer.rs 1224-2003",
+   "title": "Test modules make up 30-40% of each page file, and one test scans its own file's source, which will break silently on a split",
+   "evidence": "live.rs 578/1554, mixer.rs 780/2003 (tests + layout_tests), inventory.rs 620/2126. Native tests contain >200-char one-liners (live.rs:990-998). inventory_uses_native_rows_without_width_configuration does include_str!(\"inventory.rs\") + split(\"#[cfg(test)]\").",
+   "recommendation": "Before splitting, scan every file under src/ui/pages/inventory/ or replace with native widget-tree assertion (assert_native_list at 1887). Move tests into <page>/tests.rs and <page>/native_tests.rs; run rustfmt so one-liners expand.",
+   "risk": "Refactor safety nets lost or false failures mid-split.",
+   "smell": "Fragile Test",
+   "effort": "S",
+   "verdict": "adjusted",
+   "verifier_note": "Test sizes and include_str self-scan at inventory.rs:1852-1869 confirmed. Correction: after `git mv inventory.rs inventory/mod.rs`, `include_str!(\"inventory.rs\")` fails to COMPILE (path resolves to inventory/inventory.rs), so it breaks loudly, not silently; the silent risk is after further splits, when forbidden tokens could appear in sibling files. Also rustfmt will not expand the >200-char lines (live.rs:983-998): they sit inside a closure whose first arg is a long string literal, which is why `cargo fmt --check` passes today; reformat by hand (e.g. pass `concat!(module_path!(), \"::name\")`)."
+  }
+ ],
+ "proposed_splits": [
+  {
+   "file": "src/ui/pages/inventory.rs",
+   "current_lines": 2126,
+   "rationale": "Seven responsibilities; registry rules mixed into UI; 15 unwraps.",
+   "target_modules": [
+    {
+     "path": "src/domain/registry.rs (or storage/registry.rs until the aggregate moves)",
+     "responsibility": "Registry aggregate behaviour",
+     "moves": "reordered_scene_ids -> SceneRegistry::move_scene; stale computation -> SceneRegistry::stale_entries; remove_retained; remove_stale_entry; reorder tests"
+    },
+    {
+     "path": "src/ui/pages/inventory/mod.rs",
+     "responsibility": "Page entry, reconciler closure, refresh action, populate shell",
+     "moves": "build, rebuild, populate (shell only)"
+    },
+    {
+     "path": "src/ui/pages/inventory/presentation.rs",
+     "responsibility": "Pure read model and label helpers",
+     "moves": "InventoryPresentation, ScenePresentation, role_row, role_at, scene_curation_label, dropdown round-trip test"
+    },
+    {
+     "path": "src/ui/pages/inventory/view.rs",
+     "responsibility": "Typed widget handles and incremental reconcile",
+     "moves": "update_rows -> InventoryView::reconcile; SceneRowHandle; inventory_widget deleted"
+    },
+    {
+     "path": "src/ui/pages/inventory/scene_row.rs",
+     "responsibility": "One scene row",
+     "moves": "build_scene_row, build_role_cell, handle_scene_role_change, set_scene_icon, inventory_label"
+    },
+    {
+     "path": "src/ui/pages/inventory/scene_options.rs",
+     "responsibility": "Per-row popover editor",
+     "moves": "build_scene_options, build_accent_controls, build_accent_button, set_scene_accent"
+    },
+    {
+     "path": "src/ui/pages/inventory/reorder.rs",
+     "responsibility": "Drag-and-drop and keyboard reorder wiring",
+     "moves": "install_scene_reordering, reorder_scenes, focus_named_row"
+    },
+    {
+     "path": "src/ui/pages/inventory/stale.rs",
+     "responsibility": "Stale and retained identity group",
+     "moves": "build_stale_group, handle_stale_entry_remove"
+    },
+    {
+     "path": "src/ui/pages/inventory/yaml_transfer.rs",
+     "responsibility": "Registry YAML import/export",
+     "moves": "build_yaml_actions_row, show_export_dialog (via new ui::persist::export_registry), show_import_dialog, yaml_dialog, yaml_file_filter, dialog_cancelled, parent_window; delete handle_export_click/handle_import_click"
+    },
+    {
+     "path": "src/ui/pages/inventory/save_status.rs",
+     "responsibility": "Registry save status row (push subscription)",
+     "moves": "build_registry_save_status"
+    },
+    {
+     "path": "src/ui/widgets/breakpoint_focus.rs",
+     "responsibility": "Reusable focus preservation across BreakpointBin layout changes",
+     "moves": "preserve_breakpoint_focus"
+    },
+    {
+     "path": "src/ui/pages/inventory/tests.rs + native_tests.rs",
+     "responsibility": "Tests",
+     "moves": "split pure/native; source-scan test rewritten to scan the directory"
+    }
+   ],
+   "order": "1) Rewrite include_str source-scan test to scan a directory, green. 2) git mv inventory.rs -> inventory/mod.rs, tests to inventory/tests.rs. 3) SceneRegistry methods + unit tests; page calls them. 4) presentation.rs. 5) yaml_transfer.rs, save_status.rs. 6) stale.rs. 7) scene_options.rs, scene_row.rs, reorder.rs. 8) view.rs SceneRowHandle; reconcile; remove unwraps. 9) preserve_breakpoint_focus to widgets. cargo test + test-native.py after every step.",
+   "safety_net": "Native tests at 1513, 1567, 1622, 1681, 1766, 1804, 1946, 2044. Add before step 3: SceneRegistry::stale_entries and move_scene-refuses-while-filtered unit tests. Add before step 8: native test that ids with '-' and spaces reconcile without panic.",
+   "verdict": "adjusted",
+   "verifier_note": "Order step 1 contradiction: you cannot scan `src/ui/pages/inventory/` before it exists. Do step 1 as: replace the include_str test with the existing native assertion (assert_native_list, inventory.rs:1887) or a scan of `inventory.rs` OR `inventory/**`. Drop src/ui/widgets/breakpoint_focus.rs: preserve_breakpoint_focus has exactly one caller (inventory.rs:454), so moving it to widgets is speculative generality; keep it in inventory/mod.rs. SceneRegistry methods go in storage/registry.rs (domain cannot import storage). stale_entries must cover both the presentation shape (107-114) and the group shape (1025-1047). save_status push subscription requires a new observer API in ui/persist.rs — scope it as its own step. Rest verified against the grep function map."
+  },
+  {
+   "file": "src/ui/pages/mixer.rs",
+   "current_lines": 2003,
+   "rationale": "Handle mixes view handles, Debug-string signatures and request-dedupe tracker; populate 204 lines under a held borrow; ~110 lines of inspection JSON; duplicated grouping.",
+   "target_modules": [
+    {
+     "path": "src/controller/state/mixer.rs",
+     "responsibility": "Scene-audio request dedupe and selection invariants",
+     "moves": "MixerRefreshRequestIntent, should_request_mixer_scene_audio, prepare_mixer_scene_audio_request, requested_scene tracker, clear_tracked_request -> AppState::{claim_mixer_scene_request, release_mixer_scene_request}; selection intent methods; dedupe tests"
+    },
+    {
+     "path": "src/domain/mixer.rs",
+     "responsibility": "Pure input filtering and grouping",
+     "moves": "filter_inputs, new group_inputs"
+    },
+    {
+     "path": "src/ui/pages/mixer/mod.rs",
+     "responsibility": "build, MixerPageHandle (view handles only), refresh orchestration",
+     "moves": "build, MixerPageHandle, refresh, update_mute, update_volume"
+    },
+    {
+     "path": "src/ui/pages/mixer/presenter.rs",
+     "responsibility": "Typed MixerPresentation, controls key, MixerBody, summary text",
+     "moves": "mixer_structure -> MixerPresentation::read, controls_key -> MixerControlsKey, visible_inputs, source_summary, scene_target_summary, summary tests"
+    },
+    {
+     "path": "src/ui/pages/mixer/controls.rs",
+     "responsibility": "Controls group, options expander, view-state capture/restore",
+     "moves": "build_mode_row, build_scene_row, build_grouping_row, build_search_row, presets row, MixerViewState, visit_mixer, persist_mixer_selection"
+    },
+    {
+     "path": "src/ui/pages/mixer/body.rs",
+     "responsibility": "Loaded/empty/loading/error rendering",
+     "moves": "append_mixer_inputs, append_group, append_mixer_error_status, append_loading_placeholder, MixerSurfaces"
+    },
+    {
+     "path": "src/ui/pages/mixer/inspection.rs",
+     "responsibility": "SCENEDECK_MIXER_INSPECT diagnostics",
+     "moves": "MIXER_INSPECT_ENV (OnceLock-cached), MixerRetryInspection, emit_mixer_inspection, format_mixer_inspection_line, inspection helpers and tests"
+    },
+    {
+     "path": "src/ui/pages/mixer/native_tests.rs",
+     "responsibility": "GTK layout tests",
+     "moves": "mod layout_tests (1788-2003)"
+    }
+   ],
+   "order": "1) git mv to mixer/mod.rs; tests to files. 2) inspection.rs. 3) filter_inputs/group_inputs into domain/mixer.rs. 4) dedupe tracker/policy into controller/state/mixer.rs, port tests. 5) AppState selection intent methods. 6) presenter.rs typed MixerPresentation. 7) Split populate into controls.rs and body.rs. Tests + test-native.py after each.",
+   "safety_net": "Existing 1802, 1923, 1991, 1240, inspection-line tests. Add before step 6: MixerPresentation equality ignores volume/mute echoes but changes on search/grouping/scope/membership. Add before step 3: group_inputs unit tests incl. global fallback label.",
+   "verdict": "adjusted",
+   "verifier_note": "Verified function/test locations (tests 1224, layout_tests 1788-2003, dedupe tests 1622-1786, MixerRefreshRequestIntent at 293). Change inspection.rs plan: keep eprintln output contract (docs/manual-test-plan.md:361-365, 406-410); only cache the flag. Moving MixerRefreshRequestIntent into controller/state/mixer.rs is allowed (no GTK). adapter_* tests (1691-1786) exercise the page handle and need rewriting against AppState, not just moving."
+  },
+  {
+   "file": "src/ui/pages/live.rs",
+   "current_lines": 1554,
+   "rationale": "Page shell, scene deck, audio strip, output/disconnect flows, and the domain deck-slot projection in one file.",
+   "target_modules": [
+    {
+     "path": "src/domain/deck.rs",
+     "responsibility": "Deck slot projection",
+     "moves": "live_scene_order, visible_scene_slots, scene_for_slot (over SceneRegistrySnapshot), projection tests"
+    },
+    {
+     "path": "src/domain/output.rs",
+     "responsibility": "Output safety policy",
+     "moves": "OutputAction, output_action_for_active_state, requires_output_confirmation, requires_disconnect_confirmation, output_running, disconnect_stops_outputs (over domain OutputSafety), tests"
+    },
+    {
+     "path": "src/ui/output_flow.rs",
+     "responsibility": "GTK flows for stream/record toggles and disconnect",
+     "moves": "handle_output_toggle, finish_output_toggle, handle_stream_output_toggle, handle_record_output_toggle, handle_disconnect, disconnect_label, output_label, OutputConfirmationDialog, OutputConfirmationAppearance, output_confirmation_dialog, to_adw_response_appearance, confirm_output_action, native preflight test"
+    },
+    {
+     "path": "src/ui/dialogs.rs",
+     "responsibility": "Shared confirm-dialog builder",
+     "moves": "common MessageDialog setup duplicated at live.rs 414-432 and 583-595"
+    },
+    {
+     "path": "src/ui/pages/live/mod.rs",
+     "responsibility": "LivePageHandle, build shell, disconnected view, view switching",
+     "moves": "LivePageHandle, build, build_disconnected_view, show_disconnected_view, show_live_view"
+    },
+    {
+     "path": "src/ui/pages/live/scene_deck.rs",
+     "responsibility": "Scene card grid, empty states, hotkey hint",
+     "moves": "ScenePresentation, SceneCardPresentation, rebuild_scene_cards, shortcut_for_slot, set_hotkey_hint, card_shortcuts tests"
+    },
+    {
+     "path": "src/ui/pages/live/audio_strip.rs",
+     "responsibility": "Compact audio strip",
+     "moves": "AudioPresentation (with AudioInputIdentity), rebuild_audio_cards -> AudioStripView, clear_audio_cards, audio_collapsed, expand toggle wiring, native audio tests"
+    }
+   ],
+   "order": "1) git mv to live/mod.rs; tests to files. 2) domain/deck.rs + tests; re-export; switch hotkeys.rs:145 and inventory; drop re-export. 3) domain/output.rs policy + ui/output_flow.rs; update sidebar/transport_bar/window imports; ui/dialogs.rs::confirm. 4) audio_strip.rs, remove unwrap. 5) scene_deck.rs with pure SceneDeckBody. 6) Replace tick callbacks with a breakpoint.",
+   "safety_net": "Existing 1013, 1113, 1148, 1177, 1100, 1528; window_render_tests.rs:259-261, preview_scheduler_tests.rs:105, hotkeys tests. Add before step 5: unit test per SceneDeckBody variant.",
+   "verdict": "adjusted",
+   "verifier_note": "domain/deck.rs cannot take SceneRegistrySnapshot as-is (no order/filter/favorite fields, domain/registry.rs:114-117) and cannot import storage; add a domain input type built by storage first. Do not switch inventory to deck_projection (it lists non-live-switchable scenes). Callers verified: hotkeys.rs:145/161, sidebar.rs:329/422/425, transport_bar.rs:87/91/264, window.rs:32 and many window.rs rebuild_scene_cards/rebuild_audio_cards call sites (125, 321, 368, 644, 665, 1278) — module path change of live::* must update all, or keep `pub(crate) use` re-exports in live/mod.rs."
+  },
+  {
+   "file": "src/ui/pages/stats.rs",
+   "current_lines": 1160,
+   "rationale": "Domain health policy, pop-out lifecycle, activity timeline, gauges, charts and cards.",
+   "target_modules": [
+    {
+     "path": "src/domain/stats/health.rs (or domain/health/thresholds.rs)",
+     "responsibility": "Health thresholds and level classification shared with health alerts",
+     "moves": "FPS_*, FRAME_TIME_*, DROPPED_*, CONGESTION_* constants, fps_target (over StatsSample), frame_budget_ms, *_severity -> HealthLevel; tests"
+    },
+    {
+     "path": "src/ui/pages/stats/mod.rs",
+     "responsibility": "build, build_content, header, layout helpers",
+     "moves": "build, build_content, build_header, responsive_section, add_to_section, axis baselines"
+    },
+    {
+     "path": "src/ui/pages/stats/popout.rs",
+     "responsibility": "Detached stats window lifecycle",
+     "moves": "PopoutSlot, build_popout_button, open_popout, native popout tests"
+    },
+    {
+     "path": "src/ui/pages/stats/gauges.rs",
+     "responsibility": "Gauge row",
+     "moves": "GaugeRow, build_gauges, empty_reading"
+    },
+    {
+     "path": "src/ui/pages/stats/charts.rs",
+     "responsibility": "Time-series charts",
+     "moves": "ChartGrid, build_charts, TitledChart, series_chart"
+    },
+    {
+     "path": "src/ui/pages/stats/cards.rs",
+     "responsibility": "Counter cards",
+     "moves": "StatsCards, build_cards, card, update_cards, format_frames"
+    },
+    {
+     "path": "src/ui/pages/stats/activity.rs",
+     "responsibility": "Activity timeline and chart markers",
+     "moves": "build_activity (with apply_marker)"
+    }
+   ],
+   "order": "1) git mv to stats/mod.rs; tests. 2) thresholds/severity to domain with From<HealthLevel> for chart::Severity; unify with health.rs SKIPPED_RATIO. 3) popout.rs. 4) activity.rs. 5) gauges.rs, charts.rs, cards.rs.",
+   "safety_net": "Existing 1024, 1045, 1112, popout tests 919, 979. Add: test that health-alert skipped threshold and stats dropped-warning threshold are the same constant.",
+   "verdict": "adjusted",
+   "verifier_note": "Split is sound and verified against function map (build 84, open_popout 202, gauges 357, charts 476, cards 589/650, activity 724, helpers 848-903, tests 913). Replace the proposed 'same constant' test: health uses windowed deltas (domain/health.rs:150-159) while the gauge uses cumulative ratio (stats.rs:413-416). domain/health/ directory already exists; put thresholds there (domain/health/thresholds.rs). fps_target must take Option<&StatsSample> instead of &AppState."
+  },
+  {
+   "file": "src/ui/pages/graph.rs",
+   "current_lines": 968,
+   "rationale": "Page shell and relationship list, pure layered layout, cairo rendering with hard-coded palette, drag interaction; presentation key duplicates Doctor's.",
+   "target_modules": [
+    {
+     "path": "src/services/graph_layout.rs",
+     "responsibility": "Pure layering and ordering of the scene graph",
+     "moves": "compute_layers, scene_order, node-id collection (duplicated at 144-149 and 299-309), EdgeSummary, tests compute_layers_handles_cycles_with_finite_depths, graph_model_counts_edge_statuses_from_registry_policy, graph_model_keeps_isolated_scenes_with_no_edges"
+    },
+    {
+     "path": "src/ui/pages/topology.rs",
+     "responsibility": "Shared Doctor/Graph presentation key and notice",
+     "moves": "stateful_page key closure, topology notice chain"
+    },
+    {
+     "path": "src/ui/pages/graph/mod.rs",
+     "responsibility": "Page build/populate, header, edge summary chips",
+     "moves": "build, populate, build_edge_summary, build_edge_summary_label"
+    },
+    {
+     "path": "src/ui/pages/graph/relationships.rs",
+     "responsibility": "Accessible relationship list",
+     "moves": "list construction from populate 136-184"
+    },
+    {
+     "path": "src/ui/pages/graph/canvas.rs",
+     "responsibility": "Pixel layout, drawing, drag gesture",
+     "moves": "NODE_*/LAYER_GAP/ROW_GAP/CANVAS_PADDING/GRID_STEP, GraphModel, GraphNode, GraphEdge, install_drag_controller, draw_*, edge_points, rect_edge_scale, rounded_rect, fitted_text, text_width, role_color, Palette, Color (shared via ui/widgets/canvas_palette.rs)"
+    }
+   ],
+   "order": "1) git mv to graph/mod.rs; tests. 2) services/graph_layout.rs + tests. 3) canvas.rs. 4) relationships.rs. 5) topology.rs for Graph and Doctor. 6) Optionally pangocairo.",
+   "safety_net": "Existing 797, 862, layout unit tests 888-935. Add: services layout returns identical ranks before and after the move.",
+   "verdict": "adjusted",
+   "verifier_note": "graph_model_* tests (888-926) test GraphModel::build, which also computes pixel layout and stays in canvas.rs per this plan; only compute_layers test and an extracted pure node-ordering fn should move to services. services/graph_service.rs already exists — put compute_layers/scene_order there or alongside as graph_layout.rs; services must hold no GTK and no storage (fine: inputs are domain SceneGraph/SceneInventory/SceneRegistrySnapshot). topology.rs: use content-based key first (see ui-pages-14). pangocairo needs a new Cargo dependency."
+  },
+  {
+   "file": "src/ui/pages/settings.rs",
+   "current_lines": 1057,
+   "rationale": "Appearance, language, outputs, hotkeys and status in one file; owns PasswordWrites; imports window.rs upward; repeated ComboRow boilerplate.",
+   "target_modules": [
+    {
+     "path": "src/ui/pages/settings/mod.rs",
+     "responsibility": "Page assembly and refresh",
+     "moves": "build (minus startup_notice side effect), build_obs_group removed"
+    },
+    {
+     "path": "src/ui/pages/settings/appearance.rs",
+     "responsibility": "Colour scheme, motion, theme family, custom CSS, theme status",
+     "moves": "build_appearance_group, build_color_scheme_row, build_motion_row, CustomCssRows, build_custom_css_rows, CssPathKind, save_custom_css_path, theme_report_text, apply_theme_with_status, apply_theme_logging, path_text"
+    },
+    {
+     "path": "src/ui/pages/settings/language.rs",
+     "responsibility": "Language selection",
+     "moves": "build_language_group"
+    },
+    {
+     "path": "src/ui/pages/settings/outputs.rs",
+     "responsibility": "Output confirmation switches",
+     "moves": "build_output_group, output_switch_row, connect_output_switch (via AppState::set_output_confirmation)"
+    },
+    {
+     "path": "src/ui/pages/settings/hotkeys.rs",
+     "responsibility": "Scene hotkey preferences",
+     "moves": "build_hotkey_group (debounced timeout persist), hotkey_preview_text"
+    },
+    {
+     "path": "src/ui/pages/settings/rows.rs",
+     "responsibility": "Shared row helpers",
+     "moves": "with_icon, with_entry_icon, row_icon, report_save_failure"
+    },
+    {
+     "path": "src/ui/pages/settings/status.rs",
+     "responsibility": "OBS status text as pure fn over &AppState",
+     "moves": "obs_status_text"
+    },
+    {
+     "path": "src/ui/theme.rs",
+     "responsibility": "Colour scheme application",
+     "moves": "apply_color_scheme (from ui/window.rs:1574)"
+    }
+   ],
+   "order": "1) git mv settings.rs -> settings/mod.rs. 2) PasswordWrites into connections/password_writes.rs, fix expect. 3) apply_color_scheme into theme.rs. 4) rows.rs and status.rs. 5) outputs.rs, hotkeys.rs, language.rs, appearance.rs one per commit with enum_combo_row. 6) Startup-notice handling.",
+   "safety_net": "Existing 886, 917, 979 (password lane). Add: obs_status_text(&AppState) per ObsStatus variant; hotkey_preview_text unit test.",
+   "verdict": "adjusted",
+   "verifier_note": "Remove 'debounced timeout persist' from settings/hotkeys.rs (ui-pages-17 refuted: run_config_snapshot already coalesces). Moving apply_color_scheme to ui/theme.rs requires updating window.rs callers. Rest verified."
+  },
+  {
+   "file": "src/ui/pages/settings/connections.rs",
+   "current_lines": 642,
+   "rationale": "Secrets port, Editor controller, widget construction and validation; depends on PasswordWrites in parent.",
+   "target_modules": [
+    {
+     "path": "src/ui/pages/settings/connections/mod.rs",
+     "responsibility": "Widget construction and signal wiring",
+     "moves": "build, build_with_secrets"
+    },
+    {
+     "path": "src/ui/pages/settings/connections/editor.rs",
+     "responsibility": "Selection, generation and IO orchestration",
+     "moves": "Editor and methods (endpoint parsing via domain::obs::ObsEndpoint::parse)"
+    },
+    {
+     "path": "src/ui/pages/settings/connections/secrets.rs",
+     "responsibility": "Keyring port",
+     "moves": "ConnectionSecrets trait, KeyringSecrets"
+    },
+    {
+     "path": "src/ui/pages/settings/connections/password_writes.rs",
+     "responsibility": "FIFO password write lane",
+     "moves": "PasswordWrites and its test"
+    },
+    {
+     "path": "src/domain/obs.rs",
+     "responsibility": "ObsEndpoint value object",
+     "moves": "port and host validation from Editor::save_fields"
+    }
+   ],
+   "order": "1) Directory module, move tests. 2) PasswordWrites in. 3) secrets.rs. 4) ObsEndpoint with unit tests. 5) editor.rs.",
+   "safety_net": "Existing 519, 574, password FIFO test. Add: ObsEndpoint::parse unit tests.",
+   "verdict": "confirmed",
+   "verifier_note": "Structure verified (642 lines; storage imports at 15-17; save_fields 188-234; PasswordWrites usages 54/147/157/381). Converting to connections/mod.rs keeps `super::` = settings, so helper paths (report_save_failure, obs_status_text, with_entry_icon) keep resolving; password_writes.rs must be a child of connections."
+  }
+ ]
+}

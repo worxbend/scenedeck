@@ -1,0 +1,808 @@
+{
+  "reviewer": "performance",
+  "skills": [
+    "performance-engineering",
+    "rust-linux-apps",
+    "verifier: code-review",
+    "verifier: doubt-driven-development"
+  ],
+  "summary": "VERIFIED by an adversarial pass that re-read every cited range. The reviewer's main conclusions hold: perpetual tick callbacks; collect_report called twice per event plus on every tick; scene-card rebuilds that clone the registry, repeated about 3x per cut; serial OBS round trips; a 50 ms poll pump with a 2 ms busy-retry producer; no performance instrumentation. Corrections that implementers MUST apply: (1) Two proposed service moves violate architecture_tests: services/scene_deck_service.rs over storage::registry::SceneRegistry (domain_and_services_do_not_reach_into_storage) and services/thumbnail_service.rs using glib::base64_decode (services_hold_no_gtk). (2) collect_report once per batch would lose intermediate scene and alert transitions. Instead drop only the redundant PRE-event call and skip InputLevelsUpdated. (3) async-channel cannot preserve the send_if re-validation invariant (it has no reserve/permit); use tokio::sync::mpsc. (4) obws 0.15 has no VideoSettingsChanged event, so the video-settings cache needs a TTL. (5) The apply_event recursion is borrow-safe today, so do not cite it as a panic risk. (6) A cached workflow_scope must be invalidated on direct config host/port edits. (7) Bitflags capabilities must also cover action_catalog's dynamic request checks. (8) The obs/client.rs split must use child modules (src/obs/client/*.rs) to keep private-field access, and must keep the control_tests::mock_client path used by obs/regression_tests.rs and controller/workspace/audio_presets/tests.rs. Original summary: Performance review (reviewer \"performance\"; skills loaded: performance-engineering, rust-linux-apps). I read these files in full or across all hot-path ranges: ui/event_pump.rs, controller/refresh_controller.rs, controller/event_sender.rs, ui/window.rs (1-520, 640-1575), controller/state.rs (186-510, 760-1245), controller/state/session_reports.rs (250-412), controller/state/report_history.rs (95-140), ui/report_history.rs (117-236), ui/pages/mixer.rs (25-960), ui/widgets/audio_card.rs (64-170, 800-885), ui/widgets/volume_meter.rs (1-260), domain/meter.rs (140-240), ui/pages/live.rs (113-320, 612-976), ui/pages/stats.rs (553-850), ui/health_alerts.rs (77-306), domain/health.rs (263-283), domain/health/audio.rs (59-110), ui/previews.rs (1-240), ui/widgets/status_bar.rs (130-175), ui/widgets/studio_controls.rs (55-110), ui/widgets/transport_bar.rs (180-203), ui/widgets/output_results_tray.rs (10-50), ui/widgets/operating_panel.rs (94-240), ui/pages/inventory.rs (495-572), obs/client.rs (20-315, 517-600 plus structure), obs/audio.rs (60-200), obs/sources.rs (71-96), obs/mapper.rs (189-240), controller/lifecycle.rs (395-431), controller/app_controller.rs (380-458). I also checked obws-0.15.0's SceneItem in the cargo registry.\n\nMain conclusion: the Tokio side is mostly healthy. Task tracking is bounded, there is no Mutex held across .await, stats polling is owned by the session, refreshes are coalesced through watch channels, and meters are pulled rather than pushed. The cost sits on the GTK thread and in how it learns that state changed. AppState has no way to say what changed, so about 15 long-lived glib timers and 3 tick callbacks that run on every frame keep checking it. Because of that the app never goes idle. (1) The status bar and Live page register add_tick_callback closures that keep GdkFrameClock rendering at the display's refresh rate for the life of the window. (2) The event pump wakes 20 times a second. Around each event it calls AppState::collect_report twice, and that function is O(activity + output_results + alerts + bookmarks) and allocates a BTreeMap with String keys. Meter traffic alone (about 20 events per second) leads to about 60 collect_report calls per second. (3) One OBS scene switch rebuilds the Live scene cards at least 3 times, and each rebuild deep-clones SceneRegistry and SceneInventory. (4) Each stats tick sends 3 OBS requests one after another, including GetVideoSettings, which is also re-sent for every thumbnail. get_control_snapshot makes 7 sequential round trips. Scene-audio reads pay an N+1 GetSceneItemEnabled because obws 0.15 drops sceneItemEnabled (confirmed in obws-0.15.0/src/responses/scene_items.rs:26-45). (5) Meter frames share the bounded GTK queue (capacity 128) with transport publications. A stall on the GTK thread can therefore push the controller's 64-slot handoff into 'controller-publication-backlog' and retire the connection.\n\nOn structure: window.rs::apply_event is a 585-line match that mixes AppState mutation with widget refresh. refresh_controller.rs mixes readback, stats polling, translation of OBS events and the event loop. Large test blocks inflate the god files: state.rs lines 1247-3088, window.rs lines 1590-2698, state/mixer.rs lines 453-1396, and client.rs, which has a test module in the middle of the file (317-515). The splits below follow the DDD boundaries: Session/Connection, Outputs, Audio, Topology, Telemetry and Workspace become separate state sub-aggregates, and each exposes a revision counter. A UiInvalidation dispatcher then replaces the polling timers.\n\nHow to measure: there are no benches and no perf counters today (Cargo.toml dev-dependencies has no criterion, and there is no benches/ directory). The measurements I propose are: `pidstat -u -w -p $(pidof scenedeck) 1` (CPU% and context switches per second while idle-connected), `strace -f -c -e trace=ppoll,poll,futex -p PID` over 30 s, the GTK inspector FPS overlay (GTK_DEBUG=interactive), `sysprof-cli --gtk` flamegraphs, `heaptrack` allocations per second, and a new feature-gated tracing span/counter layer (see performance-20). Each finding states its own hypothesis and expected result. None of the numbers below have been measured yet; they are estimates to check against those baselines. Items not verified in code are marked speculative.",
+  "verification_counts": {
+    "confirmed": 10,
+    "adjusted": 21
+  },
+  "findings": [
+    {
+      "id": "performance-01",
+      "severity": "high",
+      "category": "performance",
+      "file": "src/ui/widgets/status_bar.rs",
+      "lines": "142-165",
+      "title": "Perpetual frame tick callbacks keep the frame clock running for the whole app lifetime (status bar + Live page)",
+      "evidence": "status_bar::build registers root.add_tick_callback(...) that returns ControlFlow::Continue forever and each frame recomputes status_layout(window.width()), calls responsive_metrics.set_visible, widget.set_focusable, set_spacing, cpu_segment/bitrate_segment.set_visible. The status bar is always mapped. ui/pages/live.rs:137-152 adds a second perpetual tick (set_spacing/set_margin_top/set_margin_bottom/add|remove_css_class on window.height()<700) and live.rs:270-284 a third (audio_box.set_visible, header.set_orientation). A registered tick callback forces GdkFrameClock into continuous update phase, so GTK renders every vblank (60-165 Hz) even when nothing changes.",
+      "risk": "Idle CPU and power drain on a tool that runs for hours during a live show, with the frame clock never idling. Laptop operators lose battery, and OBS on the same machine loses CPU headroom.",
+      "recommendation": "1) Replace all three tick callbacks with size-driven notifications: wrap the window content in adw::BreakpointBin/adw::Breakpoint conditions (max-height: 700sp, max-width: N sp) and apply setters/CSS classes in breakpoint apply/unapply. The pattern is already used in ui/pages/inventory.rs:507. Alternatively connect_notify_local(Some(\"default-height\"/\"default-width\")) on the toplevel plus connect_realize. 2) Extract the pure decision helpers status_layout(width) (already pure) and a new live_layout(height, expanded) -> LiveLayout value into src/ui/responsive.rs and unit-test them. 3) Keep one-shot tick callbacks only (mixer.rs:271, inventory.rs:513 already Break). Measure: GTK inspector FPS overlay and `pidstat -u 1` with OBS disconnected and the window idle, before and after. Hypothesis: idle frames drop from the display refresh rate to about 0 and idle CPU drops by at least 50%.",
+      "effort": "M",
+      "smell": "Polling instead of event (Temporal Coupling)",
+      "verdict": "confirmed",
+      "verifier_note": "Verified status_bar.rs:142-165 (tick returns Continue forever), live.rs:137-152 and live.rs:270-284 (both Continue forever). The status bar is part of the shell and is always mapped, so the frame clock never idles while the window is shown. Most setters are GTK no-ops when the value is unchanged, but the tick callback alone keeps the clock in its update phase. Breakpoint precedent is confirmed: inventory.rs:507 uses connect_current_breakpoint_notify on an adw::BreakpointBin, and Cargo.toml enables adw feature v1_4, which provides Breakpoint. Caveats for the implementer: (a) status_bar.rs:143-144 deliberately measures the *window* width, not the widget, so attach the breakpoint to the window (adw::ApplicationWindow::add_breakpoint) or to a BreakpointBin that wraps the whole content, not the status bar itself. (b) The second live.rs tick reads the css class set by the first, so replace both together (live.rs:272). (c) The native test short_windows_collapse_audio_until_expanded guards the behaviour. The CPU numbers are estimates."
+    },
+    {
+      "id": "performance-02",
+      "severity": "high",
+      "category": "performance",
+      "file": "src/ui/window.rs",
+      "lines": "424-468",
+      "title": "AppState::collect_report runs twice per AppEvent and every 50 ms tick; O(activity+outputs+alerts+bookmarks) with heavy allocation",
+      "evidence": "install_event_polling's apply closure calls nav.state.borrow_mut().collect_report(...) before and after apply_event (lines 428-430, 440-442), and the tick closure calls it again (462-465). collect_report (controller/state/session_reports.rs:271-411) clones scene_collections.current every call (276), iterates the whole activity log even when the entries are already consumed (284-291), iterates output_results twice (293-304), builds a fresh BTreeMap<(String, Option<String>, Option<u64>), AlertPhase> with kind.to_owned() and audio name Strings for every alert (336-354), allocates a cleared Vec (372-377), and filters the bookmark archive into a new Vec<id> (394-403). health.alerts(now) (domain/health.rs:263-283) also allocates and sorts a Vec. InputLevelsUpdated arrives at about 20 Hz per OBS session (refresh_controller.rs:531-537), so meter traffic alone causes about 40 calls/s plus 20 from the tick. Each AppEvent also takes 3 borrow_mut and 2 borrow on the shared RefCell.",
+      "risk": "Steady GTK-thread CPU and allocator churn that grows with log size and alert count. It increases latency for every UI event and every fader echo.",
+      "recommendation": "1) Call collect_report once per drained batch, not once per event: change event_pump::drain_batch to return the drained count and have install() run a single after_batch() hook when the count is greater than 0. Skip it entirely when the only events in the batch were InputLevelsUpdated (track this with a bool set in apply). 2) Make collection incremental: move the logic into a new domain service src/domain/session_report/collector.rs (struct ReportCollector { activity_after, output_rev, health_rev, bookmarks_rev, scene_key }) that early-returns when activity.sequence(), OutputResults::revision() (new u64), HealthMonitor::revision() (new u64, bumped in observe_stats/raise/clear) and the bookmark archive revision are unchanged. 3) Use &'static str kinds plus an InputIndex in the alert key instead of String. 4) Iterate activity.numbered().skip_while(seq <= activity_after) rather than the full log. Guard tests: controller/state/session_reports/tests.rs already covers the report semantics; add a test asserting collect_report is a no-op (revision unchanged) when nothing changed. Measure: a feature-gated counter (performance-20) for collect_report calls/s and time per call, plus heaptrack allocations/s with OBS connected and meters active. Hypothesis: calls drop from about 60/s to at most 2/s and allocations/s drop by an order of magnitude.",
+      "effort": "M",
+      "smell": "Shotgun Surgery / Feature Envy (UI shell drives domain reporting cadence)",
+      "depends_on": [
+        "performance-20"
+      ],
+      "verdict": "adjusted",
+      "verifier_note": "Call sites verified: window.rs:428-430 (pre-event), 440-442 (post-event), 462-465 (tick); collect_report is at session_reports.rs:271-411 as cited. Correction 1: 'once per drained batch' changes the report semantics. collect_report records intermediate Scene transitions (session_reports.rs:306-319), health alert phase transitions (336-385) and per-event output results by diffing the current state. Two CurrentSceneChanged events in one batch would then record only the last scene, and the doc comment at 269-270 requires 'Call after each accepted event'. Safe version: (a) delete the PRE-event call (428-430). It is redundant with the previous event's post-event call and the tick; only time-based health alerts can differ, and the tick covers those. (b) Skip the post-event call for AppEvent::InputLevelsUpdated, which does not change any input that collect_report reads (audio health is observed in the health tick, ui/health_alerts.rs:83, not in apply). (c) Make the remaining calls cheap with revision early-returns as proposed. Correction 2: do NOT put the collector in src/domain/session_report/collector.rs, because it reads AppState fields (workspace.activity, output_results, health, bookmarks, scene_inventory) and domain must not depend on controller. Put it in src/controller/state/session_reports/collector.rs; the session_reports/ directory already exists. Minor: the closure takes 2 borrow_mut + 2 borrow, not 3 + 2. Meter rate: obs-websocket InputVolumeMeters fires at about 50 ms, so the 20 Hz estimate is plausible."
+    },
+    {
+      "id": "performance-03",
+      "severity": "high",
+      "category": "performance",
+      "file": "src/ui/window.rs",
+      "lines": "306-375",
+      "title": "UI synchronisation is built on about 15 long-lived glib polling timers because AppState has no change notification",
+      "evidence": "Long-lived sources found: event_pump 50 ms (ui/event_pump.rs:17); registry/workspace poll 200 ms (window.rs:306), which also calls state.workspace.output_results.expire() under borrow_mut every tick (330-337); output clock 1 s (window.rs:479); previews 100 ms (ui/previews.rs:31), which calls fit_image_height on every card and workflow_scope() every tick; studio_controls 100 ms x2 with no is_mapped guard (ui/widgets/studio_controls.rs:65, 177); inventory save status 100 ms with fl! formatting every tick while Saving (ui/pages/inventory.rs:539-570); transport_bar 250 ms (ui/widgets/transport_bar.rs:195); output_results_tray 250 ms, which clones every OutputResult into a Vec every tick to compare (ui/widgets/output_results_tray.rs:25-43); health summary 250 ms, which allocates an alerts Vec and a joined tooltip String (ui/health_alerts.rs:142-175); operating_panel 1 s x2 (ui/widgets/operating_panel.rs:107, 118). Dialog-scoped 250 ms pollers (quick_actions.rs:434, action_shortcuts.rs:367/551, preflight.rs:428, command_palette.rs:272, audio_presets.rs:699, report_history.rs:533, bookmarks.rs:359, health_alerts.rs:296) follow the same pattern. Only WorkspaceState::revision (controller/state.rs:202, 406-416) exists as a coarse render key.",
+      "risk": "About 60-80 wakeups/s at idle. Changes show up 100-250 ms late. Every widget is coupled to AppState internals (Feature Envy). Adding a feature adds another timer.",
+      "recommendation": "Introduce change notification as an explicit boundary. 1) Add src/controller/state/revisions.rs: a StateRevisions struct of u64 counters per sub-aggregate (session, outputs, audio, topology, registry, workspace, telemetry, health, capabilities), bumped inside AppState mutators. 2) Add src/ui/invalidation.rs: bitflags UiInvalidation computed by diffing StateRevisions before and after each event-pump batch, plus a UiInvalidationBus (Rc<RefCell<Vec<(UiInvalidation, Weak<dyn Fn()>)>>>) where widgets subscribe with an interest mask. 3) Migrate the timers one at a time in this order, each step green: transport_bar → studio_controls → output_results_tray → health summary → window.rs:306 registry/workspace timer → previews setting watch. Keep wall-clock timers only where time itself is the input (output clock 1 s, preview cadence, expire()). 4) Native tests in ui/widgets/transport_bar_tests.rs and window_render_tests.rs guard each migration. Measure: `strace -f -c -e trace=ppoll -p PID` for 30 s idle (wakeups) and pidstat cswch/s. Hypothesis: idle wakeups drop from about 70/s to below 5/s.",
+      "effort": "L",
+      "smell": "Polling / Feature Envy / Divergent Change",
+      "depends_on": [
+        "performance-05"
+      ],
+      "verdict": "adjusted",
+      "verifier_note": "The timer inventory is verified by grepping timeout_add_local. Corrections: bookmarks.rs:359 is 200 ms, not 250. Missed pollers: ui/global_shortcuts.rs:399 (250 ms), ui/health_alerts/audio_editor.rs:272 (250 ms), ui/preflight/editor.rs:366 (250 ms). app.rs:860/961 and background_io.rs (20 ms) are completion pollers for blocking work, which is a separate concern. studio_controls.rs:65 and 177 break only when the widget is dropped and have no is_mapped guard (confirmed). The window.rs:306 timer also drives output_results.expire() (330-337), which is wall-clock driven and must stay on a timer. The design (StateRevisions + UiInvalidation bus) is sound and respects the threading rules, because all of it stays on the GTK thread. The bus must hold Weak closures and widgets must never subscribe while a borrow_mut is held. depends_on performance-05 is not a hard dependency: revisions can be diffed around the existing drain_batch. The wakeup numbers are estimates."
+    },
+    {
+      "id": "performance-04",
+      "severity": "high",
+      "category": "performance",
+      "file": "src/ui/pages/live.rs",
+      "lines": "659-733",
+      "title": "One scene switch rebuilds Live scene cards 3+ times, each deep-cloning SceneRegistry and SceneInventory",
+      "evidence": "rebuild_scene_cards clones state.registry (live.rs:665-672). SceneRegistry (storage/registry.rs:23-53) holds HashMaps of scenes and uuids, retained_scenes, scene_order, decks BTreeMap, action_bindings, quick_actions and audio_alerts. The clone happens before the signature check that usually returns early (728-733). Callers also clone scene_inventory first: window.rs:124, 320, 367, 646, 828, 1043, 1083, 1109; previews.rs:37. On CurrentSceneChanged, apply_event calls workspace.mark_dirty(), set_current_program and rebuild_scene_cards (window.rs:1096-1113). mark_dirty bumps workspace.revision, so the 200 ms timer calls rebuild_scene_cards again (window.rs:362-369), and dirty=true triggers workspace::refresh → WorkspaceLoaded → a third rebuild (window.rs:827-829). Each call also runs quick_actions_refresh (live.rs:664), registry_availability_message, hotkeys::scene_hint and visible_scene_slots (allocating Vecs, ordered_scene_ids).",
+      "risk": "Program-change tally latency (the most time-critical operator feedback) grows with registry size. Allocation spikes land exactly on scene cuts.",
+      "recommendation": "1) Change the signature to rebuild_scene_cards(handle, nav) and work on a single nav.state.borrow(). Compute ScenePresentation first and early-return to the update_state fast path without cloning the registry or inventory. Only on a structural change, drop the borrow and build cards from owned SceneCardPresentation rows, which already carry id/slot/role/icon/accent. 2) Move live_scene_order/visible_scene_slots/scene_for_slot (live.rs:612-654) into a pure service src/services/scene_deck_service.rs over (&SceneInventory, &SceneRegistry) returning Vec<(usize, &str)>, with unit tests moved from live.rs:1307-1392. 3) Dedupe through invalidation (performance-03): the timer path should not rebuild when apply_event already did for the same StateRevisions. Measure: count rebuild_scene_cards calls and time per call with a tracing span over one scripted scene switch using obs_fixture. Hypothesis: 3+ calls become 1, and clone bytes per switch drop to 0 on the fast path.",
+      "effort": "M",
+      "smell": "Duplicate Code across callers / Primitive Obsession (clone-to-compare)",
+      "depends_on": [
+        "performance-03"
+      ],
+      "verdict": "adjusted",
+      "verifier_note": "Verified: live.rs:665-672 clones registry before the signature check at 728. CurrentSceneChanged at window.rs:1096-1113 calls mark_dirty (state.rs:413-416 bumps revision via touch). The 200 ms timer rebuilds on a revision change (window.rs:362-369), and WorkspaceLoaded rebuilds again (window.rs:827-829). The third rebuild only happens when the timer's refresh predicate holds (live root mapped, Connected, not loading/pending; window.rs:338-359), so '3+' applies with Live visible. Corrections: (1) 'work on a single nav.state.borrow()' must NOT cover (handle.quick_actions_refresh)() (live.rs:664), crate::ui::persist::registry_availability_message(nav) (673), hotkeys::scene_hint(nav, ..) (727) or deck_controls::build/sync. They take their own borrows, and some may call borrow_mut, which would panic with BorrowMutError. Compute the signature inside a scoped borrow, drop it, then call those. (2) services/scene_deck_service.rs over storage::registry::SceneRegistry would FAIL architecture_tests::domain_and_services_do_not_reach_into_storage (architecture_tests.rs:~620), because SceneRegistry lives in src/storage/registry.rs:23. domain::registry::SceneRegistrySnapshot (domain/registry.rs:114) has no order, favorite or filter fields. Either (a) add a domain value object, e.g. domain/scene_deck.rs SceneDeckView { ordered_ids, roles, favorites, filter }, built by SceneRegistry::deck_view() in storage, and write the service over that; or (b) keep the policy in controller/state (an AppState::live_scene_slots method). Also check where the tests live: the live.rs test module starts at 977, so confirm that 1307-1392 contains the ordering tests before moving them."
+    },
+    {
+      "id": "performance-05",
+      "severity": "high",
+      "category": "performance",
+      "file": "src/ui/event_pump.rs",
+      "lines": "11-55",
+      "title": "50 ms poll-based event pump adds about 25 ms mean latency and 20 idle wakeups/s; the producer side busy-retries every 2 ms",
+      "evidence": "install() uses glib::timeout_add_local(50ms) and drain_batch does up to 128 try_recv per tick. The producer EventSender::send_if (controller/event_sender.rs:107-138) loops on SyncSender::try_send with tokio::time::sleep(2ms) when the 128-slot sync_channel (app.rs:41) is full. Under backpressure it wakes 500 times/s per waiting task. Every OBS echo (fader, mute, program tally) waits on average half a tick before it is applied.",
+      "risk": "Visible lag on fader echo and tally. Idle wakeups. CPU spin under GTK stalls, which is exactly when the CPU is scarce.",
+      "recommendation": "Replace std::sync::mpsc + timeout polling with an awaitable bounded channel. 1) Add the async-channel crate (or tokio::sync::mpsc, whose blocking_send/try_send works outside the runtime) for AppEvent. Producer: EventSender::send_if awaits sender.send(), re-checking valid() after reserve: use tokio::sync::mpsc::Sender::reserve().await, then call valid() synchronously, then permit.send(event). This keeps the 'no await between check and admission' invariant documented at event_sender.rs:104-106 and removes the sleep loop. 2) Consumer: glib::MainContext::default().spawn_local(async move { while let Some(ev) = rx.recv().await { apply(ev); drain up to 127 more via try_recv; after_batch(); glib::timeout_future(Duration::ZERO).await /* yield */ } }), keeping the 128-per-batch bound and Source teardown (store the JoinHandle and abort on window_removed/shutdown). 3) Update CLAUDE.md/docs/architecture.md, which say std::sync::mpsc and 50 ms, and architecture_tests if they assert the type. Guard: keep drain_is_bounded_and_keeps_queued_event_order (event_pump.rs:62-80) as a pure test over a helper drain_ready(rx, max), and event_sender tests (event_sender.rs:152-310). Measure: add observed_at → applied_at latency histogram for InputVolumeChanged/CurrentSceneChanged (performance-20). Hypothesis: p50 latency goes from about 25 ms to below 2 ms and idle wakeups drop by 20/s.",
+      "effort": "M",
+      "smell": "Busy waiting",
+      "verdict": "adjusted",
+      "verifier_note": "Verified: event_pump.rs:17 is a 50 ms timeout, drain_batch is bounded at 128, event_sender.rs:107-138 sleeps 2 ms on Full, and app.rs:41 is sync_channel(128). architecture_tests.rs does not assert the channel type (grep found no mpsc reference), so no test change is needed there. CLAUDE.md and the docs do describe std::sync::mpsc and 50 ms and must be updated. Correction: the async-channel option breaks the invariant. async_channel::Sender has no reserve/permit API, so send().await admits the event after an await and the valid() re-check (event_sender.rs:104-106) would be lost. Use tokio::sync::mpsc specifically: reserve().await, then valid() plus the scope checks, then permit.send(event). Its Receiver::recv() works under glib::MainContext::spawn_local because it needs no Tokio runtime. Also: (a) app.rs:674 creates a second sync_channel(128); check its consumer. (b) EventSender::try_send (event_sender.rs:140) is used for meters and thumbnails and maps to tokio try_send. (c) Teardown needs a stored glib::JoinHandle abort, or a dropped Rc-held flag, in connect_window_removed/connect_shutdown, mirroring event_pump.rs:24-41. (d) The tick() hook (health tick, report_history tick, collect_report) is currently driven by the 50 ms timer and must keep a separate timer (it is wall-clock based) once the pump becomes event-driven. That is not mentioned in the recommendation and matters."
+    },
+    {
+      "id": "performance-06",
+      "severity": "medium",
+      "category": "correctness",
+      "file": "src/controller/refresh_controller.rs",
+      "lines": "531-537",
+      "title": "Meter frames use slots in the bounded GTK queue that lifecycle events need; a GTK stall can turn meters into a connection retirement",
+      "evidence": "InputLevelsUpdated is try_sent directly into the 128-slot GTK SyncSender (refresh_controller.rs:532). Transport publications go through a 64-slot handoff (392, 419-420) whose publisher awaits sender.send (425), which spins while the GTK queue is full (event_sender.rs:115-137). When the handoff overflows, enqueue_transport_publication sets controller-publication-backlog and calls client.retire() (394-406). While GTK is busy (for example during a full mixer rebuild, performance-09, or operating_panel populate), about 20 meter frames/s keep filling the queue ahead of state events. They are dropped only once the queue is already full, by which point lifecycle events are already waiting behind them.",
+      "risk": "A long GTK-thread stall plus meter traffic can disconnect the operator mid-show. Meter frames also displace scene and output events in the queue.",
+      "recommendation": "Treat meter levels as latest-value state, not a queue item. 1) Add a src/controller/meter_feed.rs LevelsSlot (Arc<Mutex<Option<(Vec<InputLevels>, Instant)>>> or tokio::sync::watch::Sender), written by the event loop instead of tx.try_send. 2) Publish a zero-payload AppEvent::LevelsAvailable only when the slot transitions from empty to full (AtomicBool), or have the GTK consumer read the slot once per batch or frame. This keeps AppEvent ordering for everything else. 3) Hold the lock only to swap, never across .await (CLAUDE.md rule). Guard: a new unit test that fills the GTK channel with meter frames and asserts a later CurrentSceneChanged is still admitted and the client is not retired. Measure: inject a 3 s GTK stall (std::thread::sleep in a debug-only command) with meters active and count the backlog retirements. Hypothesis: 0 retirements after the change.",
+      "effort": "M",
+      "smell": "Inappropriate shared resource (priority inversion)",
+      "verdict": "adjusted",
+      "verifier_note": "Verified: refresh_controller.rs:531-537 try_sends meters straight into the GTK queue. The handoff capacity is 64 (392), retirement happens on overflow (394-406), and the publisher spins via send_if (425). Correction on mechanism: meters cannot by themselves cause a retirement. Retirement requires more than 64 *transport publications* queued while the publisher is blocked. Meters only take up to 128 GTK-queue slots of headroom, so the publisher blocks sooner and transport events land behind stale meter frames. Under a GTK stall plus a burst of state events (for example a collection change, or a scene list during a cut), that lowers the threshold. Severity medium is fair; the effect is unmeasured. The LevelsSlot design is sound. Prefer tokio::sync::watch (lock-free for the reader, no Mutex) over Arc<Mutex<Option<..>>>. If a Mutex is used, std::sync::Mutex locked only to swap, with poison handled, not .expect() (the baseline flags lifecycle.rs poison cascades). The consumer reads the slot on the GTK thread once per batch, which keeps the AppState mutation on GTK."
+    },
+    {
+      "id": "performance-07",
+      "severity": "medium",
+      "category": "performance",
+      "file": "src/obs/client.rs",
+      "lines": "253-274",
+      "title": "Stats poll sends 3 sequential requests every second, including GetVideoSettings; thumbnails send GetVideoSettings again every 500 ms",
+      "evidence": "get_obs_stats calls GetStats and then GetVideoSettings sequentially (client.rs:254-262). refresh_obs_stats then calls get_stream_health (GetStreamStatus) sequentially (refresh_controller.rs:109-123). That is 3 round trips per STATS_POLL_INTERVAL of 1 s (refresh_controller.rs:22). get_scene_thumbnail also requests GetVideoSettings on every screenshot (client.rs:585-589), and the preview scheduler asks every 500 ms (ui/previews.rs:15). Video settings change only on profile or video-settings changes, which are already observed as CurrentProfileChanged.",
+      "risk": "Unnecessary WebSocket and OBS main-thread load (OBS answers requests on its own UI thread). The stats sample timestamp is skewed by the serial round trips.",
+      "recommendation": "1) Add src/obs/video_settings.rs: VideoSettingsCache (Arc<Mutex<Option<(u32 base_w, u32 base_h, Option<f64> fps)>>>) on ObsClient, invalidated by a new ObsEvent::VideoSettingsChanged mapped from obws Event::VideoSettingsChanged and CurrentProfileChanged in obs/mapper.rs, and refreshed lazily. 2) In refresh_obs_stats use tokio::join!(client.get_obs_stats(), client.get_stream_health()). The RequestGate in obs/requests.rs already bounds concurrency. 3) Move the stats/stream methods into src/obs/telemetry.rs (split of client.rs). Guard: extend obs/obs_fixture.rs with GetStats/GetStreamStatus/GetVideoSettings scripts and assert the request count per poll. Measure: count requests/minute in the fixture or with obs-websocket debug logs. Hypothesis: about 300/min drops to about 120/min while connected with previews on.",
+      "effort": "S",
+      "verdict": "adjusted",
+      "verifier_note": "Verified: client.rs:253-264 sends GetStats then GetVideoSettings; refresh_controller.rs:109-123 sends GetStreamStatus sequentially; get_scene_thumbnail sends GetVideoSettings on every screenshot (client.rs:585-589); the preview INTERVAL is 500 ms (previews.rs:15). Correction: obws 0.15 has NO Event::VideoSettingsChanged (grepped obws-0.15.0/src/events.rs), and obs-websocket v5 has no video-settings change event. A cache invalidated only by CurrentProfileChanged would go stale when the user changes base resolution or FPS in OBS Settings without switching profile. Use CurrentProfileChanged + reconnect + a TTL (for example 30 s), or keep GetVideoSettings in the 1 s stats poll and let thumbnails reuse the last value. Thumbnails use a separate gate (self.images), so the cache must be shared across both gates. tokio::join! for GetStats and GetStreamStatus is fine: RequestGate (obs/requests.rs:31, max 8) bounds concurrency."
+    },
+    {
+      "id": "performance-08",
+      "severity": "medium",
+      "category": "performance",
+      "file": "src/obs/client.rs",
+      "lines": "519-575",
+      "title": "get_control_snapshot makes 7 sequential round trips on every workspace refresh (triggered by each scene change)",
+      "evidence": "Sequential awaits: scenes().list() (525-528), ui().studio_mode_enabled() (545-548), transitions().list() (549), transitions().current() (556), replay_buffer().status() (562), replay_buffer().last_replay() (563-567), virtual_cam().status() (568), then an optional scan_source_items up to 4096 items (569-573). workspace::refresh is fired when workspace.dirty is set, which CurrentSceneChanged and WorkspaceValuesChanged do (window.rs:839-845, 1107), and every 10 s from the 200 ms timer (window.rs:352-356) and the health tick (ui/health_alerts.rs:86-92).",
+      "risk": "Workspace readback latency is 7×RTT, so the operating panel shows stale controls longer after each cut.",
+      "recommendation": "Run the six independent optional reads concurrently with tokio::join! after the scenes list (they are independent; failures stay per-field via .ok()). Move the function to src/obs/control_snapshot.rs with a small pure assembler fn assemble(scenes, studio, transitions, current, replay, last, vcam) -> ControlSnapshot so mapping is unit-testable. Guard: control_tests in client.rs:1099-1392 plus a new fixture test that tolerates out-of-order requests (mock must match by requestType, not order). Measure: wall time of get_control_snapshot against a mock that adds 5 ms latency per request. Hypothesis: 35 ms drops to about 10 ms.",
+      "effort": "S",
+      "verdict": "confirmed",
+      "verifier_note": "Verified: client.rs:519-575 makes 7 sequential awaits (scenes list, studio_mode_enabled, transitions list, current, replay status, last_replay, virtual_cam status) and then an optional scan. The reads are independent and each tolerates failure via .ok() / if let Ok, so a join! keeps the per-field failure semantics. Precondition, already noted: the ordered control_tests::mock_client (client.rs:1107-1146) asserts requestType in script order, so it must become order-insensitive first (performance-21). The 10 s refresh triggers were confirmed at window.rs:352-356 and health_alerts.rs:86-92."
+    },
+    {
+      "id": "performance-09",
+      "severity": "medium",
+      "category": "performance",
+      "file": "src/ui/pages/mixer.rs",
+      "lines": "106-221",
+      "title": "Mixer refresh builds a Debug-format String signature and allocates ScopeBinding per input on the fast path",
+      "evidence": "MixerPageHandle::refresh computes mixer_structure(&state) (136), which format!s Debug of the epoch/registry status, workflow_scope(), obs_status (including the version string), language, every scene id and every visible input tuple (173-221). On a match, the fast path loops over the inputs and calls self.update_mute and self.update_volume (139-145). Each of those calls is_current() (65-71) → mixer_binding() → state.workflow_scope() (controller/state.rs:788-796, format! plus a String clone). That is 2 ScopeBinding allocations per input per refresh, while the outer borrow is still held. populate() builds a second Debug key controls_key (370-376) and always computes state.mixer_inspection_snapshot() (365; controller/state/mixer.rs:273-317 allocates a Vec<MixerInspectionInput>) even though emit_mixer_inspection only prints when std::env::var(SCENEDECK_MIXER_INSPECT)==\"1\" (947), and it reads the env var on every call. A search apply triggers a full card rebuild because search is part of the structure key (195-201, 705-706).",
+      "risk": "Mixer refresh runs on every ActiveAudioObserved, CurrentSceneChanged, MixerAudio* and registry change. Allocation is O(inputs) and string formatting is O(scenes+inputs) on the GTK thread. Using a Debug string as an identity key is fragile, because any Debug change silently changes rebuild behaviour.",
+      "recommendation": "1) Replace the String signatures with typed value objects in src/ui/pages/mixer/structure_key.rs: #[derive(PartialEq, Eq, Clone)] struct MixerStructureKey { binding: MixerBinding, selection: MixerSelectionKey, source: MixerSourceKey, inputs: Vec<MixerCardKey>, scenes_rev: u64, language } and struct MixerBinding { epoch, scope: ScopeBinding, registry_generation, registry_status }, replacing the tuple type at mixer.rs:31-36. 2) Compute the binding once per refresh and pass it to internal update_mute_unchecked/update_volume_unchecked, keeping the public update_* (used by window.rs:1180, 1201) for single-input echoes. 3) Gate inspection: static INSPECT: OnceLock<bool>; compute mixer_inspection_snapshot only when it is true. 4) Exclude search from the structure key: filter by toggling FlowBoxChild visibility (FlowBox::set_filter_func + invalidate_filter) instead of rebuilding cards. Guard: tests at mixer.rs:1240-1259 (mixer_structure_ignores_audio_echoes...) migrate to MixerStructureKey, and native_mixer_echoes_preserve_cards_drafts_focus_and_popovers (1802) must stay green. Measure: span timing of MixerPageHandle::refresh with 40 inputs. Hypothesis: fast-path time and allocations drop by 5x or more.",
+      "effort": "M",
+      "smell": "Primitive Obsession (stringly-typed identity), Long Method (populate 355-558)",
+      "depends_on": [
+        "performance-10"
+      ],
+      "verdict": "adjusted",
+      "verifier_note": "Verified: mixer.rs:173-221 builds a Debug-format String key that includes workflow_scope() and obs_status. The fast path (refresh, around 130-145) calls update_mute/update_volume per input, and each calls is_current() (65-71) → mixer_binding → workflow_scope (state.rs:788-796). populate computes mixer_inspection_snapshot unconditionally (365), controls_key is at 370-376, and the env var is read on every emit (947). Corrections: (1) set_filter_func on FlowBox works only if every card lives in one FlowBox. Cards are grouped into PreferencesGroups (append_group 858-892, groups field), so filtering also has to hide groups that become empty. Otherwise search shows empty headers. Keep search in the key until the grouping-aware filter exists. (2) A OnceLock<bool> for the inspection env makes runtime toggling impossible; that is fine for a debug flag, but say so in the doc. The nested borrow() while refresh holds a borrow is immutable and does not panic."
+    },
+    {
+      "id": "performance-10",
+      "severity": "medium",
+      "category": "ddd",
+      "file": "src/controller/state.rs",
+      "lines": "788-796",
+      "title": "workflow_scope() rebuilds the ScopeBinding value object with allocations on every call (30 production call sites, several hot)",
+      "evidence": "AppState::workflow_scope() runs format!(\"{}:{}\", host, port) when not connected and clones connected_endpoint and scene_collections.current every call. Hot callers: audio_card AudioTargetScope::is_current on every fader value-changed and debounce fire (ui/widgets/audio_card.rs:91-98, 807, 833); previews tick every 100 ms (ui/previews.rs:81) and apply (196); rebuild_scene_cards (ui/pages/live.rs:685) and rebuild_audio_cards (842); mixer is_current per input (performance-09); operating_panel media poll (ui/widgets/operating_panel.rs:146). It is compared with == (String equality) at every use.",
+      "risk": "Allocation churn on input-latency paths. The scope identity is recomputed instead of being owned by the session aggregate (DDD: the identity of the bounded context's current scope belongs to the Session aggregate).",
+      "recommendation": "Make the scope a cached value object owned by a Session sub-aggregate. 1) Add src/controller/state/session.rs with struct ObsSessionState { status: ObsStatus, endpoint, connection_id, capabilities: ObsCapabilities, scope: Rc<ScopeBinding>, scope_rev: u64 }, rebuilt only in apply_connected, reset_obs_session, SceneCollectionsUpdated and invalidate_collection_runtime (controller/state.rs:750-880). 2) workflow_scope() returns Rc<ScopeBinding> (cheap clone). Add scope_rev() -> u64 for equality checks in hot paths (AudioTargetScope stores scope_rev and epoch; compare integers). 3) Commands still carry ScopeBinding by value at the AppCommand boundary (dispatch_volume, audio_card.rs:858-862). Guard: audio_callbacks_reject_another_session_collection_and_endpoint (audio_card.rs:1079) and workspace_lifecycle_tests.rs. Measure: heaptrack allocations during a 10 s fader drag. Hypothesis: allocations/s from workflow_scope go to about 0.",
+      "effort": "S",
+      "smell": "Primitive Obsession / Data Clumps (endpoint+collection)",
+      "verdict": "adjusted",
+      "verifier_note": "Verified: state.rs:788-796 allocates per call; 30 non-test call sites (grep). Correction: the scope depends on config.obs.host/port while disconnected (state.rs:792). Config is mutated directly by the settings page through the cached AppState.config (CLAUDE.md: 'GTK page callbacks mutate them'), not through the listed mutators. A cached Rc<ScopeBinding> rebuilt only in apply_connected/reset_obs_session/SceneCollectionsUpdated/invalidate_collection_runtime would go stale after a host/port edit while disconnected. Either also invalidate it on config writes, which need a single config setter (there is none today), or cache only the connected case and compute the disconnected fallback lazily. AppState is GTK-thread only (Rc<RefCell>), so Rc is acceptable. Comparing scope_rev integers in AudioTargetScope is sound only if scope_rev is bumped on every endpoint or collection change. Add a test that pairs each mutator with a rev bump."
+    },
+    {
+      "id": "performance-11",
+      "severity": "medium",
+      "category": "performance",
+      "file": "src/obs/audio.rs",
+      "lines": "102-163",
+      "title": "Scene-audio membership is N+1: GetSceneItemEnabled per scene item, and the enable-state event payload is discarded",
+      "evidence": "get_scene_audio_inputs lists each container and then issues scene_items().enabled(...) per item through collect_bounded_ordered (108-124). obws 0.15's responses::scene_items::SceneItem (obws-0.15.0/src/responses/scene_items.rs:26-45) has no sceneItemEnabled field, although the OBS JSON includes it, so the per-item request is forced. obs/mapper.rs:192 maps Event::SceneItemEnableStateChanged { .. } to a payload-less ObsEvent::SceneItemVisibilityChanged, which triggers another full scene-audio read plus a GetSceneList just to learn the program scene (refresh_controller.rs:353-372, 482-485). obs/sources.rs uses the same pattern for the graph (88-96, 182).",
+      "risk": "Audio refresh cost is O(items) round trips, bounded only by MAX_CONCURRENT_OBS_REQUESTS. A visibility toggle in a large nested scene sends dozens of requests.",
+      "recommendation": "1) Short term: on SceneItemVisibilityChanged, carry the program scene from the last CurrentProgramSceneChanged held in the refresh worker (dirty.audio_scene already stores Some(scene) on program change at refresh_controller.rs:509). Do not send None, which forces GetSceneList (483). Keep the last known program in RefreshInvalidation. 2) Medium term: add an anti-corruption cache src/obs/scene_item_state.rs: SceneItemEnabledCache keyed (scene_name, item_id) → bool. Fill it from SceneItemEnableStateChanged {scene, item_id, enabled} (extend ObsEvent::SceneItemVisibilityChanged to carry these, mapped in mapper.rs) and invalidate it on SceneItemsChanged/collection change. Only query misses. 3) Track an obws upgrade that exposes enabled (speculative, check the upstream changelog). Guard: obs_fixture-based test counting GetSceneItemEnabled requests for a 3-level nested scene. Measure: requests per visibility toggle. Hypothesis: items+2 drops to about 1.",
+      "effort": "M",
+      "depends_on": [
+        "performance-21"
+      ],
+      "verdict": "adjusted",
+      "verifier_note": "Verified: audio.rs:108-124 issues a per-item scene_items().enabled request; obws-0.15.0 responses/scene_items.rs:26-45 SceneItem has no enabled field; mapper.rs:192 drops the payload; refresh_controller.rs:353-372 does GetSceneList when audio_scene is None; refresh_controller.rs:481-484 sends send_replace(None). obws events.rs:450-460 confirms SceneItemEnableStateChanged carries scene, item_id and enabled. Correction to step 1: the None path is deliberate (comment at 355-356: visibility can change in a nested scene, read the current Program). The worker only knows the program after a CurrentProgramSceneChanged or a full refresh, so cache the last program from both the full-refresh inventory and the events, and fall back to GetSceneList when it is unknown (for example right after connect). Step 1 saves one GetSceneList per toggle, not N, so most of the gain is from step 2. Step 2 cache invalidation must also cover SceneItemCreated/Removed/ListReindexed (already mapped to SceneItemsChanged), CollectionChanging, and event-stream recovery (lag → None in run_event_loop), because enable-state events can be missed during a lag."
+    },
+    {
+      "id": "performance-12",
+      "severity": "medium",
+      "category": "ddd",
+      "file": "src/controller/state.rs",
+      "lines": "447-448",
+      "title": "OBS capabilities are a Vec<String> scanned linearly on 100 ms timers",
+      "evidence": "AppState::available_requests: Vec<String> (about 150 request names from GetVersion). It is scanned with iter().any(|r| r == \"SetStudioModeEnabled\") every 100 ms in ui/widgets/studio_controls.rs:93-96 and with \"GetSourceScreenshot\" every 100 ms in ui/previews.rs:83-86. A protocol-level string list leaks into UI code instead of being translated at the obs/ anti-corruption layer.",
+      "risk": "Wasted CPU on timers, and UI widgets depend on raw protocol strings (an ACL leak).",
+      "recommendation": "Add a value object src/domain/capabilities.rs: #[derive(Clone, Copy, Default, PartialEq)] struct ObsCapabilities(bitflags) with named flags for the requests the app uses (STUDIO_MODE_SET, SOURCE_SCREENSHOT, ...). Build it in obs/mapper.rs::map_version from availableRequests. Keep the raw Vec only where Doctor needs it (services/doctor_service.rs). Replace the string scans with state.session.capabilities.contains(..). Guard: mapper unit test mapping availableRequests to flags, and the Doctor checks tests.",
+      "effort": "S",
+      "smell": "Primitive Obsession",
+      "verdict": "adjusted",
+      "verifier_note": "Verified: state.rs:447 available_requests is a Vec<String>; studio_controls.rs:93-96 and previews.rs:83-86 scan it on 100 ms timers. Correction: there are more consumers than studio_controls and previews. ui/action_catalog.rs:168 uses `supports(request: &str)` with arbitrary request names per catalog action, studio_controls.rs:52, and audio_presets.rs:130. A closed bitflags set must cover every request name the catalog checks, or the catalog keeps a HashSet<String>. bitflags is not a dependency (Cargo.toml [dependencies]), so either add it or hand-roll a u64 newtype with consts. Recommended: domain/capabilities.rs ObsCapabilities { known: KnownRequests (bitset), all: Arc<HashSet<String>> } built in obs/mapper.rs:27 (map_version). That fixes the ACL leak without breaking the catalog. The CPU cost of about 150 string compares every 100 ms is negligible; the main value is DDD and the ACL."
+    },
+    {
+      "id": "performance-13",
+      "severity": "medium",
+      "category": "performance",
+      "file": "src/ui/widgets/volume_meter.rs",
+      "lines": "149-237",
+      "title": "One tick callback per meter runs every frame even when silent; Vec allocation and InputLevels clone per frame",
+      "evidence": "build_oriented registers area.add_tick_callback that never stops (149-156). advance_frame borrows AppState, clones InputLevels when the sequence changed (173-178), calls state.meter.display(), which allocates a Vec<MeterChannelDisplay> every frame (services/meter_service.rs:180-182), then compares it with drawn (219). It formats the accessible description once a second (193-218). With N mapped meters at refresh rate R, that is N×R borrows and allocations per second (for example 24 cards × 144 Hz ≈ 3.5k/s), and it also forces continuous frames (see performance-01). The pull design itself is sound (comments 9-12).",
+      "risk": "CPU cost scales with input count × monitor refresh rate even when all inputs are silent or OBS is disconnected.",
+      "recommendation": "1) Stop ticking when idle: keep the tick only while meter.is_decaying() || a new sequence exists. When idle, remove the callback (return Break) and re-arm it from a page-level MeterHub that is notified once per LevelsAvailable (performance-06). 2) Better: one tick per page. Add src/ui/widgets/meter_hub.rs (MeterHub { meters: Vec<Weak<MeterWidget>> }) that borrows AppState once per frame and advances every meter, so N borrows become 1. 3) Add InputMeterState::display_into(&mut Vec<MeterChannelDisplay>) -> bool changed, reusing the buffer, and observe(&InputLevels) by reference without the clone. Guard: meter_service tests and volume_meter lifetime_tests.rs. Measure: sysprof samples in advance_frame with 24 meters at 144 Hz, OBS connected and silent. Hypothesis: about 0 samples while silent and at least 3x fewer while active.",
+      "effort": "M",
+      "depends_on": [
+        "performance-06"
+      ],
+      "verdict": "adjusted",
+      "verifier_note": "Verified: volume_meter.rs:149-156 registers a perpetual tick; display() allocates a Vec on every frame (meter_service.rs:180-182); the InputLevels clone only happens when the sequence changes (173-178). Correction: InputMeterState::is_idle exists only under #[cfg(test)] (meter_service.rs) and there is no is_decaying, so both have to be added. Tick callbacks run only while the DrawingArea is mapped, so the cost scales with *visible* meters, not all cards. Re-arming a removed tick from a MeterHub needs care: add_tick_callback must be re-registered on the widget, or the hub owns a single tick on a page root that is always mapped. Option 2 (one hub tick per page) is simpler and avoids re-arm races. observe(&levels) already takes a reference (180-182). The clone exists so the AppState borrow is released before the widget-state borrow_mut, and since these are separate RefCells it can be avoided."
+    },
+    {
+      "id": "performance-14",
+      "severity": "medium",
+      "category": "god-file",
+      "file": "src/ui/window.rs",
+      "lines": "664-1248",
+      "title": "apply_event is a 585-line match mixing AppState mutation, persistence scheduling and widget refresh (god function in a 2698-line god file)",
+      "evidence": "apply_event handles about 40 AppEvent variants inline: session retirement and envelopes (668-720), audio (721-738, 1149-1217), workspace reconciliation (739-905), connection (906-932), outputs (934-983), scene inventory/rename/profiles/collections with persistence callbacks (985-1119), errors (1121-1147), topology/stats (1219-1246). Each arm mixes borrow_mut() mutation with direct widget calls (rebuild_scene_cards, refreshers, status_bar, toast). window.rs has 66 borrow_mut() calls. Tests take lines 1590-2698.",
+      "risk": "Every new event adds to the match (Divergent Change). Re-entrancy panic risk: apply_event recurses (706, 718, 755) while callers hold borrows in the closures. Rendering cannot be batched or deduplicated because mutation and rendering are interleaved per event.",
+      "recommendation": "Split into reduce then render. 1) Move pure state transitions into AppState::apply(event) -> UiInvalidation in src/controller/state/reducer.rs (reusing existing mutators such as apply_scene_inventory, apply_output_event and set_obs_stats_at), unit-testable without GTK. 2) Keep only widget effects in src/ui/events/{session,outputs,scenes,audio,workspace,telemetry}.rs, each exposing fn render(nav, ui, &UiInvalidation, &EventEffects). 3) Run render once per batch from the event pump (performance-02/05), deduplicating rebuilds. Guard: window.rs native tests (1595-2364) and the mixer_input_event tests (2549-2698) become pure reducer tests. See proposed_splits for window.rs.",
+      "effort": "L",
+      "smell": "Long Method, Switch Statements, Divergent Change",
+      "depends_on": [
+        "performance-03"
+      ],
+      "verdict": "adjusted",
+      "verifier_note": "Verified: apply_event spans window.rs:664-1248, there are 66 borrow_mut() calls, and tests start at 1583/1587. Refuted sub-claim: 'apply_event recurses (706, 718, 755) while callers hold borrows'. At 699-707 the borrow in `accepted` is a temporary dropped at the end of the let; at 713-716 the borrow_mut is dropped at the end of the let; 755 has no outstanding borrow. The recursion is safe today, so do not cite it as a panic risk. Also: ui/event_reconciliation.rs already exists and holds part of the workspace reconciliation (acknowledge, media_loaded, complete_workspace). Fold the proposed ui/events/workspace.rs into it or next to it instead of duplicating it. The reducer AppState::apply(event) -> UiInvalidation in controller/state/reducer.rs is sound: controller must not import ui, and UiInvalidation should be a controller-owned type (for example controller/state/revisions.rs) that ui maps to widgets."
+    },
+    {
+      "id": "performance-15",
+      "severity": "medium",
+      "category": "god-file",
+      "file": "src/controller/refresh_controller.rs",
+      "lines": "409-586",
+      "title": "run_event_loop hand-codes OBS→AppEvent translation, invalidation policy and transport backpressure in one 178-line function",
+      "evidence": "The match at 470-570 translates each ObsEvent while performing side effects: scope.invalidate_scene_activation, dirty.invalidate, dirty.audio_scene.send_replace, tx.advance_collection, client.next_observation, levels try_send. The same function also owns recovery (445-468), the publisher future (421-429) and the select loop (431-444). The file also contains refresh helpers (26-291) and the stats loop (101-185).",
+      "risk": "Translation policy can only be tested through a live loop. It has a single test, for coalescing (588-609). Divergent Change: adding an OBS event touches loop control code.",
+      "recommendation": "Extract a pure policy fn plan(event: ObsEvent, ctx: &PlanCtx) -> EventPlan { publication: Option<AppEvent>, graph_invalidation: bool, refresh: RefreshKind {None, Full, Audio(Option<SceneId>)}, fence_scene_activation: bool, advance_collection: bool, meter: Option<Vec<InputLevels>> } into src/controller/refresh/event_plan.rs, and table-test every ObsEvent variant. Keep run_event_loop as a thin executor. See proposed_splits.",
+      "effort": "M",
+      "smell": "Long Method, Switch Statements",
+      "verdict": "confirmed",
+      "verifier_note": "Verified: run_event_loop starts at refresh_controller.rs:409, with the match at about 470-570, recovery at 445-468, the publisher at 421-429, and a single test at 588-609. Note: invalidate_graph(&client, &tx) (195) builds an AppEvent from client state and so is not pure. EventPlan should carry graph_invalidation: bool and the executor calls invalidate_graph. client.next_observation() also has to stay in the executor (it is a side effect). The plan therefore returns an 'observation-wrapped' flag rather than the revision."
+    },
+    {
+      "id": "performance-16",
+      "severity": "low",
+      "category": "performance",
+      "file": "src/domain/health/audio.rs",
+      "lines": "59-110",
+      "title": "Audio health observe runs at 20 Hz with O(R²) rule-uniqueness, a deep rules compare and String clones",
+      "evidence": "observe() is called from the 50 ms event-pump tick via ui/health_alerts.rs:83 → AppState::observe_audio_health (controller/state.rs:958-985). Each call deep-compares self.rules != rules (67), re-checks per rule that its target matches exactly one rule by scanning all rules (78-89, O(R²)), clones watch.name every tick (98), and does a linear scan of data.audio (99-103). observe_audio_health also rescans registry.audio_alerts (980-984) and desired_registry_target() each tick.",
+      "risk": "Small per call but runs continuously. It grows quadratically with the alert rule count.",
+      "recommendation": "Precompute rule uniqueness and resolved targets when rules or scope change (inside the existing branch at 67-72) and store them in Watch (unique: bool, resolved name). Observe only when levels.sequence() changed or 250 ms elapsed. Assign the name only if it differs. Guard: domain::health tests (health.rs tests module, health/events.rs).",
+      "effort": "S",
+      "verdict": "confirmed",
+      "verifier_note": "Verified: domain/health/audio.rs:66-110 (rules deep compare at 67, O(R^2) uniqueness at 78-89, name clone at 98); called from health_alerts.rs:83 → state.rs:958-985 on the 50 ms tick. Caveat on throttling: silence detection depends on time passing while no levels arrive. The 'or 250 ms elapsed' clause is needed; do not observe only on sequence change. The O(R^2) uniqueness can be precomputed in the rules-changed branch (67-72) without changing behaviour."
+    },
+    {
+      "id": "performance-17",
+      "severity": "low",
+      "category": "performance",
+      "file": "src/controller/state/report_history.rs",
+      "lines": "95-140",
+      "title": "Report-history staging deep-clones the archive and every eligible report and compares by value every 10 s",
+      "evidence": "stage_report_history clones history.archive and each report (103-114), compares next != archive (117), and retains with nested linear scans (121-139). ui/report_history.rs::save then compares history.archive == *history.stored deeply (171) and clones the archive into an Arc (181). reports.revision changes on every stats sample (session_reports.rs:333), so staging always happens on the 10 s cadence (ui/report_history.rs:117-133). The 250-sample bounded reports are fine (domain/session_report.rs:192-196), but the copying is O(archive).",
+      "risk": "Periodic GTK-thread hitches that grow with archive size (the history limit).",
+      "recommendation": "Hold reports as Arc<SessionReport> in both ReportsState and the archive, and upsert by replacing the Arc. Track per-report revision and compare revisions instead of content. Change stored to Arc identity and compare with Arc::ptr_eq. Guard: storage/report_history tests and controller/state/session_reports/tests.rs. Measure: span timing of save() with 50 archived reports. Hypothesis: time drops by more than 10x.",
+      "effort": "M",
+      "verdict": "adjusted",
+      "verifier_note": "Verified: report_history.rs:95-140 clones the archive and the reports; ui/report_history.rs:171 makes a deep compare and 181 clones into an Arc; tick due every 10 s (117-133). Caveat: the archive is a storage serde representation (storage/report_history), so Arc<SessionReport> inside it needs serde's 'rc' feature or a custom serialize, and that crosses the storage/domain conversion boundary in CLAUDE.md. Lower-risk alternative: keep the value types and skip staging when no eligible report's revision changed (per-report revision map), and compare history.revision == saved_revision instead of archive == stored. Low severity is fair."
+    },
+    {
+      "id": "performance-18",
+      "severity": "low",
+      "category": "performance",
+      "file": "src/ui/previews.rs",
+      "lines": "170-213",
+      "title": "Base64 and PNG decode run on the GTK thread for each preview (up to 2/s)",
+      "evidence": "apply() runs glib::base64_decode on up to 512 KiB of input (172-175) and gdk::Texture::from_bytes (213) on the GTK main thread inside the event-pump apply. bounded_png caps the size at 384x216, so each decode costs about a millisecond (estimated, not measured).",
+      "risk": "Small, regular frame-time spikes on the Live page.",
+      "recommendation": "Decode base64 and validate the PNG header in the Tokio thumbnail worker (controller/thumbnails.rs) and send Vec<u8> (or glib::Bytes) in AppEvent::ThumbnailLoaded. Keep Texture::from_bytes on GTK (moving it would need gdk::Texture: Send, which is speculative and must be verified against the gtk4-rs version in Cargo.lock). Move bounded_png and its tests (previews.rs:275-285) to src/services/thumbnail_service.rs.",
+      "effort": "S",
+      "verdict": "adjusted",
+      "verifier_note": "Verified: previews.rs:170-182 (bounded_png uses glib::base64_decode) and apply() decodes on GTK (209-213). Correction: moving bounded_png to src/services/thumbnail_service.rs as written fails architecture_tests::services_hold_no_gtk, which forbids glib:: in services. Use the base64 crate (only transitive in Cargo.lock today, so it would need a direct dependency) or a small decoder; alternatively decode inside obs/ (an ACL concern: the adapter returns PNG bytes instead of a data URL) or in controller/thumbnails.rs. Changing AppEvent::ThumbnailLoaded's result to Vec<u8> touches controller/thumbnails.rs:57, 91, 96, 247 and their tests. Low severity; the cost is an estimate."
+    },
+    {
+      "id": "performance-19",
+      "severity": "low",
+      "category": "performance",
+      "file": "src/ui/widgets/audio_card.rs",
+      "lines": "130-135",
+      "title": "update_mute has no change detection, so fast-path refreshes rewrite toggle state and CSS for every card",
+      "evidence": "update_mute always blocks the signal, calls set_active, unblocks and runs apply_mute_style (130-135). update_volume early-returns when unchanged (141-143). Fast paths call update_mute for every input on each refresh: mixer.rs:139-145, live.rs:883-888, 961-963. stats.rs:776-787 has a similar pattern: build_activity clones the last 15 ActivityRecords on every stats refresh (1 Hz) just to compare.",
+      "risk": "Unnecessary style invalidation for each card on every audio event.",
+      "recommendation": "Add observed_muted: Cell<Option<bool>> to AudioCardHandle and return early when unchanged. In stats activity, compare workspace.activity.sequence() (already exists, used at session_reports.rs:292) instead of cloning records.",
+      "effort": "S",
+      "verdict": "adjusted",
+      "verifier_note": "Verified: audio_card.rs:130-135 has no change check; update_volume has one (141-143); stats.rs:776-787 clones the last 15 records. Severity is lower than stated: gtk4 ToggleButton::set_active is a no-op when the value is unchanged (no toggled emission and no redraw), and add/remove_css_class with an unchanged class set does not invalidate style. The win is marginal and mostly about consistency with update_volume. The stats activity sequence compare is valid, but it must also reset when the activity log is cleared or the language changes (the labels are localized), so key it on (sequence, language)."
+    },
+    {
+      "id": "performance-20",
+      "severity": "medium",
+      "category": "test",
+      "file": "Cargo.toml",
+      "lines": "dev-dependencies",
+      "title": "No performance instrumentation, counters or benchmarks; hot-path claims cannot be measured or regression-gated",
+      "evidence": "[dev-dependencies] contains only proc-macro2, syn and tokio-websockets. There is no benches/ directory and no tracing spans around apply_event, rebuild functions or collect_report. The existing pump test (event_pump.rs:62-80) checks ordering only.",
+      "risk": "Every fix in this report is unverifiable, and regressions (for example a new 100 ms timer) go unnoticed.",
+      "recommendation": "1) Add a cargo feature perf-trace that enables tracing spans: trace_span!(\"apply_event\", kind=%variant_name), spans on rebuild_scene_cards, rebuild_audio_cards, MixerPageHandle::refresh, collect_report and stage_report_history, plus per-second counters (events drained, batches, meter frames dropped) logged at debug every 10 s from src/infra/perf.rs. 2) Add criterion benches under benches/ for pure functions: AppState::collect_report (1k activity entries), MixerStructureKey construction (40 inputs), InputLevelSnapshot::update_at, StatsHistory::series, services::scene_deck_service ordering. 3) Add a scripted soak using obs_fixture (meter events at 20 Hz for 60 s) asserting no queue growth and no retirement. 4) Document the measurement recipe in docs/developer-guide.md: pidstat -u -w, strace -c -e ppoll, GTK_DEBUG=interactive FPS, sysprof-cli --gtk, heaptrack.",
+      "effort": "M",
+      "verdict": "confirmed",
+      "verifier_note": "Verified: Cargo.toml [dev-dependencies] has only proc-macro2, syn and tokio-websockets; there is no benches/ directory. Note: criterion benches cannot reach pub(crate) items in a single binary crate (src/lib.rs exposes only run()). Benches would need a #[cfg(feature=\"bench\")] pub re-export module, or use #[test]-based timing harnesses gated by #[ignore]. Spans behind a perf-trace feature are fine with the existing tracing dependency."
+    },
+    {
+      "id": "performance-21",
+      "severity": "low",
+      "category": "test",
+      "file": "src/obs/obs_fixture.rs",
+      "lines": "whole file",
+      "title": "The protocol fixture cannot count or reorder requests, which blocks request-budget regression tests",
+      "evidence": "The baseline says fixture coverage stops at handshake plus GetVersion. client.rs::control_tests::mock_client (client.rs:1107-1146) expects an ordered script (std::iter::once((\"GetVersion\", version)).chain(script)), so concurrent requests (performance-07/08) would break the existing ordered mocks.",
+      "risk": "Parallelising requests breaks tests that assume strict ordering. Request-count budgets cannot be asserted.",
+      "recommendation": "Extend obs_fixture with a ScriptedObs { responders: HashMap<&'static str, Box<dyn Fn(Value)->Value>>, counts: Arc<Mutex<HashMap<String, usize>>> } that matches by requestType and records counts. Migrate mock_client to it before parallelising. Add tests asserting the requests per stats poll, per control snapshot and per scene-audio read.",
+      "effort": "M",
+      "verdict": "confirmed",
+      "verifier_note": "Verified: control_tests::mock_client (client.rs:1107-1146) asserts request order. Extra constraint: mock_client is used outside client.rs, by obs/regression_tests.rs:4 (super::control_tests::mock_client) and controller/workspace/audio_presets/tests.rs:2 (crate::obs::client::control_tests::mock_client). Keep the old ordered API as a wrapper, or migrate those callers in the same change."
+    },
+    {
+      "id": "performance-22",
+      "severity": "low",
+      "category": "code-smell",
+      "file": "src/obs/client.rs",
+      "lines": "317-517",
+      "title": "Test module sits in the middle of client.rs; client mixes connection, telemetry, outputs, thumbnails, control execution and sources",
+      "evidence": "#[cfg(test)] mod tests occupies 317-515 between two impl ObsClient blocks (62-315 and 517-1097). A second test module control_tests runs 1099-1392, and regression_tests is at 1393-1395. Responsibilities: connect/retire (62-183), reads (185-274), outputs (276-314), control snapshot (519-575), thumbnails/screenshots (577-631), source detail (632-764), control execution (765-1076), helpers (1077-1097).",
+      "risk": "A god file in the anti-corruption layer (1395 lines). It is hard to find and review protocol mapping.",
+      "recommendation": "See proposed_splits for obs/client.rs. Keep ObsClient as one type and spread its impl blocks across src/obs/{connection,telemetry,outputs,control_snapshot,thumbnails,source_detail,control_exec}.rs (Rust allows multiple impl blocks across modules in the same crate). Move tests next to each module.",
+      "effort": "M",
+      "smell": "Large Class",
+      "verdict": "confirmed",
+      "verifier_note": "Verified: impl ObsClient at 62-315, #[cfg(test)] mod tests at 317-515, a second impl at 517-1097, control_tests at 1099-1392, regression_tests at 1393-1395. Multiple impl blocks across modules are legal, and private fields (inner, images, endpoint) are accessible from child modules of client.rs (src/obs/client/*.rs) but NOT from sibling modules src/obs/*.rs unless the fields are pub(super). Prefer src/obs/client/{reads,telemetry,...}.rs as children of client.rs to keep the fields private."
+    }
+  ],
+  "proposed_splits": [
+    {
+      "file": "src/ui/window.rs",
+      "current_lines": 2698,
+      "rationale": "God file: shell construction, page registry, polling timers, a 585-line event reducer/renderer and helpers, plus about 1100 lines of tests. This is the main obstacle to batching and deduplicating renders (performance-02/03/04/14).",
+      "target_modules": [
+        {
+          "path": "src/ui/shell/mod.rs",
+          "responsibility": "build_main_window, WindowSources, welcome dialog",
+          "moves": "build_main_window (63-279), WindowSources (44-61), maybe_show_welcome_dialog (611-640), apply_color_scheme (1574-1590)"
+        },
+        {
+          "path": "src/ui/shell/pages.rs",
+          "responsibility": "Page construction and visibility-aware refresh routing",
+          "moves": "add_pages minus the 200 ms timer (281-408), PageRefreshers + impl (1499-1572)"
+        },
+        {
+          "path": "src/ui/shell/header.rs",
+          "responsibility": "Content header and streaming chrome",
+          "moves": "build_content_header (513-592), header_button (593-610), StreamingChrome (1493-1498), sync_streaming_chrome (1469-1492), sync_output_indicators (1455-1468)"
+        },
+        {
+          "path": "src/ui/shell/timers.rs",
+          "responsibility": "Event-pump wiring and remaining wall-clock timers (to shrink as UiInvalidation lands)",
+          "moves": "install_event_polling (412-469), install_output_clock (475-507), registry/workspace 200 ms timer body (306-375) as fn install_workspace_watch"
+        },
+        {
+          "path": "src/ui/events/mod.rs",
+          "responsibility": "Thin exhaustive router: AppEvent -> sub-handler; envelope handling",
+          "moves": "apply_event match skeleton (664-720), EventUiContext (1515-1524), report_failure (1422-1431), command_failure_message (1432-1454)"
+        },
+        {
+          "path": "src/ui/events/session.rs",
+          "responsibility": "Connection lifecycle rendering",
+          "moves": "SessionRetired/Connecting/Disconnected/Connected/Error arms (668-693, 906-932, 1121-1147), show_no_session_ui (1272-1309)"
+        },
+        {
+          "path": "src/ui/events/outputs.rs",
+          "responsibility": "Output status rendering",
+          "moves": "OutputReadbackFailed arm (934-976), apply_output_event (1340-1356), refresh_output_status_bar (1317-1338), elapsed_suffix/format_elapsed (1403-1419)"
+        },
+        {
+          "path": "src/ui/events/scenes.rs",
+          "responsibility": "Inventory, rename, profiles, collections rendering and registry reconciliation callbacks",
+          "moves": "refresh_scene_inventory_views (643-655), SceneInventoryUpdated/SceneRenamed/ProfilesUpdated/SceneCollectionsUpdated/CurrentSceneChanged arms (985-1119), WorkspaceScopeChanging (858-883)"
+        },
+        {
+          "path": "src/ui/events/audio.rs",
+          "responsibility": "Active audio, mute/volume echoes, levels, mixer transitions",
+          "moves": "ActiveAudio* arms (721-738), Mixer* arms (1149-1167), InputMute/Volume/Levels arms (1169-1217), apply_mixer_audio_transition (1254-1264), update_live_audio_card (1363-1376), should_rebuild_visible_mixer_for_input_event (1378-1401; move the pure part to AppState in controller/state/mixer)"
+        },
+        {
+          "path": "src/ui/events/workspace.rs",
+          "responsibility": "Workspace/preset/replay reconciliation",
+          "moves": "WorkspaceAcknowledged/MediaLoaded/Loaded/Invalidated/ValuesChanged/StudioMode/VirtualCamera/AudioFailed/Preset*/ReplaySaved arms (739-905)"
+        },
+        {
+          "path": "src/ui/events/telemetry.rs",
+          "responsibility": "Graph and stats rendering",
+          "moves": "Graph* arms (766-783, 1219-1225), StatsUpdated (1227-1246), ThumbnailLoaded (784-788)"
+        },
+        {
+          "path": "src/ui/shell/window_native_tests.rs",
+          "responsibility": "Native GTK tests",
+          "moves": "tests 1590-2525 (native_*)"
+        },
+        {
+          "path": "src/ui/events/tests.rs",
+          "responsibility": "Pure tests",
+          "moves": "mixer_input_event_* and command_failure_message tests (1970-1996, 2527-2698)"
+        }
+      ],
+      "order": "1) Move tests out to window_native_tests.rs/events tests via #[path] (no code change). 2) Extract shell/header.rs and shell/pages.rs (pure moves, pub(super)). 3) Create ui/events/mod.rs holding apply_event unchanged; window.rs re-exports it. 4) Move one family at a time into events/*.rs as fn apply_<family>(nav, event_variant_fields, ui), keeping the router match exhaustive. Run the full gate after each family. 5) Extract shell/timers.rs. 6) Later (performance-14): introduce AppState::apply -> UiInvalidation reducer and per-batch render.",
+      "safety_net": "Run before moving: python3 tools/test-native.py for window.rs native tests (native_audio_events_and_background_reads_do_not_blink_pages, native_refresh_button_waits_for_new_data_before_redrawing, native_identical_inventory_readback_keeps_live_preview_paintables, native_assembled_window_releases_shell_sources_while_stats_popout_survives) and cargo test window. Add one pure test per family asserting AppState after apply_event with ui=None, so the moves can be verified without GTK. architecture_tests.rs must allow the new ui/events and ui/shell modules.",
+      "verdict": "adjusted",
+      "verifier_note": "The line anchors I checked hold: apply_event 664-1248, the 200 ms timer 306-375, install_event_polling around 412-469, tests from 1583/1587. Adjustments: (1) architecture_tests scope rules by directory (violations(\"ui\", ...)), so new ui/events and ui/shell modules inherit the ui rules automatically and need no test change; the 'must allow' note is unnecessary. (2) ui/event_reconciliation.rs and ui/window_render_tests.rs already exist. Place the workspace family next to event_reconciliation instead of creating a parallel ui/events/workspace.rs, and keep window_render_tests where they are. (3) The recursion in the SessionEvent/Observation arms is borrow-safe (see performance-14). Keep the arm-level recursion in the router. (4) Extracting install_event_polling into shell/timers.rs interacts with performance-05; do performance-05 after the move so the diff stays small. The order is sound and each step is a pure move."
+    },
+    {
+      "file": "src/controller/state.rs",
+      "current_lines": 3088,
+      "rationale": "God struct AppState (about 60 fields across 9 concerns) plus WorkspaceState, enums and about 1840 lines of tests. With no sub-aggregates, change notification cannot be per-concern (performance-03/10/12).",
+      "target_modules": [
+        {
+          "path": "src/controller/state/page.rs",
+          "responsibility": "Page enum (navigation)",
+          "moves": "Page + impl (35-97)"
+        },
+        {
+          "path": "src/controller/state/session.rs",
+          "responsibility": "ObsSessionState aggregate: status, endpoint, connection id, ObsCapabilities, cached Rc<ScopeBinding> + scope_rev, session_retirements",
+          "moves": "ObsStatus (98-127), fields available_requests/supported_image_formats/connected_endpoint/connected_connection_id/obs_status/session_retirements, apply_connected (750-772), workflow_scope (788-796), reset_obs_session (853-880), accepts_session_publication (882-892), apply_terminal_evidence (896-940)"
+        },
+        {
+          "path": "src/controller/state/topology.rs",
+          "responsibility": "TopologyState: scene_inventory, scene_graph, topology_status, topology_revision",
+          "moves": "TopologyStatus (128-160), apply_scene_inventory (776-786), set_topology_* (815-828), set_current_program (1035-1044), graph arms of reconcile_observation"
+        },
+        {
+          "path": "src/controller/state/audio.rs",
+          "responsibility": "ActiveAudioState: audio_inputs, active_audio_status, revision, levels",
+          "moves": "ActiveAudioStatus (162-188), set_audio_levels_at/clear (942-955), invalidate_active_audio/apply_active_audio/active_audio_notice (1046-1084), apply_input_mute/volume/audio_input_mut (1196-1244), observe_audio_health (958-985)"
+        },
+        {
+          "path": "src/controller/state/outputs.rs",
+          "responsibility": "OutputsState: stream/record status, errors, active_since, observed_at",
+          "moves": "set_stream_*/set_record_* and failure/recovery methods (1086-1141), output fields (465-474)"
+        },
+        {
+          "path": "src/controller/state/telemetry.rs",
+          "responsibility": "TelemetryState: obs_stats, observed_at, bitrate, stream_health, stats_history",
+          "moves": "set_obs_stats_at/clear_obs_stats (1143-1188), fields (487-498)"
+        },
+        {
+          "path": "src/controller/state/workspace_state.rs",
+          "responsibility": "WorkspaceState aggregate",
+          "moves": "WorkspaceState + impl (192-435)"
+        },
+        {
+          "path": "src/controller/state/collection_runtime.rs",
+          "responsibility": "Collection-scope invalidation orchestration",
+          "moves": "invalidate_collection_runtime (833-849)"
+        },
+        {
+          "path": "src/controller/state/revisions.rs",
+          "responsibility": "StateRevisions counters per sub-aggregate (new)",
+          "moves": "new"
+        },
+        {
+          "path": "src/controller/state/tests/",
+          "responsibility": "Tests split per sub-aggregate",
+          "moves": "tests module 1247-3088 split into session.rs, outputs.rs, audio.rs, telemetry.rs, topology.rs"
+        }
+      ],
+      "order": "1) Move the tests into state/tests/mod.rs (#[path]). 2) Move the enums Page/ObsStatus/TopologyStatus/ActiveAudioStatus into their own modules and re-export them from state.rs (keeps every import path). 3) Move WorkspaceState. 4) Move impl AppState method groups into the new files as additional `impl AppState` blocks (no struct change yet). 5) Introduce sub-structs one at a time (TelemetryState first: fewest call sites), with delegating accessors to limit churn. 6) Add StateRevisions bumps inside the sub-aggregate mutators. 7) Remove the delegating accessors once callers are migrated.",
+      "safety_net": "Existing state tests (1247-3088), controller/final_regression_tests.rs and workspace_lifecycle_tests.rs must pass unchanged after each step. Add a test asserting each sub-aggregate mutator bumps exactly its own revision.",
+      "verdict": "adjusted",
+      "verifier_note": "state.rs is the module root of an existing controller/state/ directory (mixer.rs, session_reports.rs, report_history.rs, show_registry.rs, bookmarks.rs, audio_presets.rs), so the new files slot in without a rename. Field and method anchors checked: available_requests at 447, workflow_scope at 788-796, mark_dirty/touch/revision at 406-416, observe_audio_health at 958-985. Adjustments: (1) controller/workspace/ and controller/workspace.rs already exist, so name the moved WorkspaceState file controller/state/workspace.rs only if it does not confuse readers; workspace_state.rs as proposed is acceptable. (2) The session sub-aggregate's cached scope has to handle config host/port edits (see performance-10). (3) SessionRetirement comes from controller/lifecycle.rs; moving session_retirements into ObsSessionState keeps that dependency intra-controller, which is fine. (4) Delegating accessors in step 5 will touch about 559 borrow sites across ui/. Do it per sub-aggregate and run the native suite each time. No cycles: these are all impl AppState blocks or child structs under controller::state."
+    },
+    {
+      "file": "src/controller/refresh_controller.rs",
+      "current_lines": 610,
+      "rationale": "Mixed responsibilities: OBS readback helpers, stats polling, refresh invalidation worker, OBS→AppEvent translation and transport backpressure (performance-15). Under 700 lines, but the event loop is the hottest controller path and has a single test.",
+      "target_modules": [
+        {
+          "path": "src/controller/refresh/readback.rs",
+          "responsibility": "One-shot OBS readbacks published as AppEvents",
+          "moves": "publish_profiles_after (26-45), refresh_after_collection_change (47-67), refresh_profile_and_collection_lists (69-99), refresh_live_data/_if (187-260), refresh_scene_audio (262-291), invalidate_graph (195-204)"
+        },
+        {
+          "path": "src/controller/refresh/stats_poll.rs",
+          "responsibility": "Session-owned telemetry polling",
+          "moves": "BitrateSample (17), STATS_POLL_INTERVAL (22), refresh_obs_stats (103-136), run_stats_poll_loop (147-160), bitrate_kbps_since_last_sample (165-185)"
+        },
+        {
+          "path": "src/controller/refresh/worker.rs",
+          "responsibility": "Coalesced full/audio refresh worker",
+          "moves": "RefreshInvalidation (295-321), refresh_worker (323-387), coalescing test (588-609)"
+        },
+        {
+          "path": "src/controller/refresh/event_plan.rs",
+          "responsibility": "Pure ObsEvent -> EventPlan translation policy (new, table-tested)",
+          "moves": "logic of match at 470-570"
+        },
+        {
+          "path": "src/controller/refresh/event_loop.rs",
+          "responsibility": "Executor: select loop, recovery, publisher, backpressure",
+          "moves": "TRANSPORT_PUBLICATION_CAPACITY (392), enqueue_transport_publication (394-406), run_event_loop (409-586) reduced to applying EventPlan"
+        },
+        {
+          "path": "src/controller/meter_feed.rs",
+          "responsibility": "Latest-value meter slot (performance-06)",
+          "moves": "new; replaces try_send at 531-537"
+        }
+      ],
+      "order": "1) Create the controller/refresh/ dir with mod.rs re-exporting the current pub(crate) names (session_controller and app_controller imports stay valid). 2) Move stats_poll.rs, then readback.rs, then worker.rs (pure moves). 3) Introduce event_plan.rs with plan() and table tests while run_event_loop still uses the old match. 4) Switch run_event_loop to plan() once the tests pass. 5) Add meter_feed.rs (behaviour change, separate commit).",
+      "safety_net": "Keep invalidations_during_a_scan_coalesce_without_a_third_spurious_wake. Add table tests for every ObsEvent variant → expected EventPlan before step 4. Use the session_controller tests and the obs/event.rs lag-recovery test (event.rs:61-103) as integration guards.",
+      "verdict": "adjusted",
+      "verifier_note": "The anchors match the grep (17, 22, 26, 47, 69, 103, 147, 165, 187, 195, 206, 262, 296, 323, 392, 394, 409). Adjustments: (1) Creating controller/refresh/ with a mod.rs 'keeps imports valid' only if callers import crate::controller::refresh::*. Today they import refresh_controller::*. Either keep refresh_controller.rs as the module root with child files under controller/refresh_controller/, or update the callers (session_controller, app_controller) in the same commit. (2) invalidate_graph (195) is private and used by both run_event_loop and readback, so move it to readback.rs with pub(super) visibility. (3) refresh_live_data_if is 206-260, not part of 187-260; refresh_live_data is 187-193. Fine. (4) meter_feed.rs is a behaviour change; keep it in a separate commit as stated."
+    },
+    {
+      "file": "src/ui/pages/mixer.rs",
+      "current_lines": 2003,
+      "rationale": "Page handle, stringly-typed structure keys, control rows, card grouping, status pages, a debug inspection subsystem, request dedupe and view-state capture in one file. The hot refresh path is buried (performance-09).",
+      "target_modules": [
+        {
+          "path": "src/ui/pages/mixer/mod.rs",
+          "responsibility": "build() and MixerPageHandle (refresh, update_mute/volume, summary)",
+          "moves": "MixerPageHandle (47-160), build (315-353), populate (355-558)"
+        },
+        {
+          "path": "src/ui/pages/mixer/structure_key.rs",
+          "responsibility": "Typed MixerBinding/MixerStructureKey value objects",
+          "moves": "MixerBinding tuple + mixer_binding (31-45), mixer_structure (173-221), controls_key (370-376), visible_inputs (162-171)"
+        },
+        {
+          "path": "src/ui/pages/mixer/controls.rs",
+          "responsibility": "Mode/scene/grouping/search rows",
+          "moves": "build_mode_row (560-600), build_scene_row (601-649), build_grouping_row (650-684), build_search_row (685-711), mode_at/grouping_at/persist_mixer_selection (1202-1223)"
+        },
+        {
+          "path": "src/ui/pages/mixer/cards.rs",
+          "responsibility": "Card grouping and FlowBox population",
+          "moves": "MixerSurfaces (715-719), append_mixer_inputs (721-796), append_group (858-892), filter_inputs (894-913)"
+        },
+        {
+          "path": "src/ui/pages/mixer/status.rs",
+          "responsibility": "Status/loading/error placeholders",
+          "moves": "append_mixer_status (798-806), append_mixer_error_status (808-850), append_loading_placeholder (922-939)"
+        },
+        {
+          "path": "src/ui/pages/mixer/inspection.rs",
+          "responsibility": "SCENEDECK_MIXER_INSPECT debug output (OnceLock-gated)",
+          "moves": "MIXER_INSPECT_ENV (290), MixerRetryInspection (298-313), emit_mixer_inspection (941-953), format_mixer_inspection_line and label helpers (955-1050)"
+        },
+        {
+          "path": "src/ui/pages/mixer/requests.rs",
+          "responsibility": "Scene-audio request dedupe adapter",
+          "moves": "MixerRefreshRequestIntent (292-296), request_visible_mixer_scene_audio/request_mixer_scene_audio/prepare_.../should_request_mixer_scene_audio/clear_tracked_request (1116-1200); the pure should_request decision moves to controller/state/mixer"
+        },
+        {
+          "path": "src/ui/pages/mixer/view_state.rs",
+          "responsibility": "Search draft/expander/scroll capture-restore",
+          "moves": "MixerViewState, visit_mixer (223-289)"
+        },
+        {
+          "path": "src/ui/pages/mixer/summary.rs",
+          "responsibility": "Summary text",
+          "moves": "source_summary (1051-1075), scene_target_summary (1076-1115)"
+        },
+        {
+          "path": "src/ui/pages/mixer/tests.rs + layout_tests.rs",
+          "responsibility": "Tests",
+          "moves": "1224-1786 and 1788-2003"
+        }
+      ],
+      "order": "1) Convert to mixer/mod.rs with the tests moved out (#[path]). 2) Move inspection.rs, summary.rs, status.rs, view_state.rs (leaf moves). 3) Move controls.rs and cards.rs. 4) Introduce structure_key.rs with typed keys, keeping a temporary String adapter for tests. 5) Remove the String keys and switch search to set_filter_func.",
+      "safety_net": "mixer_structure_ignores_audio_echoes_but_tracks_membership_and_scope, all mixer_inspection_line_* tests, the adapter_* dedupe tests, and the native tests native_mixer_echoes_preserve_cards_drafts_focus_and_popovers and mixer_page_minimum_height_does_not_grow_with_the_card_count via tools/test-native.py.",
+      "verdict": "confirmed",
+      "verifier_note": "The item anchors match the grep: MixerBinding 31, mixer_binding 38, MixerPageHandle 50, visible_inputs 162, mixer_structure 173, MixerViewState 224, visit_mixer 230, MIXER_INSPECT_ENV 290, build 315, populate 355, rows 560/601/650/685, MixerSurfaces 715, append_* 721/798/808/858/922, filter_inputs 894, inspection 941-1050, summaries 1051/1076, requests 1116-1200, mode_at/grouping_at/persist 1202-1223, tests 1224 and 1788. Step 5 (set_filter_func for search) has the grouping caveat noted in performance-09."
+    },
+    {
+      "file": "src/ui/pages/live.rs",
+      "current_lines": 1554,
+      "rationale": "Mixes the page shell, output toggle and confirmation flows, scene-deck ordering policy (pure domain logic), scene card rebuild and audio strip reconciliation, plus perpetual tick-driven responsive layout (performance-01/04).",
+      "target_modules": [
+        {
+          "path": "src/ui/pages/live/mod.rs",
+          "responsibility": "build(), LivePageHandle, show_live_view/show_disconnected_view",
+          "moves": "LivePageHandle (89-111), build (113-303), show_* (305-308, 466-469), build_disconnected_view (470-499)"
+        },
+        {
+          "path": "src/ui/pages/live/responsive.rs",
+          "responsibility": "Breakpoint-driven short-window layout (replaces tick callbacks)",
+          "moves": "tick bodies 137-152 and 270-284, audio_collapsed (371-374)"
+        },
+        {
+          "path": "src/ui/pages/live/outputs.rs",
+          "responsibility": "Output toggle, confirmation and disconnect flows",
+          "moves": "OutputAction/OutputConfirmation* (27-45), handle_output_toggle/finish (315-357), requires_* / disconnect_* / handle_disconnect (358-465), output_label (500-523), confirmation helpers (524-611)"
+        },
+        {
+          "path": "src/services/scene_deck_service.rs",
+          "responsibility": "Pure scene ordering/slot policy over SceneInventory + SceneRegistry",
+          "moves": "live_scene_order (612-627), visible_scene_slots (629-645), scene_for_slot (648-654), shortcut_for_slot (804-810) and the tests at 1307-1392"
+        },
+        {
+          "path": "src/ui/pages/live/scene_grid.rs",
+          "responsibility": "Scene card reconciliation",
+          "moves": "ScenePresentation/SceneCardPresentation (56-77), rebuild_scene_cards (659-802), set_hotkey_hint (812-824)"
+        },
+        {
+          "path": "src/ui/pages/live/audio_strip.rs",
+          "responsibility": "Audio card reconciliation",
+          "moves": "AudioPresentation (46-55, 78-88), rebuild_audio_cards (830-967), clear_audio_cards (969-975)"
+        }
+      ],
+      "order": "1) Move the tests out. 2) Extract services/scene_deck_service.rs (pure) and re-export it from live for callers (window.rs, hotkeys). 3) Move outputs.rs. 4) Move scene_grid.rs and audio_strip.rs. 5) Replace tick callbacks with responsive.rs breakpoints (behaviour change, separate commit). 6) Change the rebuild_scene_cards signature to drop clones (performance-04).",
+      "safety_net": "Native live tests (native_live_filters_keep_search_widget_and_original_shortcut_badges, native_audio_refresh_retains_controls_until_their_owner_changes, native_observed_studio_changes_update_hints_without_replacing_cards, short_windows_collapse_audio_until_expanded) and the pure ordering/confirmation tests.",
+      "verdict": "adjusted",
+      "verifier_note": "The item anchors match the grep (27, 33, 38, 46, 56, 70, 78, 89, 113, 305, 315, 339, 358, 371, 375, 380, 385, 394, 458, 462, 466, 470, 500, 524, 533, 541, 570, 577, 612, 629, 648, 659, 804, 812, 830, 969; tests 977). Correction: src/services/scene_deck_service.rs over storage::registry::SceneRegistry violates architecture_tests::domain_and_services_do_not_reach_into_storage. Use a domain value object (domain/scene_deck.rs) produced by storage, or keep the policy as an AppState method in controller/state. shortcut_for_slot takes domain::hotkey::SceneHotkeyConfig and returns ui::widgets::scene_card::SceneShortcut, a UI type, so it cannot move to services as-is; leave it in live/scene_grid.rs. hotkeys.rs uses scene_for_slot, so update its import."
+    },
+    {
+      "file": "src/ui/pages/stats.rs",
+      "current_lines": 1160,
+      "rationale": "Gauges, charts, cards, activity log, popout window and pure severity policy in one file.",
+      "target_modules": [
+        {
+          "path": "src/ui/pages/stats/mod.rs",
+          "responsibility": "build/build_content/refresh wiring",
+          "moves": "StatsCards, PopoutSlot, build, build_content (66-171)"
+        },
+        {
+          "path": "src/ui/pages/stats/popout.rs",
+          "responsibility": "Detached stats window",
+          "moves": "build_popout_button, open_popout (172-289)"
+        },
+        {
+          "path": "src/ui/pages/stats/gauges.rs",
+          "responsibility": "Gauge row",
+          "moves": "GaugeRow, build_gauges, empty_reading (352-470)"
+        },
+        {
+          "path": "src/ui/pages/stats/charts.rs",
+          "responsibility": "Series charts",
+          "moves": "ChartGrid, build_charts, TitledChart, series_chart (471-585)"
+        },
+        {
+          "path": "src/ui/pages/stats/cards.rs",
+          "responsibility": "Counter cards",
+          "moves": "build_cards, card, update_cards (589-723), responsive_section/add_to_section/build_header (290-351)"
+        },
+        {
+          "path": "src/ui/pages/stats/activity.rs",
+          "responsibility": "Activity markers list (compare by activity.sequence)",
+          "moves": "build_activity (724-844)"
+        },
+        {
+          "path": "src/services/stats_severity.rs",
+          "responsibility": "Pure thresholds and formatting",
+          "moves": "constants (34-62), read_sample/fps_target/frame_budget_ms/*_severity/format_frames (848-912) with their unit tests"
+        }
+      ],
+      "order": "Tests out, then stats_severity (pure), then leaf UI modules, then mod.rs. Each step is a pure move.",
+      "safety_net": "Native popout tests (native_popout_window_does_not_own_its_strong_window_slot, native_popout_application_removal_releases_refresh_subscription, native_stats_fixture_exposes_congestion_and_configured_fps_health) and the pure severity tests.",
+      "verdict": "adjusted",
+      "verifier_note": "The anchors match the grep (constants 34-62, StatsCards 66, build 84, build_content 117, popout 172/202, sections 290-351, gauges 352-470, charts 471-585, cards 589-723, activity 724, helpers 848-912, tests 913). Correction: read_sample(&AppState) and fps_target(&AppState) (848, 853) take AppState. Moving them to services would make services depend on controller::state, which is a layering inversion even though no test forbids it. Move only the pure functions (frame_budget_ms, fps_severity, frame_time_severity, dropped_severity, format_frames and the threshold constants 34-54) to services/stats_severity.rs. format_frames uses fl!, and infra::i18n is allowed in services. GAUGE_COLUMNS, CHART_COLUMNS and CARD_COLUMNS (60-62) are UI layout and stay in the UI. Severity has to be a domain or services type and not a UI widget enum; check where Severity is defined before moving."
+    },
+    {
+      "file": "src/ui/widgets/audio_card.rs",
+      "current_lines": 1123,
+      "rationale": "Card assembly, scope fencing, volume debounce and dispatch, and styling in one file. The volume path is hot during fader drags (performance-10/19).",
+      "target_modules": [
+        {
+          "path": "src/ui/widgets/audio_card/mod.rs",
+          "responsibility": "AudioCardHandle, build, build_compact, set_compact_expanded",
+          "moves": "AudioCardHandle + Drop + impl (42-160), build (455-568), build_compact (569-615), set_compact_expanded (616-631)"
+        },
+        {
+          "path": "src/ui/widgets/audio_card/scope.rs",
+          "responsibility": "AudioTargetScope fencing using scope_rev",
+          "moves": "AudioTargetScope (69-99)"
+        },
+        {
+          "path": "src/ui/widgets/audio_card/volume.rs",
+          "responsibility": "Fader, fine controls, debounce and dispatch",
+          "moves": "VolumeDispatch (64-67), VolumeChangeContext (101-108), VolumeControls/build_volume_controls (351-454), build_fine_controls (704-757), connect_volume_action/dispatch_db_adjust/apply_volume_change/dispatch_volume/update_visible_volume (758-883), OBS_FADER_* (25-38)"
+        },
+        {
+          "path": "src/ui/widgets/audio_card/parts.rs",
+          "responsibility": "Mute/name/scope bar/lock/ruler/style helpers",
+          "moves": "build_mute_button (168-202), build_name_label (203-231), ScopeBar/build_scope_bar (232-287), build_lock_button (288-332), control_row (333-350), set_scope_icon/set_input_icon/apply_mute_style/apply_lock_style/build_meter_ruler (632-703)"
+        },
+        {
+          "path": "src/ui/widgets/audio_card/tests.rs",
+          "responsibility": "Tests",
+          "moves": "885-1123"
+        }
+      ],
+      "order": "Tests out, then parts.rs, then scope.rs, then volume.rs, then mod.rs. Pure moves, then the scope_rev change (performance-10) in a separate commit.",
+      "safety_net": "native_multiple_outstanding_same_input_echoes_preserve_dispatched_gain, native_same_input_delayed_echo_preserves_pending_gain_and_timer, audio_callbacks_reject_another_session_collection_and_endpoint, fader mark tests.",
+      "verdict": "confirmed",
+      "verifier_note": "The anchors match the grep (consts 23-38, AudioCardHandle 42, Drop 55, VolumeDispatch 64, AudioTargetScope 70-99, VolumeChangeContext 101, impl 110, parts 168-350, VolumeControls 351/369, build 455, build_compact 569, set_compact_expanded 616, helpers 632-703, fine controls 704, volume fns 758-883, tests 885). These are pure moves. The scope_rev change depends on the performance-10 caveat."
+    },
+    {
+      "file": "src/controller/state/mixer.rs",
+      "current_lines": 1396,
+      "rationale": "About 450 lines of production code (mixer refresh state machine, render-source selection, debug inspection snapshot) followed by about 943 lines of tests. Inspection types are debug-only but computed on every populate (performance-09).",
+      "target_modules": [
+        {
+          "path": "src/controller/state/mixer/mod.rs",
+          "responsibility": "MixerAudioRefreshState machine and AppState mixer mutators",
+          "moves": "MixerAudioError/Snapshot/RefreshTransition/Request/RefreshState (7-200), set_mixer_audio_* (202-221)"
+        },
+        {
+          "path": "src/controller/state/mixer/render_source.rs",
+          "responsibility": "Visible render source and refresh-target selection",
+          "moves": "MixerVisibleAudioStatus/RenderSource/SceneRefreshTarget(+Reason) (35-66), visible_mixer_audio_status/visible_mixer_render_source/mixer_scene_refresh_target(_details) (222-272, 319-410)"
+        },
+        {
+          "path": "src/controller/state/mixer/inspection.rs",
+          "responsibility": "Debug inspection snapshot types",
+          "moves": "MixerInspection* types (68-107), mixer_inspection_snapshot (273-317), helper fns (411-452)"
+        },
+        {
+          "path": "src/controller/state/mixer/tests.rs",
+          "responsibility": "Tests",
+          "moves": "453-1396"
+        }
+      ],
+      "order": "Tests out, then inspection.rs, then render_source.rs. Pure moves with re-exports from state.rs.",
+      "safety_net": "Existing visible_mixer_render_source_* and refresh-state tests (716-1396).",
+      "verdict": "confirmed",
+      "verifier_note": "The anchors match the grep (impls at 26, 114, 129, 201; set_mixer_audio_* 202-221; visible_* 222/242; inspection snapshot 273; refresh target 319/326; tests 453). Converting it to controller/state/mixer/mod.rs is a pure move and creates no cycle. If performance-09 gates inspection, mixer_inspection_snapshot stays callable, but only on the inspect path."
+    },
+    {
+      "file": "src/obs/client.rs",
+      "current_lines": 1395,
+      "rationale": "God file in the anti-corruption layer: connection, reads, telemetry, outputs, control snapshot, thumbnails, source detail and control execution, with a test module wedged between impl blocks (performance-22). Telemetry and snapshot need caching and parallelisation (performance-07/08).",
+      "target_modules": [
+        {
+          "path": "src/obs/client.rs",
+          "responsibility": "ObsClient struct, connect/retire, request gating, collect_bounded_ordered",
+          "moves": "keep 1-183 (struct, connect, disconnect_client, wait_retired, request/mutation, next_observation, endpoint, with_connection_id)"
+        },
+        {
+          "path": "src/obs/reads.rs",
+          "responsibility": "Simple list reads",
+          "moves": "get_version, get_scene_inventory, get_profiles, set_current_profile, get_scene_collections, set_current_scene_collection (185-243)"
+        },
+        {
+          "path": "src/obs/telemetry.rs",
+          "responsibility": "GetStats/GetStreamStatus + VideoSettingsCache",
+          "moves": "get_obs_stats, get_stream_health (253-274) + new video_settings cache"
+        },
+        {
+          "path": "src/obs/outputs.rs",
+          "responsibility": "Stream/record status and guarded mutations",
+          "moves": "get_stream_status, set_streaming_if, get_record_status, set_recording_if (244-314)"
+        },
+        {
+          "path": "src/obs/control_snapshot.rs",
+          "responsibility": "Parallel control snapshot + pure assembler",
+          "moves": "get_control_snapshot (519-575)"
+        },
+        {
+          "path": "src/obs/thumbnails.rs",
+          "responsibility": "Screenshots and thumbnail sizing",
+          "moves": "get_scene_thumbnail, get_thumbnail_collection, get_source_screenshot, source_screenshot (577-631), thumbnail_dimensions (1077-1088)"
+        },
+        {
+          "path": "src/obs/source_detail.rs",
+          "responsibility": "Source detail reads",
+          "moves": "get_source_detail (632-764), text_is_file_backed (1089-1097)"
+        },
+        {
+          "path": "src/obs/control_exec.rs",
+          "responsibility": "Control action execution",
+          "moves": "execute_control, execute_control_if, execute_control_with_identity_if (765-1076)"
+        },
+        {
+          "path": "src/obs/client/tests.rs and src/obs/control_tests.rs",
+          "responsibility": "Tests",
+          "moves": "317-515 and 1099-1392"
+        }
+      ],
+      "order": "1) Move the two test modules out (#[path]). 2) Move impl blocks into sibling modules one at a time (each is `impl ObsClient` in a new file with pub(crate)/pub(super) visibility unchanged). 3) Add VideoSettingsCache and tokio::join! in telemetry/control_snapshot after obs_fixture supports unordered requests (performance-21).",
+      "safety_net": "connect_negotiates_obs_websocket_and_requests_meter_events, bounded_collection_* tests, all control_tests, obs/regression_tests.rs. architecture_tests.rs must still confirm that only src/obs/** imports obws.",
+      "verdict": "adjusted",
+      "verifier_note": "The anchors match: impl at 62, tests at 317-515, impl at 517, thumbnails from 577 (get_thumbnail_collection 598, source_screenshot 609), execute_control_if 772 / execute_control_with_identity_if 781, thumbnail_dimensions 1077, text_is_file_backed 1089, control_tests 1100, regression_tests 1393-1395. Corrections: (1) Put the sibling files under src/obs/client/ (children of client.rs), not src/obs/*.rs. ObsClient's private fields (inner, images, endpoint, ...) are visible to child modules but not to siblings unless widened. (2) control_tests is imported as crate::obs::client::control_tests::mock_client by controller/workspace/audio_presets/tests.rs:2 and as super::control_tests by obs/regression_tests.rs:4. Moving it to src/obs/control_tests.rs breaks both paths unless client.rs re-exports it (`#[cfg(test)] pub(crate) use ...`) or the callers are updated. (3) get_stream_status (around 244) is used for output readback and get_stream_health (around 268) for telemetry. Both send GetStreamStatus; consider merging them into one request in telemetry and outputs (speculative). architecture_tests only_the_obs_adapter_imports_obws stays green, because everything remains under src/obs/."
+    }
+  ]
+}

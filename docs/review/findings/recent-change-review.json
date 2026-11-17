@@ -1,0 +1,985 @@
+{
+  "reviewer": "recent-change-review",
+  "skills": [
+    "code-review",
+    "code-review-and-quality",
+    "clean-code-guard"
+  ],
+  "verifier_skills": [
+    "code-review",
+    "doubt-driven-development"
+  ],
+  "summary": "Verified review of commit 9488c86 ('feat: add scoped show workspaces and operator workflows'; 138 files, +28,043/-826, 117 under src/). Verifier opened every cited file/line range. Of 28 findings: 9 confirmed, 19 adjusted, 0 refuted. Of 16 proposed splits: 3 confirmed, 13 adjusted (one sub-move, RuleConfig to domain/graph_rules.rs, refuted inside the storage/registry.rs split). Main corrections: (1) the store file is show-workspaces.json, not shows.json; (2) any new pure persistence core placed in src/controller/ must not reference crate::ui (architecture_tests background_layers_hold_no_gtk_or_ui), so FailureEvidence/run_serialized stay in a ui-side coordinator; (3) any move into src/domain/ or src/services/ must not name storage types (domain_and_services_do_not_reach_into_storage) - this refutes moving RuleConfig into domain/graph_rules.rs and moving impl SceneRegistry into domain before the type itself becomes domain; (4) domain/bookmark.rs, domain/obs.rs and domain/registry.rs::SceneRegistrySnapshot already exist and should be extended; (5) controller/state/mixer.rs (1396 lines) already exists, so the proposed state/audio.rs must be planned together with it; (6) the close-retry gap (finding 02) is broader: session-report export, config-snapshot and worker-panic failures are also never re-admitted; (7) hotkey gating on curation readiness and retry-on-unchanged-edit are documented intentional behaviour (docs/feature-program.md:166-167, docs/configuration.md:215-216), so changes there need doc updates; (8) complete_workspace mutates AppState beyond WorkspaceState, so it moves as impl AppState. Recommended order unchanged: fix 01 (cards/dispatch only), fix 02, extract persistence core + ui coordinator, domain aggregates behind storage mappers, AppState sub-aggregates, operator policy to services (domain-typed views), split window.rs apply_event, regroup ui/. Not verified: runtime behaviour (no tests run), ui/global_shortcuts/portal.rs, ui/preflight/*, exact line numbers inside live.rs/report_history.rs split targets beyond function starts.",
+  "findings": [
+    {
+      "id": "recent-change-review-01",
+      "severity": "high",
+      "category": "correctness",
+      "file": "src/ui/navigation.rs",
+      "lines": "src/ui/navigation.rs:184-187 (dispatch gate), 111-122 (registry_is_current); src/ui/pages/live.rs:673-677; src/ui/hotkeys.rs:158-163; src/ui/widgets/scene_card.rs:107-109",
+      "title": "Program-scene switching is disabled whenever optional curation registry is not Ready",
+      "evidence": "NavigationContext::dispatch returns silently for AppCommand::SwitchPrimaryScene when `!self.registry_is_current() || registry_import_busy()`. registry_is_current requires show_registry.status == RegistryStatus::Ready (navigation.rs:112-122). live.rs:673-677 renders no scene cards when registry_availability_message is Some (Loading/Unavailable/Failed); hotkeys.rs:160 refuses slot activation unless Ready. RegistryStatus::Failed is set by finish_registry_load on any shows.json read error (show_registry.rs:134), e.g. corrupt file, version!=1, or store larger than REGISTRY_LIMIT. registry_import_busy is also checked twice (inside registry_is_current and again at line 185).",
+      "risk": "A corrupt or oversized local metadata file removes the operator's primary live control (switching program/preview from SceneDeck) for the whole session. The same happens briefly after every connect/collection change while the workspace loads. The OBS command does not depend on curation data.",
+      "recommendation": "Separate the two concerns. (1) Scene switching is an OBS control capability: gate it only on workspace.scene_action(scene).is_some() and session currency. (2) Curation gating (order, roles, slots) degrades gracefully: when the registry is not Ready, render cards in OBS inventory order with no roles and keep hotkeys working off inventory order (or turn hotkeys off with a visible notice, but never the cards). Implement as `ScenePresentationPolicy` in src/services/scene_presentation.rs taking (SceneInventory, Option<&ShowWorkspace>). Drop the duplicate registry_import_busy() check. Add a unit test: RegistryStatus::Failed + connected session -> scene_action dispatch is admitted.",
+      "effort": "M",
+      "smell": "Inappropriate coupling / Feature Envy",
+      "original_lines": "184-187 (also src/ui/pages/live.rs:673-677, src/ui/hotkeys.rs:158-163, src/ui/widgets/scene_card.rs:107)",
+      "verdict": "adjusted",
+      "verifier_note": "Code confirmed: dispatch() returns early for SwitchPrimaryScene unless registry_is_current() (requires RegistryStatus::Ready, navigation.rs:111-122); live.rs:673-677 builds no scene slots when registry_availability_message() is Some; scene_card.rs:107-109 sets cards insensitive unless registry_is_current(); registry_import_busy() is checked twice (navigation.rs:114 and 185). Adjustments: (a) the store file is show-workspaces.json, not shows.json; (b) 'for the whole session' is overstated - docs/configuration.md:205-207 documents an Inventory Retry for corrupt data, though a persistently corrupt/oversized file does keep switching disabled; (c) hotkey gating is documented as intentional (docs/feature-program.md:166-167 'scene hotkeys cannot use stale curation while a selection loads') because slot->scene mapping depends on curation order - keep hotkeys gated, fix only cards + dispatch. Recommendation: gate SwitchPrimaryScene in NavigationContext::dispatch only on is_current() + workspace.scene_action(scene); render cards in OBS inventory order (no roles/accents) when status != Ready, with the availability banner shown above them. A services/scene_presentation.rs policy must take domain inputs only (SceneInventory + Option<&domain::registry::SceneRegistrySnapshot>, which already exists in src/domain/registry.rs:114), not a storage type (architecture_tests domain_and_services_do_not_reach_into_storage). Test: AppState with RegistryStatus::Failed + Connected -> a pure helper (e.g. AppState::scene_switch_admitted) returns true."
+    },
+    {
+      "id": "recent-change-review-02",
+      "severity": "high",
+      "category": "error-handling",
+      "file": "src/app.rs",
+      "lines": "404-425 (retry branch of show_persistence_close_failure); src/ui/bookmarks.rs:21-79",
+      "title": "Close-failure Retry re-admits only registry and history writes; bookmark, session-report export, config-snapshot and worker-panic failures keep the close barrier failing",
+      "evidence": "The Retry response calls ui::persist::retry_registry_writes() and ui::report_history::retry_active() only. Bookmark save failures are pushed to bookmarks.rs FAILURES and background_io::record_failure() (bookmarks.rs:64-73) and are resolved only by a later successful bookmark save (bookmarks.rs:47-56), which needs the Bookmarks window's retry button. background_io::flush_pending returns Err(WorkerFailed) while UNRESOLVED_FAILURES is non-empty (background_io.rs:325-332). So after a bookmark write failure, Close -> Retry -> drain fails again, and the user can only Abandon. Verdict: plausible, reasoned from code, not reproduced. Every new persisted store must also be hand-added to this hard-coded list in app.rs.",
+      "risk": "The user is stuck in a retry loop at exit, or abandons bookmarks unaware; the app looks unable to close cleanly.",
+      "recommendation": "Introduce `trait DurableStore { fn retry(&self); fn status(&self) -> SaveStatus; }` in src/controller/persistence/mod.rs (or src/application/persistence/). Register registry, report-history, settings and bookmarks stores in a `PersistenceCoordinator` owned by the shell. CloseGuard calls coordinator.retry_all(), not named functions. Add a native or pure test: bookmark write fails, close, retry succeeds after fixing the path, window closes without abandon.",
+      "effort": "M",
+      "smell": "Shotgun Surgery",
+      "depends_on": [
+        "recent-change-review-03"
+      ],
+      "original_title": "Close-failure Retry re-admits registry and history writes but not failed bookmark writes (Shotgun Surgery on new stores)",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed and broader than stated. app.rs:413-416 Retry calls only ui::persist::retry_registry_writes() and ui::report_history::retry_active(). flush_pending (background_io.rs:318-345) returns WorkerFailed while UNRESOLVED_FAILURES is non-empty. Other producers of background_io::record_failure() that Retry never re-admits: ui/bookmarks.rs:72, ui/session_reports.rs:459 (EXPORT_FAILURES, resolved only by re-exporting the same report to the same path), background_io.rs:226 (config snapshot batch failed), background_io.rs:370 (worker panicked). Still unreproduced (plausible). Layering fix to the recommendation: a DurableStore trait may live in controller only if GTK-free and it must not mention ui::background_io::FailureEvidence (architecture_tests background_layers_hold_no_gtk_or_ui forbids crate::ui in controller/storage/obs). Put the PersistenceCoordinator that drives background_io and owns retry_all() in src/ui/persistence/coordinator.rs; CloseGuard calls coordinator.retry_all(). Also decide explicitly whether export failures (user-initiated, not durable state) should block close at all - likely they should be acknowledged, not retried."
+    },
+    {
+      "id": "recent-change-review-03",
+      "severity": "high",
+      "category": "code-smell",
+      "file": "src/ui/persist.rs",
+      "lines": "src/ui/persist.rs:23-205, 207-271; src/ui/report_history.rs:21-308; src/ui/bookmarks.rs:21-79; src/ui/session_reports.rs:22-23 (4th: EXPORT_FAILURES)",
+      "title": "Three hand-rolled thread_local durable-snapshot state machines live in ui/ (duplicated knowledge, hidden singletons)",
+      "evidence": "persist.rs: thread_local REGISTRY_WRITES (revision, BTreeMap<u64,RegistryOperation>, failures, error, retrying), REGISTRY_IMPORTING, AFTER_REGISTRY_IMPORT. report_history.rs: thread_local ACTIVE (Weak<RefCell<AppState>> service locator), FAILURES, SETTINGS_FAILURES, plus save/reload/save_settings. bookmarks.rs: thread_local FAILURES plus save() with pending/saved_revision/failed_revision. All three implement the same concept: revisioned snapshot, serialized lane write, success confirms through revision, failure records FailureEvidence, explicit retry resolves it. app.rs reaches them through free functions (ui::report_history::finish_for_shutdown/abandon_exit/checkpoint_before_close/retry_active).",
+      "risk": "Behaviour can only be tested inside GTK-isolated child processes (isolated_test_child or native_test). Fixes must be made three times. Globals make ownership implicit (ACTIVE silently retargets on register), and there is no compile-time link between AppState and its writers.",
+      "recommendation": "Extract one GTK-free generic `DurableSnapshot<T: Clone + PartialEq>` with enum `SaveState { Idle, Saving { revision, force_after: bool }, Failed { revision, error, evidence } }` in src/controller/persistence/snapshot.rs, with pure methods begin_save() -> Option<(T, u64)>, finish(revision, Result) and retry(). Keep a thin GTK adapter in src/ui/persistence_bridge.rs that drives background_io::run_serialized. Move RegistryWrites (write-ahead replay queue) to src/controller/persistence/registry_queue.rs as an owned struct held by a `PersistenceCoordinator` that NavigationContext carries as Rc instead of thread_local. Port the existing isolated persist.rs tests to plain unit tests on the pure core.",
+      "effort": "L",
+      "smell": "Duplicate Code (knowledge) / Global Data / Divergent Change",
+      "original_lines": "23-205, 207-271 (also src/ui/report_history.rs:17-308, src/ui/bookmarks.rs:21-79)",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed: thread_locals at persist.rs:42-43 and 207-209, report_history.rs:21-24, bookmarks.rs:21-22; there is also a fourth failure registry at session_reports.rs:22-23. Adjustment: the pure core cannot reference crate::ui::background_io::FailureEvidence or call run_serialized if it lives in src/controller/ (architecture_tests background_layers_hold_no_gtk_or_ui). Make DurableSnapshot<T, E> generic over the evidence token (or keep evidence in the ui adapter), and keep RegistryWrites' replay closures (Arc<dyn Fn() -> io::Result<()>>) - these are fine in controller since they are Send+Sync and GTK-free. The coordinator that owns the thread_local replacement and drives background_io must stay in ui (src/ui/persistence/). Holding it in NavigationContext conflicts with finding 13's goal of a narrow NavigationContext - prefer passing Rc<PersistenceCoordinator> to page builders that need it, or accept NavigationContext as an app-context and update CLAUDE.md."
+    },
+    {
+      "id": "recent-change-review-04",
+      "severity": "high",
+      "category": "god-struct",
+      "file": "src/controller/state.rs",
+      "lines": "19-30, 438-499 (AppState), plus impl blocks in state/report_history.rs:52, state/session_reports.rs:63, state/bookmarks.rs:73, state/show_registry.rs:39, state/audio_presets.rs:4",
+      "title": "AppState grew 9 fields; feature behaviour was relocated into 6 new `impl AppState` files, not decomposed",
+      "evidence": "New fields: preset_run, preset_serial, report_history, reports, bookmarks, health, connected_connection_id, show_registry, obs_stats_observed_at. AppState now has about 50 fields. Feature methods (prepare_report_exit, collect_report, capture_bookmark, select_registry, load_report_history...) are all `impl AppState` in sibling files, so each one reads and writes across sub-states (e.g. collect_report reads workspace.activity, workspace.output_results, scene_collections, scene_inventory, obs_stats*, health, bookmarks and writes reports). 111 pub fns sit across state.rs and state/*.rs. The splitting reduces file length but not the concepts a reader must hold.",
+      "risk": "Every feature can mutate every field. Invariants such as 'reports.revision bump implies stage_report_history' live only in the call order inside many methods. RefCell borrow_mut contention grows as one borrow covers everything.",
+      "recommendation": "Turn sub-states into aggregates that own their methods and take explicit inputs: `SessionReports::collect(&mut self, ctx: &ReportContext)`, where ReportContext is a read-only view struct built by AppState holding activity, outputs, scene, stats sample, alerts and bookmark session. Same pattern for `BookmarkLog::capture(&mut self, BookmarkContext)` and `ShowWorkspaceSelection::select(...)`. AppState keeps only orchestration methods (apply_connected etc.) that build contexts and call aggregates. Target layout: src/controller/state/{mod.rs (AppState shell), session.rs (connection/ObsStatus/available_requests/endpoint/id), outputs.rs (OutputTrack x2), topology.rs, audio.rs, stats.rs, reports/, bookmarks/, show_registry/}.",
+      "effort": "XL",
+      "smell": "Large Class / Feature Envy",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed: AppState (state.rs:437-499) has ~45 pub fields; impl AppState blocks exist in state/report_history.rs, session_reports.rs, bookmarks.rs, show_registry.rs, audio_presets.rs, mixer.rs. Field count '~50' is approximate (45 counted lines with pub in the struct). Adjustment to target layout: src/controller/state/mixer.rs (1396 lines) already exists and owns mixer/audio state; the proposed state/audio.rs must be planned together with it (split mixer.rs into audio/levels.rs, audio/mixer_selection.rs etc.) rather than add a parallel audio module. state.rs is a file-module with a state/ dir (Rust 2018 style); keep state.rs as the shell rather than creating state/mod.rs, to avoid a needless rename."
+    },
+    {
+      "id": "recent-change-review-05",
+      "severity": "high",
+      "category": "ddd",
+      "file": "src/controller/state/report_history.rs",
+      "lines": "3-26 (also state/bookmarks.rs:8-22, state/show_registry.rs:5-25, state.rs:454)",
+      "title": "Storage serde DTOs are used as live controller aggregates; storage path types leak into controller (no anti-corruption layer)",
+      "evidence": "ReportHistoryState.archive/stored are storage::report_history::HistoryArchive, and domain rules (upsert, retain) are implemented on the storage type (storage/report_history.rs:86-109). BookmarksState.archive is storage::bookmarks::BookmarkArchive, and controller code mutates archive.entries/next_id/next_session directly (bookmarks.rs:41-69, 120-164). ShowRegistryState.target is storage::show_workspaces::RegistryTarget, which embeds PathBuf and is built via xdg paths inside AppState::desired_registry_target (show_registry.rs:63-70). NavigationContext also stores RegistryTarget (navigation.rs:31). CLAUDE.md says storage structs must convert to domain snapshots before services use them.",
+      "risk": "File format changes ripple into controller and ui. Domain invariants such as the bookmark limit, id monotonicity and retention live in storage validation and controller code at once. Tests need filesystem paths to express domain identity.",
+      "recommendation": "Create domain aggregates: src/domain/session_history.rs (`SessionHistory { entries, upsert, retain }`), src/domain/bookmark.rs (`BookmarkLog { next_id, next_session, entries; capture(), rename(), remove() }`), src/domain/show_workspace.rs (`WorkspaceKey`, `ShowWorkspaceId`). Storage keeps `HistoryArchiveDto`/`BookmarkArchiveDto` with From/TryFrom mappers in the same storage files. Replace RegistryTarget in controller and ui with a pure `CurationScope { Legacy, Workspace(WorkspaceKey) }`. storage::show_workspaces resolves CurationScope -> path inside the worker closure. Extend architecture_tests.rs to forbid `crate::storage::` imports in src/controller/state/** except mapper call sites.",
+      "effort": "L",
+      "smell": "Primitive Obsession / Inappropriate Intimacy",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed: ReportHistoryState.archive/stored are storage::report_history::HistoryArchive (report_history.rs:4,9-10); upsert/retain on the storage type (storage/report_history.rs:86-109); BookmarksState.archive is storage::bookmarks::BookmarkArchive and next_session is mutated in controller (bookmarks.rs:8,13,36-46); ShowRegistryState.target is RegistryTarget (show_registry.rs:5-8,19-25); NavigationContext stores RegistryTarget (navigation.rs:31). Adjustments: (a) CLAUDE.md wording is 'convert to domain snapshots before services use them' - the controller (not services) using storage types is a softer deviation, but still the missing ACL; (b) src/domain/bookmark.rs already exists (Bookmark, BOOKMARK_LIMIT, valid_name) - extend it with BookmarkLog rather than create it; (c) controller/state.rs itself imports storage::config::AppConfig and storage::registry::SceneRegistry, so a new architecture test forbidding crate::storage in controller/state/** can only land as the final step after AppConfig and SceneRegistry also get domain counterparts; scope the first version of the rule to state/report_history.rs, state/bookmarks.rs and state/show_registry.rs."
+    },
+    {
+      "id": "recent-change-review-06",
+      "severity": "medium",
+      "category": "god-struct",
+      "file": "src/storage/registry.rs",
+      "lines": "23-72 (struct), 167-476 (impl blocks), 530-585 (RuleConfig), storage/registry/{decks.rs,identity.rs} already exist",
+      "title": "SceneRegistry became a god aggregate spanning five bounded contexts in one serde struct and one file",
+      "evidence": "The commit adds scene_uuids, retained_scenes, scene_filter, decks, action_bindings (domain::action_shortcut), quick_actions (domain::operator_action), audio_alerts (domain::health::AudioRule) and audio_presets (domain::audio_preset) to SceneRegistry. It is persisted whole per workspace in shows.json. The storage struct imports four domain contexts. Every mutation (a deck query, a shortcut, a preset) clones and rewrites the whole thing (persist.rs:517-536).",
+      "risk": "Divergent Change: scene curation, operator shortcuts, health rules and audio presets all edit one type and one file. Schema evolution of any one risks the others. The 'registry' name no longer matches the ubiquitous language (show workspace).",
+      "recommendation": "Introduce domain aggregate `ShowWorkspace { curation: SceneCuration, views: DeckViews, operator: OperatorSetup { bindings, quick_actions }, audio: AudioSetup { alerts, presets } }` in src/domain/show_workspace/{mod,curation,views,operator,audio}.rs. Keep `SceneRegistryDto` in storage/registry/ as the serde form with field-for-field From impls, so the on-disk format is unchanged. Split storage/registry.rs into storage/registry/{dto.rs, io.rs (read/write/yaml), rules.rs (RuleConfig/policy), accent.rs (scene_accent_hex/parse_scene_accent)}.",
+      "effort": "L",
+      "smell": "Large Class / Divergent Change",
+      "depends_on": [
+        "recent-change-review-05"
+      ],
+      "original_lines": "23-72",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed: SceneRegistry (registry.rs:23-72) carries decks, action_bindings, quick_actions, audio_alerts, audio_presets alongside curation; whole-snapshot write per edit via persist_registry (persist.rs:511-536). File name: show-workspaces.json, not shows.json. Adjustments: storage/registry/ already has decks.rs and identity.rs submodules - the dto/io/rules/accent split must sit next to them. src/domain/registry.rs already has SceneRegistrySnapshot (line 114) and SceneMetadata - grow the domain ShowWorkspace from that existing snapshot instead of a fresh type. Moving `impl SceneRegistry` blocks into src/domain/show_workspace/curation.rs is only legal after the type itself becomes a domain type; while SceneRegistry is a storage type, domain cannot name it (architecture_tests domain_and_services_do_not_reach_into_storage)."
+    },
+    {
+      "id": "recent-change-review-07",
+      "severity": "medium",
+      "category": "performance",
+      "file": "src/ui/widgets/deck_controls.rs",
+      "lines": "52-62, 283-290 (with src/storage/show_workspaces.rs:50-66, src/ui/persist.rs:511-536)",
+      "title": "Every scene-search change rewrites the entire show-workspaces.json store (all workspaces)",
+      "evidence": "search.connect_search_changed -> apply_inputs -> apply -> persist_registry('scene view') sets registry.scene_filter and submits target.write(&registry). For RegistryTarget::Workspace, write() does read_store (read plus parse plus validate up to 8 MiB), replaces one entry, serializes all entries pretty-printed, and does an atomic write (show_workspaces.rs:50-66, 152-157). Each submission also clones the full SceneRegistry into an Arc closure retained in REGISTRY_WRITES until confirmed (persist.rs:133-146).",
+      "risk": "Disk churn and fsync per search pause. Cost grows with the number of workspaces. A failure on transient view state forces the close barrier dialog.",
+      "recommendation": "Treat the live search query as session view state (keep it in AppState, not persisted), or debounce persistence (for example 1 s after the last change) through one coalescible snapshot like background_io::run_config_snapshot. Persist only named decks. Longer term, write workspaces as separate files (shows/<hash>.json) so one write touches one workspace.",
+      "effort": "S",
+      "smell": "Inappropriate persistence of view state",
+      "original_title": "Every scene-search change rewrites the entire shows.json store (all workspaces)",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed: search.connect_search_changed (deck_controls.rs:283-286) -> apply (52-62) -> persist_registry('scene view') -> RegistryTarget::Workspace write = read_store + replace + to_vec_pretty + atomic write (show_workspaces.rs:50-66, 152-157). GtkSearchEntry's search-changed already has a short built-in delay, so 'per search pause' is accurate. Adjustment: persisting scene_filter is intentional (registry.rs:36-38 'Current view shared by Inventory and Live in this workspace'), so do not drop persistence without a product decision; prefer debounce/coalesce (one pending snapshot per target, write latest after ~1 s idle) and mark view-state write failures as non-blocking for close. Also note persist_registry's unchanged branch calls retry_registry_writes() (persist.rs:521-524), so every no-op filter event also triggers retry of failed writes."
+    },
+    {
+      "id": "recent-change-review-08",
+      "severity": "low",
+      "category": "correctness",
+      "file": "src/storage/show_workspaces.rs",
+      "lines": "71-93, 121-157 (limit in src/storage/small_file.rs:10)",
+      "title": "All workspaces share one file and one 8 MiB REGISTRY_LIMIT with no eviction or garbage collection",
+      "evidence": "load_or_create appends a StoredWorkspace for every new (connection, endpoint, collection) key. Nothing removes entries (no deletion path in storage/config/connections.rs or ui/pages/settings/connections.rs). read_store/write_store enforce REGISTRY_LIMIT on the whole store. docs/configuration.md:199 says changing an endpoint selects separate curation, so DHCP or host edits mint new entries. Once the combined size passes the limit, every read fails -> RegistryStatus::Failed for all workspaces (and, through finding 01, scene switching is lost). Verdict: plausible; size growth not measured.",
+      "risk": "Silent long-term degradation. One user's history of endpoints and collections bricks curation for all shows.",
+      "recommendation": "Store one file per workspace (src/storage/show_workspaces/ with an index), or add LRU or explicit 'forget workspace' management with a cap on entries. At minimum, surface the store size and the oldest workspaces in Settings and let the user prune. Add a test that a store near the limit still loads.",
+      "effort": "M",
+      "depends_on": [
+        "recent-change-review-06"
+      ],
+      "original_severity": "medium",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed structurally: load_or_create appends entries (show_workspaces.rs:71-93), no removal path exists in show_workspaces.rs (grep: no retain/remove), REGISTRY_LIMIT = 8 MiB on the whole store (small_file.rs:10, show_workspaces.rs:121-157), docs/configuration.md:199-200 confirms endpoint change selects separate curation. Severity lowered to low: 8 MiB of JSON metadata needs thousands of workspaces in practice; unmeasured. Keep the 'forget workspace' / size surfacing recommendation; one-file-per-workspace is optional."
+    },
+    {
+      "id": "recent-change-review-09",
+      "severity": "medium",
+      "category": "ddd",
+      "file": "src/controller/state/session_reports.rs",
+      "lines": "336-388 (also src/controller/state.rs:755, src/ui/report_history.rs:57,78,105)",
+      "title": "Localized UI text and ad-hoc strings are persisted as report domain data (stringly-typed events)",
+      "evidence": "apply_connected ends the previous report with `finish_report(&ObsStatus::Connecting.label())`, a translated label (state.rs:755). ui/report_history.rs passes fl!(\"history-exit-requested\"/\"history-exit-resumed\"/\"history-app-closed\") as reasons. collect_report maps AlertKind to literal strings (\"connection_lost\", \"audio_silence\", ...) and AlertPhase to \"active\"/\"recovering\"/\"unobserved\" into ReportEvent::Health { kind: String, phase: Option<String> }. report_export and the ui session_reports page parse or print them again.",
+      "risk": "Persisted history changes language with locale. Exports mix languages. Renaming an enum variant cannot be caught by the compiler. Health keys include the input display name (session_reports.rs:347-350), so an input rename emits spurious cleared/active pairs (plausible).",
+      "recommendation": "Add `enum ReportEndReason { Reconnected, AppClosed, ExitRequested, Disconnected }` and `enum ReportActivity::ExitResumed` to src/domain/session_report.rs. Make ReportEvent::Health carry `kind: AlertKind` and `phase: Option<AlertPhase>` with #[serde(rename_all = \"snake_case\")], so the existing JSON stays compatible. Localize only in ui/session_reports.rs::event_text. Key health by input UUID when known.",
+      "effort": "M",
+      "smell": "Primitive Obsession",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed: state.rs:755 finish_report(&ObsStatus::Connecting.label()) and label() is fl!-localized (state.rs:105-114); ui/report_history.rs:105 passes fl!(history-app-closed); session_reports.rs:336-388 maps AlertKind/AlertPhase to literal strings; ReportEvent::Health { kind: String, input, phase: Option<String> } and Ended { reason: String } (domain/session_report.rs:38-58). Adjustment: existing persisted histories already contain localized reason strings, so a typed ReportEndReason needs a backward-compatible deserializer (e.g. an `Other(String)` fallback / #[serde(untagged)] legacy arm) - snake_case rename alone keeps Health compatible but not Ended. Add golden JSON tests for both before the change."
+    },
+    {
+      "id": "recent-change-review-10",
+      "severity": "medium",
+      "category": "boundary",
+      "file": "src/ui/action_catalog.rs",
+      "lines": "66-146, 154-287, 513-616, 619-665",
+      "title": "Operator-action policy (identity resolution, capability checks against OBS request names) lives in ui and switches on OperatorAction in four places",
+      "evidence": "resolve_with_inputs (about 130 lines) decides availability using string literals \"SetCurrentPreviewScene\", \"SetCurrentProgramScene\", \"SaveReplayBuffer\", \"SetInputMute\", \"SetSourceFilterEnabled\", \"TriggerMediaInputAction\" against state.available_requests. These are OBS protocol names outside obs/. observed_label, resolve_with_inputs, binding_entry and execute each destructure the same `OperatorAction::OpenSource{target} | SetMuted{target,..} | ...` arm list. execute uses let-else nested inside let-else with unreachable!() (637-641). binding_entry's `name` closure takes a bool flag (scene: bool). binding_entries calls entries() and then binding_entry() -> resolve() -> inputs(state) clone per entry.",
+      "risk": "Adding an OperatorAction variant needs edits in 4+ match sites (Shotgun Surgery). Protocol renames leak into UI. The pure decision logic is only testable with an AppState fixture through ui.",
+      "recommendation": "Move to src/services/operator_actions/{resolve.rs (resolve(&OperatorView, &OperatorAction) -> Option<ResolvedAction>), observe.rs (observed state enum, not localized String), catalog.rs (entries as data)}. Add `OperatorAction::target(&self) -> Option<&ActionTarget>` and `OperatorAction::required_capability()` in src/domain/operator_action.rs. Add `domain::capability::{ObsCapability enum, Capabilities}`, built in obs/mapper.rs from available_requests. Keep ui/action_catalog.rs as label and i18n rendering only (under about 250 lines). Rewrite execute as one `match action { Page, Bookmarks, Reports, Operator }`.",
+      "effort": "L",
+      "smell": "Switch Statements / Shotgun Surgery / Flag Argument",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed: request-name literals at action_catalog.rs:194-195, 204, 234, 241, 247, 261, 270; repeated OperatorAction target arm lists in observed_label (99-104) and execute (643-650); execute's nested let-else with unreachable!() (637-642). Adjustment: services must stay pure over domain types - an OperatorView passed to services/operator_actions must be built from domain types (scene inventory, input catalog, studio snapshot, Capabilities) by the caller, not wrap controller::state::AppState, otherwise services would depend on controller. Note ui/widgets/transport_bar.rs also checks available_requests, so the Capabilities type should replace both. Domain ControlAction already lives in domain/control.rs:222, so ResolvedAction can reuse it."
+    },
+    {
+      "id": "recent-change-review-11",
+      "severity": "medium",
+      "category": "god-file",
+      "file": "src/ui/window.rs",
+      "lines": "664-1253",
+      "title": "apply_event is a ~590-line switch; the commit added inline domain transitions to it",
+      "evidence": "New arms: OutputReadbackFailed (934-976) mutates last_stream/record_command_error, health, status and activity log directly with duplicated Stream/Record branches. SceneRenamed (1013-1058) runs registry rename, generation bump, conflict reporting and rebuilds. SceneInventoryUpdated (985-1011) branches on registry_import_busy. SceneCollectionsUpdated (1067-1094) does registry scope selection. PresetProgress, PresetRejected and WorkspaceAudioFailed were also added. window.rs production code is 1582 lines; the file total is 2698.",
+      "risk": "Each new event grows one function. Domain decisions hide in GTK code. Re-entrant apply_event recursion (SessionEvent/Observation/CommandFailed) makes borrow scopes fragile.",
+      "recommendation": "Split into src/ui/shell/events/{mod.rs (dispatch match only, one line per arm), session.rs, outputs.rs, scenes.rs (inventory/rename/collections + registry scope), audio.rs, workspace.rs, stats.rs}. Move state transitions into AppState or aggregate methods, e.g. `AppState::apply_output_readback_failure(kind, message, observed_at) -> ReadbackOutcome { changed }`, so ui does only toast and refresh. Return an `EffectSet` (rebuild scenes/audio, refresh pages, toast) from reducers for testability.",
+      "effort": "L",
+      "smell": "Long Method / Switch Statements",
+      "depends_on": [
+        "recent-change-review-12"
+      ],
+      "verdict": "confirmed",
+      "verifier_note": "Confirmed: apply_event spans window.rs:664-1253; OutputReadbackFailed arm at 934-976 does the duplicated stream/record mutation; SceneRenamed bumps show_registry.generation at 1027-1029. Production/test boundary at 1583 matches. Recommended split is compatible with architecture tests (all modules remain under ui/)."
+    },
+    {
+      "id": "recent-change-review-12",
+      "severity": "medium",
+      "category": "boundary",
+      "file": "src/ui/event_reconciliation.rs",
+      "lines": "1-206",
+      "title": "GTK-free AppState reducer lives in ui/ (misplaced module)",
+      "evidence": "The module doc says 'without widget ownership'. Imports are controller::state, controller::workspace, domain and i18n only; no gtk4/adw. Functions acknowledge, media_loaded, complete_workspace (lines 56-179), audio_failed and replay_saved mutate state.workspace.* fields directly. WorkspaceCompletion carries three bools (acknowledged, uncertain, action).",
+      "risk": "Controller-layer invariants for workspace sit in the UI layer, so other callers (controller tests) must reach into ui. Flag-heavy structs hide distinct outcomes.",
+      "recommendation": "Move to src/controller/state/workspace_reconciliation.rs as `impl WorkspaceState` methods. Replace the bools with `enum CompletionKind { Refresh, Action { acknowledged: bool }, Uncertain }`. Keep localized result strings out of state (store an enum and localize in ui).",
+      "effort": "S",
+      "smell": "Feature Envy / Flag Arguments",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed GTK-free (imports at event_reconciliation.rs:3-8) and misplaced. Adjustment: complete_workspace touches more than WorkspaceState - it calls state.accept_output_observation, set_stream_status/set_record_status, stream_/record_active_since, health, merge_workspace_audio and workflow_scope - so it cannot be `impl WorkspaceState`; move it as `impl AppState` in src/controller/state/workspace_reconciliation.rs (acknowledge/media_loaded/audio_failed can be WorkspaceState methods). Moving to controller is allowed (no gtk/ui imports; controller already uses fl!, e.g. ObsStatus::label). Callers at window.rs:744, 795, 812, 888, 904 need pub(crate) visibility."
+    },
+    {
+      "id": "recent-change-review-13",
+      "severity": "medium",
+      "category": "boundary",
+      "file": "src/ui/navigation.rs",
+      "lines": "19-31, 53-56, 98-122, 184-207",
+      "title": "NavigationContext widened into a service locator, contradicting the documented page contract",
+      "evidence": "CLAUDE.md: pages hold a NavigationContext 'exposing only switch_to_page() and dispatch()'. This commit adds `global_shortcuts: Rc<RefCell<Manager>>`, `registry_binding`, `parent_window()`, `registry_scoped()` and `registry_is_current()`. dispatch() now refuses some commands silently and stops global shortcuts as a side effect on Connect/Disconnect/SetCurrentSceneCollection (201-206). `pub(crate) state` is used across all new feature modules.",
+      "risk": "Pages bypass the command flow, and policy hides in a dispatch side effect. Hard to reason about which component owns global-shortcut lifecycle.",
+      "recommendation": "Keep NavigationContext as the documented narrow port. Move registry binding into a `CurationGuard` value returned by a `ShowWorkspaceService` in src/ui/services/curation.rs (or the PersistenceCoordinator from finding 03). Make global-shortcut stop a reaction to the SessionRetired/WorkspaceScopeChanging events in the event reducer, not a dispatch side effect. Update CLAUDE.md if the contract is intentionally widened.",
+      "effort": "M",
+      "smell": "Middle Man / Hidden side effects",
+      "verdict": "confirmed",
+      "verifier_note": "Confirmed: global_shortcuts field (navigation.rs:21), registry_binding (31), parent_window (54-57), registry_scoped (98-109), registry_is_current (111-122), Connect/Disconnect/SetCurrentSceneCollection side effect stopping global shortcuts (201-206). Note conflict with recommendation of finding 25 (inject CredentialStore through NavigationContext) - use a page-builder argument instead."
+    },
+    {
+      "id": "recent-change-review-14",
+      "severity": "medium",
+      "category": "code-smell",
+      "file": "src/ui/persist.rs",
+      "lines": "358-378, 511-536, 554-571 (also src/ui/window.rs:1027-1029)",
+      "title": "show_registry invariants (generation and revision bumps) are mutated directly from ui; registry snapshot lives apart from its target",
+      "evidence": "ui code increments state.show_registry.generation (persist.rs:368, window.rs:1028) and revision (persist.rs:526, 569). AppState.registry (state.rs:454) holds the data while ShowRegistryState (show_registry.rs:19-25) holds target, status and cache, so every operation must keep two fields consistent by convention. persist_registry also calls retry_registry_writes() when an edit is a no-op (523), a hidden command inside an unchanged path.",
+      "risk": "A missed generation bump lets stale editors write to the wrong curation. Duplicated bump logic spreads across modules.",
+      "recommendation": "Move `registry` into ShowRegistryState (rename to ShowWorkspaceSelection). Expose `fn edit(&mut self, f) -> Option<EditTicket>` and `fn apply_reconciliation(&inventory) -> Option<Snapshot>` that bump revision and generation internally, and make the fields private. Remove the implicit retry from the unchanged branch; keep retry explicit (Settings or the close dialog).",
+      "effort": "M",
+      "smell": "Inappropriate Intimacy / Temporal Coupling",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed: generation bumps at persist.rs:368 and window.rs:1027-1029; revision bumps at persist.rs:526 and 569; retry_registry_writes() on unchanged edits at 523 and 574. Adjustment: retry-on-unchanged-edit is documented behaviour (docs/configuration.md:215-216 'Repeating an unchanged dirty edit also retries retained intent'), so removing it is a behaviour change requiring a docs update; minimally make it explicit (an EditOutcome::Unchanged -> coordinator.retry_failed() at call sites) rather than hidden inside persist_registry. Note interplay with finding 07 (every no-op search event triggers retry)."
+    },
+    {
+      "id": "recent-change-review-15",
+      "severity": "medium",
+      "category": "ddd",
+      "file": "src/ui/persist.rs",
+      "lines": "317-328 (also src/storage/secret.rs:21, src/storage/config.rs:161, src/storage/config/connections.rs:40, src/obs/client.rs:100, src/obs/mapper.rs:23)",
+      "title": "Legacy-migration policy and magic \"default\" connection id live in ui; ConnectionId is a raw String",
+      "evidence": "select_registry_scope decides which workspace adopts the legacy registry: `key.connection == \"default\" && key.endpoint == original_endpoint` with a fallback `format!(\"{}:{}\", host, port)`. The \"default\" literal is repeated in 6 production files. persist.rs:317 also adds `.expect(\"deferred registry jobs run outside the gate\")` on the GTK thread.",
+      "risk": "The migration rule is untestable without GTK. A typo or rename of the sentinel silently breaks credential lookup or migration. The expect panics the UI if the gate invariant ever breaks.",
+      "recommendation": "Add `struct ConnectionId(String)` with `ConnectionId::legacy_default()` and `is_legacy_default()` in src/domain/connection.rs, and `struct Endpoint { host, port }` with Display. Move the adoption rule to `storage::show_workspaces::LegacyAdoption::applies(&WorkspaceKey, &AppConfig) -> bool` (pure, unit-tested). Replace the expect with a logged refusal that marks the load Failed.",
+      "effort": "M",
+      "smell": "Primitive Obsession / Magic String",
+      "verdict": "confirmed",
+      "verifier_note": "Confirmed: legacy rule at persist.rs:318-328 with fallback format!(host:port) and 'default' at 326; expect at 316. Production \"default\" sites: storage/secret.rs:21, storage/config.rs:161, storage/config/connections.rs:40, obs/mapper.rs:23, obs/client.rs:100, ui/persist.rs:326 (6). Putting LegacyAdoption in storage is allowed (storage may read AppConfig). Note storage/show_workspaces.rs:228, controller/session_controller.rs:338 and event_sender.rs:168 are test code."
+    },
+    {
+      "id": "recent-change-review-16",
+      "severity": "medium",
+      "category": "boundary",
+      "file": "src/obs/mapper.rs",
+      "lines": "12-21 (also src/obs/client.rs:93-101, 175-192)",
+      "title": "obs adapter stamps placeholder connection_id/endpoint into a controller type and patches them later",
+      "evidence": "map_version returns crate::controller::event::ConnectionInfo { connection_id: \"default\", endpoint: String::new(), ... }. ObsClient::connect sets connection_id: \"default\", and session_controller later calls client.with_connection_id(config.connection_id) (session_controller.rs:308). client.rs:191 overwrites info.connection_id afterwards. obs depends on controller::event (dependency points inward-to-outward).",
+      "risk": "Temporal coupling: any path that skips with_connection_id reports the legacy default and mis-keys workspaces and secrets. The ACL is inverted.",
+      "recommendation": "obs returns a domain `ObsServerInfo { obs_version, websocket_version, capabilities, image_formats }` (src/domain/obs.rs). session_controller composes ConnectionInfo from (ConnectionId, Endpoint, ObsServerInfo). Remove connection_id from ObsClient entirely. Add an architecture test that obs/ does not import crate::controller.",
+      "effort": "M",
+      "smell": "Temporal Coupling / Dependency Inversion violation",
+      "verdict": "confirmed",
+      "verifier_note": "Confirmed: obs/mapper.rs:12 and obs/client.rs:14 import crate::controller::event::ConnectionInfo; mapper.rs:21-29 stamps 'default'/empty endpoint; client.rs:100 'default'; with_connection_id at client.rs:180-183 used at session_controller.rs:308; get_version overwrites at 186-195. Note src/domain/obs.rs already exists (ObsNamedList) - add ObsServerInfo there. New architecture test 'obs does not import crate::controller' is consistent with existing scanner (violations(\"obs\", &[\"crate::controller\"], &[]))."
+    },
+    {
+      "id": "recent-change-review-17",
+      "severity": "medium",
+      "category": "code-smell",
+      "file": "src/controller/state/report_history.rs",
+      "lines": "7-50 (also src/app.rs:104-113, src/controller/state/bookmarks.rs:11-22,32-46)",
+      "title": "Boolean-flag state machines and tuple or sentinel state instead of enums",
+      "evidence": "ReportHistoryState has 17 pub fields including 7 independent bools/options (busy, force_after_pending, urgent, clear_pending, settings_pending, exit_abandoned, load_error/save_error/settings_error). CloseGuard has 4 Cells (allowed, pending, abandon, main). BookmarksState.session is Option<(u64, u64, Instant)>, with session_id 0 as the 'archive failed' sentinel checked in capture_bookmark (bookmarks.rs:106). It also has pending: usize, saved_revision and failed_revision.",
+      "risk": "Illegal combinations are representable (busy && exit_abandoned && clear_pending). Readers must reconstruct the state machine from scattered checks (ui/report_history.rs:117-184).",
+      "recommendation": "ReportHistory: `enum DiskState { Loading, LoadFailed(String), Idle, Saving{revision, then: FollowUp}, SaveFailed{revision, error} }` plus separate `RetentionPolicy` and `Ownership { eligible, owned }`. CloseGuard: `enum CloseState { Open, Draining, Failed, Allowed }`. Bookmarks: `struct BookmarkSession { number: Option<SessionNumber>, started_unix_ms: u64, started_at: Instant }`. Make fields private with intent-named methods.",
+      "effort": "M",
+      "smell": "Primitive Obsession / Boolean flags",
+      "depends_on": [
+        "recent-change-review-03"
+      ],
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed in substance. Corrections: ReportHistoryState has 16 pub fields + 1 private (report_history.rs:8-26), not 17 pub; CloseGuard (app.rs:166-175) has 3 Cells (allowed, pending, abandon) + Rc<Cell> quitting + bool main + RefCell exit - `main` is a plain bool, not a Cell. Sentinel session_id == 0 confirmed at bookmarks.rs:106 (set by begin_session at 37). Recommendation stands."
+    },
+    {
+      "id": "recent-change-review-18",
+      "severity": "medium",
+      "category": "code-smell",
+      "file": "src/controller/state/session_reports.rs",
+      "lines": "136-210, 271-411",
+      "title": "collect_report is a 140-line multi-concern method with repeated unwraps; report id built ad hoc",
+      "evidence": "collect_report handles collection name, activity gaps, activity copy, output results diff, scene change, stats sampling, health alert diffing (with string mapping) and bookmark id sync, and calls reports.current().unwrap() four times (276, 280, 326, 392) after one guard at 273. begin_report builds the id by SessionReport::new format!(\"{started}-{session}\") + \"-{next_run}\" + \"-{pid}-{nonce}\", then a `while archive contains id { push('x') }` loop that checks the archive but not in-memory entries. It also clears five ReportsState fields by hand.",
+      "risk": "A refactor that moves the guard gives a panic on the GTK thread. The id policy is spread across domain and controller, and collision handling is half-implemented.",
+      "recommendation": "Split into ReportsState methods with a `ReportContext` input: collect_activity, collect_outputs, collect_scene, collect_sample, collect_health, sync_bookmarks. Bind `let Some(report) = ...` once and pass &mut SessionReport down. Add `ReportId::new(started, session, run, pid, nonce)` in src/domain/session_report.rs with uniqueness checked by `SessionHistory::contains`. Use `ReportsState::reset_for_new_run()` for the five clears.",
+      "effort": "M",
+      "smell": "Long Method",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed: four reports.current().unwrap() at session_reports.rs:276, 280, 326, 392 after guard at 273; begin_report has two more back_mut().unwrap() at 158 and 161; id built with next_run + pid + nanos nonce and 'x' suffix loop over archive only (163-178); five manual clears (195-199). Adjustment: in-memory collision is practically impossible (next_run is monotonic in-process), so 'collision handling half-implemented' is overstated; the real smell is that id policy is spread across domain (SessionReport::new) and controller. Recommendation stands."
+    },
+    {
+      "id": "recent-change-review-19",
+      "severity": "medium",
+      "category": "test",
+      "file": "src/controller/state/session_reports.rs",
+      "lines": "66, 120, 162-165, 213 (also state/bookmarks.rs:82-86, state.rs:753-757, ui/report_history.rs:102)",
+      "title": "Wall-clock reads inside state transitions; inconsistent with the injected `now` used elsewhere",
+      "evidence": "prepare_report_exit, resume_report_exit and finish_report call crate::controller::workspace::unix_ms() and Instant::now() internally. collect_report and capture_bookmark take now/unix_ms parameters. load_bookmarks and apply_connected also read the clock. begin_report uses SystemTime nanos for the nonce.",
+      "risk": "Non-deterministic tests (several tests compensate with sleeps or pump_until). Ordering bugs around exit and resume cannot be reproduced exactly.",
+      "recommendation": "Introduce `Clock` (`struct Now { instant: Instant, unix_ms: u64 }`) passed into every AppState transition. Callers in ui/window.rs and app.rs create it once per event. Remove direct unix_ms() calls from controller/state/** and enforce this with an architecture test grep.",
+      "effort": "M",
+      "verdict": "confirmed",
+      "verifier_note": "Confirmed: prepare_report_exit (session_reports.rs:64-66), resume path (~120) and finish_report (213-215) call unix_ms()/Instant::now(); nonce from SystemTime at 162-165. ui/event_reconciliation.rs:27 also calls unix_ms() inside a reducer. An architecture-test grep for unix_ms in controller/state/** is feasible with the existing violations() helper."
+    },
+    {
+      "id": "recent-change-review-20",
+      "severity": "medium",
+      "category": "test",
+      "file": "src/app.rs",
+      "lines": "src/app.rs:158-425 (document_windows, CloseGuard, show_persistence_close_failure); tests 457-1345",
+      "title": "Exit-checkpoint protocol is only covered by #[ignore] native GTK tests; no pure decision tests",
+      "evidence": "CloseGuard::request/drain/prepare_exit combine GTK window queries (document_windows, app.windows()) with persistence decisions (abandon, checkpoint_again, quitting). Coverage is native_last_detached_report_close_supports_cancel_retry_and_informed_abandon, native_last_stats_close_saves_final_report_before_state_release and native_quit_after_shell_close_saves_final_stats_report_before_shutdown, all #[ignore] and run only through tools/test-native.py. Fixtures are 100+ line test bodies with an inline widget find(). app.rs (composition root) grew +448.",
+      "risk": "Regressions in exit ordering are caught only in the separate native CI job. The decision logic cannot be exercised in `cargo test`.",
+      "recommendation": "Extract `ExitPolicy` (pure): inputs { is_last_document, quitting, abandon, flush_outcome, checkpoint_dirty } -> enum ExitStep { Proceed, Drain, CheckpointAgain, ShowFailure, Quit, CloseWindow }, in src/ui/shell/exit_policy.rs with table-driven unit tests. Move CloseGuard and show_persistence_close_failure from app.rs to src/ui/shell/close_guard.rs, leaving app.rs as a thin composition root.",
+      "effort": "M",
+      "depends_on": [
+        "recent-change-review-03",
+        "recent-change-review-17"
+      ],
+      "original_lines": "104-212, 469-652",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed: CloseGuard at app.rs:166+, show_persistence_close_failure ending ~425, three cited #[ignore] native tests at 574-575, 741-742, 750-751, plus a fourth ignored test at 759 (config write failure). Cited line ranges were off (104-212 covers shutdown/activate, not only CloseGuard). Moving CloseGuard to src/ui/shell/close_guard.rs is fine (ui may use gtk/adw)."
+    },
+    {
+      "id": "recent-change-review-21",
+      "severity": "low",
+      "category": "correctness",
+      "file": "src/ui/global_shortcuts.rs",
+      "lines": "62-90",
+      "title": "Persistent portal shortcut IDs are derived from serde_json serialization of OperatorAction",
+      "evidence": "specs() serializes binding.action with serde_json, blanks target.name when a uuid exists, serializes the tuple (connection id, workflow_scope(), identity) and hashes it with SHA-256. There are three `.expect(...)` calls in production (68, 77, 79). Any serde attribute change, field rename or ScopeBinding field addition changes every ID, and desktop-portal bindings the user configured are orphaned.",
+      "risk": "Silent loss of user-configured global shortcuts after an unrelated refactor.",
+      "recommendation": "Add `OperatorAction::stable_key(&self) -> String` (explicit, versioned, e.g. \"v1:mute:<uuid|name>\") in src/domain/operator_action.rs and `WorkspaceKey::stable_key()`. Hash those instead. Add a golden test fixing the ID for a few actions.",
+      "effort": "S",
+      "smell": "Hidden coupling to serialization format",
+      "verdict": "confirmed",
+      "verifier_note": "Confirmed: global_shortcuts.rs:62-90 serializes OperatorAction with serde_json, blanks target.name, hashes (connection id, workflow_scope(), identity); three expects at 68, 77, 79. Golden test recommendation is the right guard; when introducing stable_key, emit the same bytes as today for existing actions or accept a one-time migration."
+    },
+    {
+      "id": "recent-change-review-22",
+      "severity": "low",
+      "category": "code-smell",
+      "file": "src/ui/report_history.rs",
+      "lines": "310-324 (dupes: ui/quick_actions.rs:18, ui/bookmarks.rs:81, ui/session_reports.rs:26, ui/audio_presets.rs:27, ui/action_shortcuts.rs:162, ui/health_alerts.rs:~20, ui/preflight.rs:~50, ui/global_shortcuts.rs:313,354)",
+      "title": "Duplicated widget scaffolding across the new feature modules (labels, dialog shell, test finders)",
+      "evidence": "The same Label builder (wrap(true).wrap_mode(WordChar).width_chars(1).xalign(0.0)) is redefined in 9 new files. The dialog shell (adw::Window transient_for + set_application + alive Cell + HeaderBar + Box margins 16) is repeated in report_history.rs:370-395 and session_reports.rs:218-245, and similar in bookmarks, action_shortcuts and audio_presets. Test helper `fn find(widget, name)` is redefined in 12 places (app.rs:643, quick_actions.rs:461, action_shortcuts.rs:606, command_palette.rs:291, live.rs:1024, window.rs:2232/2377, preflight/tests.rs:12, deck_controls.rs:346, inventory.rs:1872, transport_bar_tests.rs:28).",
+      "risk": "Style drift (wrap modes already differ: gtk4::WrapMode vs pango::WrapMode) and test fixture bloat.",
+      "recommendation": "Add src/ui/widgets/text.rs (`wrapping_label`, `labeled_button`) and src/ui/widgets/feature_window.rs (`FeatureWindow::new(parent, title, widget_name) -> (adw::Window, GtkBox content, Rc<Cell<bool>> alive)`). Move test_support out of ui/mod.rs:243 into src/ui/test_support.rs with `find_named` and `find_where` helpers, and replace the copies.",
+      "effort": "S",
+      "smell": "Duplicate Code",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed in substance; counts corrected: `width_chars(1)` label helpers appear in 11 ui files (grep), and `fn find(` test helpers are defined 11 times (action_shortcuts.rs:606, command_palette.rs:291, quick_actions.rs:461, deck_controls.rs:346, window.rs:2232, window.rs:2377, inventory.rs:1872, live.rs:1024, transport_bar_tests.rs:28, app.rs:643, preflight/tests.rs:12) - not 12. Signatures differ (by name vs predicate, Option vs panic), so provide both find_named and find_where. test_support is at ui/mod.rs:242-243."
+    },
+    {
+      "id": "recent-change-review-23",
+      "severity": "low",
+      "category": "code-smell",
+      "file": "src/controller/state.rs",
+      "lines": "465-474, 605-751 (also src/controller/output_controller.rs:469-556, src/ui/window.rs:945-961)",
+      "title": "Stream/Record data clump duplicated across state, controller and ui",
+      "evidence": "AppState has parallel fields stream_status/record_status, last_*_command_error, *_active_since, *_observed_at (plus record_path_observed_at). apply_output_event repeats per-kind arms. accept_output_observation selects fields by match. OutputReadbackErrors has stream/record tuples, and refresh_output_statuses duplicates its stream and record blocks verbatim. window.rs OutputReadbackFailed matches kind twice.",
+      "risk": "Every output feature edits several mirrored branches, and asymmetric bugs are easy (record-only path logic is mixed into the shared flow).",
+      "recommendation": "Introduce `struct OutputTrack { status, active_since, observed_at, last_command_error }` and `struct Outputs { stream: OutputTrack, record: OutputTrack }` with `fn track_mut(kind)`, in src/controller/state/outputs.rs. Keep record-only path evidence in `RecordingEvidence`. Collapse refresh_output_statuses into one `read_status(kind)` loop.",
+      "effort": "M",
+      "smell": "Data Clumps / Duplicate Code",
+      "verdict": "confirmed",
+      "verifier_note": "Confirmed: OutputReadbackErrors stream/record tuple fields (output_controller.rs:469-472) and duplicated stream/record blocks in refresh_output_statuses (503-559); window.rs:945-961 double match on kind. Merge with the state.rs outputs split."
+    },
+    {
+      "id": "recent-change-review-24",
+      "severity": "low",
+      "category": "code-smell",
+      "file": "src/storage/report_export.rs",
+      "lines": "96-120",
+      "title": "CSV export uses magic column indexes and a JSON-trim hack for enum names",
+      "evidence": "`vec![String::new(); 14]` with values[0], values[1], values[13]... assigned by position. Enum names come from json(&result.status)?.trim_matches('\"'). ActivityOrigin -> string mapping is duplicated here (108-113) and in ui/session_reports.rs:52.",
+      "risk": "Adding a column silently shifts data. Serialization changes alter CSV evidence values.",
+      "recommendation": "Define `struct CsvRow { kind, timestamp, evidence, description, obs_host_path, cpu, fps, render_ms, free_disk_mib, bitrate, render_skipped, output_skipped, stream_skipped, details }` with a `to_cells()` that is the single header source. Add `fn as_str(&self) -> &'static str` on ActivityOrigin, OutputResultStatus and OutputKind in domain, and use them in both export and ui.",
+      "effort": "S",
+      "smell": "Magic Numbers / Primitive Obsession",
+      "original_lines": "64-171",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed: vec![String::new(); 14] at report_export.rs:96 and 102, values[13] at 99/105, trim_matches at 118-119, ActivityOrigin literal mapping at 108-113. Adjustment: ui/session_reports.rs:52-57 maps ActivityOrigin to fl! localized labels, not to the same stable strings, so it is not duplication of the export mapping; only the export side needs as_str(). Use as_str() in export; keep ui localization separate."
+    },
+    {
+      "id": "recent-change-review-25",
+      "severity": "low",
+      "category": "code-smell",
+      "file": "src/ui/pages/settings/connections.rs",
+      "lines": "22-38",
+      "title": "Second keyring port defined in a UI page duplicates controller::dependencies::ObsPasswordProvider",
+      "evidence": "`trait ConnectionSecrets { read(id), write(id, Option<&str>) }` with KeyringSecrets calling storage::secret directly from ui. controller/dependencies.rs already defines ObsPasswordProvider::obs_password(&str) for the same Secret Service boundary.",
+      "risk": "Two seams for one trust boundary drift apart, and fakes are duplicated in tests.",
+      "recommendation": "Define one `CredentialStore` port (read/write/delete by ConnectionId) in src/controller/dependencies.rs, implemented by storage::secret. Inject it into both the controller and the settings page through NavigationContext or a page-builder argument.",
+      "effort": "S",
+      "smell": "Duplicate abstraction",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed: ConnectionSecrets/KeyringSecrets at connections.rs:22-38, ObsPasswordProvider at controller/dependencies.rs:17-19. Adjustment: inject the unified CredentialStore into the settings page via a page-builder argument, not NavigationContext (conflicts with finding 13)."
+    },
+    {
+      "id": "recent-change-review-26",
+      "severity": "low",
+      "category": "code-smell",
+      "file": "src/storage/registry.rs",
+      "lines": "152-165, 477-503, 623-638 (also src/ui/persist.rs:122-125, 406-414)",
+      "title": "Test-only scaffolding kept inside production modules",
+      "evidence": "#[cfg(test)] RegistryMutationError, set_scene_icon, mutate_registry, set_scene_role_from_path and remove_scene_entry_from_path live among production items in registry.rs. persist.rs has #[cfg(test)] submit_registry_write and import_registry_to_path wrappers. This commit turned former production helpers into cfg(test) islands instead of moving them into tests.",
+      "risk": "Production files read larger than they are, and test APIs can mask dead production paths.",
+      "recommendation": "Move these into the files' `mod tests` (or a sibling `registry/test_support.rs` under #[cfg(test)]).",
+      "effort": "S",
+      "smell": "Dead Code (test-only)",
+      "verdict": "confirmed",
+      "verifier_note": "Confirmed: cfg(test) items at registry.rs:153-165, 479-503, 622-638; persist.rs:122-125 and 406-414."
+    },
+    {
+      "id": "recent-change-review-27",
+      "severity": "low",
+      "category": "god-file",
+      "file": "src/ui/mod.rs",
+      "lines": "whole ui/ root (30 flat files)",
+      "title": "Flat ui/ root: 13 new feature modules added beside shell infrastructure without grouping",
+      "evidence": "New top-level ui modules: action_catalog, action_shortcuts, audio_presets(+dir), bookmarks, command_palette, global_shortcuts(+dir), health_alerts(+dir), operator_picker, preflight(+dir), quick_actions, report_history(+dir), session_reports, and the grown event_reconciliation. Shell pieces (window, event_pump, navigation, persist, background_io, theme, sidebar) sit at the same level.",
+      "risk": "No visible bounded contexts in the UI. Cross-feature imports (global_shortcuts -> action_catalog/action_shortcuts; quick_actions -> operator_picker) are unconstrained.",
+      "recommendation": "Regroup into src/ui/shell/{window, events/, navigation, event_pump, close_guard, exit_policy}, src/ui/infra/{background_io, persistence_bridge, theme}, src/ui/operator/{catalog, shortcuts, global_shortcuts/, quick_actions, command_palette, picker}, src/ui/reports/{session_reports, history, bookmarks}, src/ui/audio/{presets/, health_alerts/}, src/ui/preflight/. Do pure `git mv` commits with re-exports first, then fix paths. Add architecture_tests rules that ui/operator does not import ui/reports and the reverse.",
+      "effort": "M",
+      "verdict": "confirmed",
+      "verifier_note": "Confirmed: ui/ root has 27 .rs files plus dirs (audio_presets, global_shortcuts, health_alerts, preflight, report_history, pages, widgets). New ui-level architecture rules (ui/operator not importing ui/reports) are expressible with the existing violations() helper. Note pages_reach_the_controller_only_through_navigation exempts ui/window.rs and ui/navigation.rs by path - moving them to ui/shell/ must update that exemption list in architecture_tests.rs:647-652."
+    },
+    {
+      "id": "recent-change-review-28",
+      "severity": "low",
+      "category": "docs",
+      "file": "docs/feature-program.md",
+      "lines": "commit 9488c86 as a whole",
+      "title": "Single 28k-line commit mixes refactors, the storage migration, 10+ features and docs",
+      "evidence": "138 files: a new storage format (show-workspaces.json), keyring key migration, AppEvent signature changes (OutputStatusUpdated gained Instant, OutputCommandPending gained admitted_at), SceneRegistry schema growth, 13 UI features, 8 x 366 i18n lines, and a 1612-line docs/feature-program.md, all in one commit.",
+      "risk": "Not reviewable as a unit, cannot be bisected, and a revert drops everything. git-cliff release notes collapse 10+ features into one line.",
+      "recommendation": "For the remediation work, use stacked commits per bounded context in the order of proposed_splits (each green on the four CI commands). Keep refactor commits (`refactor:`) separate from behaviour fixes (`fix:` for findings 01, 02 and 07).",
+      "effort": "S",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed: 138 files, +28043/-826, docs/feature-program.md +1612. Correction to the summary: 117 changed files are under src/, not 74."
+    }
+  ],
+  "proposed_splits": [
+    {
+      "file": "src/controller/state.rs",
+      "current_lines": 3088,
+      "rationale": "About 1246 production lines plus 1840 test lines. AppState is a ~45-field god struct whose feature behaviour is scattered across 7 `impl AppState` blocks. WorkspaceState, Page, ObsStatus and TopologyStatus share the file.",
+      "target_modules": [
+        {
+          "path": "src/controller/state.rs (keep as shell; do not rename to state/mod.rs)",
+          "responsibility": "AppState shell: composition of sub-aggregates plus cross-aggregate orchestration (apply_connected, reset_obs_session, invalidate_collection_runtime)",
+          "moves": "struct AppState, AppState::new, apply_connected, reset_obs_session, invalidate_collection_runtime, accepts_session_publication, apply_terminal_evidence, workflow_scope"
+        },
+        {
+          "path": "src/controller/state/page.rs",
+          "responsibility": "Navigation value types",
+          "moves": "enum Page + impl Page (lines 34-96)"
+        },
+        {
+          "path": "src/controller/state/session.rs",
+          "responsibility": "Connection session aggregate",
+          "moves": "ObsStatus (97-126), available_requests, supported_image_formats, connected_endpoint, connected_connection_id, obs_password, session_retirements -> struct SessionState"
+        },
+        {
+          "path": "src/controller/state/outputs.rs",
+          "responsibility": "Stream/Record OutputTrack aggregate",
+          "moves": "stream_/record_ fields, update_active_since (182), accept_output_observation, observe_recording_path, apply_output_event, set_*_status/command_*"
+        },
+        {
+          "path": "src/controller/state/workspace_state.rs",
+          "responsibility": "Operating workspace aggregate",
+          "moves": "struct WorkspaceState + impl (192-436)"
+        },
+        {
+          "path": "src/controller/state/workspace_reconciliation.rs",
+          "responsibility": "Reducers from ui/event_reconciliation.rs",
+          "moves": "acknowledge/media_loaded/audio_failed as WorkspaceState methods; complete_workspace and replay_saved as impl AppState (they touch outputs, health, audio)"
+        },
+        {
+          "path": "src/controller/state/topology.rs",
+          "responsibility": "Graph topology status",
+          "moves": "TopologyStatus (127-160), topology_revision, set_topology_*"
+        },
+        {
+          "path": "src/controller/state/audio/ (merge with existing state/mixer.rs)",
+          "responsibility": "Active audio, levels, mute/volume, mixer selection",
+          "moves": "ActiveAudioStatus (161), previous_scene_for_inventory_update, set_audio_levels*, observe_audio_health, merge_workspace_audio, apply_active_audio, active_audio_notice, apply_input_mute/volume; existing state/mixer.rs (1396 lines) split into audio/mixer.rs + audio/levels.rs"
+        },
+        {
+          "path": "src/controller/state/stats.rs",
+          "responsibility": "Stats telemetry",
+          "moves": "obs_stats, obs_stats_observed_at, stream_bitrate_kbps, stream_health, stats_history, set_obs_stats*, clear_obs_stats"
+        },
+        {
+          "path": "src/controller/state/tests/",
+          "responsibility": "Tests split per aggregate",
+          "moves": "mod tests (1247-3088) split into outputs.rs, audio.rs, session.rs, reconciliation.rs"
+        }
+      ],
+      "order": "1) Move the test module to state/tests/mod.rs unchanged. 2) Move Page, ObsStatus, TopologyStatus out (re-export from state.rs). 3) Extract OutputTrack/Outputs and switch call sites (window.rs, output_controller tests). 4) Extract StatsState, then audio (together with state/mixer.rs). 5) Extract SessionState. 6) Move ui/event_reconciliation.rs into state/workspace_reconciliation.rs. 7) Turn reports/bookmarks/show_registry impl AppState blocks into aggregate methods taking context structs. Run the four CI commands after each step.",
+      "safety_net": "Existing state tests plus final_regression_tests.rs. Before step 3, add characterization tests for apply_output_event per (kind, event) pair; before step 7, add tests for collect_report outputs given a fixed ReportContext.",
+      "verdict": "adjusted",
+      "verifier_note": "Line anchors verified (Page 34-96, ObsStatus 97-126, TopologyStatus 127-160, ActiveAudioStatus 161, update_active_since 182, WorkspaceState 192-436, AppState 437-499, tests 1247). Adjusted: keep state.rs as the shell (Rust 2018 file+dir module already used; renaming to mod.rs is churn); state/mixer.rs already exists and must be merged into the audio target instead of creating a parallel state/audio.rs; complete_workspace cannot be a WorkspaceState method. No cycle risk: all targets are children of controller::state."
+    },
+    {
+      "file": "src/ui/window.rs",
+      "current_lines": 2698,
+      "rationale": "1582 production lines; apply_event (664-1253) is a 590-line switch combining domain transitions, persistence scheduling and widget refresh.",
+      "target_modules": [
+        {
+          "path": "src/ui/shell/window.rs",
+          "responsibility": "build_main_window, add_pages, build_content_header, header_button, maybe_show_welcome_dialog",
+          "moves": "lines 45-640 (WindowSources 45-61, build_main_window 63, add_pages 281, build_content_header 513, header_button 593, maybe_show_welcome_dialog 611)"
+        },
+        {
+          "path": "src/ui/shell/polling.rs",
+          "responsibility": "Event polling and output clock sources",
+          "moves": "install_event_polling (412), install_output_clock (475)"
+        },
+        {
+          "path": "src/ui/shell/events/mod.rs",
+          "responsibility": "apply_event dispatcher",
+          "moves": "apply_event match skeleton"
+        },
+        {
+          "path": "src/ui/shell/events/session.rs",
+          "responsibility": "Session lifecycle events",
+          "moves": "SessionRetired/SessionEvent/Connecting/Connected/Disconnected/Error arms, show_no_session_ui (1272)"
+        },
+        {
+          "path": "src/ui/shell/events/outputs.rs",
+          "responsibility": "Output events and status bar",
+          "moves": "OutputReadbackFailed (934-976), apply_output_event (1340), refresh_output_status_bar (1317), sync_output_indicators (1455), sync_streaming_chrome (1469), elapsed helpers (1403-1420)"
+        },
+        {
+          "path": "src/ui/shell/events/scenes.rs",
+          "responsibility": "Inventory/rename/collections/current scene + registry scope",
+          "moves": "scene arms ~985-1119, refresh_scene_inventory_views (643)"
+        },
+        {
+          "path": "src/ui/shell/events/audio.rs",
+          "responsibility": "Mixer/input/levels/active audio events",
+          "moves": "audio arms, apply_mixer_audio_transition (1254), update_live_audio_card (1363), should_rebuild_visible_mixer_for_input_event (1378)"
+        },
+        {
+          "path": "src/ui/shell/events/workspace.rs",
+          "responsibility": "Workspace/preset/replay/graph/stats events",
+          "moves": "workspace arms (event_reconciliation callers at 744-904)"
+        },
+        {
+          "path": "src/ui/shell/refreshers.rs",
+          "responsibility": "PageRefreshers, EventUiContext",
+          "moves": "StreamingChrome (1493), PageRefreshers (1499, impl 1525-1573), EventUiContext (1515)"
+        }
+      ],
+      "order": "1) Move tests (1583-2698) to a sibling tests file. 2) Extract PageRefreshers and polling. 3) Create events/ submodules one context at a time. 4) Push state mutations (OutputReadbackFailed, SceneRenamed generation bump) into AppState methods. 5) Optionally return EffectSet values.",
+      "safety_net": "window_render_tests.rs, native window tests via tools/test-native.py, mixer_input_event unit tests. Add a unit test for AppState::apply_output_readback_failure before step 4.",
+      "verdict": "adjusted",
+      "verifier_note": "Function anchors verified via grep. Adjusted: SourceTracker does not exist - the source-lifetime type is WindowSources (45-61). Moving window.rs/navigation.rs under ui/shell/ requires updating the path exemption list in architecture_tests.rs pages_reach_the_controller_only_through_navigation (\"ui/window.rs\", \"ui/navigation.rs\"), otherwise that test fails. window.rs declares `mod render_tests` (1585) pointing at window_render_tests.rs - keep the #[path] when moving."
+    },
+    {
+      "file": "src/ui/persist.rs",
+      "current_lines": 1033,
+      "rationale": "592 production lines mixing a registry write-ahead replay queue, the import transaction gate, workspace scope selection plus legacy migration, config persistence and registry edit APIs, all through thread_local globals.",
+      "target_modules": [
+        {
+          "path": "src/controller/persistence/registry_queue.rs",
+          "responsibility": "Pure RegistryWrites queue (revision, operations, confirm-through, retry set) generic over failure evidence",
+          "moves": "RegistryOperation, RegistryWrites, confirm logic (23-120) as an owned struct without thread_local and without crate::ui types"
+        },
+        {
+          "path": "src/ui/persistence/import_gate.rs",
+          "responsibility": "Exclusive import transaction plus deferred-job queue",
+          "moves": "REGISTRY_IMPORTING, AFTER_REGISTRY_IMPORT, RegistryImportGuard, begin_registry_import, registry_edit_allowed, after_registry_import, registry_import_busy (207-271) as an owned ImportGate"
+        },
+        {
+          "path": "src/storage/show_workspaces/legacy.rs (or a fn in storage/show_workspaces.rs)",
+          "responsibility": "Legacy adoption rule",
+          "moves": "legacy decision block (318-328) as LegacyAdoption::applies"
+        },
+        {
+          "path": "src/ui/persistence/registry.rs",
+          "responsibility": "GTK adapter: persist_registry, persist_registry_field, reconcile_registry, select_registry_scope, import_registry, registry_availability_message",
+          "moves": "273-455, 498-590"
+        },
+        {
+          "path": "src/ui/persistence/config.rs",
+          "responsibility": "Config persistence helpers",
+          "moves": "persist_config, persist_config_with (457-497)"
+        }
+      ],
+      "order": "1) Move tests to persist/tests.rs. 2) Split config helpers out. 3) Extract pure RegistryWrites keeping the thread_local as holder. 4) Replace thread_locals with a ui-side PersistenceCoordinator. 5) Move the legacy rule to storage with unit tests.",
+      "safety_net": "Existing isolated persist tests (592-1033) and native workspace tests in window.rs. Add pure unit tests for queue confirm/replay ordering before step 4.",
+      "verdict": "adjusted",
+      "verifier_note": "Verified thread_locals (42-43, 207-209), legacy block (318-328), registry_availability_message (273). Adjusted: RegistryWrites.failures holds crate::ui::background_io::FailureEvidence, so the controller-side queue must be generic over evidence (or keep failures in the ui adapter) - architecture_tests background_layers_hold_no_gtk_or_ui forbids crate::ui in controller. ImportGate holds Box<dyn FnOnce()> GTK-thread closures (non-Send jobs touching NavigationContext), so it belongs in ui/persistence/, not controller/persistence/."
+    },
+    {
+      "file": "src/ui/report_history.rs",
+      "current_lines": 541,
+      "rationale": "Mixes the session-history disk state machine, the exit-checkpoint protocol called by app.rs, and the GTK history window.",
+      "target_modules": [
+        {
+          "path": "src/controller/persistence/session_history.rs",
+          "responsibility": "Pure save scheduling decisions",
+          "moves": "decision parts of save (135-236), tick due logic (117-133), reload (238) / save_settings (267) decisions"
+        },
+        {
+          "path": "src/ui/shell/exit_checkpoint.rs",
+          "responsibility": "ExitCheckpoint plus shutdown hooks used by CloseGuard",
+          "moves": "register (27), checkpoint_before_close (31), ExitCheckpoint (38-88), abandon_exit (90), finish_for_shutdown (96), retry_active (110)"
+        },
+        {
+          "path": "src/ui/reports/history_window.rs",
+          "responsibility": "History window UI",
+          "moves": "text (310), button (320), status (326), open_button (351), settings_group (361), show (370-end)"
+        }
+      ],
+      "order": "1) Split the UI window out. 2) Extract pure due/save decisions with unit tests. 3) Remove the ACTIVE thread_local by handing the coordinator to CloseGuard.",
+      "safety_net": "report_history/tests.rs plus the app.rs native exit tests.",
+      "verdict": "confirmed",
+      "verifier_note": "Function anchors verified by grep (register 27, checkpoint_before_close 31, ExitCheckpoint 38, abandon_exit 90, finish_for_shutdown 96, retry_active 110, tick 117, save 135, reload 238, save_settings 267, show 370). Only the pure decision part may go to controller; anything calling background_io stays in ui."
+    },
+    {
+      "file": "src/ui/action_catalog.rs",
+      "current_lines": 1155,
+      "rationale": "667 production lines of operator-action policy plus palette entry building and execution, all in ui.",
+      "target_modules": [
+        {
+          "path": "src/services/operator_actions/resolve.rs",
+          "responsibility": "Pure resolve(&OperatorView, &OperatorAction) -> Option<ResolvedAction>; OperatorView built from domain types only",
+          "moves": "Resolved, resolve, resolve_with_inputs (148-287), inputs, observed_input, observed_mute (35-64)"
+        },
+        {
+          "path": "src/services/operator_actions/observe.rs",
+          "responsibility": "Observed state as an enum",
+          "moves": "observed_label logic (66-146) returning ObservedState"
+        },
+        {
+          "path": "src/services/operator_actions/catalog.rs",
+          "responsibility": "Enumerate candidate actions",
+          "moves": "entries (289-462) and binding_entries (464-511) without fl!"
+        },
+        {
+          "path": "src/ui/operator/catalog.rs",
+          "responsibility": "Localized labels, Entry, execute",
+          "moves": "CatalogAction, Entry, binding_entry rendering (513-616), execute (619-665)"
+        },
+        {
+          "path": "src/domain/operator_action.rs",
+          "responsibility": "Domain helpers",
+          "moves": "new OperatorAction::target(), required_capability(), stable_key()"
+        }
+      ],
+      "order": "1) Add domain helpers and replace repeated match arms. 2) Move resolve plus tests to services. 3) Split observe and catalog. 4) Leave ui with labels only.",
+      "safety_net": "Existing action_catalog tests (667-1155) moved first and kept green. Add a capability-table test.",
+      "verdict": "adjusted",
+      "verifier_note": "Anchors verified (observed_label 66, resolve ~152, execute 619-665, tests 667). Adjusted: services must not take controller::state::AppState (services are pure over domain snapshots); the caller (ui or an AppState method) builds OperatorView from scene_inventory, workspace snapshot/input_catalog, audio_inputs and a domain Capabilities set. Gating on show_registry.status / workspace.can_control() (66-73) is controller state and stays with the caller. Tests currently use AppState fixtures and must be rewritten against OperatorView when moved."
+    },
+    {
+      "file": "src/storage/registry.rs",
+      "current_lines": 1556,
+      "rationale": "693 production lines: SceneRegistry DTO for five contexts, scene identity/rename logic, decks, JSON/YAML IO, RuleConfig policy, accent colour parsing and test-only helpers.",
+      "target_modules": [
+        {
+          "path": "src/storage/registry/dto.rs",
+          "responsibility": "Serde SceneRegistry/SceneEntry/InputEntry/RuleConfig DTO",
+          "moves": "struct definitions (23-150); next to existing storage/registry/decks.rs and identity.rs"
+        },
+        {
+          "path": "src/storage/registry/io.rs",
+          "responsibility": "read/write JSON and YAML",
+          "moves": "read_registry, try_read_registry, read/write_registry_*_path (586-692)"
+        },
+        {
+          "path": "src/storage/registry/rules.rs",
+          "responsibility": "RuleConfig -> domain::registry::GraphDependencyPolicy mapper",
+          "moves": "impl RuleConfig, parse_role_list (530-585)"
+        },
+        {
+          "path": "src/domain/appearance.rs",
+          "responsibility": "Accent colour value object",
+          "moves": "scene_accent_hex, parse_scene_accent (505-529) (pure, no storage types)"
+        },
+        {
+          "path": "src/domain/show_workspace/curation.rs (later)",
+          "responsibility": "Scene curation rules",
+          "moves": "impl SceneRegistry blocks 167-476 only after a domain ShowWorkspace/SceneCuration type exists with From<SceneRegistryDto>"
+        }
+      ],
+      "order": "1) Move tests to registry/tests.rs. 2) Move IO, rules and accent helpers out. 3) Introduce domain ShowWorkspace (extending domain::registry::SceneRegistrySnapshot) with From<SceneRegistry> and a byte-identical round-trip test. 4) Migrate callers context by context, then move curation methods onto the domain type.",
+      "safety_net": "registry tests (694-1556), show_workspaces tests, plus a new serde round-trip golden test on fixture registry.json and show-workspaces.json.",
+      "verdict": "adjusted",
+      "verifier_note": "Anchors verified by grep (struct 23, impl blocks 167/313/395/440, accent 505/518, RuleConfig impl 530, parse_role_list 571, IO 586-692, tests 693). Refuted sub-move: original target src/domain/graph_rules.rs for RuleConfig would make domain import crate::storage and fail architecture_tests domain_and_services_do_not_reach_into_storage - kept in storage/registry/rules.rs. Moving impl SceneRegistry to domain before the type moves would fail the same test. storage/registry/{decks.rs,identity.rs} already exist."
+    },
+    {
+      "file": "src/app.rs",
+      "current_lines": 1345,
+      "rationale": "457 production lines: composition root plus CloseGuard exit state machine, close-failure dialog and startup IO.",
+      "target_modules": [
+        {
+          "path": "src/ui/shell/close_guard.rs",
+          "responsibility": "CloseGuard, install_persistence_close_guard, show_persistence_close_failure, document_window(s)",
+          "moves": "lines ~158-425"
+        },
+        {
+          "path": "src/ui/shell/exit_policy.rs",
+          "responsibility": "Pure ExitStep decisions",
+          "moves": "decision branches from CloseGuard::request/drain/prepare_exit"
+        },
+        {
+          "path": "src/app/startup.rs",
+          "responsibility": "StartupData loading on the worker thread",
+          "moves": "StartupData and the spawn closure"
+        },
+        {
+          "path": "src/app.rs",
+          "responsibility": "run() + build_ui only",
+          "moves": "remaining"
+        }
+      ],
+      "order": "1) Move tests (457-1345) to app/tests.rs. 2) Extract startup. 3) Move CloseGuard to ui/shell. 4) Extract ExitPolicy with unit tests.",
+      "safety_net": "app.rs native exit tests (ignored suite, 4 tests at 574/741/750/759) and new ExitPolicy table tests.",
+      "verdict": "adjusted",
+      "verifier_note": "Adjusted line anchors: CloseGuard begins ~166 (document_window helpers at ~158-164), not 95; lines 95-115 are connect_shutdown. Moving CloseGuard into ui/ is fine; app.rs is not covered by any architecture test scope."
+    },
+    {
+      "file": "src/ui/pages/inventory.rs",
+      "current_lines": 2126,
+      "rationale": "1505 production lines: page build/reconcile, rows, scene options, drag reordering, stale group, YAML import/export dialogs.",
+      "target_modules": [
+        {
+          "path": "src/ui/pages/inventory/mod.rs",
+          "responsibility": "build, rebuild, populate, update_rows, presentations, save status",
+          "moves": "lines 34-573"
+        },
+        {
+          "path": "src/ui/pages/inventory/rows.rs",
+          "responsibility": "Scene row and role cell",
+          "moves": "scene_curation_label (574), inventory_label (586), build_scene_row (598), build_role_cell (697), handle_scene_role_change (1293)"
+        },
+        {
+          "path": "src/ui/pages/inventory/options.rs",
+          "responsibility": "Tags/favorite/accent/icon editors",
+          "moves": "build_scene_options (751), build_accent_controls (898), build_accent_button (1171), set_scene_icon (1330), set_scene_accent (1346)"
+        },
+        {
+          "path": "src/ui/pages/inventory/reorder.rs",
+          "responsibility": "Drag/keyboard reordering",
+          "moves": "install_scene_reordering (960), focus_named_row (1106), reorder_scenes (1120), reordered_scene_ids (1152)"
+        },
+        {
+          "path": "src/ui/pages/inventory/retained.rs",
+          "responsibility": "Stale/retained identities",
+          "moves": "build_stale_group (1019), handle_stale_entry_remove (1315)"
+        },
+        {
+          "path": "src/ui/pages/inventory/yaml.rs",
+          "responsibility": "Import/export dialogs",
+          "moves": "build_yaml_actions_row (1214), handle_export/import_click, yaml_dialog, dialog_cancelled, show_export/import_dialog, yaml_file_filter, parent_window (1352-1505)"
+        }
+      ],
+      "order": "1) Move tests to inventory/tests.rs. 2) yaml.rs. 3) reorder.rs. 4) retained.rs. 5) options.rs and rows.rs.",
+      "safety_net": "Native inventory tests (1506-2126) and every_role_round_trips_through_dropdown_including_unassigned.",
+      "verdict": "confirmed",
+      "verifier_note": "Every cited function start line verified by grep. Minor: build_registry_save_status (528) and preserve_breakpoint_focus (462) were unassigned - keep them in mod.rs."
+    },
+    {
+      "file": "src/ui/pages/live.rs",
+      "current_lines": 1554,
+      "rationale": "976 production lines: layout, scene card presentation, audio cards, deck controls hosting, hotkey hints, output toggles and disconnect confirmation.",
+      "target_modules": [
+        {
+          "path": "src/ui/pages/live/mod.rs",
+          "responsibility": "Page build and LivePageHandle",
+          "moves": "build (113), show_live_view (466), show_disconnected_view (305), build_disconnected_view (470)"
+        },
+        {
+          "path": "src/ui/pages/live/outputs.rs",
+          "responsibility": "Stream/record toggles, confirmation dialog, disconnect",
+          "moves": "OutputConfirmationDialog (38), handle_output_toggle (315) through confirm_output_action (577-611), handle_disconnect (394), disconnect_label/disconnect_stops_outputs (380-393)"
+        },
+        {
+          "path": "src/ui/pages/live/scenes.rs",
+          "responsibility": "Scene presentation plus card rebuild",
+          "moves": "ScenePresentation (56), SceneCardPresentation (70), live_scene_order (612), visible_scene_slots (629), scene_for_slot (648), rebuild_scene_cards (659-803), shortcut_for_slot (804)"
+        },
+        {
+          "path": "src/ui/pages/live/audio.rs",
+          "responsibility": "Audio cards",
+          "moves": "AudioPresentation (46), audio_collapsed (371), rebuild_audio_cards (830), clear_audio_cards (969)"
+        },
+        {
+          "path": "src/ui/pages/live/hints.rs",
+          "responsibility": "Hotkey hint",
+          "moves": "set_hotkey_hint (812) and notice expiry"
+        }
+      ],
+      "order": "Tests out first, then outputs.rs, then scenes.rs (apply finding 01 fix there), then audio and hints.",
+      "safety_net": "live.rs native tests (977-1554) and window_render_tests.",
+      "verdict": "adjusted",
+      "verifier_note": "Adjusted: the original split omitted the output toggle / confirmation / disconnect cluster (315-611, ~300 lines), which would have stayed in mod.rs; added live/outputs.rs. Line anchors re-derived by grep (rebuild_scene_cards 659, not ~650; rebuild_audio_cards 830)."
+    },
+    {
+      "file": "src/controller/state/session_reports.rs",
+      "current_lines": 412,
+      "rationale": "ReportsState aggregate, exit/resume protocol, id generation and a 140-line collector, all as impl AppState.",
+      "target_modules": [
+        {
+          "path": "src/controller/state/reports/aggregate.rs",
+          "responsibility": "ReportsState with private fields, begin/finish/push, ReportExit",
+          "moves": "ReportsState, ReportExit, current/bind_generation/push (20-61), begin_report body (136-210)"
+        },
+        {
+          "path": "src/controller/state/reports/collect.rs",
+          "responsibility": "collect_* steps over ReportContext",
+          "moves": "collect_report (271-411) split into 6 functions"
+        },
+        {
+          "path": "src/controller/state/reports/exit.rs",
+          "responsibility": "prepare/resume exit",
+          "moves": "prepare_report_exit, resume_report_exit (63-134)"
+        },
+        {
+          "path": "src/domain/session_report.rs",
+          "responsibility": "ReportId, ReportEndReason, typed Health event",
+          "moves": "id construction and string health mapping (336-388)"
+        }
+      ],
+      "order": "1) Add ReportContext plus Clock params. 2) Split collect. 3) Move exit. 4) Introduce typed domain events with serde-compatible names and a legacy fallback for Ended.reason.",
+      "safety_net": "state/session_reports/tests.rs. Add golden JSON tests for ReportEvent::Health and Ended serialization (including an old localized reason) before the type change.",
+      "verdict": "adjusted",
+      "verifier_note": "Verified anchors. Adjusted: a state/session_reports/ directory already exists (holds tests.rs); rename the module to reports/ in one pure-move commit or keep session_reports/ as the parent to avoid two dirs. Ended { reason: String } already persisted with localized text, so the typed enum needs a fallback variant."
+    },
+    {
+      "file": "src/ui/action_shortcuts.rs",
+      "current_lines": 798,
+      "rationale": "562 production lines; show (173-378) and editor (383-562) are long methods mixing conflict policy with widgets.",
+      "target_modules": [
+        {
+          "path": "src/domain/action_shortcut.rs",
+          "responsibility": "Binding conflict/matching over domain inputs",
+          "moves": "conflict (97-120) and matching (121-133) rewritten to take (&SceneHotkeyConfig-equivalent, &[ActionBinding]) instead of &AppState; chord normalization part of chord (20-64)"
+        },
+        {
+          "path": "src/ui/operator/shortcuts/list.rs",
+          "responsibility": "Shortcut list window",
+          "moves": "settings_group (143), show (173-378)"
+        },
+        {
+          "path": "src/ui/operator/shortcuts/editor.rs",
+          "responsibility": "Binding editor dialog",
+          "moves": "editor (383-562), conflict_for_enable (379), label (65), conflict_text (134)"
+        }
+      ],
+      "order": "Move pure matching logic to domain with unit tests, then split the UI.",
+      "safety_net": "action_shortcuts tests (563-798).",
+      "verdict": "adjusted",
+      "verifier_note": "Adjusted: core conflict detection already lives in domain (ActionShortcut::conflict, domain/action_shortcut.rs:55); ui conflict()/matching() are thin wrappers that read state.config.hotkeys and state.registry.action_bindings. Only the binding-skip/matching filter moves, with AppState replaced by explicit inputs; verify the hotkey config type is domain-visible (it is passed to ActionShortcut::conflict already) and contains no storage type, else domain_and_services_do_not_reach_into_storage fails."
+    },
+    {
+      "file": "src/ui/audio_presets.rs",
+      "current_lines": 713,
+      "rationale": "impl Editor (146-525) mixes preset planning checks with widgets.",
+      "target_modules": [
+        {
+          "path": "src/services/audio_presets.rs",
+          "responsibility": "Pure snapshot/resolve/capable/review_matches over domain views",
+          "moves": "snapshot (44-67), resolve (68-74), capable (118-134), review_matches (135-145)"
+        },
+        {
+          "path": "src/ui/audio/presets/editor.rs",
+          "responsibility": "Editor widget",
+          "moves": "Row, Editor, impl Editor (90-525)"
+        },
+        {
+          "path": "src/ui/audio/presets/mod.rs",
+          "responsibility": "show entry point",
+          "moves": "show (526-712)"
+        }
+      ],
+      "order": "Extract the pure helpers with unit tests, then move the UI.",
+      "safety_net": "ui/audio_presets/tests.rs and controller/workspace/audio_presets/tests.rs.",
+      "verdict": "adjusted",
+      "verifier_note": "Not line-verified in detail (file length 713 confirmed). Adjusted: services must take domain inputs, not AppState; if the helpers need AppState, put them in controller/state/audio_presets.rs (already exists) instead of services."
+    },
+    {
+      "file": "src/ui/bookmarks.rs",
+      "current_lines": 634,
+      "rationale": "thread_local save state machine (21-79) plus a ~210-line show window.",
+      "target_modules": [
+        {
+          "path": "src/controller/persistence/bookmarks.rs",
+          "responsibility": "Pure DurableSnapshot<BookmarkLog> revision bookkeeping",
+          "moves": "revision/pending/saved_revision/failed_revision decisions from save (25-79)"
+        },
+        {
+          "path": "src/ui/persistence/bookmarks.rs",
+          "responsibility": "GTK driver: run_serialized + FailureEvidence",
+          "moves": "save() IO driving and FAILURES replacement via coordinator"
+        },
+        {
+          "path": "src/ui/reports/bookmarks/window.rs",
+          "responsibility": "Bookmarks window and rows",
+          "moves": "show, row, error_label, describe, clock, button"
+        }
+      ],
+      "order": "After finding 03's DurableSnapshot exists, port save; then move the UI.",
+      "safety_net": "Native bookmark tests (445-634).",
+      "verdict": "adjusted",
+      "verifier_note": "Verified save at 25-79 and FAILURES at 21-22, tests at 445. Adjusted: save() calls background_io::run_serialized and record_failure, so it cannot move wholesale to controller (background_layers_hold_no_gtk_or_ui); only pure bookkeeping moves, the driver stays in ui."
+    },
+    {
+      "file": "src/ui/pages/settings/connections.rs",
+      "current_lines": 642,
+      "rationale": "Keyring port defined in ui, a password write queue and the connection editor widget.",
+      "target_modules": [
+        {
+          "path": "src/controller/dependencies.rs",
+          "responsibility": "Single CredentialStore port",
+          "moves": "ConnectionSecrets/KeyringSecrets (22-38) merged with ObsPasswordProvider (17-19)"
+        },
+        {
+          "path": "src/ui/pages/settings/connections/editor.rs",
+          "responsibility": "Editor widget",
+          "moves": "struct Editor + impl"
+        }
+      ],
+      "order": "Unify the port, then move the editor.",
+      "safety_net": "connections tests (441-642).",
+      "verdict": "confirmed",
+      "verifier_note": "Verified anchors. Inject the port via the page builder, not NavigationContext."
+    },
+    {
+      "file": "src/controller/output_controller.rs",
+      "current_lines": 812,
+      "rationale": "Duplicated stream/record readback blocks and data-clump error struct.",
+      "target_modules": [
+        {
+          "path": "src/controller/output_controller/readback.rs",
+          "responsibility": "refresh_output_statuses as one per-kind loop plus OutputReadbackErrors keyed by OutputKind",
+          "moves": "OutputReadbackErrors (469-501), refresh_output_statuses (503-559)"
+        },
+        {
+          "path": "src/controller/output_controller/tests.rs",
+          "responsibility": "Tests",
+          "moves": "mod tests (389-end; note second #[cfg(test)] item at 561)"
+        }
+      ],
+      "order": "Move tests, then collapse the duplicate blocks behind a read_one(kind) helper.",
+      "safety_net": "Existing output_controller tests including late_recording_stop_response_keeps_file_evidence_after_an_observed_restart.",
+      "verdict": "adjusted",
+      "verifier_note": "Verified. Adjusted: production code continues after the first #[cfg(test)] at 389 (OutputReadbackErrors at 469, refresh_output_statuses at 503) and there is a second #[cfg(test)] at 561, so 'mod tests (389-812)' is wrong - identify the actual test module boundaries before moving. The read order (stream then record, each with its own observation revision and Instant) must be preserved in the loop."
+    },
+    {
+      "file": "src/ui/event_reconciliation.rs",
+      "current_lines": 626,
+      "rationale": "206 production lines of GTK-free AppState reducers misplaced in ui.",
+      "target_modules": [
+        {
+          "path": "src/controller/state/workspace_reconciliation.rs",
+          "responsibility": "Reducers: WorkspaceState methods where possible, impl AppState for complete_workspace/replay_saved",
+          "moves": "WorkspaceCompletion, acknowledge, media_loaded, complete_workspace, audio_failed, replay_saved (1-206) and tests (207-626)"
+        }
+      ],
+      "order": "Pure move plus pub(crate) visibility for window.rs callers, then replace the bool fields with an enum.",
+      "safety_net": "Existing event_reconciliation tests move unchanged.",
+      "verdict": "adjusted",
+      "verifier_note": "Verified GTK-free imports (3-8). Adjusted: complete_workspace uses accept_output_observation, set_stream/record_status, *_active_since, health, merge_workspace_audio, workflow_scope - not WorkspaceState-only. Visibility must change from pub(super) to pub(crate)."
+    }
+  ]
+}

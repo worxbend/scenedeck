@@ -1,0 +1,447 @@
+{
+  "reviewer": "tests-structure",
+  "skills": [
+    "code-review-and-quality",
+    "code-complete",
+    "refactoring-guru",
+    "verifier: code-review",
+    "verifier: doubt-driven-development"
+  ],
+  "summary": "Adversarial verification of the tests-structure review (self-review against source; no independent subagent was used). Findings: 12 confirmed, 8 adjusted, 0 refuted. Splits: 2 confirmed, 7 adjusted. The core claims hold. Test modules inflate god-file LOC. The OBS mock-wire scaffolding is duplicated (11 op:7 envelopes in 9 files). Test-to-test coupling exists (state/mixer.rs:455, regression_tests.rs:4). There is a real production obs->controller edge (obs/mapper.rs:12, obs/client.rs:14 importing controller::event::ConnectionInfo). Main corrections an implementer must apply: (1) the AppController test seam must also cover replacing the session field (final_regression_tests.rs:1449/1535/1791); (2) obs_fixture::accept discards Identify, so the connect test needs accept_with_identify; (3) deleting mutate_registry also touches registry.rs:844; test-only set_*_command_failure is not semantically equal to *_with_recovery; (4) the proposed domain/services fitness rules must allow crate::infra (i18n is imported by domain today); (5) the architecture_tests line ranges were wrong (scanner 18-366, self-tests 367-547, rules 548-681); (6) extracting reduce_event is a production refactor, so AppState-level characterization should come first. Not run: cargo test (read-only); per-test-body reads were sampled.",
+  "findings": [
+    {
+      "id": "tests-structure-01",
+      "severity": "high",
+      "category": "test",
+      "file": "src/controller/final_regression_tests.rs",
+      "lines": "22-224; src/controller/session_controller.rs:600-660; src/controller/thumbnails.rs; src/controller/workspace.rs (2 envelopes); src/controller/workspace_lifecycle_tests.rs; src/controller/workspace/audio_presets/tests.rs; src/obs/client.rs:318-515,1100-1145; src/obs/event.rs; src/obs/regression_tests.rs",
+      "title": "Hand-rolled loopback OBS servers duplicate the wire protocol across controller and obs tests",
+      "smell": "Duplicate Code / Shotgun Surgery",
+      "effort": "L",
+      "depends_on": [],
+      "recommendation": "Create src/obs/testing/{mod,wire,scripted,stateful,payloads}.rs (#[cfg(test)] pub(crate) mod testing in obs/mod.rs); move obs_fixture.rs to testing/wire.rs; ScriptedObs replaces control_tests::mock_client with typed Reply::Ok/Err instead of __error/__code/__comment keys; StatefulObs replaces the Plan mock; canonical payload builders (stream_status, record_status, scene_list, scene_item, input, uuid(n)). Migrate one consumer per commit, assertions unchanged.",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed: obs_fixture.rs is 53 lines exposing only listen/accept/version (lines 14,23,43). Request-reply envelopes (\"op\":7) appear 11 times in 9 files: final_regression_tests, session_controller, thumbnails, audio_presets/tests, workspace_lifecycle_tests, workspace.rs x2, obs/client.rs x2, obs/event.rs, obs/regression_tests.rs. GetStreamStatus/GetRecordStatus JSON is copied verbatim at final_regression_tests.rs:126-129 and session_controller.rs:637-640 (the reviewer cited 118-120). Magic keys confirmed at client.rs:1121-1125 and used at 1262. Correction: the claim that client.rs connect_negotiates_obs_websocket_and_requests_meter_events should just call obs_fixture::accept is wrong. accept() (obs_fixture.rs:23-40) reads the Identify frame and throws it away (line 32), but the connect test must inspect Identify (client.rs:361-368) to assert the meter eventSubscriptions. wire.rs needs an accept_with_identify() -> (MockSocket, Value) variant, and accept() should delegate to it. Only obs_fixture.rs and client.rs bind TcpListener directly. The other consumers already use obs_fixture::listen/accept, so the duplication is in request loops and envelopes, not in handshakes."
+    },
+    {
+      "id": "tests-structure-02",
+      "severity": "high",
+      "category": "god-file",
+      "file": "src/controller/final_regression_tests.rs",
+      "lines": "1-1981 (mounted at src/controller/app_controller.rs:460-462)",
+      "title": "final_regression_tests.rs: 1981-line god test file mounted in app_controller and coupled to private fields",
+      "smell": "Large Class / Inappropriate Intimacy",
+      "effort": "L",
+      "depends_on": [
+        "tests-structure-01"
+      ],
+      "recommendation": "Add narrow cfg(test) seams on AppController and swap direct field access for them, then split by owning aggregate (see proposed_splits).",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed: mounted via #[path] at app_controller.rs:460-462. The file has 35 tests. The reviewer's seam is incomplete. Besides reads (controller.session.scope() at 416, 1547, 1558, 1818, 1923, 1944; controller.refresh_task.take() at 1930, 1967), the tests also replace the field: `controller.session = SessionController::with_runner(...)` at 1449, 1535 and 1791. The seam set must be: #[cfg(test)] pub(super) fn test_scope(&self) -> SessionScope (or &SessionScope), #[cfg(test)] pub(super) fn replace_session_for_test(&mut self, session: SessionController), and #[cfg(test)] pub(super) fn take_refresh_task(&mut self) -> Option<JoinHandle<..>>. join_refresh alone is not enough, because 1967 passes the handle into another expression. Better still: add a constructor AppController::with_session(deps, tx, session) to remove the replacement case. Line 413 cited by the reviewer is really 416."
+    },
+    {
+      "id": "tests-structure-03",
+      "severity": "high",
+      "category": "code-smell",
+      "file": "src/controller/final_regression_tests.rs",
+      "lines": "22-32, 51-198, 653, 753, 1512, 1627-1642",
+      "title": "Plan mock is a flag bag; helper fns take boolean flag triples",
+      "smell": "Flag Arguments / Primitive Obsession",
+      "effort": "M",
+      "depends_on": [
+        "tests-structure-01"
+      ],
+      "recommendation": "Replace Plan with a StatefulObs builder; replace bool tuples with GatePoint/Delivery/Channel/Followup enums; keep names and assertions.",
+      "verdict": "confirmed",
+      "verifier_note": "Plan struct at 22-32 has exactly the 8 fields listed. mode_echo_fences_activation(at_final_gate: bool, aba: bool) is at 653, mode_echo_with_full_gtk_queue(at_final_gate: bool) at 753 and terminal_case(acknowledged: bool, full: bool, reconnect: bool) at 1512. A pure test-code refactor with no production impact."
+    },
+    {
+      "id": "tests-structure-04",
+      "severity": "high",
+      "category": "test",
+      "file": "src/storage/registry.rs",
+      "lines": "152-170, 478-520, 622-637; src/controller/state.rs:943-946,1112-1120,1143-1151; src/obs/client.rs:204-210,763-770; src/controller/app_controller.rs:419-422",
+      "title": "Test-only production APIs: tests exercise code that never ships",
+      "smell": "Speculative Generality / Dead code kept alive by tests",
+      "effort": "M",
+      "depends_on": [],
+      "recommendation": "Delete the registry cfg(test) mutation path; delete AppState set_*_command_failure; move ObsClient test-only methods into obs/testing as an extension trait.",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed cfg(test) items: registry.rs RegistryMutationError (154), free fn set_scene_icon (480, distinct from the production method SceneRegistry::set_scene_icon at 318), mutate_registry (491), set_scene_role_from_path (623), remove_scene_entry_from_path (632); state.rs set_audio_levels (944), set_stream/record_command_failure (1113/1118), set_obs_stats (1144); client.rs set_current_program_scene (205), execute_control (765, delegates to execute_control_if with an always-true lease); app_controller set_output_client_override (420). Two corrections. (1) The 'already covered' test every_registry_json_write_refuses_a_corrupt_original (registry.rs:820) itself calls mutate_registry at 844. Deleting mutate_registry means deleting that assertion as well. That is safe because write_registry_to_path (640-652) runs read_registry_from_path first, and the same loop already asserts write_registry_to_path(..).is_err() at 843. (2) The test-only set_stream_command_failure (1113) sets only the error field. set_*_command_failure_with_recovery (1122-1128) also overwrites stream_status with failure.fallback_status(). Tests like stream_command_failure_sets_stream_error_only rely on the status staying untouched, so the swap must build an OutputCommandFailureRecovery whose fallback equals the current status (via the existing command_failure_recovery / unchecked_command_failure_recovery fixtures at state.rs:1963-1979), or the assertion meaning changes. ObsClientTestExt is viable: execute_control_if is pub(crate) (client.rs:772). About 22 call sites (13 in client.rs, 7 in regression_tests, 2 in session_controller, 1 in scene_activation) would need `use crate::obs::testing::ObsClientTestExt`. set_output_client_override is a legitimate injection seam. Keep it or move it into a constructor, but it is not dead code."
+    },
+    {
+      "id": "tests-structure-05",
+      "severity": "high",
+      "category": "boundary",
+      "file": "src/architecture_tests.rs",
+      "lines": "548-681",
+      "title": "Fitness tests miss real dependency-direction violations and have no size budget",
+      "smell": "Missing guard",
+      "effort": "S",
+      "depends_on": [
+        "tests-structure-06"
+      ],
+      "recommendation": "Add adapters_do_not_depend_on_the_application_layer (KNOWN_DEBT for ConnectionInfo), services_depend_only_on_domain, domain_is_innermost and a production_files_stay_within_budget ratchet.",
+      "verdict": "adjusted",
+      "verifier_note": "Confirmed real production violation: src/obs/mapper.rs:12 and src/obs/client.rs:14 `use crate::controller::event::ConnectionInfo`. No existing rule catches it (the rules at 548-681 cover ui->obs, obws, domain->gtk/obws, services->gtk, domain/services->storage, pages->AppController, background->gtk/ui). Correction: as written, domain_is_innermost (forbidding crate::infra) and services_depend_only_on_domain fail on day one. Production domain code imports crate::infra::i18n::LANGUAGE_LOADER (domain/mixer.rs:4, domain/meter.rs:11, domain/hotkey.rs:15, and others), and services/doctor_format.rs imports crate::infra::i18n. Allow crate::infra (or at least infra::i18n and infra::error) for domain and services, or list the i18n uses as explicit KNOWN_DEBT. The other cross edges found are test-only or doc comments that the scanner already ignores: domain/audio_preset.rs:102 crate::storage (test module), domain/hotkey.rs:142 (doc comment), storage/bookmarks.rs:89 crate::controller (test), obs/regression_tests.rs:308 crate::services (test). The size budget needs the line count of production items, not 'before the first #[cfg(test)]': registry.rs has cfg(test) items at 153/479/490 and persist.rs at 122/406, so a first-marker heuristic undercounts badly. Count lines of non-test items via the existing syn scanner. The dependency on 06 is a preference, not a hard requirement."
+    },
+    {
+      "id": "tests-structure-06",
+      "severity": "medium",
+      "category": "god-file",
+      "file": "src/architecture_tests.rs",
+      "lines": "18-366 (scanner), 205-227 (check_path; special case at 213), 367-547 (scanner self-tests), 548-681 (rules), 566-575 (obws string filter)",
+      "title": "architecture_tests.rs mixes a syn scanner engine with the rules; contains rule-specific hacks",
+      "smell": "Divergent Change / Special Case",
+      "effort": "S",
+      "depends_on": [],
+      "recommendation": "Convert to src/architecture_tests/{mod,scanner,scanner_tests,rules}.rs; introduce enum Forbidden { PathPrefix, AnySegment }; give violations exempt prefixes.",
+      "verdict": "adjusted",
+      "verifier_note": "Engine special case confirmed at line 213 (`*forbidden == \"AppController\" && segments.iter().any(..)`). The obws rule (566-575) passes exempt=&[] and filters formatted output with `!hit.starts_with(\"  obs/\")`. The exempt parameter is not ignored as such. It matches exact file paths (`path == Path::new(allowed)`, line 355), so a directory cannot be exempted, and that is why the hack exists. The reviewer's line ranges were wrong: the scanner ends at 366 (not 460), the 9 self-tests span 367-547 (not 300-534) and the rules start at 548 (not 536). When moving the self-tests, the fixture strings at 528-546 contain literal `#[path = ...]` text for module-discovery tests. They are string data and must move intact."
+    },
+    {
+      "id": "tests-structure-07",
+      "severity": "medium",
+      "category": "god-file",
+      "file": "src/controller/state.rs",
+      "lines": "1247-3088; src/storage/registry.rs:694-1556; src/controller/app_controller.rs:464-1279; src/controller/state/mixer.rs:453-1396; src/ui/window.rs:1587-2698; src/ui/theme.rs:617-1553; src/ui/persist.rs:592-1033; src/app.rs:458-1345; src/obs/client.rs:317-515,1099-1392",
+      "title": "Inline test modules make up 50-90% of the largest 'god files'",
+      "smell": "Large Class (test half)",
+      "effort": "M",
+      "depends_on": [
+        "tests-structure-13"
+      ],
+      "recommendation": "Phase 0, a pure move: x.rs + x/tests.rs per file, one file per commit; move the mid-file client.rs tests so the impl blocks sit together. Guard: test --list count unchanged.",
+      "verdict": "confirmed",
+      "verifier_note": "Verified the first cfg(test) and mod tests lines: state.rs 1247 (49 tests), registry.rs mod tests 694 (37 tests, plus cfg(test) prod items 153/479/490), app_controller 464/465 (14 tests) plus #[path] at 461, client.rs tests mod 318 placed between impl ObsClient (62-316) and the later impl, control_tests 1100, regression mount 1394; state/mixer.rs 453 (45 tests); window.rs 1587 plus #[path] 1584; theme.rs 617; persist.rs 592 (plus cfg(test) items at 122, 406); app.rs 458. Production sizes are confirmed: window.rs 1582, operating_panel 1613, inventory 1505, pages/mixer 1223, live 976. The depends_on 13 is needed only for production splits that rename native test paths. Moving app::tests to app/tests.rs keeps the `app::tests::native_` prefix."
+    },
+    {
+      "id": "tests-structure-08",
+      "severity": "medium",
+      "category": "test",
+      "file": "src/controller/state/mixer.rs",
+      "lines": "453-456; src/obs/regression_tests.rs:4; src/controller/state.rs:1253-1259,1905-1990,2426,2488-2503,2574-2672,2893",
+      "title": "Child test modules import the parent's test module",
+      "smell": "Inappropriate Intimacy",
+      "effort": "S",
+      "depends_on": [],
+      "recommendation": "Move shared fixtures into controller/test_support/state.rs and obs/testing/scripted.rs; tests import test_support only.",
+      "verdict": "confirmed",
+      "verifier_note": "state/mixer.rs:455 `use super::super::tests::*;` and regression_tests.rs:4 `use super::control_tests::mock_client;` both confirmed. state::tests exposes 17 pub(super) helpers (1253, 1257, 1905, 1921, 1940, 1946, 1954, 1963, 1973, 1980, 2426, 2488, 2503, 2574, 2647, 2672, 2893). The list to move is larger than the reviewer's 4 and includes visible_loaded_input, hidden_loaded_input, loud_muted_input, assert_snapshot_input, command_failure_recovery and unchecked_command_failure_recovery. Some of these may reach AppState private fields. A test_support module that is a sibling of state can only see pub(crate)/pub(super) items, so check each helper compiles from controller::test_support before moving it, and otherwise keep it as state::test_support (a child of state)."
+    },
+    {
+      "id": "tests-structure-09",
+      "severity": "medium",
+      "category": "test",
+      "file": "src/controller/app_controller.rs",
+      "lines": "483-500, 686-760; src/controller/final_regression_tests.rs:1281-1296; src/app.rs:630-640; src/ui/window.rs:2371-2376,2527-2546; src/controller/dependencies.rs:72-85; src/ui/pages/settings/connections.rs",
+      "title": "State and dependency fixtures duplicated across many test modules",
+      "smell": "Duplicate Code",
+      "effort": "M",
+      "depends_on": [],
+      "recommendation": "controller/test_support/{state,outputs,deps}.rs with AppStateBuilder, shared input/output fixtures and a NoServices provider.",
+      "verdict": "adjusted",
+      "verifier_note": "About 29 AppState::new( call sites crate-wide (including a few production ones) and 4 separate `fn app_state` helpers. AppConfigProvider impls exist in app.rs, ui/window.rs, ui/pages/settings/connections.rs, app_controller.rs, final_regression_tests.rs and controller/dependencies.rs. Adjustment: controller/dependencies.rs:72-85 already has a test-module StaticConfigProvider(AppConfig). Promote that one into controller/test_support/deps.rs instead of writing a new NoServices. A builder is optional (YAGNI). Start with app_state() and input(); add builder methods only once 3 or more call sites need the same setup."
+    },
+    {
+      "id": "tests-structure-10",
+      "severity": "medium",
+      "category": "test",
+      "file": "src/ui/widgets/operating_panel.rs",
+      "lines": "1748-1790; src/ui/mod.rs:243-345",
+      "title": "GTK native-test harness re-implemented per file; operating_panel bypasses the timeout-guarded runner",
+      "smell": "Duplicate Code",
+      "effort": "S",
+      "depends_on": [],
+      "recommendation": "Move ui::test_support out of ui/mod.rs into ui/test_support.rs; add find_named/find_where/expect_named; convert operating_panel to native_test; delete private pump/find copies.",
+      "verdict": "confirmed",
+      "verifier_note": "operating_panel.rs:1757-1768 spawns its own child via SCENEDECK_SOURCE_USAGE_NATIVE_CHILD with `.output()` and no deadline. It defines a private pump (1770) and named (1780), while ui/mod.rs:258-290 native_test has a 60 s deadline (269). Also confirmed 10 `fn find` copies under ui/. Caveat: the hang is still bounded by test-native.py's outer `timeout 180s` (test-native.py:54), so the effect is slow CI failure, not an unbounded stall."
+    },
+    {
+      "id": "tests-structure-11",
+      "severity": "medium",
+      "category": "test",
+      "file": "src/ui/window.rs",
+      "lines": "1378-1401, 2549-2698; src/controller/app_controller.rs:26-27,655-685; src/obs/regression_tests.rs:252-318; src/controller/final_regression_tests.rs:970-1007",
+      "title": "Tests live with the wrong owner",
+      "smell": "Feature Envy (tests)",
+      "effort": "S",
+      "depends_on": [
+        "tests-structure-09"
+      ],
+      "recommendation": "Move should_rebuild_visible_mixer_for_input_event to impl AppState in controller/state/mixer.rs with its 11 tests; move bitrate tests to refresh_controller; split the DoctorService assertion out of the obs test; move the graph reducer test to state tests.",
+      "verdict": "confirmed",
+      "verifier_note": "window.rs:1378-1401 is a pure predicate over AppState (Page, visible_mixer_render_source) with no GTK, and there are 11 mixer_input_event_* tests starting at 2549. app_controller.rs:26-27 has `#[cfg(test)] use ...refresh_controller::bitrate_kbps_since_last_sample`, with tests at 656/664/672. The DoctorService::run call is at regression_tests.rs:308. The graph reducer test at final_regression_tests.rs:971 uses only AppState::reconcile_observation. Moving the predicate into controller state keeps the dependency direction ui -> controller::state, which is allowed."
+    },
+    {
+      "id": "tests-structure-12",
+      "severity": "medium",
+      "category": "test",
+      "file": "src/ui/pages/inventory.rs",
+      "lines": "1851-1870",
+      "title": "Source-text test via include_str!/split breaks on file split",
+      "smell": "Fragile Test",
+      "effort": "S",
+      "depends_on": [
+        "tests-structure-06"
+      ],
+      "recommendation": "Replace with a syn-scanner rule in architecture_tests (inventory_page_uses_native_list_rows) before splitting inventory.rs.",
+      "verdict": "confirmed",
+      "verifier_note": "inventory.rs:1853-1854 `include_str!(\"inventory.rs\")` plus `split(\"#[cfg(test)]\").next()`. Production inventory ends at 1505 and the first cfg(test) is at 1506, so today it happens to work. Note: the 'ListBox present' positive assertion cannot be expressed with the forbidden-path scanner. Keep it as a separate positive check (the scanner finds at least one path segment ListBox in ui/pages/inventory*), or drop it."
+    },
+    {
+      "id": "tests-structure-13",
+      "severity": "medium",
+      "category": "test",
+      "file": "tools/test-native.py",
+      "lines": "10-22",
+      "title": "Native test gate keys on module path prefixes and offers no subset run",
+      "smell": "Hidden coupling",
+      "effort": "S",
+      "depends_on": [],
+      "recommendation": "Classify by a native_ fn-name prefix; add --filter; optionally skip native_test self-respawn.",
+      "verdict": "confirmed",
+      "verifier_note": "test-native.py:19 requires names to start with ('ui::', 'app::tests::native_'). Of 100 ignored tests, only 2 lack a native_ prefix: the locale test (handled separately) and mixer_page_minimum_height_does_not_grow_with_the_card_count. Rename that one to native_mixer_page_minimum_height_... to adopt the convention. The --filter flag is low risk. Item 3 (setting SCENEDECK_NATIVE_TEST_CHILD from the script) is unverified: native_test compares the variable to the exact test name (ui/mod.rs:260), so the script would have to set it per test. The child respawn may also exist to isolate the GTK init from the libtest harness thread. Treat it as optional and measure before adopting."
+    },
+    {
+      "id": "tests-structure-14",
+      "severity": "medium",
+      "category": "test",
+      "file": "src/controller/state.rs",
+      "lines": "stream_/record_ test pairs within 1247-3088; src/controller/app_controller.rs:760-1279; src/controller/state/mixer.rs:453-1396",
+      "title": "Mirror-image stream/record tests and near-identical mixer cases should be table-driven",
+      "smell": "Duplicate Code",
+      "effort": "M",
+      "depends_on": [
+        "tests-structure-07",
+        "tests-structure-09"
+      ],
+      "recommendation": "Parametrize over OutputKind; table-drive mixer cases; keep case labels.",
+      "verdict": "confirmed",
+      "verifier_note": "state.rs has 7 exact stream/record twin pairs (command_failure_sets_*_error_only, start_failure, stop_failure, failure_recovery_applies_exact_payload_status, failure_recovery_applies_payload_instead_of_current_state, pending_and_success, command_failure_sequence). app_controller.rs has 3 twin pairs, not 4 (async_*_command_failure_*, *_with_*_status_refresh_failure_*, *_with_both_status_refreshes_failing_*). state/mixer.rs counts match (8-9 scene_refresh_target, 10 inspection_snapshot, 5-6 audio_status, 6-7 render_source). Keep each case's fn name as a label in the failure message so `cargo test name` filtering degrades knowingly. Table-driving reduces test-count granularity, so update the '774 passed' guard accordingly."
+    },
+    {
+      "id": "tests-structure-15",
+      "severity": "medium",
+      "category": "boundary",
+      "file": "src/controller/final_regression_tests.rs",
+      "lines": "51-198 (op:5 at 89), 303-308, 471",
+      "title": "Controller tests speak raw OBS wire protocol",
+      "smell": "Inappropriate Intimacy across bounded contexts",
+      "effort": "M",
+      "depends_on": [
+        "tests-structure-01"
+      ],
+      "recommendation": "Controller tests use obs::testing::StatefulObs with a typed vocabulary; wire JSON stays in src/obs/.",
+      "verdict": "confirmed",
+      "verifier_note": "Confirmed: op:5 event frame built at 89, frame-name assertion `*name == \"SetInputSettings\"` at 303-308, and SceneNameChanged with intent 4 at 470-471 (the reviewer cited 482). Test-only, so architecture_tests does not see it. The optional text rule (no \"op\": in controller tests) is cheap, but it should land only after migration or it fails immediately in 6 controller files."
+    },
+    {
+      "id": "tests-structure-16",
+      "severity": "medium",
+      "category": "test",
+      "file": "src/ui/widgets/operating_panel.rs",
+      "lines": "1-1613 (prod) vs 1614-2361; src/ui/window.rs:664-1253",
+      "title": "Largest UI splits have the thinnest safety net",
+      "smell": "Missing characterization tests",
+      "effort": "L",
+      "depends_on": [
+        "tests-structure-09",
+        "tests-structure-13"
+      ],
+      "recommendation": "Extract a pure reduce_event + golden test for window.rs; add per-section characterization tests for operating_panel and inventory before splitting.",
+      "verdict": "adjusted",
+      "verifier_note": "apply_event spans window.rs:664-1253 (next fn apply_mixer_audio_transition at 1254) and takes &NavigationContext plus Option<&EventUiContext>, so it is GTK-coupled. Adjustment: extracting reduce_event is itself a production behavior refactor, not a characterization step. It contradicts the 'pure move first' ordering and is risky where widget updates interleave with state mutation. Safer order: (1) add golden tests at the AppState level for the state mutations apply_event delegates to (most go through AppState methods / reconcile_observation); (2) split apply_event into per-family fns that keep the signature (a pure move guarded by native tests); (3) only then pull out a RefreshPlan. I did not exhaustively confirm that apply_event has zero pure unit tests."
+    },
+    {
+      "id": "tests-structure-17",
+      "severity": "low",
+      "category": "test",
+      "file": "src/controller/final_regression_tests.rs",
+      "lines": "226-237, 451; src/controller/app_controller.rs:686,744-757; src/controller/output_controller.rs:595-605",
+      "title": "Ad-hoc polling waits and scattered magic timeouts",
+      "smell": "Duplicate Code / Magic Number",
+      "effort": "S",
+      "depends_on": [
+        "tests-structure-09"
+      ],
+      "recommendation": "controller/test_support/events.rs with TEST_DEADLINE, recv_event, recv_matching, wait_until.",
+      "verdict": "confirmed",
+      "verifier_note": "receive() spins on try_recv plus yield_now under a 3 s timeout (226-237). wait_for_status_calls uses thread::sleep(10ms) (app_controller.rs:744-752). A similar try_recv loop sits at output_controller.rs:598. Note that the receiver is std::sync::mpsc (per CLAUDE.md), so a spin or blocking poll is inherent. Keep the helper non-blocking for tokio tests (yield, never thread::sleep inside async)."
+    },
+    {
+      "id": "tests-structure-18",
+      "severity": "low",
+      "category": "test",
+      "file": "src/storage/registry.rs",
+      "lines": "954-963; src/storage/bookmarks.rs:85-89",
+      "title": "Hand-rolled temp dir/path helpers with ad-hoc cleanup",
+      "smell": "Duplicate Code",
+      "effort": "S",
+      "depends_on": [],
+      "recommendation": "storage/test_support.rs TempDir with Drop, or a tempfile dev-dependency.",
+      "verdict": "confirmed",
+      "verifier_note": "13 files call std::env::temp_dir(). unique_temp_path is at registry.rs:954. bookmarks.rs:89 uses crate::controller::workspace::unix_ms() (defined at controller/workspace.rs:569), a test-only storage->controller edge. tempfile is already in Cargo.lock as a transitive dependency (Cargo.lock:2535), so adding it as a dev-dependency adds no new crate for cargo-deny. Prefer that over a hand-rolled TempDir."
+    },
+    {
+      "id": "tests-structure-19",
+      "severity": "low",
+      "category": "code-smell",
+      "file": "src/controller/app_controller.rs",
+      "lines": "460-462; src/obs/client.rs:1393-1395; src/ui/window.rs:1583-1585; src/ui/widgets/transport_bar.rs:432; src/ui/previews.rs:292; src/controller/workspace.rs:566",
+      "title": "Two competing conventions for out-of-line tests",
+      "smell": "Inconsistent naming",
+      "effort": "S",
+      "depends_on": [
+        "tests-structure-13"
+      ],
+      "recommendation": "Standardize on <module>/tests.rs and <module>/tests/<topic>.rs; document in docs/developer-guide.md.",
+      "verdict": "confirmed",
+      "verifier_note": "All 6 #[path] test mounts verified at the cited lines. The #[path] strings in architecture_tests.rs:530-534 are scanner fixture text, not real mounts. Renamed test paths stay under ui:: for UI files, so test-native.py keeps working even without tests-structure-13."
+    },
+    {
+      "id": "tests-structure-20",
+      "severity": "low",
+      "category": "test",
+      "file": "src/obs/regression_tests.rs",
+      "lines": "1-706",
+      "title": "OBS adapter tests organized by history, not ObsClient capability",
+      "smell": "Divergent Change",
+      "effort": "M",
+      "depends_on": [
+        "tests-structure-01",
+        "tests-structure-08"
+      ],
+      "recommendation": "Move each test next to its capability module (obs/audio, sources, operator_inputs, requests, client/tests/*).",
+      "verdict": "adjusted",
+      "verifier_note": "Test grouping confirmed. Cited lines are off by about 1 (operator 20/88, audio 126/146/163/339/366/597/623/639, sources 180/200/233/252/319, requests 381-560, fps 575, actions 658). Caveat: regression_tests currently does `use super::*` from obs::client, so it sees client.rs private items. Once a test moves under obs::audio::tests, only pub/pub(crate)/pub(super) client items stay visible. obs/audio.rs already imports collect_bounded_ordered and MAX_CONCURRENT_OBS_REQUESTS from client (audio.rs:13), but each moved test must be compile-checked for private-item use, and the item widened to pub(super) only if needed. Turning obs/audio.rs into obs/audio/{mod.rs,tests.rs} or adding `#[cfg(test)] mod tests;` with audio/tests.rs is fine under Rust 2018+ path rules."
+    }
+  ],
+  "proposed_splits": [
+    {
+      "file": "src/controller/final_regression_tests.rs",
+      "current_lines": 1981,
+      "target_modules": [
+        "src/obs/testing/stateful.rs",
+        "src/controller/test_support/events.rs",
+        "src/controller/test_support/deps.rs",
+        "src/controller/workspace/tests/cancellation.rs",
+        "src/obs/requests/tests.rs",
+        "src/controller/refresh_controller/tests/event_loop.rs",
+        "src/controller/tests/scene_activation.rs",
+        "src/controller/refresh_controller/tests/graph.rs",
+        "src/controller/state/tests/topology.rs",
+        "src/controller/tests/audio_snapshots.rs",
+        "src/controller/session_controller/tests/terminal.rs",
+        "src/controller/output_controller/tests.rs",
+        "src/controller/app_controller/tests/refresh_queue.rs"
+      ],
+      "order": "1) AppController cfg(test) seams (test_scope, replace_session_for_test, take_refresh_task) 2) test_support events/deps 3) StatefulObs 4) clusters one per commit 5) delete the file and its #[path] mount",
+      "verdict": "adjusted",
+      "verifier_note": "Step 1 must also cover the field replacement `controller.session = SessionController::with_runner(..)` at 1449/1535/1791, not only reads. src/controller/tests/*.rs presumes a controller/tests module that does not exist. Use a `#[cfg(test)] mod tests;` in controller/mod.rs or place it under app_controller/tests/. Tests that touch AppController internals (terminal, audio_snapshots, scene_activation) need the seams to be pub(crate) under cfg(test) if they move outside app_controller's subtree. Moving the admission test (354) into obs/ requires StatefulObs to exist in obs/testing first, because it uses the Plan mock. The graph reducer test (971) is pure AppState and can move first."
+    },
+    {
+      "file": "src/obs/regression_tests.rs",
+      "current_lines": 706,
+      "target_modules": [
+        "src/obs/testing/payloads.rs",
+        "src/obs/operator_inputs/tests.rs",
+        "src/obs/audio/tests.rs",
+        "src/obs/sources/tests.rs",
+        "src/obs/requests/tests.rs",
+        "src/obs/client/tests/actions.rs"
+      ],
+      "order": "1) mock_client -> obs/testing/scripted.rs re-exported 2) payload helpers 3) one capability group per commit 4) remove #[path] at client.rs:1393-1395",
+      "verdict": "adjusted",
+      "verifier_note": "Feasible. Visibility caveat: moved tests lose access to client.rs private items they reach through `use super::*` today. Compile-check each group. Split the DoctorService assertion (308) into services/doctor_service tests rather than moving it under obs/sources."
+    },
+    {
+      "file": "src/architecture_tests.rs",
+      "current_lines": 681,
+      "target_modules": [
+        "src/architecture_tests/mod.rs",
+        "src/architecture_tests/scanner.rs (lines 18-366)",
+        "src/architecture_tests/scanner_tests.rs (367-547)",
+        "src/architecture_tests/rules.rs (548-681)"
+      ],
+      "order": "1) dir conversion unchanged 2) split 3) Forbidden enum + exempt prefixes 4) new rules with KNOWN_DEBT",
+      "verdict": "adjusted",
+      "verifier_note": "Line ranges corrected (the reviewer had 18-460 / 300-534 / 536-681). The new rules must allow crate::infra (i18n, error) in domain and services. See tests-structure-05."
+    },
+    {
+      "file": "src/controller/state.rs",
+      "current_lines": 3088,
+      "target_modules": [
+        "src/controller/test_support/state.rs",
+        "src/controller/state/tests/{outputs,topology,session,stats,workspace}.rs"
+      ],
+      "order": "1) test_support/state.rs re-exported from state::tests 2) mixer tests import test_support 3) state/tests/mod.rs 4) split by topic 5) only then split production",
+      "verdict": "adjusted",
+      "verifier_note": "Structure is sound. 17 pub(super) fixtures exist (not ~11). If any of them touches private AppState fields, it cannot live in controller::test_support (a sibling). Use state/test_support.rs (a child of state) for those. Adding reconcile_observation characterization before the production split is a good idea."
+    },
+    {
+      "file": "src/controller/app_controller.rs",
+      "current_lines": 1279,
+      "target_modules": [
+        "src/controller/app_controller/tests/outputs.rs",
+        "src/controller/app_controller/tests/config.rs",
+        "src/controller/refresh_controller/tests.rs",
+        "src/controller/test_support/deps.rs",
+        "src/controller/output_controller/testing.rs"
+      ],
+      "order": "1) bitrate tests 2) deps stubs 3) unify fake output client 4) move remaining 5) drop cfg(test) imports 8-33",
+      "verdict": "confirmed",
+      "verifier_note": "FakeOutputClient at 521 (impl FakeOutputCommandClient at 617), GatedOutput at output_controller.rs:567 and DelayedStop at 610 all exist. Merging the fakes is optional. They model different gating behaviors, so merge only if one type can express both without flags (avoid recreating the Plan flag-bag smell)."
+    },
+    {
+      "file": "src/obs/client.rs",
+      "current_lines": 1395,
+      "target_modules": [
+        "src/obs/testing/scripted.rs",
+        "src/obs/client/tests/connect.rs",
+        "src/obs/requests/tests.rs",
+        "src/obs/client/tests/actions.rs",
+        "src/obs/sources/tests.rs",
+        "src/obs/client/tests/thumbnails.rs",
+        "src/obs/testing/client_ext.rs"
+      ],
+      "order": "1) move mid-file mod tests (318-515) 2) mock_client -> scripted.rs 3) test-only methods -> ObsClientTestExt 4) split control_tests 5) then production by capability",
+      "verdict": "adjusted",
+      "verifier_note": "The connect test cannot be 'rewritten on obs::testing::wire::accept' as-is, because accept() discards the Identify frame the test asserts on. Add accept_with_identify first. collect_bounded_ordered is already imported by audio.rs and operator_inputs.rs from client, so moving it to requests.rs means updating those imports."
+    },
+    {
+      "file": "src/controller/state/mixer.rs",
+      "current_lines": 1396,
+      "target_modules": [
+        "src/controller/state/mixer/tests.rs"
+      ],
+      "order": "1) import test_support 2) move to mixer/tests.rs 3) move window predicate + 11 tests 4) table-drive",
+      "verdict": "confirmed",
+      "verifier_note": "45 tests plus 11 window tests verified. Table-driving collapses fn count, so adjust the global test-count guard or assert the case count per table."
+    },
+    {
+      "file": "src/storage/registry.rs",
+      "current_lines": 1556,
+      "target_modules": [
+        "src/storage/registry/tests/{curation,persistence,snapshot}.rs",
+        "src/storage/test_support.rs (or tempfile dev-dep)"
+      ],
+      "order": "1) TempDir 2) move tests 3) rewrite *_from_path tests and delete cfg(test) mutation path 4) split production curation vs IO",
+      "verdict": "adjusted",
+      "verifier_note": "Step 3 must also remove the mutate_registry assertion inside every_registry_json_write_refuses_a_corrupt_original (registry.rs:844). The write_registry_to_path assertion at 843 keeps the guarantee. storage/registry/ already exists as a directory (registry/identity.rs), so tests/ fits."
+    },
+    {
+      "file": "src/ui/window.rs",
+      "current_lines": 2698,
+      "target_modules": [
+        "src/ui/window/tests/native.rs",
+        "src/ui/window/tests/render.rs",
+        "src/ui/window/tests/events.rs",
+        "src/controller/state/mixer/tests.rs"
+      ],
+      "order": "1) test-native classification 2) move mixer predicate 3) move tests 4) characterization 5) split apply_event by family",
+      "verdict": "adjusted",
+      "verifier_note": "Step 1 is not strictly required: the new paths stay under ui:: and pass the current classifier. NoServices should become the promoted StaticConfigProvider from controller/dependencies.rs:72-85. For step 4 see the tests-structure-16 adjustment: add AppState-level characterization before any reduce_event extraction."
+    }
+  ]
+}

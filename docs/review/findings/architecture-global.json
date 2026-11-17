@@ -1,0 +1,527 @@
+{
+  "reviewer": "architecture-global",
+  "skills": [
+    "architecture",
+    "architecture-review",
+    "planning-and-task-breakdown",
+    "verifier:code-review",
+    "verifier:doubt-driven-development"
+  ],
+  "summary": "Adversarial verification of architecture-global. 22 findings: 9 confirmed, 13 adjusted, 0 fully refuted (several sub-claims refuted inside adjusted items). 30 proposed splits: 16 confirmed, 14 adjusted. Key corrections implementers must apply: (1) storage->controller edge is TEST-ONLY (storage/bookmarks.rs:89 inside cfg(test) mod at 81), not a production violation. (2) Moving controller/state to src/state/ first would create a state<->controller cycle: production controller code (command.rs:42, event.rs:327/331, app_controller.rs:48/293) imports state::MixerAudioRequest, and state imports controller::event/command/workspace::unix_ms. Required order: finding 08 step 1 + 05 + 06 BEFORE 01. (3) Moving state out of controller/ drops existing GTK-ban coverage; add violations(\"state\", ...) to background_layers_hold_no_gtk_or_ui in the same PR. (4) chart.rs Severity is not a duplicate of DiagnosticSeverity. (5) action_catalog production is 666 lines and only 35-65 + 148-288 is resolution logic. (6) SCENEDECK_MIXER_INSPECT is a documented manual-test diagnostic; do not cfg-gate it. (7) Poison-recovery for lifecycle mutexes is a semantic change, not a mechanical move. (8) NavigationContext::update must not silently drop writes. Self-review only: no independent reviewer agent was spawned; all checks done by direct reads and greps at HEAD 31d512f.",
+  "findings": [
+    {
+      "id": "architecture-global-01",
+      "severity": "high",
+      "category": "god-struct",
+      "file": "src/controller/state.rs",
+      "lines": "193-229, 438-499, 501-1246",
+      "title": "AppState is a cross-context god aggregate (47 fields, ~745-line impl) living in the controller layer",
+      "smell": "Large Class, Divergent Change",
+      "recommendation": "1) Land finding 08 step 1 (move MixerAudioRequest out of controller/state/mixer.rs) and finding 06 (unix_ms to infra/clock.rs) and finding 05 (ConnectionInfo to domain) BEFORE moving state. 2) git mv controller/state.rs + controller/state/ to src/state/ with a temporary `pub(crate) use crate::state;` shim in controller/mod.rs. 3) In the SAME PR extend architecture_tests.rs `background_layers_hold_no_gtk_or_ui` with `violations(\"state\", &forbidden, &[])` so AppState stays GTK-free (today it is guarded only because it sits under controller/). 4) Split into slices one per PR (outputs, stats, topology, session, audio, operating, curation, navigation) with private fields + intent methods; keep delegating methods on AppState for one PR. 5) Move Page::title/icon_name, ObsStatus::label/css_class, TopologyStatus::notice to ui (e.g. src/ui/l10n/state_labels.rs). Note: state will still depend on controller::event::AppEvent and controller::command::AppCommand (note_command_intent 566-571, apply_output_event 641-646); that direction (state -> controller messages) is acceptable but AT-6 (controller !-> state) can only land after MixerAudioRequest leaves state.",
+      "effort": "XL",
+      "depends_on": [
+        "architecture-global-11",
+        "architecture-global-08",
+        "architecture-global-05",
+        "architecture-global-06"
+      ],
+      "verdict": "adjusted",
+      "verifier_note": "Verified: struct AppState 438-499 has 47 fields (not ~50), WorkspaceState 193-229 has 31 fields; impl 501-1246; cfg(test) at 1247. Presentation methods confirmed at 65 (title), 106 (label), 115 (css_class), 138 (notice). Claim 'Tokio-side controller never touches AppState' holds for AppState itself (app_controller.rs:713-731 and output_controller.rs:643 are tests), BUT production controller code imports the state module: command.rs:42 and event.rs:327/331 and app_controller.rs:48/293 use crate::controller::state::MixerAudioRequest. And state imports controller internals in production: controller::event (4, 643, 753), controller::command (568), controller::workspace::unix_ms (758, 835, 854, 932; state/bookmarks.rs:84; state/session_reports.rs:66/120/213). Moving state out first would create a state<->controller cycle at module level and AT-6 would fail immediately. Also moving out of controller/ silently drops the existing GTK-ban coverage (architecture_tests.rs:669-681 only scans controller/storage/obs). Dependencies and order fixed accordingly."
+    },
+    {
+      "id": "architecture-global-02",
+      "severity": "high",
+      "category": "boundary",
+      "file": "src/ui/navigation.rs",
+      "lines": "15-32, 59-115",
+      "title": "NavigationContext exposes raw Rc<RefCell<AppState>>, so the documented narrow page boundary is false",
+      "smell": "Inappropriate Intimacy, Message Chains",
+      "recommendation": "1) Add NavigationContext::read(f) and update(f). update must NOT silently drop the mutation on re-entrancy: return Option<R>/Result and debug_assert!/log at error level so a refused write is visible (otherwise it is fake success). 2) Make `state` private; keep a narrow accessor for ui/window.rs and ui/persist.rs. 3) AT-8 per-file ratchet on `.state.borrow_mut()`/`.state.borrow()` in ui, ceilings = today's counts. 4) Later per-context facades. 5) Correct CLAUDE.md and docs/architecture.md wording.",
+      "effort": "L",
+      "depends_on": [
+        "architecture-global-11"
+      ],
+      "verdict": "adjusted",
+      "verifier_note": "Verified navigation.rs:20 `pub(crate) state: Rc<RefCell<AppState>>` and :31 `registry_binding: Option<(crate::storage::show_workspaces::RegistryTarget, u64)>`. grep `nav\\.state|\\.state\\.borrow` in src/ui = 692. borrow_mut counts confirmed exactly (window 66, operating_panel 46, live 29, inventory 28, mixer 26, report_history 21, audio_card 20, persist 20). architecture_tests.rs:647-665 forbids only the literal `AppController` with exemptions ui/window.rs and ui/navigation.rs. Cited line range 136-180 not checked as relevant; replaced with 59-115 (borrow sites inside navigation.rs). Adjustment: 'logs and refuses' would violate clean-code-guard fake-success rule; recommendation tightened."
+    },
+    {
+      "id": "architecture-global-03",
+      "severity": "high",
+      "category": "ddd",
+      "file": "src/storage/registry.rs",
+      "lines": "22-150, 167-537, 586-690",
+      "title": "No anti-corruption layer at storage: serde DTO SceneRegistry is the show-curation aggregate, used by UI and state directly",
+      "smell": "Feature Envy, Primitive Obsession",
+      "recommendation": "Same plan as reviewer: golden JSON/YAML fixtures first (src/storage/curation/fixtures/), then domain/curation/{show_curation.rs, accent.rs}, DTO + From conversions in storage, deserialize_presets (domain/audio_preset.rs:80) moves to storage, AppState holds ShowCuration, AT-7 ratchet on ui->storage. Correction: the free `set_scene_icon` at 479-488 and `mutate_registry` 490+ are #[cfg(test)] helpers, not production I/O; do not plan to move them as production code. `ordered_scene_ids` 215 and `snapshot` 252 belong in the aggregate too. Note CLAUDE.md explicitly sanctions GTK page callbacks mutating cached config/registry snapshots in AppState, so this is a design upgrade, not a rule violation.",
+      "effort": "XL",
+      "depends_on": [
+        "architecture-global-11",
+        "architecture-global-01"
+      ],
+      "verdict": "adjusted",
+      "verifier_note": "Verified SceneRegistry at 23, mutation methods at 171, 215, 238, 252, 277, 318, 346, 398, 427, 449, policy 537, parse/hex 505/518, read/write 586-690, mod tests at 693-694 (production ~692). deserialize_with = crate::domain::audio_preset::deserialize_presets at registry.rs:58 confirmed. 15 domain files reference Serialize/Deserialize confirmed. Corrections: ui->storage::registry is 38 refs across 9 files (not 20 files; 20 is the count of ui files importing any storage module, 95 refs). SceneRegistrySnapshot is used by services/doctor_service.rs, services/doctor_format.rs and ui/pages/graph.rs (and obs regression tests), not only doctor_service. Free set_scene_icon 480 is test-only."
+    },
+    {
+      "id": "architecture-global-04",
+      "severity": "high",
+      "category": "god-file",
+      "file": "src/ui/window.rs",
+      "lines": "63-280, 281-411, 643-1253, 1254-1573",
+      "title": "window.rs: ~590-line apply_event switch over 45 AppEvent variants plus shell building, polling, clocks and page refreshers",
+      "smell": "Switch Statements, Long Method, Divergent Change",
+      "recommendation": "Reviewer plan stands: src/ui/shell/{mod,pages,header,polling,welcome,chrome}.rs and src/ui/shell/event_router/{mod,session,scenes,audio,outputs,operating,stats,errors}.rs. Keep the Observation reconcile + recursive re-dispatch (apply_event calls at 706, 718, 755) inside router/mod.rs so ordering is unchanged. Move tests at 1583+ and window_render_tests.rs with handlers.",
+      "effort": "L",
+      "depends_on": [
+        "architecture-global-01"
+      ],
+      "verdict": "confirmed",
+      "verifier_note": "Verified function map: build_main_window 63, add_pages 281, install_event_polling 412, install_output_clock 475, build_content_header 513, header_button 593, welcome 611, refresh_scene_inventory_views 643, apply_event 664-1253 (46 AppEvent:: arms), recursion at 706/718/755, apply_output_event 1340, elapsed 1403/1409, report_failure 1422, command_failure_message 1432, StreamingChrome 1493, PageRefreshers 1499, EventUiContext 1515, apply_color_scheme 1574. AppEvent at event.rs:230-388 has 45 variants. depends_on 01 is not strictly needed (router can be split before state moves); kept as soft dependency."
+    },
+    {
+      "id": "architecture-global-05",
+      "severity": "medium",
+      "category": "boundary",
+      "file": "src/obs/client.rs",
+      "lines": "14; src/obs/mapper.rs:12,21-22; src/controller/event.rs:10-18",
+      "title": "The OBS ACL depends upward on controller::event::ConnectionInfo",
+      "smell": "Inverted dependency",
+      "recommendation": "Move ConnectionInfo to the domain (src/domain/obs.rs already exists and holds ObsNamedList, or a new src/domain/session.rs); re-export from controller/event.rs for one PR; add AT-1 `violations(\"obs\", &[\"crate::controller\",\"crate::storage\",\"crate::services\",\"crate::ui\"], &[])` (add crate::state once it exists).",
+      "effort": "S",
+      "depends_on": [],
+      "verdict": "confirmed",
+      "verifier_note": "Verified production imports at obs/client.rs:14 (used at 185 get_version) and obs/mapper.rs:12 (map_version 21). ConnectionInfo is plain data at event.rs:11-18. No existing test forbids obs->controller. Pure move, no cycle."
+    },
+    {
+      "id": "architecture-global-06",
+      "severity": "medium",
+      "category": "boundary",
+      "file": "src/controller/workspace.rs",
+      "lines": "569-575; src/storage/bookmarks.rs:81-89",
+      "title": "Clock utility unix_ms lives in controller::workspace and is used across layers",
+      "smell": "Misplaced utility",
+      "recommendation": "Create src/infra/clock.rs with unix_ms(); re-export from controller::workspace for one PR; sweep callers (ui/bookmarks.rs, ui/report_history.rs, ui/navigation.rs, ui/session_reports.rs, ui/window.rs, ui/event_reconciliation.rs, ui/workspace.rs, controller/state.rs, controller/state/{bookmarks,session_reports}.rs, storage/bookmarks.rs test). AT-2 for storage: `violations(\"storage\", &[\"crate::controller\",\"crate::obs\",\"crate::services\",\"crate::ui\"], &[])`; storage's only app_info use is storage/secret.rs:9 (APP_ID), so if app_info is forbidden the exemption is storage/secret.rs, not storage/xdg.rs.",
+      "effort": "S",
+      "depends_on": [],
+      "verdict": "adjusted",
+      "verifier_note": "unix_ms at 569-575 between test module decl (565-567) and mod tests (577+) confirmed. REFUTED part: storage/bookmarks.rs:89 is inside `#[cfg(test)] mod tests` (81-82), so there is NO production storage->controller edge; the scanner already exempts test code, and AT-2 would pass today. The real problem is that GTK-side state and ui code depend on a Tokio-controller module for a clock helper (state.rs:758/835/854/932). Exemption path in AT-2 corrected (secret.rs not xdg.rs)."
+    },
+    {
+      "id": "architecture-global-07",
+      "severity": "medium",
+      "category": "ddd",
+      "file": "src/controller/state.rs",
+      "lines": "193-229; src/controller/workspace.rs:22-110; src/storage/show_workspaces.rs; src/ui/workspace.rs",
+      "title": "Ubiquitous language collision: 'workspace' has four meanings, 'registry' three",
+      "smell": "Inconsistent naming",
+      "recommendation": "Adopt glossary in docs/ubiquitous-language.md + ADR; rename Rust identifiers only, one concept per PR; on-disk names (show-workspaces.json, serde keys) unchanged. Also update log/i18n message ids only if they are not user-visible keys shared across locales (every locale must change together).",
+      "effort": "M",
+      "depends_on": [
+        "architecture-global-01"
+      ],
+      "verdict": "confirmed",
+      "verifier_note": "Verified WorkspaceState 193 (operating view), WorkspaceRequest/Observation in controller/workspace.rs, show_workspaces RegistryTarget used by navigation.rs:31, ShowRegistryState (state.rs:30). Naming overload is real. Added note on i18n keys parity test."
+    },
+    {
+      "id": "architecture-global-08",
+      "severity": "medium",
+      "category": "boundary",
+      "file": "src/controller/command.rs",
+      "lines": "6-51; src/controller/event.rs:273,327,331; src/controller/app_controller.rs:48,293",
+      "title": "AppCommand and AppEvent carry state-module and controller-internal types",
+      "smell": "Inappropriate Intimacy",
+      "recommendation": "Step 1 (prerequisite of finding 01): move MixerAudioRequest (controller/state/mixer.rs:108-119) to src/domain/mixer.rs or domain/audio/mixer_request.rs; ThumbnailRequest and WorkspaceRequest/WorkspaceObservation to domain. Step 2 optional nested enums after the router. AT-6 controller !-> state lands after step 1 AND after state moves.",
+      "effort": "M",
+      "depends_on": [],
+      "verdict": "adjusted",
+      "verifier_note": "Verified command.rs:7 ThumbnailRequest, :10/:12/:17 WorkspaceRequest, :42 MixerAudioRequest; event.rs:273 WorkspaceObservation, :327/:331 MixerAudioRequest; app_controller.rs:48 and :293 also use it in production (missed by reviewer). 19 commands / 45 events confirmed. Dependency on 01 inverted: this must land BEFORE 01, otherwise moving state creates a controller<->state cycle."
+    },
+    {
+      "id": "architecture-global-09",
+      "severity": "medium",
+      "category": "ddd",
+      "file": "src/ui/pages/live.rs",
+      "lines": "358-392, 524-540; src/ui/pages/stats.rs:34-54, 860-912; src/ui/action_catalog.rs:35-65, 148-288",
+      "title": "Domain policies live in UI pages (output confirmation, disconnect rules, stats severity, action resolution)",
+      "smell": "Feature Envy, Misplaced responsibility",
+      "recommendation": "Move pure logic: live.rs requires_disconnect_confirmation 358, output_running 375, disconnect_stops_outputs 380, requires_output_confirmation 524, output_action_for_active_state 533 + OutputAction 27 -> src/domain/output.rs (or domain/outputs/policy.rs). disconnect_label 385 stays in ui (fl!). Stats: threshold consts 34-54, frame_budget_ms 860, fps/frame_time/dropped_severity 867-912 -> src/domain/stats.rs as `HealthSeverity {Unknown, Good, Warning, Critical}` with from_thresholds; keep fps_target 853 in ui (takes &AppState) and keep Severity::label/color in ui/widgets/chart.rs as presentation over the domain enum. action_catalog: only inputs/observed_input/observed_mute 35-65 and Resolved/resolve/resolve_with_inputs 148-288 are resolution logic -> src/state/operator/action_resolution.rs (or an AppState method); observed_label 66, entries 289, binding_entries 464, binding_entry 513 render localized labels and stay in ui; execute 619-666 dispatches via nav and stays in ui. graph scene_order 483 + compute_layers 492 -> services (graph_layout).",
+      "effort": "M",
+      "depends_on": [],
+      "verdict": "adjusted",
+      "verifier_note": "Line numbers in live.rs and graph.rs verified. Corrections: (a) chart.rs:44 Severity {Unknown, Good, Warning, Critical} is NOT a duplicate of domain/diagnostic.rs:9 DiagnosticSeverity {Info, Warning, Error}; different semantics, so do not merge them. (b) fps_target 853 reads AppState and cannot go into domain. (c) action_catalog resolve_with_inputs spans 158-288, not 154-667; 289-666 are label building (fl!) and nav execution, which are UI concerns."
+    },
+    {
+      "id": "architecture-global-10",
+      "severity": "medium",
+      "category": "boundary",
+      "file": "src/ui/persist.rs",
+      "lines": "25-122, 160, 207-270, 463-590; src/ui/background_io.rs:62-67, 154, 245",
+      "title": "Persistence application service lives in ui/ with hidden global state in thread_locals",
+      "smell": "Global State, Divergent Change",
+      "recommendation": "Reviewer plan stands (ui/app_services/{persist,background_io}/, pure RegistryWrites journal extracted and unit-tested, PersistenceService replacing thread_locals, AT-9 thread_local ratchet). Keep the journal GTK-free; place it next to curation state once src/state exists.",
+      "effort": "L",
+      "depends_on": [
+        "architecture-global-02"
+      ],
+      "verdict": "adjusted",
+      "verifier_note": "Verified thread_local! at persist.rs:42 and :207, registry_save_status 54, retry_registry_writes 160, six OnceLock<SerialQueue> at background_io.rs:62-67, thread_locals at background_io 154/245, session_reports 22, report_history 21, bookmarks 21, theme 15, scene_card 334, audio_card 892. REFUTED sub-claim: tools/test-native.py's one-process-per-test is explained in CLAUDE.md by needing a fresh display and session bus per GTK test, not by these thread_locals; that inference is unsupported. Note CLAUDE.md sanctions ui::background_io::run for local persistence, so relocation must keep that GTK-callback contract."
+    },
+    {
+      "id": "architecture-global-11",
+      "severity": "medium",
+      "category": "test",
+      "file": "src/architecture_tests.rs",
+      "lines": "351-365, 548-681",
+      "title": "Architecture tests miss most dependency edges and have no ratchets",
+      "smell": "Missing fitness functions",
+      "recommendation": "Add ratchet helper and AT rules as proposed, with fixes: AT-2 has no live production violation (see 06); AT-5: Language already lives in domain::appearance (infra/i18n.rs:18), so the real fix is making i18n take a locale code &str; AT-6 only after finding 08 step 1; add `violations(\"state\", gtk-forbidden)` when src/state is created; AT-7 must allow ui/background_io.rs and ui/persist.rs since CLAUDE.md sanctions GTK-side persistence via background_io. AT-10 production-line budget must treat a file's first `#[cfg(test)]` item (not only `mod tests`) carefully, because files like storage/registry.rs (153, 479, 490, 622, 631) and obs/client.rs (317, 1099) interleave test-only items with production.",
+      "effort": "M",
+      "depends_on": [],
+      "verdict": "adjusted",
+      "verifier_note": "Verified rules: 7 tests (549, 566, 589, 607, 625, 647, 669), not 6 (reviewer listed 7 anyway). violations() at 351-365 supports exemptions only. Domain outgoing edges: only crate::domain, crate::infra (13), a doc-comment mention of crate::services (hotkey.rs:142, ignored by scanner), and a test-only storage import, so AT-3 passes today. Services edges only domain/infra/services, so AT-4 passes today."
+    },
+    {
+      "id": "architecture-global-12",
+      "severity": "medium",
+      "category": "ddd",
+      "file": "src/domain/mod.rs",
+      "lines": "whole module (26 flat files + health/, audio_preset/)",
+      "title": "Flat domain/ with no bounded-context grouping; presentation strings and serde schema inside the domain",
+      "smell": "Shotgun Surgery, Mixed abstraction",
+      "recommendation": "Regroup with re-export shims as proposed. ConnectionInfo can land in existing domain/obs.rs or a new domain/session.rs. Freeze fl! growth with AT-12 (141 today).",
+      "effort": "L",
+      "depends_on": [
+        "architecture-global-11"
+      ],
+      "verdict": "adjusted",
+      "verifier_note": "Counts corrected: 26 top-level .rs files in domain/ (incl. mod.rs; 29 .rs total with subdirs), not 28; LANGUAGE_LOADER imported in 12 files (not 11); fl!( calls = 141 confirmed; 15 files with serde confirmed."
+    },
+    {
+      "id": "architecture-global-13",
+      "severity": "medium",
+      "category": "god-struct",
+      "file": "src/controller/lifecycle.rs",
+      "lines": "13-28, 31-128, 129-433",
+      "title": "SessionScope bundles 12 Arc fields plus generation (identity, task registry, client slot, journal, terminal queue)",
+      "smell": "Large Class, Data Clumps",
+      "recommendation": "Split into controller/session/{scope,task_set,client_slot,journal,terminals}.rs as proposed, move session_controller.rs alongside. Lock handling: do NOT blindly switch to poison recovery via into_inner; that is a semantic change (a poisoned OperationJournal or task list may hold a half-applied update). Either keep the panic (documented invariant) or convert to an explicit error path, and decide per mutex in a separate PR with a test, not during the mechanical move.",
+      "effort": "M",
+      "depends_on": [],
+      "verdict": "adjusted",
+      "verifier_note": "Verified SessionScope 14-28: generation u64 + 12 Arc fields (reviewer said 13 Arc). OperationKind 31, OperationEvidence 50, SessionRetirement 63, OperationJournal 71, TerminalQueue 76, OperationLease 90-128, impl SessionScope 129, tests at 434. 21 .expect( occurrences confirmed. Poison-recovery recommendation contradicts 'keep each method body identical'; separated."
+    },
+    {
+      "id": "architecture-global-14",
+      "severity": "medium",
+      "category": "test",
+      "file": "src/controller/thumbnails.rs",
+      "lines": "136-144; src/controller/workspace.rs:587-595; src/obs/client.rs:325-333; src/obs/obs_fixture.rs:14-20",
+      "title": "Loopback OBS mock duplicated; protocol tests scattered across layers",
+      "smell": "Duplicate Code",
+      "recommendation": "Generalize obs/obs_fixture.rs into src/obs/testing/{server,scripts}.rs (cfg(test)); replace private MockObs in thumbnails.rs/workspace.rs and the TcpListener setup in obs/client.rs tests; split final_regression_tests.rs per context; add per-family obs contract tests.",
+      "effort": "M",
+      "depends_on": [],
+      "verdict": "confirmed",
+      "verifier_note": "Verified MockObs + mock_obs in thumbnails.rs:136/144 and workspace.rs:587/595, own TcpListener::bind at obs/client.rs:333 (test module), obs_fixture.rs:15 shared listen(); obs_fixture is used by obs/regression_tests.rs, obs/event.rs and obs/client.rs control_tests:1110 but not by controller tests. final_regression_tests.rs has 35 tests and imports tokio_websockets (line 20). ~33 distinct OBS request type literals across final_regression_tests.rs and obs/regression_tests.rs, matching 'about 30'."
+    },
+    {
+      "id": "architecture-global-15",
+      "severity": "medium",
+      "category": "god-file",
+      "file": "src/ui/widgets/operating_panel.rs",
+      "lines": "17-93, 94-270, 678-1097, 1098-1493",
+      "title": "operating_panel 'widget' is the full Sources page with two ~400-line functions",
+      "smell": "Long Method, Large Class",
+      "recommendation": "Split as proposed, but target src/ui/pages/sources/ (ui/pages/sources.rs already exists as a one-line wrapper calling operating_panel::build at line 8) instead of inventing a new ui/features/ tree; ui/widgets/operating_panel/ (media_progress child) already exists as a directory to fold in.",
+      "effort": "L",
+      "depends_on": [
+        "architecture-global-02"
+      ],
+      "verdict": "adjusted",
+      "verifier_note": "Verified LocalState 17, build 94, update_media_values 271, SourcesContent 317, sources_content_from_state 509, update_status 548, populate 678, build_source_detail 1098, bind_numeric_draft 1494, add_numeric_apply 1531, helpers 1554-1613, tests 1614. 46 borrow_mut confirmed. Callers: ui/pages/sources.rs:8 and ui/widgets/lifetime_tests.rs:83. Target path adjusted to avoid a third UI grouping concept (pages/widgets/features) without an ADR."
+    },
+    {
+      "id": "architecture-global-16",
+      "severity": "medium",
+      "category": "god-file",
+      "file": "src/ui/pages/inventory.rs",
+      "lines": "51-130, 330-461, 598-1018, 1214-1505",
+      "title": "inventory.rs mixes presentation model, rows, drag reordering, accent editing, YAML dialogs and curation mutation",
+      "smell": "Divergent Change",
+      "recommendation": "Split into src/ui/pages/inventory/{mod,presentation,row,options,accent,reorder,stale,yaml_io,save_status}.rs as proposed; preserve_breakpoint_focus (462) stays in mod.rs; remove the 15 production unwrap/expect while moving.",
+      "effort": "M",
+      "depends_on": [
+        "architecture-global-03"
+      ],
+      "verdict": "confirmed",
+      "verifier_note": "Verified preserve_breakpoint_focus 462, install_scene_reordering 960, build_stale_group 1019, reordered_scene_ids 1152, set_scene_icon 1330, set_scene_accent 1346, show_import_dialog 1433, tests at 1506. 15 unwrap/expect before 1506 confirmed. Dependency on 03 is soft; file split can precede ShowCuration."
+    },
+    {
+      "id": "architecture-global-17",
+      "severity": "medium",
+      "category": "god-file",
+      "file": "src/ui/pages/mixer.rs",
+      "lines": "38-314, 941-1115, 1116-1223; src/controller/state/mixer.rs:7-119, 121-452",
+      "title": "Mixer page and mixer state both mix rendering/fencing with an inspection subsystem",
+      "smell": "Divergent Change",
+      "recommendation": "Split ui/pages/mixer/{mod,handle,rows,inputs,requests,inspection}.rs and state audio/{mixer_refresh,mixer_view,mixer_inspection}.rs as proposed. Do NOT gate inspection behind cfg(debug_assertions): SCENEDECK_MIXER_INSPECT=1 is a documented manual-test diagnostic (docs/manual-test-plan.md:363, 406; docs/manual-test-runs.md:163).",
+      "effort": "M",
+      "depends_on": [
+        "architecture-global-01"
+      ],
+      "verdict": "adjusted",
+      "verifier_note": "Verified MIXER_INSPECT_ENV 290, emit_mixer_inspection 941 (env check at 947), request_mixer_scene_audio 1132, should_request_mixer_scene_audio 1169, tests 1224 and 1788; state/mixer.rs cfg(test) at 453. 'Speculative Generality' label refuted: inspection is used by the manual test plan, so it is a supported diagnostic, not speculative."
+    },
+    {
+      "id": "architecture-global-18",
+      "severity": "medium",
+      "category": "docs",
+      "file": "docs/codebase-overview.md",
+      "lines": "16-169",
+      "title": "codebase-overview.md and CLAUDE.md are out of date",
+      "smell": "Stale documentation",
+      "recommendation": "As proposed: fix NavigationContext and storage-conversion statements now; update overview per phase; add ubiquitous-language doc and ADR.",
+      "effort": "S",
+      "depends_on": [],
+      "verdict": "confirmed",
+      "verifier_note": "Verified docs/codebase-overview.md (169 lines) has zero mentions of requests.rs, scene_activation.rs, show_workspaces, atomic.rs, lifecycle.rs, workspace.rs, thumbnails.rs, event_pump, persist.rs, action_catalog, workflow.rs, i18n; line 106 says `registry.rs`: local scene role registry. docs/architecture.md:186 states conversion to SceneRegistrySnapshot. CLAUDE.md NavigationContext claim contradicted by navigation.rs:20."
+    },
+    {
+      "id": "architecture-global-19",
+      "severity": "low",
+      "category": "code-smell",
+      "file": "src/ui/pages/graph.rs",
+      "lines": "573, 699-787; src/ui/widgets/chart.rs:30-42, 88-120, 315-344",
+      "title": "Duplicated Cairo drawing primitives (Color, Palette, draw_grid) in graph.rs and chart.rs",
+      "smell": "Duplicate Code",
+      "recommendation": "Create src/ui/widgets/cairo/ shared module as proposed; diff the two Palette/draw_grid bodies before merging (signatures differ: graph draw_grid(ctx,width,height,color) vs chart draw_grid multi-arg).",
+      "effort": "S",
+      "depends_on": [],
+      "verdict": "confirmed",
+      "verifier_note": "Verified graph.rs draw_grid 573, rounded_rect 699, fitted_text 711, set_rgb 748, Color 753, Palette 755; chart.rs Color 30, Palette 88, draw_grid 315. Bodies not compared line by line; signatures differ, so consolidation needs a reconciling API."
+    },
+    {
+      "id": "architecture-global-20",
+      "severity": "low",
+      "category": "god-file",
+      "file": "src/app.rs",
+      "lines": "23-161, 162-430, 431-456",
+      "title": "app.rs composition root mixes runtime setup, startup I/O loading and close-guard UI",
+      "smell": "Divergent Change",
+      "recommendation": "As proposed; prefer ui/shell/close_guard.rs for CloseGuard (it is GTK) and src/app/startup.rs for StartupData loading.",
+      "effort": "S",
+      "depends_on": [],
+      "verdict": "confirmed",
+      "verifier_note": "Verified StartupData 23, run 32, document_window(s) 162/166, CloseGuard 170, install_persistence_close_guard 281, show_persistence_close_failure 342, build_ui 431, tests 457. storage refs: 21 (reviewer said 23), immaterial."
+    },
+    {
+      "id": "architecture-global-21",
+      "severity": "low",
+      "category": "god-file",
+      "file": "src/obs/client.rs",
+      "lines": "1-316 prod, 317-1392 tests",
+      "title": "Many 'god files' are inflated by inline test modules",
+      "smell": "Large file (tests)",
+      "recommendation": "Phase 0 mechanical test extraction as proposed. Correct the list: ui/action_catalog.rs production is 666 of 1155 (cfg(test) at 667), not all production. controller/state.rs production 1246 of 3088.",
+      "effort": "S",
+      "depends_on": [],
+      "verdict": "adjusted",
+      "verifier_note": "Verified first cfg(test) lines: obs/client.rs 317, registry.rs mod tests 693 (test-only items also at 153/479/490/622/631), state/mixer.rs 453, app_controller.rs mod tests 464 (test-only items at 8-33, 419, 460-462), persist.rs 591 (test items at 122, 406), doctor_service 177, event_reconciliation 207, session_controller 318. The summary's claim that action_catalog.rs is '1155, all production' is wrong."
+    },
+    {
+      "id": "architecture-global-22",
+      "severity": "low",
+      "category": "code-smell",
+      "file": "src/controller/refresh_controller.rs",
+      "lines": "409-587",
+      "title": "run_event_loop is a ~180-line async function combining worker, poll loop and transport publication",
+      "smell": "Long Method",
+      "recommendation": "Split controller/refresh/{lists,stats,live_data,worker,event_loop}.rs as proposed; extract a pure route_obs_event; keep the select! structure intact.",
+      "effort": "M",
+      "depends_on": [],
+      "verdict": "confirmed",
+      "verifier_note": "Verified function map: publish_profiles_after 26, refresh_after_collection_change 47, refresh_profile_and_collection_lists 69, refresh_obs_stats 103, run_stats_poll_loop 147, bitrate_kbps_since_last_sample 165, refresh_live_data 187, invalidate_graph 195, refresh_scene_audio 262, RefreshInvalidation 296, refresh_worker 323, enqueue_transport_publication 394, run_event_loop 409, tests 588."
+    }
+  ],
+  "proposed_splits": [
+    {
+      "file": "src/controller/state.rs",
+      "current_lines": 3088,
+      "verdict": "adjusted",
+      "verifier_note": "Order must change: (0) land finding 08 step 1 (MixerAudioRequest to domain), finding 06 (infra/clock.rs) and finding 05 (ConnectionInfo) first; (1) move tests 1247-3088; (2) git mv to src/state/ AND add violations(\"state\", gtk-forbidden) to background_layers_hold_no_gtk_or_ui in the same PR; (3) sweep imports, then AT-6. Slice line refs verified (apply_connected 753, reset_obs_session 853, accepts_session_publication 882, apply_terminal_evidence 896, set_stream_* 1086-1142, set_obs_stats 1144-1181, apply_input_mute 1196, apply_input_volume 1218). Fields 47 not ~50."
+    },
+    {
+      "file": "src/ui/window.rs",
+      "current_lines": 2698,
+      "verdict": "confirmed",
+      "verifier_note": "Line map verified. Tests start at 1583 (not 1588)."
+    },
+    {
+      "file": "src/ui/widgets/operating_panel.rs",
+      "current_lines": 2361,
+      "verdict": "adjusted",
+      "verifier_note": "Target src/ui/pages/sources/ (sources.rs exists, line 8 calls operating_panel::build) rather than new ui/features/operating/. Line map verified; tests at 1614."
+    },
+    {
+      "file": "src/ui/pages/inventory.rs",
+      "current_lines": 2126,
+      "verdict": "confirmed",
+      "verifier_note": "Line map spot-checked (462, 960, 1019, 1152, 1330, 1346, 1433); tests at 1506."
+    },
+    {
+      "file": "src/ui/pages/mixer.rs",
+      "current_lines": 2003,
+      "verdict": "adjusted",
+      "verifier_note": "Keep inspection.rs unconditionally compiled (documented manual-test diagnostic). Line refs 290, 941, 1132, 1169, tests 1224/1788 verified."
+    },
+    {
+      "file": "src/controller/final_regression_tests.rs",
+      "current_lines": 1981,
+      "verdict": "confirmed",
+      "verifier_note": "35 tests confirmed; uses tokio_websockets directly, not obs_fixture."
+    },
+    {
+      "file": "src/storage/registry.rs",
+      "current_lines": 1556,
+      "verdict": "adjusted",
+      "verifier_note": "Free set_scene_icon 479-488 and mutate_registry 490+ are #[cfg(test)]; do not list them under io.rs as production. Tests at 693. Golden fixtures first is correct."
+    },
+    {
+      "file": "src/ui/pages/live.rs",
+      "current_lines": 1554,
+      "verdict": "confirmed",
+      "verifier_note": "Policy fns 358/375/380/524/533 and OutputAction 27 verified; disconnect_label 385 stays in ui. Tests at 977."
+    },
+    {
+      "file": "src/ui/theme.rs",
+      "current_lines": 1553,
+      "verdict": "confirmed",
+      "verifier_note": "ThemeManager 128, validate_custom_css 279, install_desktop_signals 320, motion_css 434, BUILT_IN_THEMES 529, tests 616-617 verified."
+    },
+    {
+      "file": "src/controller/state/mixer.rs",
+      "current_lines": 1396,
+      "verdict": "adjusted",
+      "verifier_note": "MixerAudioRequest move to domain must happen before the state/ move (it is imported by command.rs, event.rs, app_controller.rs in production). Tests at 453."
+    },
+    {
+      "file": "src/obs/client.rs",
+      "current_lines": 1395,
+      "verdict": "adjusted",
+      "verifier_note": "Production is 1-316; test modules are mod tests (317-1098), control_tests (1099-1392) and regression_tests via #[path] (1393-1395). control_tests already uses obs_fixture."
+    },
+    {
+      "file": "src/app.rs",
+      "current_lines": 1345,
+      "verdict": "confirmed",
+      "verifier_note": "Line map verified; tests at 457."
+    },
+    {
+      "file": "src/controller/app_controller.rs",
+      "current_lines": 1279,
+      "verdict": "adjusted",
+      "verifier_note": "Tests 755-1279 drive AppController::handle (e.g. line 763 controller.handle(AppCommand::SetOutput...)), so they are AppController integration tests; keep them under app_controller/tests/outputs.rs rather than moving to controller/outputs/tests.rs, which would need access to AppController internals. Production also includes test-only items at 8-33 and 419."
+    },
+    {
+      "file": "src/ui/pages/stats.rs",
+      "current_lines": 1160,
+      "verdict": "adjusted",
+      "verifier_note": "fps_target 853 takes &AppState and stays in ui; Severity's label/color stay in ui; only thresholds 34-54, frame_budget_ms 860 and the three classifiers move to domain/stats.rs (HealthSeverity). Tests at 913."
+    },
+    {
+      "file": "src/ui/action_catalog.rs",
+      "current_lines": 1155,
+      "verdict": "adjusted",
+      "verifier_note": "Production is 1-666, tests 667-1155 (cfg(test) module). Only 35-65 and 148-288 are resolution logic; 66-147 observed_label, 289-618 entry/label builders (fl!) and 619-666 execute (nav dispatch) stay in ui."
+    },
+    {
+      "file": "src/ui/widgets/audio_card.rs",
+      "current_lines": 1123,
+      "verdict": "confirmed",
+      "verifier_note": "Tests at 885; thread_local at 892 is inside tests. Line refs plausible, not individually verified beyond test boundary."
+    },
+    {
+      "file": "src/ui/pages/settings.rs",
+      "current_lines": 1057,
+      "verdict": "confirmed",
+      "verifier_note": "Tests at 874; settings/ subdirectory already exists. Group line ranges not individually verified."
+    },
+    {
+      "file": "src/ui/persist.rs",
+      "current_lines": 1033,
+      "verdict": "confirmed",
+      "verifier_note": "Function map verified (25, 32, 42, 54, 69, 73, 83, 123, 160, 207, 215, 233, 251, 261, 269, 291, 358, 383, 463, 478, 511, 552). Test-only items at 122 and 406 must move with tests."
+    },
+    {
+      "file": "src/ui/pages/graph.rs",
+      "current_lines": 968,
+      "verdict": "confirmed",
+      "verifier_note": "scene_order 483, compute_layers 492, Cairo helpers 573/699/711/748/753/755 verified; tests at 788."
+    },
+    {
+      "file": "src/controller/workspace.rs",
+      "current_lines": 924,
+      "verdict": "adjusted",
+      "verifier_note": "Tests start at 565 (lifecycle_tests #[path]) and 577 (mod tests), not 578; unix_ms move does not fix a storage production edge (storage use is test-only)."
+    },
+    {
+      "file": "src/ui/background_io.rs",
+      "current_lines": 894,
+      "verdict": "confirmed",
+      "verifier_note": "OnceLock lanes 62-67, thread_locals 154/245, first cfg(test) at 378."
+    },
+    {
+      "file": "src/controller/output_controller.rs",
+      "current_lines": 812,
+      "verdict": "adjusted",
+      "verifier_note": "First cfg(test) is the FakeOutputCommandClient trait at 389-390, so 'production 25-561' includes test-only seams; move FakeOutputCommandClient into the client.rs split under #[cfg(test)]."
+    },
+    {
+      "file": "src/ui/sidebar.rs",
+      "current_lines": 800,
+      "verdict": "confirmed",
+      "verifier_note": "Tests at 548."
+    },
+    {
+      "file": "src/ui/action_shortcuts.rs",
+      "current_lines": 798,
+      "verdict": "adjusted",
+      "verifier_note": "Only conflict 97-133 is pure; conflict_for_enable 379 takes &NavigationContext and must stay in ui (or be split into a pure core + nav adapter). Tests at 563."
+    },
+    {
+      "file": "src/controller/session_controller.rs",
+      "current_lines": 792,
+      "verdict": "confirmed",
+      "verifier_note": "Tests at 318."
+    },
+    {
+      "file": "src/storage/config.rs",
+      "current_lines": 771,
+      "verdict": "confirmed",
+      "verifier_note": "apply_migrations 317, migrate 326, tests 409 verified."
+    },
+    {
+      "file": "src/ui/audio_presets.rs",
+      "current_lines": 713,
+      "verdict": "adjusted",
+      "verifier_note": "snapshot 44 and capable 118 take &AppState (state-side, fine for src/state/), resolve 68 and review_matches 135 are pure over domain types and can go to domain/audio_preset. Tests are external (cfg(test) at 712)."
+    },
+    {
+      "file": "src/controller/refresh_controller.rs",
+      "current_lines": 610,
+      "verdict": "confirmed",
+      "verifier_note": "Function map verified; tests at 588."
+    },
+    {
+      "file": "src/ui/widgets/chart.rs",
+      "current_lines": 682,
+      "verdict": "adjusted",
+      "verifier_note": "Severity 44-87 is not a duplicate of DiagnosticSeverity; replace only its classification with domain HealthSeverity and keep label/color as ui extension. Tests at 570."
+    },
+    {
+      "file": "src/architecture_tests.rs",
+      "current_lines": 681,
+      "verdict": "confirmed",
+      "verifier_note": "Scanner 18-365, scanner self-tests 367-547, rules 548-681 verified."
+    }
+  ]
+}
