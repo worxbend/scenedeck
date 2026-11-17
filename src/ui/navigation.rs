@@ -1,8 +1,12 @@
 //! Shared handle passed to every page builder.
 //!
 //! Pages use `nav.switch_to_page()` for navigation and `nav.dispatch()` to
-//! send commands to the AppController.  The stack and controller are private;
-//! pages only interact through these two methods.
+//! send commands to the AppController.  The stack and controller are private.
+//! `read` and `update` are the later borrow boundary. Existing `state.borrow`
+//! call sites stay until a follow-up moves them.
+//!
+//! A closure passed to `read` or `update` must not call `dispatch`, persist,
+//! or refresh another page. Those paths borrow this same `RefCell` again.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -43,6 +47,13 @@ impl NavigationBinding {
     }
 }
 
+/// `update` found `AppState` already borrowed, so the write was not applied.
+///
+/// shortcut: no production caller until pages leave `state.borrow`; delete the allow then.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ReentrantUpdate;
+
 /// The sidebar list plus the page each of its rows stands for, in row order.
 struct Sidebar {
     list: glib::WeakRef<ListBox>,
@@ -64,6 +75,59 @@ impl NavigationContext {
             state,
             global_shortcuts: Rc::new(RefCell::new(Default::default())),
             content_stack: content_stack.downgrade(),
+            controller,
+            sidebar: Rc::new(RefCell::new(None)),
+            binding: None,
+            registry_binding: None,
+        }
+    }
+
+    /// Borrow `AppState` for `f`.
+    ///
+    /// Panics when `update` already holds the cell. Shared `read` calls nest.
+    /// `f` must not `dispatch`, persist, or refresh another page.
+    ///
+    /// shortcut: no production caller until pages leave `state.borrow`; delete the allow then.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn read<R>(&self, f: impl FnOnce(&AppState) -> R) -> R {
+        f(&self.state.borrow())
+    }
+
+    /// Borrow `AppState` mutably for `f`.
+    ///
+    /// Returns [`ReentrantUpdate`] when the cell is already borrowed, including
+    /// a nested `update`. The closure does not run, so the write is not dropped
+    /// on the floor. `f` must not `dispatch`, persist, or refresh another page.
+    ///
+    /// shortcut: no production caller until pages leave `state.borrow`; delete the allow then.
+    #[cfg_attr(not(test), allow(dead_code))]
+    #[track_caller]
+    pub(crate) fn update<R>(
+        &self,
+        f: impl FnOnce(&mut AppState) -> R,
+    ) -> Result<R, ReentrantUpdate> {
+        let caller = std::panic::Location::caller();
+        let Ok(mut state) = self.state.try_borrow_mut() else {
+            tracing::error!(%caller, "reentrant NavigationContext::update");
+            // `cargo test` is a debug build. An unconditional `debug_assert`
+            // would abort before the caller can observe `Err`.
+            #[cfg(not(test))]
+            debug_assert!(false, "reentrant NavigationContext::update at {caller}");
+            return Err(ReentrantUpdate);
+        };
+        Ok(f(&mut state))
+    }
+
+    /// State-only context. `new` needs a GTK `Stack`, which unit tests have no display for.
+    #[cfg(test)]
+    fn for_borrow_tests(
+        state: Rc<RefCell<AppState>>,
+        controller: Rc<RefCell<AppController>>,
+    ) -> Self {
+        Self {
+            state,
+            global_shortcuts: Rc::new(RefCell::new(Default::default())),
+            content_stack: glib::WeakRef::new(),
             controller,
             sidebar: Rc::new(RefCell::new(None)),
             binding: None,
@@ -214,14 +278,106 @@ impl NavigationContext {
 
 #[cfg(test)]
 mod tests {
-    use super::NavigationBinding;
+    use super::{NavigationBinding, NavigationContext, ReentrantUpdate};
+    use crate::controller::app_controller::AppController;
+    use crate::controller::state::{AppState, Page};
     use crate::domain::workflow::ScopeBinding;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use tracing::field::{Field, Visit};
+    use tracing::Subscriber;
+    use tracing_subscriber::layer::{Context, SubscriberExt};
+    use tracing_subscriber::Layer;
+
+    struct ReentrantLog(Arc<AtomicBool>);
+
+    struct ReentrantVisit {
+        message: bool,
+        caller: bool,
+    }
+
+    impl ReentrantVisit {
+        fn note(&mut self, name: &str, value: &str) {
+            if name == "message" && value.contains("reentrant") {
+                self.message = true;
+            }
+            if name == "caller" && !value.is_empty() {
+                self.caller = true;
+            }
+        }
+    }
+
+    impl Visit for ReentrantVisit {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            self.note(field.name(), &format!("{value:?}"));
+        }
+
+        fn record_str(&mut self, field: &Field, value: &str) {
+            self.note(field.name(), value);
+        }
+    }
+
+    impl<S: Subscriber> Layer<S> for ReentrantLog {
+        fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+            let mut visit = ReentrantVisit {
+                message: false,
+                caller: false,
+            };
+            event.record(&mut visit);
+            if visit.message && visit.caller {
+                self.0.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+
+    fn borrow_nav() -> (tokio::runtime::Runtime, NavigationContext) {
+        let runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        let (tx, _rx) = std::sync::mpsc::sync_channel(1);
+        let controller = Rc::new(RefCell::new(AppController::new(
+            runtime.handle().clone(),
+            tx,
+        )));
+        let state = Rc::new(RefCell::new(AppState::new(
+            Default::default(),
+            Default::default(),
+            None,
+            None,
+        )));
+        let nav = NavigationContext::for_borrow_tests(state, controller);
+        (runtime, nav)
+    }
+
+    #[test]
+    fn nested_update_returns_err_and_read_inside_read_works() {
+        let (_runtime, nav) = borrow_nav();
+        assert!(nav.read(|outer| nav.read(|inner| inner.current_page == outer.current_page)));
+
+        let logged = Arc::new(AtomicBool::new(false));
+        let subscriber = tracing_subscriber::registry().with(ReentrantLog(Arc::clone(&logged)));
+        let updated = tracing::subscriber::with_default(subscriber, || {
+            nav.update(|state| {
+                state.set_page(Page::Stats);
+                let nested = nav.update(|inner| inner.set_page(Page::Mixer));
+                assert_eq!(nested, Err(ReentrantUpdate));
+                state.current_page
+            })
+        });
+
+        assert_eq!(updated, Ok(Page::Stats));
+        assert_eq!(nav.read(|state| state.current_page), Page::Stats);
+        assert!(
+            logged.load(Ordering::Relaxed),
+            "reentrant update was not logged"
+        );
+    }
 
     #[test]
     #[ignore = "requires a disposable GTK display"]
     fn native_navigation_does_not_retain_its_stack_or_sidebar() {
-        crate::ui::test_support::native_test(
-            "ui::navigation::tests::native_navigation_does_not_retain_its_stack_or_sidebar",
+        crate::ui::native_test!(
+            native_navigation_does_not_retain_its_stack_or_sidebar,
             || {
                 use super::*;
                 let runtime = tokio::runtime::Runtime::new().unwrap();
