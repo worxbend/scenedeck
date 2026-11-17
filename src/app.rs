@@ -573,53 +573,83 @@ mod tests {
     #[test]
     #[ignore = "requires isolated GTK and scratch history; no OBS/keyring"]
     fn native_last_detached_report_close_supports_cancel_retry_and_informed_abandon() {
-        ui::test_support::native_test("app::tests::native_last_detached_report_close_supports_cancel_retry_and_informed_abandon", || {
-            let (app, main) = fixture();
-            let (nav, _stack, _runtime, _events) = ui::test_support::navigation();
-            ui::report_history::register(&nav.state);
-            nav.state.borrow_mut().configure_report_history(true, 8);
-            connect_report(&mut nav.state.borrow_mut());
-            let detached = adw::Window::builder().application(&app).build();
-            detached.present();
-            main.close();
-            iterate_until(|| !main.is_visible());
-            assert!(nav.state.borrow().reports.entries.back().unwrap().ended_unix_ms.is_none());
-            let path = crate::storage::xdg::report_history_path();
-            let backup = path.with_extension("backup");
-            std::fs::rename(&path, &backup).unwrap();
-            std::fs::create_dir(&path).unwrap();
-            detached.close();
-            iterate_until(|| close_failure().is_some());
-            assert!(detached.is_visible() && detached.is_sensitive());
-            assert!(nav.state.borrow().reports.entries.back().unwrap().ended_unix_ms.is_none(), "failed exit resumes reporting");
-            close_failure().unwrap().response("cancel");
-            assert!(detached.is_visible());
-            nav.state.borrow_mut().workspace.log(crate::domain::workflow::ActivityOrigin::Observed, "after cancelled exit".into());
-            detached.close();
-            iterate_until(|| close_failure().is_some());
-            std::fs::remove_dir(&path).unwrap();
-            std::fs::rename(&backup, &path).unwrap();
-            close_failure().unwrap().response("retry");
-            iterate_until(|| !detached.is_visible());
-            let saved = crate::storage::report_history::read(&path).unwrap();
-            assert!(saved.entries[0].ended_unix_ms.is_some());
-            assert!(serde_json::to_string(&saved).unwrap().contains("after cancelled exit"));
+        crate::ui::native_test!(
+            native_last_detached_report_close_supports_cancel_retry_and_informed_abandon,
+            || {
+                let (app, main) = fixture();
+                let (nav, _stack, _runtime, _events) = ui::test_support::navigation();
+                ui::report_history::register(&nav.state);
+                nav.state.borrow_mut().configure_report_history(true, 8);
+                connect_report(&mut nav.state.borrow_mut());
+                let detached = adw::Window::builder().application(&app).build();
+                detached.present();
+                main.close();
+                iterate_until(|| !main.is_visible());
+                assert!(nav
+                    .state
+                    .borrow()
+                    .reports
+                    .entries
+                    .back()
+                    .unwrap()
+                    .ended_unix_ms
+                    .is_none());
+                let path = crate::storage::xdg::report_history_path();
+                let backup = path.with_extension("backup");
+                std::fs::rename(&path, &backup).unwrap();
+                std::fs::create_dir(&path).unwrap();
+                detached.close();
+                iterate_until(|| close_failure().is_some());
+                assert!(detached.is_visible() && detached.is_sensitive());
+                assert!(
+                    nav.state
+                        .borrow()
+                        .reports
+                        .entries
+                        .back()
+                        .unwrap()
+                        .ended_unix_ms
+                        .is_none(),
+                    "failed exit resumes reporting"
+                );
+                close_failure().unwrap().response("cancel");
+                assert!(detached.is_visible());
+                nav.state.borrow_mut().workspace.log(
+                    crate::domain::workflow::ActivityOrigin::Observed,
+                    "after cancelled exit".into(),
+                );
+                detached.close();
+                iterate_until(|| close_failure().is_some());
+                std::fs::remove_dir(&path).unwrap();
+                std::fs::rename(&backup, &path).unwrap();
+                close_failure().unwrap().response("retry");
+                iterate_until(|| !detached.is_visible());
+                let saved = crate::storage::report_history::read(&path).unwrap();
+                assert!(saved.entries[0].ended_unix_ms.is_some());
+                assert!(serde_json::to_string(&saved)
+                    .unwrap()
+                    .contains("after cancelled exit"));
 
-            // A corrupt startup file with new local history needs an informed exit,
-            // even though no write can be admitted until it is reloaded/repaired.
-            let detached = adw::Window::builder().application(&app).build();
-            detached.present();
-            nav.state.borrow_mut().reset_obs_session(crate::controller::state::ObsStatus::Disconnected);
-            connect_report(&mut nav.state.borrow_mut());
-            std::fs::write(&path, b"broken history").unwrap();
-            nav.state.borrow_mut().load_report_history(Err("fixture corrupt startup history".into()));
-            detached.close();
-            iterate_until(|| close_failure().is_some());
-            assert!(detached.is_visible());
-            close_failure().unwrap().response("abandon");
-            iterate_until(|| !detached.is_visible());
-            assert_eq!(std::fs::read(&path).unwrap(), b"broken history");
-        });
+                // A corrupt startup file with new local history needs an informed exit,
+                // even though no write can be admitted until it is reloaded/repaired.
+                let detached = adw::Window::builder().application(&app).build();
+                detached.present();
+                nav.state
+                    .borrow_mut()
+                    .reset_obs_session(crate::controller::state::ObsStatus::Disconnected);
+                connect_report(&mut nav.state.borrow_mut());
+                std::fs::write(&path, b"broken history").unwrap();
+                nav.state
+                    .borrow_mut()
+                    .load_report_history(Err("fixture corrupt startup history".into()));
+                detached.close();
+                iterate_until(|| close_failure().is_some());
+                assert!(detached.is_visible());
+                close_failure().unwrap().response("abandon");
+                iterate_until(|| !detached.is_visible());
+                assert_eq!(std::fs::read(&path).unwrap(), b"broken history");
+            }
+        );
     }
 
     fn final_stats_exit(quit: bool) {
@@ -740,8 +770,8 @@ mod tests {
     #[test]
     #[ignore = "requires isolated GTK and scratch history; no OBS/keyring"]
     fn native_last_stats_close_saves_final_report_before_state_release() {
-        ui::test_support::native_test(
-            "app::tests::native_last_stats_close_saves_final_report_before_state_release",
+        crate::ui::native_test!(
+            native_last_stats_close_saves_final_report_before_state_release,
             || final_stats_exit(false),
         );
     }
@@ -749,8 +779,8 @@ mod tests {
     #[test]
     #[ignore = "requires isolated GTK and scratch history; no OBS/keyring"]
     fn native_quit_after_shell_close_saves_final_stats_report_before_shutdown() {
-        ui::test_support::native_test(
-            "app::tests::native_quit_after_shell_close_saves_final_stats_report_before_shutdown",
+        crate::ui::native_test!(
+            native_quit_after_shell_close_saves_final_stats_report_before_shutdown,
             || final_stats_exit(true),
         );
     }
@@ -758,8 +788,8 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; injected Config write failure only"]
     fn native_config_write_error_requires_an_explicit_close_decision() {
-        crate::ui::test_support::native_test(
-            "app::tests::native_config_write_error_requires_an_explicit_close_decision",
+        crate::ui::native_test!(
+            native_config_write_error_requires_an_explicit_close_decision,
             || {
                 let (_app, window) = fixture();
                 ui::background_io::run_config_snapshot(|| {
@@ -801,8 +831,8 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; scratch config only, no OBS/keyring"]
     fn native_inventory_role_edit_and_rebuild_are_admitted_before_close() {
-        crate::ui::test_support::native_test(
-            "app::tests::native_inventory_role_edit_and_rebuild_are_admitted_before_close",
+        crate::ui::native_test!(
+            native_inventory_role_edit_and_rebuild_are_admitted_before_close,
             || {
                 let directory = isolated_config_dir("close");
                 let (_app, window) = fixture();
@@ -832,8 +862,8 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; scratch config only, no OBS/keyring"]
     fn native_inventory_role_edit_is_admitted_before_quit_action() {
-        crate::ui::test_support::native_test(
-            "app::tests::native_inventory_role_edit_is_admitted_before_quit_action",
+        crate::ui::native_test!(
+            native_inventory_role_edit_is_admitted_before_quit_action,
             || {
                 let directory = isolated_config_dir("quit");
                 let app = adw::Application::builder()
@@ -905,8 +935,8 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; deliberately holds the registry writer past the save deadline"]
     fn native_quit_timeout_preserves_role_edits_until_explicit_retry() {
-        crate::ui::test_support::native_test(
-            "app::tests::native_quit_timeout_preserves_role_edits_until_explicit_retry",
+        crate::ui::native_test!(
+            native_quit_timeout_preserves_role_edits_until_explicit_retry,
             || {
                 let directory = isolated_config_dir("quit-timeout");
                 let app = adw::Application::builder()
@@ -1048,8 +1078,8 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; scratch registry only, no OBS/keyring"]
     fn native_same_value_registry_edits_retry_failed_disk_writes() {
-        crate::ui::test_support::native_test(
-            "app::tests::native_same_value_registry_edits_retry_failed_disk_writes",
+        crate::ui::native_test!(
+            native_same_value_registry_edits_retry_failed_disk_writes,
             || {
                 let directory = isolated_config_dir("same-value-registry-retry");
                 let target = crate::storage::xdg::registry_path();
@@ -1135,8 +1165,8 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; scratch registry only, no OBS/keyring"]
     fn native_registry_write_error_is_visible_and_close_retry_recovers() {
-        crate::ui::test_support::native_test(
-            "app::tests::native_registry_write_error_is_visible_and_close_retry_recovers",
+        crate::ui::native_test!(
+            native_registry_write_error_is_visible_and_close_retry_recovers,
             || {
                 let directory = isolated_config_dir("registry-retry");
                 let target = crate::storage::xdg::registry_path();
@@ -1196,8 +1226,8 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display"]
     fn native_close_waits_for_accepted_save_and_gtk_publication() {
-        crate::ui::test_support::native_test(
-            "app::tests::native_close_waits_for_accepted_save_and_gtk_publication",
+        crate::ui::native_test!(
+            native_close_waits_for_accepted_save_and_gtk_publication,
             || {
                 let (_app, window) = fixture();
                 let (release, held) = std::sync::mpsc::channel();
@@ -1220,8 +1250,8 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display"]
     fn native_save_worker_failure_keeps_window_open_and_offers_cancel() {
-        crate::ui::test_support::native_test(
-            "app::tests::native_save_worker_failure_keeps_window_open_and_offers_cancel",
+        crate::ui::native_test!(
+            native_save_worker_failure_keeps_window_open_and_offers_cancel,
             || {
                 let (_app, window) = fixture();
                 let failed = Rc::new(Cell::new(false));
@@ -1303,43 +1333,40 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display"]
     fn native_quit_action_obeys_the_pre_quit_save_barrier() {
-        crate::ui::test_support::native_test(
-            "app::tests::native_quit_action_obeys_the_pre_quit_save_barrier",
-            || {
-                let app = adw::Application::builder()
-                    .application_id("io.github.worxbend.scenedeck.QuitFixture")
-                    .flags(gio::ApplicationFlags::NON_UNIQUE)
-                    .build();
-                let published = Rc::new(Cell::new(false));
-                let observed = Rc::new(Cell::new(false));
-                app.connect_shutdown({
-                    let published = published.clone();
-                    let observed = observed.clone();
-                    move |_| {
-                        assert!(published.get());
-                        observed.set(true);
-                    }
-                });
-                app.connect_activate({
-                    let published = published.clone();
-                    move |app| {
-                        let window = adw::ApplicationWindow::builder().application(app).build();
-                        install_persistence_close_guard(app, &window);
-                        window.present();
-                        let (release, held) = std::sync::mpsc::channel();
-                        ui::background_io::run(move || held.recv().unwrap(), {
-                            let published = published.clone();
-                            move |()| published.set(true)
-                        });
-                        app.activate_action("quit", None);
-                        assert!(!published.get());
-                        assert!(window.is_visible() && !window.is_sensitive());
-                        release.send(()).unwrap();
-                    }
-                });
-                assert_eq!(app.run_with_args::<&str>(&[]), glib::ExitCode::SUCCESS);
-                assert!(observed.get());
-            },
-        );
+        crate::ui::native_test!(native_quit_action_obeys_the_pre_quit_save_barrier, || {
+            let app = adw::Application::builder()
+                .application_id("io.github.worxbend.scenedeck.QuitFixture")
+                .flags(gio::ApplicationFlags::NON_UNIQUE)
+                .build();
+            let published = Rc::new(Cell::new(false));
+            let observed = Rc::new(Cell::new(false));
+            app.connect_shutdown({
+                let published = published.clone();
+                let observed = observed.clone();
+                move |_| {
+                    assert!(published.get());
+                    observed.set(true);
+                }
+            });
+            app.connect_activate({
+                let published = published.clone();
+                move |app| {
+                    let window = adw::ApplicationWindow::builder().application(app).build();
+                    install_persistence_close_guard(app, &window);
+                    window.present();
+                    let (release, held) = std::sync::mpsc::channel();
+                    ui::background_io::run(move || held.recv().unwrap(), {
+                        let published = published.clone();
+                        move |()| published.set(true)
+                    });
+                    app.activate_action("quit", None);
+                    assert!(!published.get());
+                    assert!(window.is_visible() && !window.is_sensitive());
+                    release.send(()).unwrap();
+                }
+            });
+            assert_eq!(app.run_with_args::<&str>(&[]), glib::ExitCode::SUCCESS);
+            assert!(observed.get());
+        },);
     }
 }

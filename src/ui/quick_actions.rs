@@ -453,7 +453,7 @@ mod tests {
         },
         ui::{
             action_catalog::CatalogAction,
-            test_support::{native_test, navigation, pump, pump_until},
+            test_support::{navigation, pump, pump_until},
         },
     };
     use std::time::Instant;
@@ -517,91 +517,262 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display"]
     fn native_quick_actions_pin_persist_observe_and_retain_widgets_during_reads() {
-        native_test("ui::quick_actions::tests::native_quick_actions_pin_persist_observe_and_retain_widgets_during_reads", || {
-            let (nav, _stack, _runtime, _events) = navigation();
-            *nav.state.borrow_mut() = action_catalog::tests::connected();
-            let (root, refresh) = build(nav.clone()); let window = adw::Window::new(); window.set_content(Some(&root)); window.present();
-            for action in [mute(), OperatorAction::SaveReplay] {
-                find(&root, "quick-add").downcast::<Button>().unwrap().emit_clicked();
-                let dialog = dialog(); choose(&dialog, &nav, &action); assert!(dialog.is_response_enabled("save")); dialog.response("save"); dialog.close(); refresh();
+        crate::ui::native_test!(
+            native_quick_actions_pin_persist_observe_and_retain_widgets_during_reads,
+            || {
+                let (nav, _stack, _runtime, _events) = navigation();
+                *nav.state.borrow_mut() = action_catalog::tests::connected();
+                let (root, refresh) = build(nav.clone());
+                let window = adw::Window::new();
+                window.set_content(Some(&root));
+                window.present();
+                for action in [mute(), OperatorAction::SaveReplay] {
+                    find(&root, "quick-add")
+                        .downcast::<Button>()
+                        .unwrap()
+                        .emit_clicked();
+                    let dialog = dialog();
+                    choose(&dialog, &nav, &action);
+                    assert!(dialog.is_response_enabled("save"));
+                    dialog.response("save");
+                    dialog.close();
+                    refresh();
+                }
+                let target = nav.state.borrow().show_registry.target.clone();
+                assert!(pump_until(Duration::from_secs(2), || target
+                    .read()
+                    .is_ok_and(|registry| registry.quick_actions
+                        == nav.state.borrow().registry.quick_actions)));
+                let button = find(&root, "quick-action-0").downcast::<Button>().unwrap();
+                let status = find(&root, "quick-state-0").downcast::<Label>().unwrap();
+                assert!(status
+                    .label()
+                    .contains(&fl!(LANGUAGE_LOADER, "quick-unmuted")));
+                assert!(button.is_sensitive());
+                button.grab_focus();
+                button.emit_clicked();
+                assert_eq!(
+                    nav.state.borrow().workspace.active_action,
+                    Some(ControlAction::SetInputMuted {
+                        input: "Microphone".into(),
+                        muted: true
+                    })
+                );
+                refresh();
+                assert!(!button.is_sensitive());
+                assert!(
+                    status
+                        .label()
+                        .contains(&fl!(LANGUAGE_LOADER, "output-state-unknown")),
+                    "pending commands are not observed outcomes"
+                );
+                idle(&nav);
+                nav.state.borrow_mut().workspace.audio[0].muted = true;
+                refresh();
+                assert_eq!(
+                    find(&root, "quick-action-0"),
+                    button.clone().upcast::<gtk4::Widget>()
+                );
+                assert!(status
+                    .label()
+                    .contains(&fl!(LANGUAGE_LOADER, "quick-muted")));
+                let menu = find(&root, "quick-menu-0")
+                    .downcast::<MenuButton>()
+                    .unwrap();
+                menu.popup();
+                pump(Duration::from_millis(30));
+                nav.state.borrow_mut().workspace.audio[0].muted = false;
+                refresh();
+                assert!(
+                    menu.popover().unwrap().is_visible(),
+                    "ordinary readback preserves an open control menu"
+                );
+                nav.state.borrow_mut().workspace.input_catalog = Some(Err("lost inventory".into()));
+                refresh();
+                assert!(!button.is_sensitive());
+                assert!(status
+                    .label()
+                    .contains(&fl!(LANGUAGE_LOADER, "output-state-unknown")));
+                nav.state.borrow_mut().show_registry.generation += 1;
+                button.emit_clicked();
+                assert!(nav.state.borrow().workspace.active_action.is_none());
+                let weak = root.downgrade();
+                window.close();
+                drop((root, button, status, menu, refresh, window));
+                pump(Duration::from_millis(300));
+                assert!(weak.upgrade().is_none());
             }
-            let target = nav.state.borrow().show_registry.target.clone();
-            assert!(pump_until(Duration::from_secs(2), || target.read().is_ok_and(|registry| registry.quick_actions == nav.state.borrow().registry.quick_actions)));
-            let button = find(&root, "quick-action-0").downcast::<Button>().unwrap();
-            let status = find(&root, "quick-state-0").downcast::<Label>().unwrap();
-            assert!(status.label().contains(&fl!(LANGUAGE_LOADER, "quick-unmuted")));
-            assert!(button.is_sensitive()); button.grab_focus(); button.emit_clicked();
-            assert_eq!(nav.state.borrow().workspace.active_action, Some(ControlAction::SetInputMuted { input: "Microphone".into(), muted: true }));
-            refresh(); assert!(!button.is_sensitive());
-            assert!(status.label().contains(&fl!(LANGUAGE_LOADER, "output-state-unknown")), "pending commands are not observed outcomes");
-            idle(&nav); nav.state.borrow_mut().workspace.audio[0].muted = true; refresh();
-            assert_eq!(find(&root, "quick-action-0"), button.clone().upcast::<gtk4::Widget>());
-            assert!(status.label().contains(&fl!(LANGUAGE_LOADER, "quick-muted")));
-            let menu = find(&root, "quick-menu-0").downcast::<MenuButton>().unwrap(); menu.popup(); pump(Duration::from_millis(30));
-            nav.state.borrow_mut().workspace.audio[0].muted = false; refresh();
-            assert!(menu.popover().unwrap().is_visible(), "ordinary readback preserves an open control menu");
-            nav.state.borrow_mut().workspace.input_catalog = Some(Err("lost inventory".into())); refresh(); assert!(!button.is_sensitive());
-            assert!(status.label().contains(&fl!(LANGUAGE_LOADER, "output-state-unknown")));
-            nav.state.borrow_mut().show_registry.generation += 1;
-            button.emit_clicked(); assert!(nav.state.borrow().workspace.active_action.is_none());
-            let weak = root.downgrade(); window.close(); drop((root, button, status, menu, refresh, window)); pump(Duration::from_millis(300)); assert!(weak.upgrade().is_none());
-        });
+        );
     }
 
     #[test]
     #[ignore = "requires a disposable GTK display"]
     fn native_quick_actions_reorder_edit_disable_remove_and_fence_old_callbacks() {
-        native_test("ui::quick_actions::tests::native_quick_actions_reorder_edit_disable_remove_and_fence_old_callbacks", || {
-            let (nav, _stack, _runtime, _events) = navigation(); *nav.state.borrow_mut() = action_catalog::tests::connected();
-            nav.state.borrow_mut().registry.quick_actions = vec![OperatorPin { action: mute(), enabled: true }, OperatorPin { action: OperatorAction::SaveReplay, enabled: false }];
-            gtk4::Settings::default().unwrap().set_gtk_font_name(Some("Sans 22"));
-            let (root, refresh) = build(nav.clone()); let window = adw::Window::builder().default_width(360).default_height(600).build(); window.set_content(Some(&root)); window.present(); pump(Duration::from_millis(80));
-            assert!(window.width() <= 360, "quick actions must wrap at large text sizes: {}", window.width());
-            let original = nav.state.borrow().registry.quick_actions.clone();
-            let stale_remove = find(&root, "quick-remove-0").downcast::<Button>().unwrap();
-            let stale_action = find(&root, "quick-action-0").downcast::<Button>().unwrap();
-            find(&root, "quick-menu-0").downcast::<MenuButton>().unwrap().popup(); pump(Duration::from_millis(20));
-            find(&root, "quick-down-0").downcast::<Button>().unwrap().emit_clicked(); refresh(); pump(Duration::from_millis(30));
-            assert_eq!(nav.state.borrow().registry.quick_actions, vec![original[1].clone(), original[0].clone()]);
-            let menu = find(&root, "quick-menu-1");
-            let focused = gtk4::prelude::GtkWindowExt::focus(&window).unwrap();
-            assert!(focused == menu || focused.is_ancestor(&menu), "focus should follow the moved menu, got {}", focused.widget_name());
-            stale_remove.emit_clicked(); stale_action.emit_clicked(); assert_eq!(nav.state.borrow().registry.quick_actions.len(), 2); assert!(nav.state.borrow().workspace.active_action.is_none());
-            idle(&nav); refresh();
-            assert!(!find(&root, "quick-action-0").is_sensitive());
-            find(&root, "quick-enabled-0").downcast::<gtk4::CheckButton>().unwrap().set_active(true); refresh();
-            assert!(nav.state.borrow().registry.quick_actions[0].enabled);
-            find(&root, "quick-edit-0").downcast::<Button>().unwrap().emit_clicked();
-            let edit = dialog(); choose(&edit, &nav, &mute()); edit.response("save"); edit.close(); refresh();
-            assert_eq!(nav.state.borrow().registry.quick_actions[0].action, mute());
-            find(&root, "quick-remove-1").downcast::<Button>().unwrap().emit_clicked(); refresh();
-            assert_eq!(nav.state.borrow().registry.quick_actions.len(), 1);
-            find(&root, "quick-up-0").downcast::<Button>().unwrap().emit_clicked(); assert_eq!(nav.state.borrow().registry.quick_actions.len(), 1);
-            find(&root, "quick-edit-0").downcast::<Button>().unwrap().emit_clicked(); let retired = dialog();
-            let before = nav.state.borrow().registry.quick_actions.clone(); nav.state.borrow_mut().show_registry.generation += 1;
-            retired.response("save"); retired.close(); assert_eq!(nav.state.borrow().registry.quick_actions, before);
-            window.close();
-        });
+        crate::ui::native_test!(
+            native_quick_actions_reorder_edit_disable_remove_and_fence_old_callbacks,
+            || {
+                let (nav, _stack, _runtime, _events) = navigation();
+                *nav.state.borrow_mut() = action_catalog::tests::connected();
+                nav.state.borrow_mut().registry.quick_actions = vec![
+                    OperatorPin {
+                        action: mute(),
+                        enabled: true,
+                    },
+                    OperatorPin {
+                        action: OperatorAction::SaveReplay,
+                        enabled: false,
+                    },
+                ];
+                gtk4::Settings::default()
+                    .unwrap()
+                    .set_gtk_font_name(Some("Sans 22"));
+                let (root, refresh) = build(nav.clone());
+                let window = adw::Window::builder()
+                    .default_width(360)
+                    .default_height(600)
+                    .build();
+                window.set_content(Some(&root));
+                window.present();
+                pump(Duration::from_millis(80));
+                assert!(
+                    window.width() <= 360,
+                    "quick actions must wrap at large text sizes: {}",
+                    window.width()
+                );
+                let original = nav.state.borrow().registry.quick_actions.clone();
+                let stale_remove = find(&root, "quick-remove-0").downcast::<Button>().unwrap();
+                let stale_action = find(&root, "quick-action-0").downcast::<Button>().unwrap();
+                find(&root, "quick-menu-0")
+                    .downcast::<MenuButton>()
+                    .unwrap()
+                    .popup();
+                pump(Duration::from_millis(20));
+                find(&root, "quick-down-0")
+                    .downcast::<Button>()
+                    .unwrap()
+                    .emit_clicked();
+                refresh();
+                pump(Duration::from_millis(30));
+                assert_eq!(
+                    nav.state.borrow().registry.quick_actions,
+                    vec![original[1].clone(), original[0].clone()]
+                );
+                let menu = find(&root, "quick-menu-1");
+                let focused = gtk4::prelude::GtkWindowExt::focus(&window).unwrap();
+                assert!(
+                    focused == menu || focused.is_ancestor(&menu),
+                    "focus should follow the moved menu, got {}",
+                    focused.widget_name()
+                );
+                stale_remove.emit_clicked();
+                stale_action.emit_clicked();
+                assert_eq!(nav.state.borrow().registry.quick_actions.len(), 2);
+                assert!(nav.state.borrow().workspace.active_action.is_none());
+                idle(&nav);
+                refresh();
+                assert!(!find(&root, "quick-action-0").is_sensitive());
+                find(&root, "quick-enabled-0")
+                    .downcast::<gtk4::CheckButton>()
+                    .unwrap()
+                    .set_active(true);
+                refresh();
+                assert!(nav.state.borrow().registry.quick_actions[0].enabled);
+                find(&root, "quick-edit-0")
+                    .downcast::<Button>()
+                    .unwrap()
+                    .emit_clicked();
+                let edit = dialog();
+                choose(&edit, &nav, &mute());
+                edit.response("save");
+                edit.close();
+                refresh();
+                assert_eq!(nav.state.borrow().registry.quick_actions[0].action, mute());
+                find(&root, "quick-remove-1")
+                    .downcast::<Button>()
+                    .unwrap()
+                    .emit_clicked();
+                refresh();
+                assert_eq!(nav.state.borrow().registry.quick_actions.len(), 1);
+                find(&root, "quick-up-0")
+                    .downcast::<Button>()
+                    .unwrap()
+                    .emit_clicked();
+                assert_eq!(nav.state.borrow().registry.quick_actions.len(), 1);
+                find(&root, "quick-edit-0")
+                    .downcast::<Button>()
+                    .unwrap()
+                    .emit_clicked();
+                let retired = dialog();
+                let before = nav.state.borrow().registry.quick_actions.clone();
+                nav.state.borrow_mut().show_registry.generation += 1;
+                retired.response("save");
+                retired.close();
+                assert_eq!(nav.state.borrow().registry.quick_actions, before);
+                window.close();
+            }
+        );
     }
 
     #[test]
     #[ignore = "requires a disposable GTK display"]
     fn native_quick_toggle_rejects_changed_displayed_state_and_waits_for_readback() {
-        native_test("ui::quick_actions::tests::native_quick_toggle_rejects_changed_displayed_state_and_waits_for_readback", || {
-            let (nav, _stack, _runtime, _events) = navigation(); *nav.state.borrow_mut() = action_catalog::tests::connected();
-            nav.state.borrow_mut().registry.quick_actions = vec![OperatorPin { action: OperatorAction::ToggleMuted { target: ActionTarget { name: "Microphone".into(), uuid: Some("input-1".into()) } }, enabled: true }];
-            let (root, refresh) = build(nav.clone()); let window = adw::Window::new(); window.set_content(Some(&root)); window.present();
-            let button = find(&root, "quick-action-0").downcast::<Button>().unwrap();
-            nav.state.borrow_mut().workspace.audio[0].muted = true;
-            button.emit_clicked(); assert!(nav.state.borrow().workspace.active_action.is_none(), "changed displayed state needs refresh before applying the opposite value");
-            idle(&nav); refresh(); button.emit_clicked();
-            assert_eq!(nav.state.borrow().workspace.active_action, Some(ControlAction::SetInputMuted { input: "Microphone".into(), muted: false }));
-            let sequence = nav.state.borrow().workspace.sequence;
-            button.emit_clicked(); assert_eq!(nav.state.borrow().workspace.sequence, sequence, "pending mutations cannot be toggled again");
-            refresh(); assert!(!button.is_sensitive());
-            idle(&nav); nav.state.borrow_mut().workspace.audio[0].muted = false; refresh(); button.emit_clicked();
-            assert_eq!(nav.state.borrow().workspace.active_action, Some(ControlAction::SetInputMuted { input: "Microphone".into(), muted: true }));
-            window.close();
-        });
+        crate::ui::native_test!(
+            native_quick_toggle_rejects_changed_displayed_state_and_waits_for_readback,
+            || {
+                let (nav, _stack, _runtime, _events) = navigation();
+                *nav.state.borrow_mut() = action_catalog::tests::connected();
+                nav.state.borrow_mut().registry.quick_actions = vec![OperatorPin {
+                    action: OperatorAction::ToggleMuted {
+                        target: ActionTarget {
+                            name: "Microphone".into(),
+                            uuid: Some("input-1".into()),
+                        },
+                    },
+                    enabled: true,
+                }];
+                let (root, refresh) = build(nav.clone());
+                let window = adw::Window::new();
+                window.set_content(Some(&root));
+                window.present();
+                let button = find(&root, "quick-action-0").downcast::<Button>().unwrap();
+                nav.state.borrow_mut().workspace.audio[0].muted = true;
+                button.emit_clicked();
+                assert!(
+                    nav.state.borrow().workspace.active_action.is_none(),
+                    "changed displayed state needs refresh before applying the opposite value"
+                );
+                idle(&nav);
+                refresh();
+                button.emit_clicked();
+                assert_eq!(
+                    nav.state.borrow().workspace.active_action,
+                    Some(ControlAction::SetInputMuted {
+                        input: "Microphone".into(),
+                        muted: false
+                    })
+                );
+                let sequence = nav.state.borrow().workspace.sequence;
+                button.emit_clicked();
+                assert_eq!(
+                    nav.state.borrow().workspace.sequence,
+                    sequence,
+                    "pending mutations cannot be toggled again"
+                );
+                refresh();
+                assert!(!button.is_sensitive());
+                idle(&nav);
+                nav.state.borrow_mut().workspace.audio[0].muted = false;
+                refresh();
+                button.emit_clicked();
+                assert_eq!(
+                    nav.state.borrow().workspace.active_action,
+                    Some(ControlAction::SetInputMuted {
+                        input: "Microphone".into(),
+                        muted: true
+                    })
+                );
+                window.close();
+            }
+        );
     }
 }

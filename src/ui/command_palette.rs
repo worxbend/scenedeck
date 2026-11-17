@@ -286,7 +286,7 @@ fn build(parent: &adw::ApplicationWindow, nav: &NavigationContext) -> adw::Windo
 mod tests {
     use super::*;
     use crate::controller::state::Page;
-    use crate::ui::test_support::{native_test, navigation, pump};
+    use crate::ui::test_support::{navigation, pump};
 
     fn find(widget: &gtk4::Widget, name: &str) -> Option<gtk4::Widget> {
         if widget.widget_name() == name {
@@ -322,20 +322,115 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display"]
     fn native_palette_search_scope_keyboard_and_lifetime() {
-        native_test(
-            "ui::command_palette::tests::native_palette_search_scope_keyboard_and_lifetime",
+        crate::ui::native_test!(native_palette_search_scope_keyboard_and_lifetime, || {
+            let (nav, stack, _runtime, _events) = navigation();
+            *nav.state.borrow_mut() = crate::ui::action_catalog::tests::connected();
+            for page in [Page::Live, Page::Sources, Page::Settings] {
+                stack.add_named(&GtkBox::new(Orientation::Vertical, 0), Some(page.id()));
+            }
+            let parent = adw::ApplicationWindow::builder().build();
+            parent.set_content(Some(&stack));
+            parent.present();
+            let window = build(&parent, &nav);
+            window.present();
+            pump(Duration::from_millis(60));
+            let search = find(window.upcast_ref(), "palette-search")
+                .unwrap()
+                .downcast::<SearchEntry>()
+                .unwrap();
+            let list = find(window.upcast_ref(), "palette-results")
+                .unwrap()
+                .downcast::<ListBox>()
+                .unwrap();
+            search.grab_focus();
+            assert!(key(&window, gtk4::gdk::Key::Down));
+            assert_eq!(list.selected_row().unwrap().index(), 1);
+            assert!(key(&window, gtk4::gdk::Key::Up));
+            assert_eq!(list.selected_row().unwrap().index(), 0);
+            query(&search, "INTERVIEW camera");
+            assert!(list.row_at_index(1).is_none());
+            let row = list.row_at_index(0).unwrap();
+            let label = row
+                .child()
+                .unwrap()
+                .first_child()
+                .unwrap()
+                .downcast::<Label>()
+                .unwrap();
+            assert_eq!(label.text(), "Stage Camera <b>One</b>");
+            assert!(!label.uses_markup());
+            pump(Duration::from_millis(270));
+            assert_eq!(
+                list.row_at_index(0).unwrap(),
+                row,
+                "unchanged refresh must preserve the row"
+            );
+            query(&search, "no such result");
+            assert!(list.row_at_index(0).is_none());
+            assert!(gtk4::prelude::RootExt::focus(&window)
+                .unwrap()
+                .is_ancestor(&search));
+            query(&search, "camera");
+            let sequence = nav.state.borrow().workspace.sequence;
+            nav.state
+                .borrow_mut()
+                .workspace
+                .snapshot
+                .as_mut()
+                .unwrap()
+                .studio
+                .enabled = Some(false);
+            search.emit_by_name::<()>("activate", &[]);
+            assert_eq!(
+                nav.state.borrow().workspace.sequence,
+                sequence,
+                "old Stage label cannot switch Program"
+            );
+            assert!(window.is_visible());
+            nav.state.borrow_mut().workspace.epoch += 1;
+            search.emit_by_name::<()>("activate", &[]);
+            assert_eq!(
+                nav.state.borrow().workspace.sequence,
+                sequence,
+                "retired scope cannot dispatch"
+            );
+            query(&search, "settings");
+            search.emit_by_name::<()>("activate", &[]);
+            assert_eq!(nav.state.borrow().current_page, Page::Settings);
+            let weak_window = window.downgrade();
+            let weak_search = search.downgrade();
+            drop((window, search, list, row, label));
+            pump(Duration::from_millis(280));
+            assert!(weak_window.upgrade().is_none());
+            assert!(weak_search.upgrade().is_none());
+            parent.close();
+        },);
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display"]
+    fn native_palette_large_text_navigation_escape_and_single_instance() {
+        crate::ui::native_test!(
+            native_palette_large_text_navigation_escape_and_single_instance,
             || {
-                let (nav, stack, _runtime, _events) = navigation();
+                let (nav, _stack, _runtime, _events) = navigation();
                 *nav.state.borrow_mut() = crate::ui::action_catalog::tests::connected();
-                for page in [Page::Live, Page::Sources, Page::Settings] {
-                    stack.add_named(&GtkBox::new(Orientation::Vertical, 0), Some(page.id()));
-                }
+                gtk4::Settings::default()
+                    .unwrap()
+                    .set_gtk_font_name(Some("Sans 22"));
                 let parent = adw::ApplicationWindow::builder().build();
-                parent.set_content(Some(&stack));
                 parent.present();
-                let window = build(&parent, &nav);
-                window.present();
-                pump(Duration::from_millis(60));
+                show(&parent, &nav);
+                show(&parent, &nav);
+                let windows: Vec<_> = gtk4::Window::list_toplevels()
+                    .into_iter()
+                    .filter_map(|w| w.downcast::<adw::Window>().ok())
+                    .filter(|w| w.widget_name() == "command-palette")
+                    .collect();
+                assert_eq!(windows.len(), 1);
+                let window = &windows[0];
+                window.set_default_size(360, 460);
+                pump(Duration::from_millis(100));
                 let search = find(window.upcast_ref(), "palette-search")
                     .unwrap()
                     .downcast::<SearchEntry>()
@@ -344,101 +439,33 @@ mod tests {
                     .unwrap()
                     .downcast::<ListBox>()
                     .unwrap();
+                assert!(
+                    window.width() <= 360,
+                    "palette cannot fit 360px: {}",
+                    window.width()
+                );
+                assert!(list.width() <= window.width());
                 search.grab_focus();
-                assert!(key(&window, gtk4::gdk::Key::Down));
-                assert_eq!(list.selected_row().unwrap().index(), 1);
-                assert!(key(&window, gtk4::gdk::Key::Up));
-                assert_eq!(list.selected_row().unwrap().index(), 0);
-                query(&search, "INTERVIEW camera");
-                assert!(list.row_at_index(1).is_none());
-                let row = list.row_at_index(0).unwrap();
-                let label = row
-                    .child()
+                for _ in 0..8 {
+                    key(window, gtk4::gdk::Key::Down);
+                }
+                assert_eq!(list.selected_row().unwrap().index(), 8);
+                let scroll = list
+                    .parent()
                     .unwrap()
-                    .first_child()
+                    .parent()
                     .unwrap()
-                    .downcast::<Label>()
+                    .downcast::<gtk4::ScrolledWindow>()
                     .unwrap();
-                assert_eq!(label.text(), "Stage Camera <b>One</b>");
-                assert!(!label.uses_markup());
-                pump(Duration::from_millis(270));
-                assert_eq!(
-                    list.row_at_index(0).unwrap(),
-                    row,
-                    "unchanged refresh must preserve the row"
+                assert!(
+                    scroll.vadjustment().value() > 0.0,
+                    "keyboard selection must scroll into view"
                 );
-                query(&search, "no such result");
-                assert!(list.row_at_index(0).is_none());
-                assert!(gtk4::prelude::RootExt::focus(&window)
-                    .unwrap()
-                    .is_ancestor(&search));
-                query(&search, "camera");
-                let sequence = nav.state.borrow().workspace.sequence;
-                nav.state
-                    .borrow_mut()
-                    .workspace
-                    .snapshot
-                    .as_mut()
-                    .unwrap()
-                    .studio
-                    .enabled = Some(false);
-                search.emit_by_name::<()>("activate", &[]);
-                assert_eq!(
-                    nav.state.borrow().workspace.sequence,
-                    sequence,
-                    "old Stage label cannot switch Program"
-                );
-                assert!(window.is_visible());
-                nav.state.borrow_mut().workspace.epoch += 1;
-                search.emit_by_name::<()>("activate", &[]);
-                assert_eq!(
-                    nav.state.borrow().workspace.sequence,
-                    sequence,
-                    "retired scope cannot dispatch"
-                );
-                query(&search, "settings");
-                search.emit_by_name::<()>("activate", &[]);
-                assert_eq!(nav.state.borrow().current_page, Page::Settings);
-                let weak_window = window.downgrade();
-                let weak_search = search.downgrade();
-                drop((window, search, list, row, label));
-                pump(Duration::from_millis(280));
-                assert!(weak_window.upgrade().is_none());
-                assert!(weak_search.upgrade().is_none());
+                list.selected_row().unwrap().grab_focus();
+                assert!(key(window, gtk4::gdk::Key::Escape));
+                assert!(!window.is_visible());
                 parent.close();
-            },
+            }
         );
-    }
-
-    #[test]
-    #[ignore = "requires a disposable GTK display"]
-    fn native_palette_large_text_navigation_escape_and_single_instance() {
-        native_test("ui::command_palette::tests::native_palette_large_text_navigation_escape_and_single_instance", || {
-            let (nav, _stack, _runtime, _events) = navigation();
-            *nav.state.borrow_mut() = crate::ui::action_catalog::tests::connected();
-            gtk4::Settings::default().unwrap().set_gtk_font_name(Some("Sans 22"));
-            let parent = adw::ApplicationWindow::builder().build();
-            parent.present();
-            show(&parent, &nav);
-            show(&parent, &nav);
-            let windows: Vec<_> = gtk4::Window::list_toplevels().into_iter().filter_map(|w| w.downcast::<adw::Window>().ok()).filter(|w| w.widget_name() == "command-palette").collect();
-            assert_eq!(windows.len(), 1);
-            let window = &windows[0];
-            window.set_default_size(360, 460);
-            pump(Duration::from_millis(100));
-            let search = find(window.upcast_ref(), "palette-search").unwrap().downcast::<SearchEntry>().unwrap();
-            let list = find(window.upcast_ref(), "palette-results").unwrap().downcast::<ListBox>().unwrap();
-            assert!(window.width() <= 360, "palette cannot fit 360px: {}", window.width());
-            assert!(list.width() <= window.width());
-            search.grab_focus();
-            for _ in 0..8 { key(window, gtk4::gdk::Key::Down); }
-            assert_eq!(list.selected_row().unwrap().index(), 8);
-            let scroll = list.parent().unwrap().parent().unwrap().downcast::<gtk4::ScrolledWindow>().unwrap();
-            assert!(scroll.vadjustment().value() > 0.0, "keyboard selection must scroll into view");
-            list.selected_row().unwrap().grab_focus();
-            assert!(key(window, gtk4::gdk::Key::Escape));
-            assert!(!window.is_visible());
-            parent.close();
-        });
     }
 }

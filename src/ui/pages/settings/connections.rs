@@ -517,43 +517,83 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; fake connection providers prevent OBS and keyring access"]
     fn native_connect_reads_confirmed_selection_and_refuses_failed_save() {
-        crate::ui::test_support::native_test(
-            "ui::pages::settings::connections::tests::native_connect_reads_confirmed_selection_and_refuses_failed_save",
+        crate::ui::native_test!(
+            native_connect_reads_confirmed_selection_and_refuses_failed_save,
             || {
-                use crate::controller::{app_controller::AppController, dependencies::{AppConfigProvider, ObsPasswordProvider, ControllerDependencies}, state::AppState};
+                use crate::controller::{
+                    app_controller::AppController,
+                    dependencies::{
+                        AppConfigProvider, ControllerDependencies, ObsPasswordProvider,
+                    },
+                    state::AppState,
+                };
                 #[derive(Default)]
                 struct Observed(Mutex<Option<(String, String)>>);
                 impl AppConfigProvider for Observed {
                     fn load_config(&self) -> AppConfig {
                         let config = crate::storage::config::read_config().config;
-                        *self.0.lock().unwrap() = Some((config.connection_id.clone(), config.obs.host.clone()));
+                        *self.0.lock().unwrap() =
+                            Some((config.connection_id.clone(), config.obs.host.clone()));
                         config
                     }
                 }
                 impl ObsPasswordProvider for Observed {
                     fn obs_password(&self, id: &str) -> Result<Option<String>, AppError> {
                         assert_eq!(id, "event");
-                        Err(AppError::storage(std::io::Error::other("fixture stops before OBS connection")))
+                        Err(AppError::storage(std::io::Error::other(
+                            "fixture stops before OBS connection",
+                        )))
                     }
                 }
-                let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(1)
+                    .enable_all()
+                    .build()
+                    .unwrap();
                 let observed = Arc::new(Observed::default());
                 let (tx, _events) = std::sync::mpsc::sync_channel(128);
-                let controller = Rc::new(RefCell::new(AppController::with_dependencies(runtime.handle().clone(), tx,
-                    ControllerDependencies::new(observed.clone(), observed.clone()))));
+                let controller = Rc::new(RefCell::new(AppController::with_dependencies(
+                    runtime.handle().clone(),
+                    tx,
+                    ControllerDependencies::new(observed.clone(), observed.clone()),
+                )));
                 let mut config = AppConfig::default();
-                config.save_connection(SavedConnection { id: "event".into(), name: "Event".into(), obs: ObsConfig { host: "event.local".into(), port: 4456 } });
+                config.save_connection(SavedConnection {
+                    id: "event".into(),
+                    name: "Event".into(),
+                    obs: ObsConfig {
+                        host: "event.local".into(),
+                        port: 4456,
+                    },
+                });
                 config.select_connection("event");
-                let state = Rc::new(RefCell::new(AppState::new(config, Default::default(), None, None)));
+                let state = Rc::new(RefCell::new(AppState::new(
+                    config,
+                    Default::default(),
+                    None,
+                    None,
+                )));
                 let stack = gtk4::Stack::new();
                 let nav = NavigationContext::new(state, stack, controller);
                 let (group, _status) = build_with_secrets(&nav, Arc::new(FakeSecrets::default()));
-                let connect = named(&group.clone().upcast(), "settings-connection-connect").unwrap().downcast::<gtk4::Button>().unwrap();
+                let connect = named(&group.clone().upcast(), "settings-connection-connect")
+                    .unwrap()
+                    .downcast::<gtk4::Button>()
+                    .unwrap();
                 connect.emit_clicked();
-                assert!(observed.0.lock().unwrap().is_none(), "connect must wait for GTK publication of the config save");
+                assert!(
+                    observed.0.lock().unwrap().is_none(),
+                    "connect must wait for GTK publication of the config save"
+                );
                 flush();
-                assert!(crate::ui::test_support::pump_until(Duration::from_secs(5), || observed.0.lock().unwrap().is_some()));
-                assert_eq!(*observed.0.lock().unwrap(), Some(("event".into(), "event.local".into())));
+                assert!(crate::ui::test_support::pump_until(
+                    Duration::from_secs(5),
+                    || observed.0.lock().unwrap().is_some()
+                ));
+                assert_eq!(
+                    *observed.0.lock().unwrap(),
+                    Some(("event".into(), "event.local".into()))
+                );
                 *observed.0.lock().unwrap() = None;
                 let path = crate::storage::xdg::config_path();
                 let backup = path.with_extension("json.fixture");
@@ -562,7 +602,10 @@ mod tests {
                 connect.emit_clicked();
                 flush();
                 crate::ui::test_support::pump(Duration::from_millis(100));
-                assert!(observed.0.lock().unwrap().is_none(), "a failed save must not reconnect with another selection");
+                assert!(
+                    observed.0.lock().unwrap().is_none(),
+                    "a failed save must not reconnect with another selection"
+                );
                 std::fs::remove_dir(&path).unwrap();
                 std::fs::rename(backup, path).unwrap();
             },
@@ -572,24 +615,45 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; fake credentials and scratch config, no OBS access"]
     fn native_saved_connections_keep_delayed_credentials_and_endpoints_separate() {
-        crate::ui::test_support::native_test(
-            "ui::pages::settings::connections::tests::native_saved_connections_keep_delayed_credentials_and_endpoints_separate",
+        crate::ui::native_test!(
+            native_saved_connections_keep_delayed_credentials_and_endpoints_separate,
             || {
                 let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
-                nav.state.borrow_mut().config.save_connection(SavedConnection {
-                    id: "event".into(), name: "Event laptop".into(), obs: ObsConfig { host: "event.local".into(), port: 4456 },
-                });
+                nav.state
+                    .borrow_mut()
+                    .config
+                    .save_connection(SavedConnection {
+                        id: "event".into(),
+                        name: "Event laptop".into(),
+                        obs: ObsConfig {
+                            host: "event.local".into(),
+                            port: 4456,
+                        },
+                    });
                 nav.state.borrow_mut().obs_password = Some("original-secret".into());
                 let secrets = Arc::new(FakeSecrets::default());
                 *secrets.passwords.lock().unwrap() = HashMap::from([
-                    ("default".into(), "original-secret".into()), ("event".into(), "event-secret".into()),
+                    ("default".into(), "original-secret".into()),
+                    ("event".into(), "event-secret".into()),
                 ]);
                 let (group, _status) = build_with_secrets(&nav, secrets.clone());
                 let root = group.clone().upcast::<gtk4::Widget>();
-                let picker = named(&root, "settings-connection-picker").unwrap().downcast::<ComboRow>().unwrap();
-                let password = named(&root, "settings-obs-password").unwrap().downcast::<PasswordEntryRow>().unwrap();
-                let host = named(&root, "settings-obs-host").unwrap().downcast::<EntryRow>().unwrap();
-                let name = named(&root, "settings-connection-name").unwrap().downcast::<EntryRow>().unwrap();
+                let picker = named(&root, "settings-connection-picker")
+                    .unwrap()
+                    .downcast::<ComboRow>()
+                    .unwrap();
+                let password = named(&root, "settings-obs-password")
+                    .unwrap()
+                    .downcast::<PasswordEntryRow>()
+                    .unwrap();
+                let host = named(&root, "settings-obs-host")
+                    .unwrap()
+                    .downcast::<EntryRow>()
+                    .unwrap();
+                let name = named(&root, "settings-connection-name")
+                    .unwrap()
+                    .downcast::<EntryRow>()
+                    .unwrap();
                 assert_eq!(password.text(), "original-secret");
 
                 let (release, hold) = std::sync::mpsc::channel();
@@ -605,13 +669,20 @@ mod tests {
                 flush();
                 assert_eq!(host.text(), "event.local");
                 assert_eq!(password.text(), "event-secret");
-                assert_eq!(nav.state.borrow().obs_password.as_deref(), Some("event-secret"));
+                assert_eq!(
+                    nav.state.borrow().obs_password.as_deref(),
+                    Some("event-secret")
+                );
                 assert_eq!(*secrets.writes.lock().unwrap(), ["default"]);
 
                 picker.set_selected(0);
                 flush();
                 assert_eq!(password.text(), "updated-original");
-                named(&root, "settings-connection-add").unwrap().downcast::<gtk4::Button>().unwrap().emit_clicked();
+                named(&root, "settings-connection-add")
+                    .unwrap()
+                    .downcast::<gtk4::Button>()
+                    .unwrap()
+                    .emit_clicked();
                 flush();
                 let new_id = nav.state.borrow().config.connection_id.clone();
                 assert_ne!(new_id, "default");
@@ -628,7 +699,11 @@ mod tests {
                 assert_eq!(loaded.config.obs.host, "podcast.local");
                 assert_eq!(loaded.config.connection_profiles().len(), 3);
                 let raw = std::fs::read_to_string(crate::storage::xdg::config_path()).unwrap();
-                assert!(!raw.contains("original-secret") && !raw.contains("event-secret") && !raw.contains("updated-original"));
+                assert!(
+                    !raw.contains("original-secret")
+                        && !raw.contains("event-secret")
+                        && !raw.contains("updated-original")
+                );
 
                 secrets.fail_read.store(true, Ordering::SeqCst);
                 picker.set_selected(1);

@@ -311,7 +311,7 @@ class NativeAndSourceVerification(unittest.TestCase):
             cargo.assert_not_called()
 
     def test_inventory_is_dynamic_and_rejects_unclassified_or_missing_locale(self):
-        listing = native.LOCALE + ": test\n" + "\n".join(f"ui::tests::display_{i}: test" for i in range(9))
+        listing = native.LOCALE + ": test\n" + "\n".join(f"ui::tests::native_display_{i}: test" for i in range(9))
         self.assertEqual(len(native.native_tests(listing)), 9)
         for invalid in ("", listing + "\nother::ignored: test", listing + "\n" + native.LOCALE + ": test"):
             with self.assertRaises(ValueError): native.native_tests(invalid)
@@ -322,8 +322,61 @@ class NativeAndSourceVerification(unittest.TestCase):
         with self.assertRaises(ValueError):
             native.native_tests(listing + "app::tests::ignored_non_native: test\n")
 
+    def test_native_prefix_classifies_any_module(self):
+        pure = native.LOCALE + ": test\ndomain::tests::native_pure: test\n"
+        self.assertEqual(native.native_tests(pure), ["domain::tests::native_pure"])
+        with self.assertRaises(ValueError):
+            native.native_tests(pure + "ui::tests::ignored_without_prefix: test\n")
+
+    def test_imported_main_ignores_process_argv(self):
+        listing = native.LOCALE + ": test\nui::tests::native_only: test\n"
+        calls = []
+
+        def record(command, **_kwargs):
+            calls.append(command[command.index("--lib") + 1])
+
+        with patch.object(native.shutil, "which", return_value="/fixture"), patch.object(
+            native.subprocess, "check_output", return_value=listing
+        ), patch.object(native.subprocess, "run", side_effect=record), patch.object(
+            native.sys, "argv", ["python", "--filter", "missing-from-argv"]
+        ):
+            native.main()
+        self.assertEqual(calls, ["ui::tests::native_only"])
+
+    def test_filter_runs_matching_tests_and_rejects_an_empty_match(self):
+        listing = (
+            native.LOCALE + ": test\n"
+            "ui::pages::mixer::layout_tests::native_one: test\n"
+            "ui::pages::live::tests::native_two: test\n"
+        )
+        calls = []
+
+        def record(command, **_kwargs):
+            calls.append(command[command.index("--lib") + 1])
+
+        with patch.object(native.shutil, "which", return_value="/fixture"), patch.object(
+            native.subprocess, "check_output", return_value=listing
+        ), patch.object(native.subprocess, "run", side_effect=record):
+            native.main(["--filter", "mixer"])
+            self.assertEqual(calls, ["ui::pages::mixer::layout_tests::native_one"])
+            calls.clear()
+            native.main(["--filter", "mixer|live"])
+            self.assertEqual(
+                calls,
+                [
+                    "ui::pages::live::tests::native_two",
+                    "ui::pages::mixer::layout_tests::native_one",
+                ],
+            )
+            recorded = len(calls)
+            with self.assertRaisesRegex(SystemExit, "no native test matches"):
+                native.main(["--filter", "missing"])
+            with self.assertRaisesRegex(SystemExit, "empty native test filter"):
+                native.main(["--filter", "|"])
+            self.assertEqual(len(calls), recorded)
+
     def test_fresh_cargo_display_session_and_xdg_for_each_test(self):
-        listing = native.LOCALE + ": test\nui::tests::first: test\nui::tests::second: test\n"
+        listing = native.LOCALE + ": test\nui::tests::native_first: test\nui::tests::native_second: test\n"
         calls = []
         def record(command, **kwargs):
             self.assertEqual(command.count("cargo"), 1)
@@ -333,6 +386,7 @@ class NativeAndSourceVerification(unittest.TestCase):
             self.assertNotIn("servicedir", bus_config)
             self.assertIn("unix:abstract=scenedeck-native-", bus_config)
             self.assertEqual(kwargs["env"]["GIO_USE_VFS"], "local")
+            self.assertEqual(kwargs["env"]["MESA_SHADER_CACHE_DISABLE"], "1")
             self.assertIn("--exact", command)
             self.assertEqual(command[-3:], ["--ignored", "--test-threads=1", "--nocapture"])
             self.assertTrue(Path(kwargs["env"]["XDG_RUNTIME_DIR"]).is_dir())

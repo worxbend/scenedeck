@@ -574,48 +574,45 @@ mod tests {
     #[test]
     #[ignore = "requires a native GTK display"]
     fn native_gauge_semantics_refresh_without_a_cairo_draw() {
-        crate::ui::test_support::native_test(
-            "ui::widgets::chart::tests::native_gauge_semantics_refresh_without_a_cairo_draw",
-            || {
-                let congestion = Rc::new(Cell::new(0.1));
-                let gauge = gauge({
-                    let congestion = congestion.clone();
-                    move || GaugeReading {
-                        fraction: congestion.get(),
-                        value: format!("{:.0}%", congestion.get() * 100.0),
-                        caption: fl!(LANGUAGE_LOADER, "stats-gauge-congestion"),
-                        severity: Severity::from_thresholds(congestion.get(), 0.3, 0.6),
-                    }
-                });
-                assert_eq!(
-                    gauge.widget().accessible_role(),
-                    gtk4::AccessibleRole::Meter
-                );
-                for property in [
-                    gtk4::AccessibleProperty::Label,
-                    gtk4::AccessibleProperty::Description,
-                    gtk4::AccessibleProperty::ValueMin,
-                    gtk4::AccessibleProperty::ValueMax,
-                    gtk4::AccessibleProperty::ValueNow,
-                    gtk4::AccessibleProperty::ValueText,
-                ] {
-                    assert!(gtk4::test_accessible_has_property(gauge.widget(), property));
+        crate::ui::native_test!(native_gauge_semantics_refresh_without_a_cairo_draw, || {
+            let congestion = Rc::new(Cell::new(0.1));
+            let gauge = gauge({
+                let congestion = congestion.clone();
+                move || GaugeReading {
+                    fraction: congestion.get(),
+                    value: format!("{:.0}%", congestion.get() * 100.0),
+                    caption: fl!(LANGUAGE_LOADER, "stats-gauge-congestion"),
+                    severity: Severity::from_thresholds(congestion.get(), 0.3, 0.6),
                 }
-                assert!(gauge.widget().tooltip_text().unwrap().contains("10%"));
-                congestion.set(0.8);
-                gauge.redraw();
-                assert_eq!(gauge.reading.borrow().severity, Severity::Critical);
-                assert!(gauge.widget().tooltip_text().unwrap().contains("80%"));
-                assert!(gauge
-                    .widget()
-                    .tooltip_text()
-                    .unwrap()
-                    .contains(&Severity::Critical.label()));
-                let weak = gauge.widget().downgrade();
-                drop(gauge);
-                assert!(weak.upgrade().is_none());
-            },
-        );
+            });
+            assert_eq!(
+                gauge.widget().accessible_role(),
+                gtk4::AccessibleRole::Meter
+            );
+            for property in [
+                gtk4::AccessibleProperty::Label,
+                gtk4::AccessibleProperty::Description,
+                gtk4::AccessibleProperty::ValueMin,
+                gtk4::AccessibleProperty::ValueMax,
+                gtk4::AccessibleProperty::ValueNow,
+                gtk4::AccessibleProperty::ValueText,
+            ] {
+                assert!(gtk4::test_accessible_has_property(gauge.widget(), property));
+            }
+            assert!(gauge.widget().tooltip_text().unwrap().contains("10%"));
+            congestion.set(0.8);
+            gauge.redraw();
+            assert_eq!(gauge.reading.borrow().severity, Severity::Critical);
+            assert!(gauge.widget().tooltip_text().unwrap().contains("80%"));
+            assert!(gauge
+                .widget()
+                .tooltip_text()
+                .unwrap()
+                .contains(&Severity::Critical.label()));
+            let weak = gauge.widget().downgrade();
+            drop(gauge);
+            assert!(weak.upgrade().is_none());
+        },);
     }
 
     #[test]

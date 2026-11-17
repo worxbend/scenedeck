@@ -553,60 +553,57 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; no OBS or keyring access"]
     fn native_selector_readbacks_retain_model_rows() {
-        crate::ui::test_support::native_test(
-            "ui::sidebar::tests::native_selector_readbacks_retain_model_rows",
-            || {
-                let selector = NamedSelector::build("Fixture", "Fixture");
-                let list = ObsNamedList {
-                    items: vec!["First".into(), "Other".into()],
-                    current: Some("First".into()),
-                };
-                selector.update(&list);
-                let first = selector.model.item(0).unwrap();
-                let changes = Rc::new(Cell::new(0));
-                selector.model.connect_items_changed({
-                    let changes = changes.clone();
-                    move |_, _, _, _| changes.set(changes.get() + 1)
-                });
-                selector.update(&list);
-                assert_eq!(
-                    changes.get(),
-                    0,
-                    "identical readback must not splice the model"
-                );
-                selector.dropdown.set_selected(1);
-                selector.update(&list);
-                assert_eq!(
-                    selector.dropdown.selected(),
-                    0,
-                    "readback must correct an optimistic selection"
-                );
-                assert_eq!(selector.model.item(0).unwrap(), first);
-                assert_eq!(changes.get(), 0);
-                selector.update(&ObsNamedList {
-                    current: Some("Other".into()),
-                    ..list
-                });
-                assert_eq!(selector.dropdown.selected(), 1);
-                assert_eq!(changes.get(), 0);
-                selector.update(&ObsNamedList {
-                    items: vec!["New".into()],
-                    current: Some("New".into()),
-                });
-                assert_eq!(changes.get(), 1);
-                assert_eq!(selector.model.string(0).as_deref(), Some("New"));
-                selector.update(&ObsNamedList::default());
-                assert_eq!(changes.get(), 2);
-                assert!(!selector.root.is_visible());
-            },
-        );
+        crate::ui::native_test!(native_selector_readbacks_retain_model_rows, || {
+            let selector = NamedSelector::build("Fixture", "Fixture");
+            let list = ObsNamedList {
+                items: vec!["First".into(), "Other".into()],
+                current: Some("First".into()),
+            };
+            selector.update(&list);
+            let first = selector.model.item(0).unwrap();
+            let changes = Rc::new(Cell::new(0));
+            selector.model.connect_items_changed({
+                let changes = changes.clone();
+                move |_, _, _, _| changes.set(changes.get() + 1)
+            });
+            selector.update(&list);
+            assert_eq!(
+                changes.get(),
+                0,
+                "identical readback must not splice the model"
+            );
+            selector.dropdown.set_selected(1);
+            selector.update(&list);
+            assert_eq!(
+                selector.dropdown.selected(),
+                0,
+                "readback must correct an optimistic selection"
+            );
+            assert_eq!(selector.model.item(0).unwrap(), first);
+            assert_eq!(changes.get(), 0);
+            selector.update(&ObsNamedList {
+                current: Some("Other".into()),
+                ..list
+            });
+            assert_eq!(selector.dropdown.selected(), 1);
+            assert_eq!(changes.get(), 0);
+            selector.update(&ObsNamedList {
+                items: vec!["New".into()],
+                current: Some("New".into()),
+            });
+            assert_eq!(changes.get(), 1);
+            assert_eq!(selector.model.string(0).as_deref(), Some("New"));
+            selector.update(&ObsNamedList::default());
+            assert_eq!(changes.get(), 2);
+            assert!(!selector.root.is_visible());
+        },);
     }
 
     #[test]
     #[ignore = "requires a disposable native GTK display"]
     fn native_obs_setup_popover_follows_the_selected_palette() {
-        crate::ui::test_support::native_test(
-            "ui::sidebar::tests::native_obs_setup_popover_follows_the_selected_palette",
+        crate::ui::native_test!(
+            native_obs_setup_popover_follows_the_selected_palette,
             || {
                 use crate::domain::appearance::{MotionLevel, ThemeId, ThemeMode, ThemePreference};
                 use crate::ui::theme::ThemeManager;

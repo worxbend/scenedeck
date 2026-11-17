@@ -310,62 +310,161 @@ mod tests {
     use super::*;
     use crate::ui::{
         preflight::tests::{find, window},
-        test_support::{native_test, navigation, pump},
+        test_support::{navigation, pump},
     };
     #[test]
     #[ignore = "requires isolated GTK"]
     fn native_health_summary_survives_page_changes_and_reports_stale_evidence() {
-        native_test("ui::health_alerts::tests::native_health_summary_survives_page_changes_and_reports_stale_evidence", || {
-            let (nav, stack, _runtime, _events) = navigation();
-            for page in [Page::Live, Page::Mixer, Page::Sources, Page::Stats] { stack.add_named(&Label::new(Some(page.id())), Some(page.id())); }
-            gtk4::Settings::default().unwrap().set_gtk_font_name(Some("Sans 22"));
-            let (root, source) = build(nav.clone());
-            let body = GtkBox::new(Orientation::Vertical, 4); body.append(&root); body.append(&stack);
-            let parent = adw::Window::builder().default_width(360).default_height(600).build(); parent.set_content(Some(&body)); parent.present(); pump(Duration::from_millis(300));
-            assert!(!root.is_visible());
-            let start = Instant::now() - Duration::from_secs(6);
-            crate::domain::health::tests::raise(&mut nav.state.borrow_mut().health, AlertKind::NetworkDrops, start);
-            pump(Duration::from_millis(300)); assert!(root.is_visible());
-            let label = find(&root, "health-summary").downcast::<Label>().unwrap(); assert!(label.text().contains(&fl!(LANGUAGE_LOADER, "health-network")));
-            assert!(root.measure(Orientation::Horizontal, -1).0 <= 360);
-            for page in [Page::Mixer, Page::Sources, Page::Stats, Page::Live] { nav.switch_to_page(page); pump(Duration::from_millis(40)); assert!(root.is_visible()); assert_eq!(find(&root, "health-summary"), label.clone().upcast::<gtk4::Widget>()); }
-            find(&root, "health-details").downcast::<Button>().unwrap().emit_clicked();
-            let dialog = window("health-dialog").downcast::<adw::MessageDialog>().unwrap();
-            dialog.set_default_size(360, 600); pump(Duration::from_millis(80));
-            assert!(dialog.measure(Orientation::Horizontal, -1).0 <= 360);
-            assert!(dialog.measure(Orientation::Vertical, 360).0 <= 600);
-            assert!(find(&dialog, "health-report").downcast::<Label>().unwrap().text().contains(&fl!(LANGUAGE_LOADER, "health-network-help")));
-            let mut stale = crate::domain::health::HealthMonitor::default();
-            crate::domain::health::tests::raise(&mut stale, AlertKind::NetworkDrops, Instant::now() - Duration::from_secs(20));
-            nav.state.borrow_mut().health = stale; pump(Duration::from_millis(300));
-            assert!(label.text().contains(&fl!(LANGUAGE_LOADER, "health-unobserved")));
-            dialog.response("stats"); assert_eq!(nav.state.borrow().current_page, Page::Stats);
-            nav.state.borrow_mut().health.clear_samples(); pump(Duration::from_millis(300)); assert!(!root.is_visible());
-            let weak = root.downgrade(); parent.close(); source.remove(); drop((root, body, label, dialog, parent)); pump(Duration::from_millis(300)); assert!(weak.upgrade().is_none());
-        });
+        crate::ui::native_test!(
+            native_health_summary_survives_page_changes_and_reports_stale_evidence,
+            || {
+                let (nav, stack, _runtime, _events) = navigation();
+                for page in [Page::Live, Page::Mixer, Page::Sources, Page::Stats] {
+                    stack.add_named(&Label::new(Some(page.id())), Some(page.id()));
+                }
+                gtk4::Settings::default()
+                    .unwrap()
+                    .set_gtk_font_name(Some("Sans 22"));
+                let (root, source) = build(nav.clone());
+                let body = GtkBox::new(Orientation::Vertical, 4);
+                body.append(&root);
+                body.append(&stack);
+                let parent = adw::Window::builder()
+                    .default_width(360)
+                    .default_height(600)
+                    .build();
+                parent.set_content(Some(&body));
+                parent.present();
+                pump(Duration::from_millis(300));
+                assert!(!root.is_visible());
+                let start = Instant::now() - Duration::from_secs(6);
+                crate::domain::health::tests::raise(
+                    &mut nav.state.borrow_mut().health,
+                    AlertKind::NetworkDrops,
+                    start,
+                );
+                pump(Duration::from_millis(300));
+                assert!(root.is_visible());
+                let label = find(&root, "health-summary").downcast::<Label>().unwrap();
+                assert!(label
+                    .text()
+                    .contains(&fl!(LANGUAGE_LOADER, "health-network")));
+                assert!(root.measure(Orientation::Horizontal, -1).0 <= 360);
+                for page in [Page::Mixer, Page::Sources, Page::Stats, Page::Live] {
+                    nav.switch_to_page(page);
+                    pump(Duration::from_millis(40));
+                    assert!(root.is_visible());
+                    assert_eq!(
+                        find(&root, "health-summary"),
+                        label.clone().upcast::<gtk4::Widget>()
+                    );
+                }
+                find(&root, "health-details")
+                    .downcast::<Button>()
+                    .unwrap()
+                    .emit_clicked();
+                let dialog = window("health-dialog")
+                    .downcast::<adw::MessageDialog>()
+                    .unwrap();
+                dialog.set_default_size(360, 600);
+                pump(Duration::from_millis(80));
+                assert!(dialog.measure(Orientation::Horizontal, -1).0 <= 360);
+                assert!(dialog.measure(Orientation::Vertical, 360).0 <= 600);
+                assert!(find(&dialog, "health-report")
+                    .downcast::<Label>()
+                    .unwrap()
+                    .text()
+                    .contains(&fl!(LANGUAGE_LOADER, "health-network-help")));
+                let mut stale = crate::domain::health::HealthMonitor::default();
+                crate::domain::health::tests::raise(
+                    &mut stale,
+                    AlertKind::NetworkDrops,
+                    Instant::now() - Duration::from_secs(20),
+                );
+                nav.state.borrow_mut().health = stale;
+                pump(Duration::from_millis(300));
+                assert!(label
+                    .text()
+                    .contains(&fl!(LANGUAGE_LOADER, "health-unobserved")));
+                dialog.response("stats");
+                assert_eq!(nav.state.borrow().current_page, Page::Stats);
+                nav.state.borrow_mut().health.clear_samples();
+                pump(Duration::from_millis(300));
+                assert!(!root.is_visible());
+                let weak = root.downgrade();
+                parent.close();
+                source.remove();
+                drop((root, body, label, dialog, parent));
+                pump(Duration::from_millis(300));
+                assert!(weak.upgrade().is_none());
+            }
+        );
     }
     #[test]
     #[ignore = "requires isolated GTK"]
     fn native_health_event_acknowledgement_cannot_clear_new_or_cancelled_incidents() {
-        native_test("ui::health_alerts::tests::native_health_event_acknowledgement_cannot_clear_new_or_cancelled_incidents", || {
-            use crate::domain::output::{OutputKind, OutputStatus};
-            let (nav, _stack, _runtime, _events) = navigation();
-            let stop = || {
-                let mut state = nav.state.borrow_mut(); state.health.connected();
-                state.health.observe_output(OutputKind::Record, &OutputStatus::active(), Instant::now());
-                state.health.observe_output(OutputKind::Record, &OutputStatus::inactive(), Instant::now());
-            };
-            let (root, source) = build(nav.clone()); let parent = adw::Window::new(); parent.set_content(Some(&root)); parent.present(); stop(); pump(Duration::from_millis(300));
-            let open = || { find(&root, "health-details").downcast::<Button>().unwrap().emit_clicked(); window("health-dialog").downcast::<adw::MessageDialog>().unwrap() };
-            let old = open(); assert!(old.is_response_enabled("acknowledge")); stop(); old.response("acknowledge");
-            assert_eq!(nav.state.borrow().health.alerts(Instant::now()).len(), 1);
-            let cancelled = open(); cancelled.response("close"); cancelled.response("acknowledge");
-            assert_eq!(nav.state.borrow().health.alerts(Instant::now()).len(), 1);
-            open().response("acknowledge"); pump(Duration::from_millis(300)); assert!(!root.is_visible());
-            nav.state.borrow_mut().reset_obs_session(crate::controller::state::ObsStatus::Error("lost".into())); pump(Duration::from_millis(300)); assert!(root.is_visible());
-            assert!(find(&root, "health-summary").downcast::<Label>().unwrap().text().contains(&fl!(LANGUAGE_LOADER, "health-connection-lost")));
-            nav.state.borrow_mut().health.connected(); pump(Duration::from_millis(300)); assert!(!root.is_visible());
-            parent.close(); source.remove();
-        });
+        crate::ui::native_test!(
+            native_health_event_acknowledgement_cannot_clear_new_or_cancelled_incidents,
+            || {
+                use crate::domain::output::{OutputKind, OutputStatus};
+                let (nav, _stack, _runtime, _events) = navigation();
+                let stop = || {
+                    let mut state = nav.state.borrow_mut();
+                    state.health.connected();
+                    state.health.observe_output(
+                        OutputKind::Record,
+                        &OutputStatus::active(),
+                        Instant::now(),
+                    );
+                    state.health.observe_output(
+                        OutputKind::Record,
+                        &OutputStatus::inactive(),
+                        Instant::now(),
+                    );
+                };
+                let (root, source) = build(nav.clone());
+                let parent = adw::Window::new();
+                parent.set_content(Some(&root));
+                parent.present();
+                stop();
+                pump(Duration::from_millis(300));
+                let open = || {
+                    find(&root, "health-details")
+                        .downcast::<Button>()
+                        .unwrap()
+                        .emit_clicked();
+                    window("health-dialog")
+                        .downcast::<adw::MessageDialog>()
+                        .unwrap()
+                };
+                let old = open();
+                assert!(old.is_response_enabled("acknowledge"));
+                stop();
+                old.response("acknowledge");
+                assert_eq!(nav.state.borrow().health.alerts(Instant::now()).len(), 1);
+                let cancelled = open();
+                cancelled.response("close");
+                cancelled.response("acknowledge");
+                assert_eq!(nav.state.borrow().health.alerts(Instant::now()).len(), 1);
+                open().response("acknowledge");
+                pump(Duration::from_millis(300));
+                assert!(!root.is_visible());
+                nav.state
+                    .borrow_mut()
+                    .reset_obs_session(crate::controller::state::ObsStatus::Error("lost".into()));
+                pump(Duration::from_millis(300));
+                assert!(root.is_visible());
+                assert!(find(&root, "health-summary")
+                    .downcast::<Label>()
+                    .unwrap()
+                    .text()
+                    .contains(&fl!(LANGUAGE_LOADER, "health-connection-lost")));
+                nav.state.borrow_mut().health.connected();
+                pump(Duration::from_millis(300));
+                assert!(!root.is_visible());
+                parent.close();
+                source.remove();
+            }
+        );
     }
 }

@@ -1,7 +1,7 @@
 //! Mapped-window checks: widget identity alone does not detect layout flashes.
 use super::*;
 use crate::domain::{audio::AudioInput, role::SceneRole, scene::Scene};
-use crate::ui::test_support::{native_test, navigation, pump};
+use crate::ui::test_support::{navigation, pump};
 
 fn capture(window: &gtk4::Window, name: &str) {
     let Some(directory) = std::env::var_os("SCENEDECK_UI_CAPTURE_DIR") else {
@@ -35,8 +35,8 @@ fn capture(window: &gtk4::Window, name: &str) {
 #[test]
 #[ignore = "requires a disposable GTK display; real toggle timers and animations"]
 fn native_global_toggles_only_show_their_own_pending_state() {
-    native_test(
-        "ui::window::render_tests::native_global_toggles_only_show_their_own_pending_state",
+    crate::ui::native_test!(
+        native_global_toggles_only_show_their_own_pending_state,
         || {
             use crate::domain::control::{ControlAction, ControlSnapshot, GlobalToggle};
             let (nav, _stack, _runtime, _events) = navigation();
@@ -202,8 +202,8 @@ fn native_global_toggles_only_show_their_own_pending_state() {
 #[test]
 #[ignore = "requires a disposable GTK display; rendered synthetic OBS sequence"]
 fn native_scene_readback_retains_audio_and_page_geometry() {
-    native_test(
-        "ui::window::render_tests::native_scene_readback_retains_audio_and_page_geometry",
+    crate::ui::native_test!(
+        native_scene_readback_retains_audio_and_page_geometry,
         || {
             let (nav, stack, _runtime, _events) = navigation();
             gtk4::Settings::default()

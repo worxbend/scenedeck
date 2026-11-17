@@ -5,7 +5,7 @@ use crate::{
         output::{OutputKind, OutputStatus},
         preflight::SavedPreflight,
     },
-    ui::test_support::{native_test, navigation, pump, pump_until},
+    ui::test_support::{navigation, pump, pump_until},
 };
 use std::cell::Cell;
 
@@ -87,8 +87,8 @@ fn signal(nav: &NavigationContext) {
 #[test]
 #[ignore = "requires isolated GTK and config storage"]
 fn native_preflight_saves_actual_connection_and_retires_checkmarks() {
-    native_test(
-        "ui::preflight::tests::native_preflight_saves_actual_connection_and_retires_checkmarks",
+    crate::ui::native_test!(
+        native_preflight_saves_actual_connection_and_retires_checkmarks,
         || {
             let (nav, _stack, _runtime, _events) = navigation();
             connected(&nav);
@@ -191,49 +191,121 @@ fn native_preflight_saves_actual_connection_and_retires_checkmarks() {
 #[test]
 #[ignore = "requires isolated GTK and config storage"]
 fn native_preflight_editor_handles_namespace_changes_validation_and_save_retry() {
-    native_test("ui::preflight::tests::native_preflight_editor_handles_namespace_changes_validation_and_save_retry", || {
-        let (nav, _stack, _runtime, _events) = navigation(); connected(&nav);
-        save_plan(&nav, PreflightPlan { expected_collection: "Missing collection".into(), required_scenes: vec![ActionTarget { name: "Missing <b>scene</b>".into(), uuid: Some("absent".into()) }], microphone: Some(ActionTarget { name: "Missing microphone".into(), uuid: Some("absent-mic".into()) }), ..Default::default() });
-        let parent = adw::Window::new(); parent.present();
-        editor::show(parent.upcast_ref(), &nav, &Owner::current(&nav.state.borrow()).unwrap());
-        let editor = window("preflight-editor");
-        let missing = find(&editor, "preflight-scene-0").downcast::<CheckButton>().unwrap(); assert!(missing.is_active());
-        let label = missing.child().unwrap().downcast::<Label>().unwrap(); assert!(!label.uses_markup());
-        entry(&editor, "preflight-expected", "Show");
-        assert!(!find(&editor, "preflight-scene-0").downcast::<CheckButton>().unwrap().is_active(), "foreign UUID cannot become a requirement in another collection");
-        toggle(&editor, "preflight-scene-0", true); toggle(&editor, "preflight-mic-0", true);
-        entry(&editor, "preflight-minimum-disk", "0"); click(&editor, "preflight-save");
-        assert!(editor.is_visible()); assert_eq!(plan(&nav).expected_collection, "Missing collection");
-        entry(&editor, "preflight-minimum-disk", "2048");
-        let path = crate::storage::xdg::config_path(); std::fs::create_dir_all(&path).unwrap();
-        click(&editor, "preflight-save");
-        assert!(pump_until(Duration::from_secs(3), || find(&editor, "preflight-save-notice").downcast::<Label>().unwrap().text().contains("Could not save")));
-        assert!(editor.is_visible()); std::fs::remove_dir(&path).unwrap(); click(&editor, "preflight-save");
-        assert!(pump_until(Duration::from_secs(3), || !editor.is_visible()));
-        assert_eq!(crate::storage::config::read_config().config.preflight_plans[0].plan.minimum_disk_mib, Some(2048));
-        entry(&editor, "preflight-expected", "Closed editor callback"); click(&editor, "preflight-save");
-        assert_eq!(plan(&nav).expected_collection, "Show");
-        editor::show(parent.upcast_ref(), &nav, &Owner::current(&nav.state.borrow()).unwrap()); let stale = window("preflight-editor");
-        entry(&stale, "preflight-expected", "Do not save"); nav.state.borrow_mut().workspace.epoch += 1; click(&stale, "preflight-save");
-        assert_eq!(plan(&nav).expected_collection, "Show"); stale.close();
-        {
-            let mut state = nav.state.borrow_mut(); state.config.preflight_plans.clear();
-            state.scene_collections.current = Some(" Show ".into()); state.workspace.epoch += 1;
+    crate::ui::native_test!(
+        native_preflight_editor_handles_namespace_changes_validation_and_save_retry,
+        || {
+            let (nav, _stack, _runtime, _events) = navigation();
+            connected(&nav);
+            save_plan(
+                &nav,
+                PreflightPlan {
+                    expected_collection: "Missing collection".into(),
+                    required_scenes: vec![ActionTarget {
+                        name: "Missing <b>scene</b>".into(),
+                        uuid: Some("absent".into()),
+                    }],
+                    microphone: Some(ActionTarget {
+                        name: "Missing microphone".into(),
+                        uuid: Some("absent-mic".into()),
+                    }),
+                    ..Default::default()
+                },
+            );
+            let parent = adw::Window::new();
+            parent.present();
+            editor::show(
+                parent.upcast_ref(),
+                &nav,
+                &Owner::current(&nav.state.borrow()).unwrap(),
+            );
+            let editor = window("preflight-editor");
+            let missing = find(&editor, "preflight-scene-0")
+                .downcast::<CheckButton>()
+                .unwrap();
+            assert!(missing.is_active());
+            let label = missing.child().unwrap().downcast::<Label>().unwrap();
+            assert!(!label.uses_markup());
+            entry(&editor, "preflight-expected", "Show");
+            assert!(
+                !find(&editor, "preflight-scene-0")
+                    .downcast::<CheckButton>()
+                    .unwrap()
+                    .is_active(),
+                "foreign UUID cannot become a requirement in another collection"
+            );
+            toggle(&editor, "preflight-scene-0", true);
+            toggle(&editor, "preflight-mic-0", true);
+            entry(&editor, "preflight-minimum-disk", "0");
+            click(&editor, "preflight-save");
+            assert!(editor.is_visible());
+            assert_eq!(plan(&nav).expected_collection, "Missing collection");
+            entry(&editor, "preflight-minimum-disk", "2048");
+            let path = crate::storage::xdg::config_path();
+            std::fs::create_dir_all(&path).unwrap();
+            click(&editor, "preflight-save");
+            assert!(pump_until(Duration::from_secs(3), || find(
+                &editor,
+                "preflight-save-notice"
+            )
+            .downcast::<Label>()
+            .unwrap()
+            .text()
+            .contains("Could not save")));
+            assert!(editor.is_visible());
+            std::fs::remove_dir(&path).unwrap();
+            click(&editor, "preflight-save");
+            assert!(pump_until(Duration::from_secs(3), || !editor.is_visible()));
+            assert_eq!(
+                crate::storage::config::read_config().config.preflight_plans[0]
+                    .plan
+                    .minimum_disk_mib,
+                Some(2048)
+            );
+            entry(&editor, "preflight-expected", "Closed editor callback");
+            click(&editor, "preflight-save");
+            assert_eq!(plan(&nav).expected_collection, "Show");
+            editor::show(
+                parent.upcast_ref(),
+                &nav,
+                &Owner::current(&nav.state.borrow()).unwrap(),
+            );
+            let stale = window("preflight-editor");
+            entry(&stale, "preflight-expected", "Do not save");
+            nav.state.borrow_mut().workspace.epoch += 1;
+            click(&stale, "preflight-save");
+            assert_eq!(plan(&nav).expected_collection, "Show");
+            stale.close();
+            {
+                let mut state = nav.state.borrow_mut();
+                state.config.preflight_plans.clear();
+                state.scene_collections.current = Some(" Show ".into());
+                state.workspace.epoch += 1;
+            }
+            editor::show(
+                parent.upcast_ref(),
+                &nav,
+                &Owner::current(&nav.state.borrow()).unwrap(),
+            );
+            let spaces = window("preflight-editor");
+            toggle(&spaces, "preflight-scene-0", true);
+            click(&spaces, "preflight-save");
+            assert!(pump_until(Duration::from_secs(3), || !spaces.is_visible()));
+            assert_eq!(
+                plan(&nav).expected_collection,
+                " Show ",
+                "OBS identity retains meaningful whitespace"
+            );
+            assert_eq!(plan(&nav).required_scenes.len(), 1);
+            parent.close();
         }
-        editor::show(parent.upcast_ref(), &nav, &Owner::current(&nav.state.borrow()).unwrap());
-        let spaces = window("preflight-editor"); toggle(&spaces, "preflight-scene-0", true);
-        click(&spaces, "preflight-save"); assert!(pump_until(Duration::from_secs(3), || !spaces.is_visible()));
-        assert_eq!(plan(&nav).expected_collection, " Show ", "OBS identity retains meaningful whitespace");
-        assert_eq!(plan(&nav).required_scenes.len(), 1);
-        parent.close();
-    });
+    );
 }
 
 #[test]
 #[ignore = "requires isolated GTK"]
 fn native_preflight_start_review_is_opt_in_explicit_and_scope_bound() {
-    native_test(
-        "ui::preflight::tests::native_preflight_start_review_is_opt_in_explicit_and_scope_bound",
+    crate::ui::native_test!(
+        native_preflight_start_review_is_opt_in_explicit_and_scope_bound,
         || {
             let (nav, _stack, _runtime, _events) = navigation();
             connected(&nav);
@@ -300,19 +372,56 @@ fn native_preflight_start_review_is_opt_in_explicit_and_scope_bound() {
 #[test]
 #[ignore = "requires isolated GTK"]
 fn native_preflight_large_text_layout_and_observation_updates_keep_manual_focus() {
-    native_test("ui::preflight::tests::native_preflight_large_text_layout_and_observation_updates_keep_manual_focus", || {
-        let (nav, _stack, _runtime, _events) = navigation(); connected(&nav);
-        gtk4::Settings::default().unwrap().set_gtk_font_name(Some("Sans 22"));
-        save_plan(&nav, PreflightPlan { expected_collection: "Show".into(), check_microphone: false, minimum_disk_mib: None, manual_items: vec!["A long manual checklist item with <b>literal markup</b> and enough text to wrap on a narrow window".into()], ..Default::default() });
-        let open = button(nav.clone()); let parent = adw::Window::builder().default_width(360).default_height(600).build(); parent.set_content(Some(&open)); parent.present();
-        assert!(open.measure(gtk4::Orientation::Horizontal, -1).0 <= 360);
-        open.emit_clicked(); let report = window("preflight-review"); report.set_default_size(360, 600); pump(Duration::from_millis(80));
-        assert!(report.measure(gtk4::Orientation::Horizontal, -1).0 <= 360, "review minimum width {}", report.measure(gtk4::Orientation::Horizontal, -1).0);
-        let manual = find(&report, "preflight-manual-0").downcast::<CheckButton>().unwrap(); manual.grab_focus();
-        nav.state.borrow_mut().workspace.observed_at = Some(Instant::now()); pump(Duration::from_millis(300));
-        assert_eq!(find(&report, "preflight-manual-0"), manual.clone().upcast::<gtk4::Widget>()); assert!(manual.has_focus());
-        click(&report, "preflight-configure"); let editor = window("preflight-editor"); editor.set_default_size(360, 600); pump(Duration::from_millis(80));
-        assert!(editor.measure(gtk4::Orientation::Horizontal, -1).0 <= 360, "editor minimum width {}", editor.measure(gtk4::Orientation::Horizontal, -1).0);
-        assert!(find(&editor, "preflight-save").is_sensitive()); editor.close(); report.close(); parent.close();
-    });
+    crate::ui::native_test!(
+        native_preflight_large_text_layout_and_observation_updates_keep_manual_focus,
+        || {
+            let (nav, _stack, _runtime, _events) = navigation();
+            connected(&nav);
+            gtk4::Settings::default()
+                .unwrap()
+                .set_gtk_font_name(Some("Sans 22"));
+            save_plan(&nav, PreflightPlan { expected_collection: "Show".into(), check_microphone: false, minimum_disk_mib: None, manual_items: vec!["A long manual checklist item with <b>literal markup</b> and enough text to wrap on a narrow window".into()], ..Default::default() });
+            let open = button(nav.clone());
+            let parent = adw::Window::builder()
+                .default_width(360)
+                .default_height(600)
+                .build();
+            parent.set_content(Some(&open));
+            parent.present();
+            assert!(open.measure(gtk4::Orientation::Horizontal, -1).0 <= 360);
+            open.emit_clicked();
+            let report = window("preflight-review");
+            report.set_default_size(360, 600);
+            pump(Duration::from_millis(80));
+            assert!(
+                report.measure(gtk4::Orientation::Horizontal, -1).0 <= 360,
+                "review minimum width {}",
+                report.measure(gtk4::Orientation::Horizontal, -1).0
+            );
+            let manual = find(&report, "preflight-manual-0")
+                .downcast::<CheckButton>()
+                .unwrap();
+            manual.grab_focus();
+            nav.state.borrow_mut().workspace.observed_at = Some(Instant::now());
+            pump(Duration::from_millis(300));
+            assert_eq!(
+                find(&report, "preflight-manual-0"),
+                manual.clone().upcast::<gtk4::Widget>()
+            );
+            assert!(manual.has_focus());
+            click(&report, "preflight-configure");
+            let editor = window("preflight-editor");
+            editor.set_default_size(360, 600);
+            pump(Duration::from_millis(80));
+            assert!(
+                editor.measure(gtk4::Orientation::Horizontal, -1).0 <= 360,
+                "editor minimum width {}",
+                editor.measure(gtk4::Orientation::Horizontal, -1).0
+            );
+            assert!(find(&editor, "preflight-save").is_sensitive());
+            editor.close();
+            report.close();
+            parent.close();
+        }
+    );
 }

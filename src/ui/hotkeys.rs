@@ -321,8 +321,8 @@ mod tests {
     #[test]
     #[ignore = "requires a native GTK display"]
     fn native_rearm_keeps_the_new_notice_until_its_own_expiry() {
-        crate::ui::test_support::native_test(
-            "ui::hotkeys::tests::native_rearm_keeps_the_new_notice_until_its_own_expiry",
+        crate::ui::native_test!(
+            native_rearm_keeps_the_new_notice_until_its_own_expiry,
             || {
                 let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
                 let live = Rc::new(crate::ui::pages::live::build(nav));

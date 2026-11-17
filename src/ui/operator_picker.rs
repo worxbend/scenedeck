@@ -331,7 +331,7 @@ impl Drop for ActionPicker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::test_support::{native_test, navigation, pump};
+    use crate::ui::test_support::{navigation, pump};
     use crate::{
         controller::state::Page,
         domain::{
@@ -344,101 +344,188 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display"]
     fn native_picker_inspects_independently_preserves_selection_and_releases_scope() {
-        native_test("ui::operator_picker::tests::native_picker_inspects_independently_preserves_selection_and_releases_scope", || {
-            let (nav, _stack, _runtime, _events) = navigation();
-            *nav.state.borrow_mut() = action_catalog::tests::connected();
-            let target = ActionTarget { name: "Clip <b>One</b>".into(), uuid: Some("clip-1".into()) };
-            {
-                let mut state = nav.state.borrow_mut();
-                state.current_page = Page::Settings;
-                state.workspace.selected_scene = Some("Editor scene".into());
-                state.workspace.selected_input = Some("Editor input".into());
-                state.workspace.loading = true; // Hold a read while the inspector changes its target.
-                state.workspace.input_catalog.as_mut().unwrap().as_mut().unwrap().push(InputIdentity { target: target.clone(), kind: "ffmpeg_source".into() });
-            }
-            let (root, picker) = ActionPicker::new(&nav, None);
-            let window = adw::Window::new(); window.set_content(Some(&root)); window.present();
-            pump(Duration::from_millis(50));
-            let selected = picker.selected().unwrap();
-            picker.input.upgrade().unwrap().set_selected(2);
-            let token = picker.inspection.get().unwrap();
-            {
-                let state = nav.state.borrow();
-                assert_eq!(state.workspace.operator_inspections, vec![(token, target.clone())]);
-                assert!(state.workspace.dirty, "a pending read must leave the new inspection requested");
-                assert_eq!(state.workspace.selected_input.as_deref(), Some("Editor input"));
-                assert_eq!(state.workspace.selected_scene.as_deref(), Some("Editor scene"));
-            }
-            {
-                let mut state = nav.state.borrow_mut();
-                state.workspace.loading = false;
-                state.workspace.dirty = false;
-                state.workspace.operator_inputs.push(InputObservation { target: target.clone(), media: Some(Ok(MediaStatus { state: MediaState::Playing, cursor_ms: Some(0), duration_ms: Some(1000) })), filters: Some(Ok(Vec::new())) });
-                state.available_requests.push("TriggerMediaInputAction".into());
-            }
-            picker.refresh();
-            assert_eq!(picker.selected(), Some(selected), "new results do not change the user's chosen action");
-            let restart = OperatorAction::RestartMedia { target };
-            let index = picker.choices.borrow().iter().position(|entry| entry.action == CatalogAction::Operator(restart.clone()) && entry.available).unwrap();
-            picker.action.upgrade().unwrap().set_selected(index as u32);
-            assert_eq!(picker.selected(), Some(restart.clone()));
-            picker.refresh(); assert_eq!(picker.selected(), Some(restart));
-            let catalog = nav.state.borrow().workspace.input_catalog.clone();
-            nav.state.borrow_mut().workspace.input_catalog = Some(Err("temporarily unavailable".into()));
-            picker.refresh();
-            assert_eq!(picker.input.upgrade().unwrap().selected(), 2);
-            assert_eq!(picker.inspection.get(), Some(token), "a read failure must retain inspection for recovery");
-            assert!(!picker.choices.borrow()[picker.action.upgrade().unwrap().selected() as usize].available);
-            nav.state.borrow_mut().workspace.input_catalog = catalog;
-            picker.refresh();
-            assert!(action_catalog::execute(&nav, &CatalogAction::Operator(picker.selected().unwrap())));
-            assert!(matches!(nav.state.borrow().workspace.active_action, Some(crate::domain::control::ControlAction::Media { .. })));
-            assert_eq!(nav.state.borrow().workspace.selected_input.as_deref(), Some("Editor input"));
-            window.close(); pump(Duration::from_millis(50));
-            assert!(nav.state.borrow().workspace.operator_inspections.is_empty());
-            let weak = Rc::downgrade(&picker); drop((picker, root, window));
-            pump(Duration::from_millis(50)); assert!(weak.upgrade().is_none());
+        crate::ui::native_test!(
+            native_picker_inspects_independently_preserves_selection_and_releases_scope,
+            || {
+                let (nav, _stack, _runtime, _events) = navigation();
+                *nav.state.borrow_mut() = action_catalog::tests::connected();
+                let target = ActionTarget {
+                    name: "Clip <b>One</b>".into(),
+                    uuid: Some("clip-1".into()),
+                };
+                {
+                    let mut state = nav.state.borrow_mut();
+                    state.current_page = Page::Settings;
+                    state.workspace.selected_scene = Some("Editor scene".into());
+                    state.workspace.selected_input = Some("Editor input".into());
+                    state.workspace.loading = true; // Hold a read while the inspector changes its target.
+                    state
+                        .workspace
+                        .input_catalog
+                        .as_mut()
+                        .unwrap()
+                        .as_mut()
+                        .unwrap()
+                        .push(InputIdentity {
+                            target: target.clone(),
+                            kind: "ffmpeg_source".into(),
+                        });
+                }
+                let (root, picker) = ActionPicker::new(&nav, None);
+                let window = adw::Window::new();
+                window.set_content(Some(&root));
+                window.present();
+                pump(Duration::from_millis(50));
+                let selected = picker.selected().unwrap();
+                picker.input.upgrade().unwrap().set_selected(2);
+                let token = picker.inspection.get().unwrap();
+                {
+                    let state = nav.state.borrow();
+                    assert_eq!(
+                        state.workspace.operator_inspections,
+                        vec![(token, target.clone())]
+                    );
+                    assert!(
+                        state.workspace.dirty,
+                        "a pending read must leave the new inspection requested"
+                    );
+                    assert_eq!(
+                        state.workspace.selected_input.as_deref(),
+                        Some("Editor input")
+                    );
+                    assert_eq!(
+                        state.workspace.selected_scene.as_deref(),
+                        Some("Editor scene")
+                    );
+                }
+                {
+                    let mut state = nav.state.borrow_mut();
+                    state.workspace.loading = false;
+                    state.workspace.dirty = false;
+                    state.workspace.operator_inputs.push(InputObservation {
+                        target: target.clone(),
+                        media: Some(Ok(MediaStatus {
+                            state: MediaState::Playing,
+                            cursor_ms: Some(0),
+                            duration_ms: Some(1000),
+                        })),
+                        filters: Some(Ok(Vec::new())),
+                    });
+                    state
+                        .available_requests
+                        .push("TriggerMediaInputAction".into());
+                }
+                picker.refresh();
+                assert_eq!(
+                    picker.selected(),
+                    Some(selected),
+                    "new results do not change the user's chosen action"
+                );
+                let restart = OperatorAction::RestartMedia { target };
+                let index = picker
+                    .choices
+                    .borrow()
+                    .iter()
+                    .position(|entry| {
+                        entry.action == CatalogAction::Operator(restart.clone()) && entry.available
+                    })
+                    .unwrap();
+                picker.action.upgrade().unwrap().set_selected(index as u32);
+                assert_eq!(picker.selected(), Some(restart.clone()));
+                picker.refresh();
+                assert_eq!(picker.selected(), Some(restart));
+                let catalog = nav.state.borrow().workspace.input_catalog.clone();
+                nav.state.borrow_mut().workspace.input_catalog =
+                    Some(Err("temporarily unavailable".into()));
+                picker.refresh();
+                assert_eq!(picker.input.upgrade().unwrap().selected(), 2);
+                assert_eq!(
+                    picker.inspection.get(),
+                    Some(token),
+                    "a read failure must retain inspection for recovery"
+                );
+                assert!(
+                    !picker.choices.borrow()[picker.action.upgrade().unwrap().selected() as usize]
+                        .available
+                );
+                nav.state.borrow_mut().workspace.input_catalog = catalog;
+                picker.refresh();
+                assert!(action_catalog::execute(
+                    &nav,
+                    &CatalogAction::Operator(picker.selected().unwrap())
+                ));
+                assert!(matches!(
+                    nav.state.borrow().workspace.active_action,
+                    Some(crate::domain::control::ControlAction::Media { .. })
+                ));
+                assert_eq!(
+                    nav.state.borrow().workspace.selected_input.as_deref(),
+                    Some("Editor input")
+                );
+                window.close();
+                pump(Duration::from_millis(50));
+                assert!(nav.state.borrow().workspace.operator_inspections.is_empty());
+                let weak = Rc::downgrade(&picker);
+                drop((picker, root, window));
+                pump(Duration::from_millis(50));
+                assert!(weak.upgrade().is_none());
 
-            let (root, picker) = ActionPicker::new(&nav, None);
-            let window = adw::Window::new(); window.set_content(Some(&root)); window.present();
-            nav.state.borrow_mut().workspace.loading = true;
-            picker.input.upgrade().unwrap().set_selected(1);
-            assert_eq!(nav.state.borrow().workspace.operator_inspections.len(), 1);
-            nav.state.borrow_mut().show_registry.generation += 1;
-            picker.refresh();
-            assert!(nav.state.borrow().workspace.operator_inspections.is_empty());
-            assert!(!picker.input.upgrade().unwrap().is_sensitive());
-            window.close();
-        });
+                let (root, picker) = ActionPicker::new(&nav, None);
+                let window = adw::Window::new();
+                window.set_content(Some(&root));
+                window.present();
+                nav.state.borrow_mut().workspace.loading = true;
+                picker.input.upgrade().unwrap().set_selected(1);
+                assert_eq!(nav.state.borrow().workspace.operator_inspections.len(), 1);
+                nav.state.borrow_mut().show_registry.generation += 1;
+                picker.refresh();
+                assert!(nav.state.borrow().workspace.operator_inspections.is_empty());
+                assert!(!picker.input.upgrade().unwrap().is_sensitive());
+                window.close();
+            }
+        );
     }
 
     #[test]
     #[ignore = "requires a disposable GTK display"]
     fn native_picker_can_retry_failed_initial_inventory_without_an_inspection() {
-        native_test("ui::operator_picker::tests::native_picker_can_retry_failed_initial_inventory_without_an_inspection", || {
-            let (nav, _stack, _runtime, _events) = navigation();
-            *nav.state.borrow_mut() = action_catalog::tests::connected();
-            nav.state.borrow_mut().current_page = Page::Settings;
-            nav.state.borrow_mut().workspace.input_catalog = Some(Err("unavailable".into()));
-            let initial = nav.state.borrow().workspace.sequence;
-            let (root, picker) = ActionPicker::new(&nav, None);
-            assert_eq!(nav.state.borrow().workspace.sequence, initial + 1, "opening after a failed catalog retries the read");
-            assert!(!picker.retry.upgrade().unwrap().is_sensitive());
-            assert!(nav.state.borrow().workspace.operator_inspections.is_empty());
-            // An unsuccessful read enables an explicit retry even though no
-            // source could be selected and no background inspector exists.
-            nav.state.borrow_mut().workspace.loading = false;
-            picker.refresh();
-            let retry = picker.retry.upgrade().unwrap();
-            assert!(retry.is_sensitive()); retry.emit_clicked();
-            assert_eq!(nav.state.borrow().workspace.sequence, initial + 2);
-            assert!(!retry.is_sensitive());
-            nav.state.borrow_mut().workspace.loading = false;
-            nav.state.borrow_mut().show_registry.generation += 1;
-            picker.refresh();
-            assert!(!retry.is_sensitive()); retry.emit_clicked();
-            assert_eq!(nav.state.borrow().workspace.sequence, initial + 2, "retired callbacks cannot refresh another scope");
-            drop(root);
-        });
+        crate::ui::native_test!(
+            native_picker_can_retry_failed_initial_inventory_without_an_inspection,
+            || {
+                let (nav, _stack, _runtime, _events) = navigation();
+                *nav.state.borrow_mut() = action_catalog::tests::connected();
+                nav.state.borrow_mut().current_page = Page::Settings;
+                nav.state.borrow_mut().workspace.input_catalog = Some(Err("unavailable".into()));
+                let initial = nav.state.borrow().workspace.sequence;
+                let (root, picker) = ActionPicker::new(&nav, None);
+                assert_eq!(
+                    nav.state.borrow().workspace.sequence,
+                    initial + 1,
+                    "opening after a failed catalog retries the read"
+                );
+                assert!(!picker.retry.upgrade().unwrap().is_sensitive());
+                assert!(nav.state.borrow().workspace.operator_inspections.is_empty());
+                // An unsuccessful read enables an explicit retry even though no
+                // source could be selected and no background inspector exists.
+                nav.state.borrow_mut().workspace.loading = false;
+                picker.refresh();
+                let retry = picker.retry.upgrade().unwrap();
+                assert!(retry.is_sensitive());
+                retry.emit_clicked();
+                assert_eq!(nav.state.borrow().workspace.sequence, initial + 2);
+                assert!(!retry.is_sensitive());
+                nav.state.borrow_mut().workspace.loading = false;
+                nav.state.borrow_mut().show_registry.generation += 1;
+                picker.refresh();
+                assert!(!retry.is_sensitive());
+                retry.emit_clicked();
+                assert_eq!(
+                    nav.state.borrow().workspace.sequence,
+                    initial + 2,
+                    "retired callbacks cannot refresh another scope"
+                );
+                drop(root);
+            }
+        );
     }
 }

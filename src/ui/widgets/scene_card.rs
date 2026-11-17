@@ -394,8 +394,8 @@ mod tests {
     #[test]
     #[ignore = "requires a native GTK display"]
     fn native_replaced_scene_accents_release_display_providers() {
-        crate::ui::test_support::native_test(
-            "ui::widgets::scene_card::tests::native_replaced_scene_accents_release_display_providers",
+        crate::ui::native_test!(
+            native_replaced_scene_accents_release_display_providers,
             || {
                 let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
                 TEST_ACCENT_PROVIDERS.with(|providers| providers.borrow_mut().clear());
@@ -417,14 +417,22 @@ mod tests {
                         .with(|providers| providers.borrow().last().unwrap().clone());
                     let retained_root = card.root.clone();
                     drop(card);
-                    assert!(provider.upgrade().is_some(), "a visible card lost its accent");
+                    assert!(
+                        provider.upgrade().is_some(),
+                        "a visible card lost its accent"
+                    );
                     drop(retained_root);
-                    assert!(provider.upgrade().is_none(), "obsolete display provider retained");
+                    assert!(
+                        provider.upgrade().is_none(),
+                        "obsolete display provider retained"
+                    );
                 }
                 TEST_ACCENT_PROVIDERS.with(|providers| {
                     let providers = providers.borrow();
                     assert_eq!(providers.len(), 128);
-                    assert!(providers.iter().all(|provider| provider.upgrade().is_none()));
+                    assert!(providers
+                        .iter()
+                        .all(|provider| provider.upgrade().is_none()));
                 });
             },
         );

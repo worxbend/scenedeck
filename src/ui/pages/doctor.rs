@@ -242,28 +242,42 @@ mod tests {
     #[test]
     #[ignore = "requires a native GTK display"]
     fn native_doctor_requires_ready_topology_and_rerun_shows_loading_immediately() {
-        crate::ui::test_support::native_test(
-            "ui::pages::doctor::tests::native_doctor_requires_ready_topology_and_rerun_shows_loading_immediately",
+        crate::ui::native_test!(
+            native_doctor_requires_ready_topology_and_rerun_shows_loading_immediately,
             || {
                 let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
                 let container = GtkBox::new(gtk4::Orientation::Vertical, 0);
                 {
                     let mut state = nav.state.borrow_mut();
-                    state.scene_inventory.scenes = vec![Scene { uuid: None, id: "Main".into() }];
-                    state.registry.set_scene_role("Main", Some(SceneRole::Primary));
+                    state.scene_inventory.scenes = vec![Scene {
+                        uuid: None,
+                        id: "Main".into(),
+                    }];
+                    state
+                        .registry
+                        .set_scene_role("Main", Some(SceneRole::Primary));
                 }
                 populate(&container, &nav);
                 assert!(page_text(container.upcast_ref()).contains("Scene topology not observed"));
                 assert!(!page_text(container.upcast_ref()).contains("No problems found"));
                 nav.state.borrow_mut().scene_inventory.scenes.clear();
-                nav.state.borrow_mut().set_topology_ready(SceneGraph::default());
+                nav.state
+                    .borrow_mut()
+                    .set_topology_ready(SceneGraph::default());
                 rebuild(&container, &nav);
                 assert!(page_text(container.upcast_ref()).contains("No scenes observed"));
                 {
                     let mut state = nav.state.borrow_mut();
-                    state.obs_status = ObsStatus::Connected { obs_version: "fixture".into() };
-                    state.scene_inventory.scenes = vec![Scene { uuid: None, id: "Main".into() }];
-                    state.registry.set_scene_role("Main", Some(SceneRole::Primary));
+                    state.obs_status = ObsStatus::Connected {
+                        obs_version: "fixture".into(),
+                    };
+                    state.scene_inventory.scenes = vec![Scene {
+                        uuid: None,
+                        id: "Main".into(),
+                    }];
+                    state
+                        .registry
+                        .set_scene_role("Main", Some(SceneRole::Primary));
                     state.set_topology_ready(SceneGraph::default());
                 }
                 rebuild(&container, &nav);
@@ -275,22 +289,32 @@ mod tests {
                 let text = page_text(container.upcast_ref());
                 assert!(text.contains("Reading scene topology"));
                 assert!(!text.contains("No problems found"));
-                assert!(!refresh_button(container.upcast_ref()).unwrap().is_sensitive());
-                nav.state.borrow_mut().set_topology_failed("Group <b>& read failed".into());
+                assert!(!refresh_button(container.upcast_ref())
+                    .unwrap()
+                    .is_sensitive());
+                nav.state
+                    .borrow_mut()
+                    .set_topology_failed("Group <b>& read failed".into());
                 rebuild(&container, &nav);
                 let text = page_text(container.upcast_ref());
                 assert!(text.contains("Scene topology could not be read"));
                 assert!(text.contains("Group <b>& read failed"));
                 assert!(!text.contains("No problems found"));
-                refresh_button(container.upcast_ref()).unwrap().emit_clicked();
+                refresh_button(container.upcast_ref())
+                    .unwrap()
+                    .emit_clicked();
                 assert_eq!(nav.state.borrow().topology_status, TopologyStatus::Loading);
-                nav.state.borrow_mut().set_topology_ready(SceneGraph::default());
+                nav.state
+                    .borrow_mut()
+                    .set_topology_ready(SceneGraph::default());
                 rebuild(&container, &nav);
                 assert!(page_text(container.upcast_ref()).contains("No problems found"));
                 nav.state.borrow_mut().invalidate_collection_runtime();
                 rebuild(&container, &nav);
                 assert!(page_text(container.upcast_ref()).contains("Scene topology not observed"));
-                nav.state.borrow_mut().reset_obs_session(ObsStatus::Disconnected);
+                nav.state
+                    .borrow_mut()
+                    .reset_obs_session(ObsStatus::Disconnected);
                 rebuild(&container, &nav);
                 assert!(page_text(container.upcast_ref()).contains("Scene topology not observed"));
             },

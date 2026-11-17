@@ -981,63 +981,135 @@ mod tests {
     #[test]
     #[ignore = "requires isolated GTK; no OBS connection"]
     fn native_preflight_continuation_honors_current_output_confirmation_once() {
-        crate::ui::test_support::native_test("ui::pages::live::tests::native_preflight_continuation_honors_current_output_confirmation_once", || {
-            use crate::ui::preflight::tests::{connected, save_plan, window};
-            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation(); connected(&nav);
-            save_plan(&nav, crate::domain::preflight::PreflightPlan { review_before_output: true, ..Default::default() });
-            let button = Button::with_label("Record"); let parent = adw::Window::new(); parent.set_content(Some(&button)); parent.present();
-            handle_output_toggle(&button, &nav, OutputKind::Record);
-            let review = window("preflight-review").downcast::<adw::MessageDialog>().unwrap();
-            nav.state.borrow_mut().config.outputs.confirm_start_recording = true;
-            review.response("continue");
-            let confirmation = gtk4::Window::list_toplevels().into_iter().find_map(|widget| widget.downcast::<adw::MessageDialog>().ok().filter(|dialog| dialog.is_visible() && dialog.widget_name() != "preflight-review")).expect("ordinary output confirmation after review");
-            assert!(nav.state.borrow().workspace.activity.entries.is_empty()); confirmation.response("cancel");
-            assert!(nav.state.borrow().workspace.activity.entries.is_empty());
-            handle_output_toggle(&button, &nav, OutputKind::Record);
-            let review = window("preflight-review").downcast::<adw::MessageDialog>().unwrap();
-            nav.state.borrow_mut().config.outputs.confirm_start_recording = false;
-            review.response("continue"); review.response("continue");
-            assert_eq!(nav.state.borrow().workspace.activity.entries.len(), 1);
-            {
-                let mut state = nav.state.borrow_mut(); state.record_status = OutputStatus::active(); state.config.outputs.confirm_stop_recording = false;
+        crate::ui::native_test!(
+            native_preflight_continuation_honors_current_output_confirmation_once,
+            || {
+                use crate::ui::preflight::tests::{connected, save_plan, window};
+                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+                connected(&nav);
+                save_plan(
+                    &nav,
+                    crate::domain::preflight::PreflightPlan {
+                        review_before_output: true,
+                        ..Default::default()
+                    },
+                );
+                let button = Button::with_label("Record");
+                let parent = adw::Window::new();
+                parent.set_content(Some(&button));
+                parent.present();
+                handle_output_toggle(&button, &nav, OutputKind::Record);
+                let review = window("preflight-review")
+                    .downcast::<adw::MessageDialog>()
+                    .unwrap();
+                nav.state
+                    .borrow_mut()
+                    .config
+                    .outputs
+                    .confirm_start_recording = true;
+                review.response("continue");
+                let confirmation = gtk4::Window::list_toplevels()
+                    .into_iter()
+                    .find_map(|widget| {
+                        widget
+                            .downcast::<adw::MessageDialog>()
+                            .ok()
+                            .filter(|dialog| {
+                                dialog.is_visible() && dialog.widget_name() != "preflight-review"
+                            })
+                    })
+                    .expect("ordinary output confirmation after review");
+                assert!(nav.state.borrow().workspace.activity.entries.is_empty());
+                confirmation.response("cancel");
+                assert!(nav.state.borrow().workspace.activity.entries.is_empty());
+                handle_output_toggle(&button, &nav, OutputKind::Record);
+                let review = window("preflight-review")
+                    .downcast::<adw::MessageDialog>()
+                    .unwrap();
+                nav.state
+                    .borrow_mut()
+                    .config
+                    .outputs
+                    .confirm_start_recording = false;
+                review.response("continue");
+                review.response("continue");
+                assert_eq!(nav.state.borrow().workspace.activity.entries.len(), 1);
+                {
+                    let mut state = nav.state.borrow_mut();
+                    state.record_status = OutputStatus::active();
+                    state.config.outputs.confirm_stop_recording = false;
+                }
+                handle_output_toggle(&button, &nav, OutputKind::Record);
+                assert_eq!(
+                    nav.state.borrow().workspace.activity.entries.len(),
+                    2,
+                    "stop retains its existing flow"
+                );
+                assert!(!gtk4::Window::list_toplevels().iter().any(|window| window
+                    .clone()
+                    .downcast::<gtk4::Window>()
+                    .is_ok_and(
+                        |window| window.is_visible() && window.widget_name() == "preflight-review"
+                    )));
+                parent.close();
             }
-            handle_output_toggle(&button, &nav, OutputKind::Record);
-            assert_eq!(nav.state.borrow().workspace.activity.entries.len(), 2, "stop retains its existing flow");
-            assert!(!gtk4::Window::list_toplevels().iter().any(|window| window.clone().downcast::<gtk4::Window>().is_ok_and(|window| window.is_visible() && window.widget_name() == "preflight-review")));
-            parent.close();
-        });
+        );
     }
 
     #[test]
     #[ignore = "requires a disposable GTK display and isolated registry storage"]
     fn native_live_filters_keep_search_widget_and_original_shortcut_badges() {
-        crate::ui::test_support::native_test(
-            "ui::pages::live::tests::native_live_filters_keep_search_widget_and_original_shortcut_badges",
+        crate::ui::native_test!(
+            native_live_filters_keep_search_widget_and_original_shortcut_badges,
             || {
                 let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
                 let (inventory, mut registry) = live_fixture(
-                    &[("Camera", SceneRole::Primary), ("Slides", SceneRole::Primary)], &[]);
+                    &[
+                        ("Camera", SceneRole::Primary),
+                        ("Slides", SceneRole::Primary),
+                    ],
+                    &[],
+                );
                 registry.set_scene_favorite("Slides", true);
                 nav.state.borrow_mut().registry = registry;
                 nav.state.borrow_mut().scene_inventory = inventory.clone();
                 let live = build(nav.clone());
-                fn find(root: &gtk4::Widget, matches: &impl Fn(&gtk4::Widget) -> bool) -> Option<gtk4::Widget> {
-                    if matches(root) { return Some(root.clone()); }
+                fn find(
+                    root: &gtk4::Widget,
+                    matches: &impl Fn(&gtk4::Widget) -> bool,
+                ) -> Option<gtk4::Widget> {
+                    if matches(root) {
+                        return Some(root.clone());
+                    }
                     let mut child = root.first_child();
                     while let Some(widget) = child {
-                        if let Some(found) = find(&widget, matches) { return Some(found); }
+                        if let Some(found) = find(&widget, matches) {
+                            return Some(found);
+                        }
                         child = widget.next_sibling();
                     }
                     None
                 }
-                let badge = |card: &scene_card::SceneCardHandle| find(card.root.upcast_ref(), &|widget| widget.has_css_class("scene-card-hotkey"))
-                    .unwrap().downcast::<Label>().unwrap().text().to_string();
+                let badge = |card: &scene_card::SceneCardHandle| {
+                    find(card.root.upcast_ref(), &|widget| {
+                        widget.has_css_class("scene-card-hotkey")
+                    })
+                    .unwrap()
+                    .downcast::<Label>()
+                    .unwrap()
+                    .text()
+                    .to_string()
+                };
                 rebuild_scene_cards(&live, &inventory, &nav);
                 assert_eq!(live.scene_cards.borrow()[0].scene_id, "Slides");
                 assert_eq!(badge(&live.scene_cards.borrow()[0]), "2");
                 assert_eq!(badge(&live.scene_cards.borrow()[1]), "1");
-                let search = find(live.deck_controls.upcast_ref(), &|widget| widget.widget_name() == "deck-search")
-                    .unwrap().downcast::<gtk4::SearchEntry>().unwrap();
+                let search = find(live.deck_controls.upcast_ref(), &|widget| {
+                    widget.widget_name() == "deck-search"
+                })
+                .unwrap()
+                .downcast::<gtk4::SearchEntry>()
+                .unwrap();
                 search.set_text("Slides");
                 search.emit_by_name::<()>("search-changed", &[]);
                 rebuild_scene_cards(&live, &inventory, &nav);
@@ -1047,15 +1119,28 @@ mod tests {
                 search.emit_by_name::<()>("search-changed", &[]);
                 rebuild_scene_cards(&live, &inventory, &nav);
                 assert!(live.scene_cards.borrow().is_empty());
-                assert_eq!(find(live.deck_controls.upcast_ref(), &|widget| widget.widget_name() == "deck-search").unwrap(), search.clone().upcast::<gtk4::Widget>());
-                assert_eq!(scene_for_slot(&inventory, &nav.state.borrow().registry, 1).as_deref(), Some("Slides"));
+                assert_eq!(
+                    find(live.deck_controls.upcast_ref(), &|widget| widget
+                        .widget_name()
+                        == "deck-search")
+                    .unwrap(),
+                    search.clone().upcast::<gtk4::Widget>()
+                );
+                assert_eq!(
+                    scene_for_slot(&inventory, &nav.state.borrow().registry, 1).as_deref(),
+                    Some("Slides")
+                );
                 nav.state.borrow_mut().show_registry.generation += 1;
                 nav.state.borrow_mut().registry.scene_filter.query = "Camera".into();
                 rebuild_scene_cards(&live, &inventory, &nav);
                 search.set_text("Slides");
                 search.emit_by_name::<()>("search-changed", &[]);
                 assert_eq!(nav.state.borrow().registry.scene_filter.query, "Camera");
-                assert!(crate::ui::test_support::pump_until(std::time::Duration::from_secs(5), || crate::ui::persist::registry_save_status() == crate::ui::persist::RegistrySaveStatus::Saved));
+                assert!(crate::ui::test_support::pump_until(
+                    std::time::Duration::from_secs(5),
+                    || crate::ui::persist::registry_save_status()
+                        == crate::ui::persist::RegistrySaveStatus::Saved
+                ));
             },
         );
     }
@@ -1111,109 +1196,201 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; no OBS or keyring access"]
     fn native_audio_refresh_retains_controls_until_their_owner_changes() {
-        crate::ui::test_support::native_test("ui::pages::live::tests::native_audio_refresh_retains_controls_until_their_owner_changes", || {
-            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
-            let input = crate::domain::audio::AudioInput::new("Mic".into(), false, 0.5, -6.0);
-            nav.state.borrow_mut().set_current_program("Main".into());
-            nav.state.borrow_mut().apply_active_audio(Some("Main".into()), Ok(vec![input.clone()]));
-            let live = build(nav.clone());
-            rebuild_audio_cards(&live, std::slice::from_ref(&input), &nav);
-            let root = live.audio_cards.borrow()[0].root.clone();
-            rebuild_audio_cards(&live, std::slice::from_ref(&input), &nav);
-            assert_eq!(live.audio_cards.borrow()[0].root, root, "identical audio readback replaced its controls");
-            nav.state.borrow_mut().invalidate_active_audio();
-            rebuild_audio_cards(&live, &[], &nav);
-            assert_eq!(live.audio_cards.borrow()[0].root, root, "same-scene loading replaced controls");
-            assert!(root.is_sensitive());
-            nav.state.borrow_mut().apply_active_audio(Some("Main".into()), Ok(vec![input.clone()]));
-            rebuild_audio_cards(&live, std::slice::from_ref(&input), &nav);
-            assert_eq!(live.audio_cards.borrow()[0].root, root);
-            assert!(root.is_sensitive());
-            nav.state.borrow_mut().set_current_program("Other".into());
-            rebuild_audio_cards(&live, &[], &nav);
-            assert_eq!(live.audio_cards.borrow()[0].root, root, "Program changed the layout before membership arrived");
-            let other = crate::domain::audio::AudioInput::new("Other input".into(), false, 1.0, 0.0);
-            let inputs = vec![input.clone(), other];
-            nav.state.borrow_mut().apply_active_audio(Some("Other".into()), Ok(inputs.clone()));
-            rebuild_audio_cards(&live, &inputs, &nav);
-            assert_eq!(live.audio_cards.borrow()[0].root, root, "adding an input replaced an unrelated fader");
-            nav.state.borrow_mut().workspace.invalidate();
-            rebuild_audio_cards(&live, &[], &nav);
-            assert!(live.audio_cards.borrow().is_empty(), "collection/session changes must retire old controls");
-        });
+        crate::ui::native_test!(
+            native_audio_refresh_retains_controls_until_their_owner_changes,
+            || {
+                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+                let input = crate::domain::audio::AudioInput::new("Mic".into(), false, 0.5, -6.0);
+                nav.state.borrow_mut().set_current_program("Main".into());
+                nav.state
+                    .borrow_mut()
+                    .apply_active_audio(Some("Main".into()), Ok(vec![input.clone()]));
+                let live = build(nav.clone());
+                rebuild_audio_cards(&live, std::slice::from_ref(&input), &nav);
+                let root = live.audio_cards.borrow()[0].root.clone();
+                rebuild_audio_cards(&live, std::slice::from_ref(&input), &nav);
+                assert_eq!(
+                    live.audio_cards.borrow()[0].root,
+                    root,
+                    "identical audio readback replaced its controls"
+                );
+                nav.state.borrow_mut().invalidate_active_audio();
+                rebuild_audio_cards(&live, &[], &nav);
+                assert_eq!(
+                    live.audio_cards.borrow()[0].root,
+                    root,
+                    "same-scene loading replaced controls"
+                );
+                assert!(root.is_sensitive());
+                nav.state
+                    .borrow_mut()
+                    .apply_active_audio(Some("Main".into()), Ok(vec![input.clone()]));
+                rebuild_audio_cards(&live, std::slice::from_ref(&input), &nav);
+                assert_eq!(live.audio_cards.borrow()[0].root, root);
+                assert!(root.is_sensitive());
+                nav.state.borrow_mut().set_current_program("Other".into());
+                rebuild_audio_cards(&live, &[], &nav);
+                assert_eq!(
+                    live.audio_cards.borrow()[0].root,
+                    root,
+                    "Program changed the layout before membership arrived"
+                );
+                let other =
+                    crate::domain::audio::AudioInput::new("Other input".into(), false, 1.0, 0.0);
+                let inputs = vec![input.clone(), other];
+                nav.state
+                    .borrow_mut()
+                    .apply_active_audio(Some("Other".into()), Ok(inputs.clone()));
+                rebuild_audio_cards(&live, &inputs, &nav);
+                assert_eq!(
+                    live.audio_cards.borrow()[0].root,
+                    root,
+                    "adding an input replaced an unrelated fader"
+                );
+                nav.state.borrow_mut().workspace.invalidate();
+                rebuild_audio_cards(&live, &[], &nav);
+                assert!(
+                    live.audio_cards.borrow().is_empty(),
+                    "collection/session changes must retire old controls"
+                );
+            }
+        );
     }
 
     #[test]
     #[ignore = "requires a native GTK display"]
     fn native_active_audio_readiness_retains_loading_but_retires_failed_controls() {
-        crate::ui::test_support::native_test("ui::pages::live::tests::native_active_audio_readiness_retains_loading_but_retires_failed_controls", || {
-            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
-            {
-                let mut state = nav.state.borrow_mut();
-                state.set_current_program("A".into());
-                state.apply_active_audio(Some("A".into()), Ok(vec![crate::domain::audio::AudioInput::new("MicA".into(), false, 0.5, -6.0)]));
+        crate::ui::native_test!(
+            native_active_audio_readiness_retains_loading_but_retires_failed_controls,
+            || {
+                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+                {
+                    let mut state = nav.state.borrow_mut();
+                    state.set_current_program("A".into());
+                    state.apply_active_audio(
+                        Some("A".into()),
+                        Ok(vec![crate::domain::audio::AudioInput::new(
+                            "MicA".into(),
+                            false,
+                            0.5,
+                            -6.0,
+                        )]),
+                    );
+                }
+                let live = build(nav.clone());
+                let inputs = nav.state.borrow().audio_inputs.clone();
+                rebuild_audio_cards(&live, &inputs, &nav);
+                assert_eq!(live.audio_cards.borrow().len(), 1);
+                nav.state.borrow_mut().set_current_program("B".into());
+                rebuild_audio_cards(&live, &[], &nav);
+                assert_eq!(live.audio_cards.borrow().len(), 1);
+                assert!(live.audio_refresh_notice.is_spinning());
+                let rendered_hint = || {
+                    live.audio_box
+                        .first_child()
+                        .unwrap()
+                        .first_child()
+                        .unwrap()
+                        .downcast::<Label>()
+                        .unwrap()
+                        .text()
+                        .to_string()
+                };
+                nav.state.borrow_mut().apply_active_audio(
+                    Some("B".into()),
+                    Err("fixture observation unavailable".into()),
+                );
+                rebuild_audio_cards(&live, &[], &nav);
+                assert!(live.audio_cards.borrow().is_empty());
+                assert!(rendered_hint().contains("fixture observation unavailable"));
+                nav.state
+                    .borrow_mut()
+                    .apply_active_audio(Some("B".into()), Ok(Vec::new()));
+                rebuild_audio_cards(&live, &[], &nav);
+                assert_eq!(
+                    rendered_hint(),
+                    fl!(LANGUAGE_LOADER, "live-audio-empty-hint")
+                );
             }
-            let live = build(nav.clone());
-            let inputs = nav.state.borrow().audio_inputs.clone();
-            rebuild_audio_cards(&live, &inputs, &nav);
-            assert_eq!(live.audio_cards.borrow().len(), 1);
-            nav.state.borrow_mut().set_current_program("B".into());
-            rebuild_audio_cards(&live, &[], &nav);
-            assert_eq!(live.audio_cards.borrow().len(), 1);
-            assert!(live.audio_refresh_notice.is_spinning());
-            let rendered_hint = || live.audio_box.first_child().unwrap().first_child().unwrap().downcast::<Label>().unwrap().text().to_string();
-            nav.state.borrow_mut().apply_active_audio(Some("B".into()), Err("fixture observation unavailable".into()));
-            rebuild_audio_cards(&live, &[], &nav);
-            assert!(live.audio_cards.borrow().is_empty());
-            assert!(rendered_hint().contains("fixture observation unavailable"));
-            nav.state.borrow_mut().apply_active_audio(Some("B".into()), Ok(Vec::new()));
-            rebuild_audio_cards(&live, &[], &nav);
-            assert_eq!(rendered_hint(), fl!(LANGUAGE_LOADER, "live-audio-empty-hint"));
-        });
+        );
     }
 
     #[test]
     #[ignore = "requires a native GTK display"]
     fn native_observed_studio_changes_update_hints_without_replacing_cards() {
-        crate::ui::test_support::native_test("ui::pages::live::tests::native_observed_studio_changes_update_hints_without_replacing_cards", || {
-            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
-            {
-                let mut state = nav.state.borrow_mut();
-                state.obs_status = ObsStatus::Connected { obs_version: "fixture".into() };
-                state.scene_collections.current = Some("Fixture".into());
-                state.scene_inventory.scenes = vec![Scene { uuid: None, id: "Main".into() }];
-                state.scene_inventory.current_id = Some("Main".into());
-                state.registry.scenes.insert("Main".into(), SceneEntry { role: Some(SceneRole::Primary), ..Default::default() });
-                state.workspace.observed_at = Some(std::time::Instant::now());
-                state.workspace.snapshot = Some(Default::default());
-                state.workspace.snapshot.as_mut().unwrap().studio.enabled = Some(false);
-            }
-            let live = build(nav.clone());
-            let inventory = nav.state.borrow().scene_inventory.clone();
-            rebuild_scene_cards(&live, &inventory, &nav);
-            let root = live.scene_cards.borrow()[0].root.clone();
-            for studio in [false, true, false] {
+        crate::ui::native_test!(
+            native_observed_studio_changes_update_hints_without_replacing_cards,
+            || {
+                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
                 {
                     let mut state = nav.state.borrow_mut();
-                    state.workspace.snapshot.as_mut().unwrap().studio.enabled = Some(studio);
-                    state.workspace.pending = false;
-                    state.workspace.active_action = None;
-                    state.workspace.loading = false;
+                    state.obs_status = ObsStatus::Connected {
+                        obs_version: "fixture".into(),
+                    };
+                    state.scene_collections.current = Some("Fixture".into());
+                    state.scene_inventory.scenes = vec![Scene {
+                        uuid: None,
+                        id: "Main".into(),
+                    }];
+                    state.scene_inventory.current_id = Some("Main".into());
+                    state.registry.scenes.insert(
+                        "Main".into(),
+                        SceneEntry {
+                            role: Some(SceneRole::Primary),
+                            ..Default::default()
+                        },
+                    );
                     state.workspace.observed_at = Some(std::time::Instant::now());
-                    state.workspace.observe_global_controls();
+                    state.workspace.snapshot = Some(Default::default());
+                    state.workspace.snapshot.as_mut().unwrap().studio.enabled = Some(false);
                 }
+                let live = build(nav.clone());
+                let inventory = nav.state.borrow().scene_inventory.clone();
                 rebuild_scene_cards(&live, &inventory, &nav);
-                assert_eq!(live.scene_cards.borrow()[0].root, root);
-                let hint = if studio { fl!(LANGUAGE_LOADER, "scene-card-stage-hint") }
-                    else { fl!(LANGUAGE_LOADER, "scene-card-tooltip-ready") };
-                assert!(root.tooltip_text().unwrap().contains(&hint));
-                assert_eq!(live.hotkey_hint.tooltip_text().as_deref(), crate::ui::hotkeys::scene_hint(&nav, &nav.state.borrow().config.hotkeys).as_deref());
-                root.emit_clicked();
-                let expected = if studio { fl!(LANGUAGE_LOADER, "control-preview", scene = "Main") }
-                    else { fl!(LANGUAGE_LOADER, "control-program", scene = "Main") };
-                assert_eq!(nav.state.borrow().workspace.activity.entries.back().unwrap().description, expected);
+                let root = live.scene_cards.borrow()[0].root.clone();
+                for studio in [false, true, false] {
+                    {
+                        let mut state = nav.state.borrow_mut();
+                        state.workspace.snapshot.as_mut().unwrap().studio.enabled = Some(studio);
+                        state.workspace.pending = false;
+                        state.workspace.active_action = None;
+                        state.workspace.loading = false;
+                        state.workspace.observed_at = Some(std::time::Instant::now());
+                        state.workspace.observe_global_controls();
+                    }
+                    rebuild_scene_cards(&live, &inventory, &nav);
+                    assert_eq!(live.scene_cards.borrow()[0].root, root);
+                    let hint = if studio {
+                        fl!(LANGUAGE_LOADER, "scene-card-stage-hint")
+                    } else {
+                        fl!(LANGUAGE_LOADER, "scene-card-tooltip-ready")
+                    };
+                    assert!(root.tooltip_text().unwrap().contains(&hint));
+                    assert_eq!(
+                        live.hotkey_hint.tooltip_text().as_deref(),
+                        crate::ui::hotkeys::scene_hint(&nav, &nav.state.borrow().config.hotkeys)
+                            .as_deref()
+                    );
+                    root.emit_clicked();
+                    let expected = if studio {
+                        fl!(LANGUAGE_LOADER, "control-preview", scene = "Main")
+                    } else {
+                        fl!(LANGUAGE_LOADER, "control-program", scene = "Main")
+                    };
+                    assert_eq!(
+                        nav.state
+                            .borrow()
+                            .workspace
+                            .activity
+                            .entries
+                            .back()
+                            .unwrap()
+                            .description,
+                        expected
+                    );
+                }
             }
-        });
+        );
     }
 
     #[test]

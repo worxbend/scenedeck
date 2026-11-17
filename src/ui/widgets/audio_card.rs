@@ -908,8 +908,8 @@ mod tests {
     #[test]
     #[ignore = "requires a native GTK display"]
     fn native_multiple_outstanding_same_input_echoes_preserve_dispatched_gain() {
-        crate::ui::test_support::native_test(
-            "ui::widgets::audio_card::tests::native_multiple_outstanding_same_input_echoes_preserve_dispatched_gain",
+        crate::ui::native_test!(
+            native_multiple_outstanding_same_input_echoes_preserve_dispatched_gain,
             || {
                 use super::*;
                 use crate::ui::test_support::{navigation, pump};
@@ -934,7 +934,9 @@ mod tests {
                 let (nav, _stack, _runtime, _events) = navigation();
                 {
                     let mut state = nav.state.borrow_mut();
-                    state.obs_status = ObsStatus::Connected { obs_version: "fixture".into() };
+                    state.obs_status = ObsStatus::Connected {
+                        obs_version: "fixture".into(),
+                    };
                     state.scene_collections.current = Some("Fixture".into());
                 }
                 let input = AudioInput::new("Mic".into(), false, 1.0, 0.0);
@@ -963,11 +965,20 @@ mod tests {
                             let assert_dispatched = |gains: &[f64]| {
                                 GAIN_DISPATCHES.with_borrow(|log| {
                                     let log = log.as_ref().unwrap();
-                                    assert_eq!(log.len(), gains.len(), "unexpected volume dispatch count");
-                                    for ((sent_scope, input, gain), expected) in log.iter().zip(gains) {
+                                    assert_eq!(
+                                        log.len(),
+                                        gains.len(),
+                                        "unexpected volume dispatch count"
+                                    );
+                                    for ((sent_scope, input, gain), expected) in
+                                        log.iter().zip(gains)
+                                    {
                                         assert_eq!(sent_scope, &scope);
                                         assert_eq!(input, "Mic");
-                                        assert!((gain - expected).abs() < 1e-12, "wrong dispatched gain: {gain} != {expected}");
+                                        assert!(
+                                            (gain - expected).abs() < 1e-12,
+                                            "wrong dispatched gain: {gain} != {expected}"
+                                        );
                                     }
                                 });
                             };
@@ -977,9 +988,16 @@ mod tests {
                             for echo in if reverse_echoes { [b, a] } else { [a, b] } {
                                 let echo = f64::from(echo as f32);
                                 card.update_volume(echo, AudioService::volume_mul_to_db(echo));
-                                assert_eq!(card.vol_scale.value(), -12.0, "own echo moved the newer same-input fader");
+                                assert_eq!(
+                                    card.vol_scale.value(),
+                                    -12.0,
+                                    "own echo moved the newer same-input fader"
+                                );
                                 assert_eq!(card.db_label.text(), "-12.0 dB");
-                                assert!(card.volume_debounce_source.borrow().is_some(), "own echo cancelled C's timer");
+                                assert!(
+                                    card.volume_debounce_source.borrow().is_some(),
+                                    "own echo cancelled C's timer"
+                                );
                             }
                             pump(VOLUME_SLIDER_DEBOUNCE + Duration::from_millis(30));
                             let c = AudioService::volume_db_to_mul(-12.0);
@@ -1010,8 +1028,8 @@ mod tests {
     #[test]
     #[ignore = "requires a native GTK display"]
     fn native_same_input_delayed_echo_preserves_pending_gain_and_timer() {
-        crate::ui::test_support::native_test(
-            "ui::widgets::audio_card::tests::native_same_input_delayed_echo_preserves_pending_gain_and_timer",
+        crate::ui::native_test!(
+            native_same_input_delayed_echo_preserves_pending_gain_and_timer,
             || {
                 use super::*;
                 use crate::ui::test_support::{navigation, pump};
@@ -1020,7 +1038,9 @@ mod tests {
                 let (nav, _stack, _runtime, _events) = navigation();
                 {
                     let mut state = nav.state.borrow_mut();
-                    state.obs_status = ObsStatus::Connected { obs_version: "fixture".into() };
+                    state.obs_status = ObsStatus::Connected {
+                        obs_version: "fixture".into(),
+                    };
                     state.scene_collections.current = Some("Fixture".into());
                 }
                 let input = AudioInput::new("Mic".into(), false, 1.0, 0.0);
@@ -1036,9 +1056,16 @@ mod tests {
                     card.vol_scale.set_value(-9.0);
                     let sent = f64::from(AudioService::volume_db_to_mul(-6.0) as f32);
                     card.update_volume(sent, AudioService::volume_mul_to_db(sent));
-                    assert_eq!(card.vol_scale.value(), -9.0, "older same-input echo moved the fader");
+                    assert_eq!(
+                        card.vol_scale.value(),
+                        -9.0,
+                        "older same-input echo moved the fader"
+                    );
                     assert_eq!(card.db_label.text(), "-9.0 dB");
-                    assert!(card.volume_debounce_source.borrow().is_some(), "older echo cancelled the newer timer");
+                    assert!(
+                        card.volume_debounce_source.borrow().is_some(),
+                        "older echo cancelled the newer timer"
+                    );
                     pump(VOLUME_SLIDER_DEBOUNCE + Duration::from_millis(30));
                     assert!(card.volume_debounce_source.borrow().is_none());
                     let mut sent_state = card.volume_debouncer.borrow().clone();
@@ -1056,7 +1083,11 @@ mod tests {
                     card.set_available(false);
                     pump(VOLUME_SLIDER_DEBOUNCE + Duration::from_millis(30));
                     assert!(card.volume_debounce_source.borrow().is_none());
-                    assert_eq!(card.volume_debouncer.borrow_mut().take_due(), None, "unavailable input retained an unsent gain");
+                    assert_eq!(
+                        card.volume_debouncer.borrow_mut().take_due(),
+                        None,
+                        "unavailable input retained an unsent gain"
+                    );
                     assert!((card.vol_scale.value() + 3.0).abs() < 0.0001);
                     card.set_available(true);
                     card.update_volume(external, -3.0);
@@ -1065,7 +1096,11 @@ mod tests {
                     nav.state.borrow_mut().workspace.epoch += 1;
                     pump(VOLUME_SLIDER_DEBOUNCE + Duration::from_millis(30));
                     assert!(card.volume_debounce_source.borrow().is_none());
-                    assert_eq!(card.volume_debouncer.borrow_mut().take_due(), Some(AudioService::volume_db_to_mul(-15.0)), "stale scope consumed a send");
+                    assert_eq!(
+                        card.volume_debouncer.borrow_mut().take_due(),
+                        Some(AudioService::volume_db_to_mul(-15.0)),
+                        "stale scope consumed a send"
+                    );
                     let root = card.root.downgrade();
                     drop(card);
                     pump(Duration::from_millis(10));

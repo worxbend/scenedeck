@@ -1593,32 +1593,94 @@ mod tests {
     #[test]
     #[ignore = "requires isolated GTK navigation and synthetic output observations"]
     fn native_output_read_failure_cannot_replace_newer_evidence_or_invent_a_stop() {
-        crate::ui::test_support::native_test("ui::window::tests::native_output_read_failure_cannot_replace_newer_evidence_or_invent_a_stop", || {
-            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
-            nav.state.borrow_mut().health.connected();
-            let start = Instant::now() - Duration::from_secs(60);
-            apply_event(&nav, AppEvent::OutputStatusUpdated(OutputKind::Record, OutputStatus::active(), start + Duration::from_secs(20)), None);
-            apply_event(&nav, AppEvent::RecordingStopObserved { path: "closed.mkv".into(), command_at: start }, None);
-            assert!(nav.state.borrow().record_status.active, "completed stop evidence does not replace current state");
-            assert_eq!(nav.state.borrow().last_recording_path.as_deref(), Some("closed.mkv"));
-            for second in [10, 30] {
-                apply_event(&nav, AppEvent::OutputReadbackFailed { kind: OutputKind::Record, error: crate::infra::error::AppError::Request("fixture unavailable".into()), observed_at: start + Duration::from_secs(second) }, None);
-                assert_eq!(nav.state.borrow().health.output_activity(OutputKind::Record), if second == 10 { Some(true) } else { None });
+        crate::ui::native_test!(
+            native_output_read_failure_cannot_replace_newer_evidence_or_invent_a_stop,
+            || {
+                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+                nav.state.borrow_mut().health.connected();
+                let start = Instant::now() - Duration::from_secs(60);
+                apply_event(
+                    &nav,
+                    AppEvent::OutputStatusUpdated(
+                        OutputKind::Record,
+                        OutputStatus::active(),
+                        start + Duration::from_secs(20),
+                    ),
+                    None,
+                );
+                apply_event(
+                    &nav,
+                    AppEvent::RecordingStopObserved {
+                        path: "closed.mkv".into(),
+                        command_at: start,
+                    },
+                    None,
+                );
+                assert!(
+                    nav.state.borrow().record_status.active,
+                    "completed stop evidence does not replace current state"
+                );
+                assert_eq!(
+                    nav.state.borrow().last_recording_path.as_deref(),
+                    Some("closed.mkv")
+                );
+                for second in [10, 30] {
+                    apply_event(
+                        &nav,
+                        AppEvent::OutputReadbackFailed {
+                            kind: OutputKind::Record,
+                            error: crate::infra::error::AppError::Request(
+                                "fixture unavailable".into(),
+                            ),
+                            observed_at: start + Duration::from_secs(second),
+                        },
+                        None,
+                    );
+                    assert_eq!(
+                        nav.state
+                            .borrow()
+                            .health
+                            .output_activity(OutputKind::Record),
+                        if second == 10 { Some(true) } else { None }
+                    );
+                    assert!(nav.state.borrow().health.alerts(Instant::now()).is_empty());
+                }
+                apply_event(
+                    &nav,
+                    AppEvent::OutputStatusUpdated(
+                        OutputKind::Record,
+                        OutputStatus::inactive(),
+                        start + Duration::from_secs(25),
+                    ),
+                    None,
+                );
+                assert_eq!(
+                    nav.state.borrow().record_status.state,
+                    crate::domain::output::OutputRunState::Unknown
+                );
                 assert!(nav.state.borrow().health.alerts(Instant::now()).is_empty());
+                apply_event(
+                    &nav,
+                    AppEvent::OutputStatusUpdated(
+                        OutputKind::Record,
+                        OutputStatus::inactive(),
+                        start + Duration::from_secs(40),
+                    ),
+                    None,
+                );
+                assert_eq!(
+                    nav.state.borrow().health.alerts(Instant::now())[0].kind,
+                    crate::domain::health::AlertKind::RecordStopped
+                );
             }
-            apply_event(&nav, AppEvent::OutputStatusUpdated(OutputKind::Record, OutputStatus::inactive(), start + Duration::from_secs(25)), None);
-            assert_eq!(nav.state.borrow().record_status.state, crate::domain::output::OutputRunState::Unknown);
-            assert!(nav.state.borrow().health.alerts(Instant::now()).is_empty());
-            apply_event(&nav, AppEvent::OutputStatusUpdated(OutputKind::Record, OutputStatus::inactive(), start + Duration::from_secs(40)), None);
-            assert_eq!(nav.state.borrow().health.alerts(Instant::now())[0].kind, crate::domain::health::AlertKind::RecordStopped);
-        });
+        );
     }
 
     #[test]
     #[ignore = "requires a disposable GTK display; scratch files and synthetic identities"]
     fn native_scene_identity_reconciles_load_import_and_retired_editors() {
-        crate::ui::test_support::native_test(
-            "ui::window::tests::native_scene_identity_reconciles_load_import_and_retired_editors",
+        crate::ui::native_test!(
+            native_scene_identity_reconciles_load_import_and_retired_editors,
             || {
                 use crate::domain::scene::{Scene, SceneInventory};
                 use crate::storage::registry::{write_registry_yaml_to_path, SceneRegistry};
@@ -1744,181 +1806,180 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; scratch workspace files and synthetic OBS events"]
     fn native_workspace_switch_isolates_edits_and_imports() {
-        crate::ui::test_support::native_test(
-            "ui::window::tests::native_workspace_switch_isolates_edits_and_imports",
-            || {
-                use crate::controller::state::RegistryStatus;
-                use crate::storage::registry::{write_registry_yaml_to_path, SceneRegistry};
-                use crate::storage::show_workspaces::RegistryTarget;
-                use crate::ui::persist::{import_registry, persist_registry};
-                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
-                let mut legacy = SceneRegistry::default();
-                legacy.set_scene_icon("Camera", Some("legacy"));
-                RegistryTarget::legacy().write(&legacy).unwrap();
-                {
-                    let mut state = nav.state.borrow_mut();
-                    state.obs_status = ObsStatus::Connected {
-                        obs_version: "fixture".into(),
-                    };
-                    state.connected_endpoint = Some("127.0.0.1:4455".into());
-                    state.connected_connection_id = Some("default".into());
-                }
-                let flush = || {
-                    let done = Rc::new(RefCell::new(None));
-                    super::super::background_io::flush_pending(Duration::from_secs(10), {
-                        let done = done.clone();
-                        move |result| *done.borrow_mut() = Some(result)
-                    });
-                    assert!(crate::ui::test_support::pump_until(
-                        Duration::from_secs(11),
-                        || done.borrow().is_some()
-                    ));
-                    assert_eq!(*done.borrow(), Some(Ok(())));
+        crate::ui::native_test!(native_workspace_switch_isolates_edits_and_imports, || {
+            use crate::controller::state::RegistryStatus;
+            use crate::storage::registry::{write_registry_yaml_to_path, SceneRegistry};
+            use crate::storage::show_workspaces::RegistryTarget;
+            use crate::ui::persist::{import_registry, persist_registry};
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            let mut legacy = SceneRegistry::default();
+            legacy.set_scene_icon("Camera", Some("legacy"));
+            RegistryTarget::legacy().write(&legacy).unwrap();
+            {
+                let mut state = nav.state.borrow_mut();
+                state.obs_status = ObsStatus::Connected {
+                    obs_version: "fixture".into(),
                 };
-                let select = |name: &str| {
-                    apply_event(
-                        &nav,
-                        AppEvent::SceneCollectionsUpdated(crate::domain::obs::ObsNamedList {
-                            current: Some(name.into()),
-                            items: vec![name.into()],
-                        }),
-                        None,
-                    );
-                };
-                select("Podcast");
-                assert_eq!(
-                    nav.state.borrow().show_registry.status,
-                    RegistryStatus::Loading
-                );
-                assert!(!persist_registry(&nav, "loading edit", |registry| registry
-                    .set_scene_icon("Camera", Some("wrong"))));
-                flush();
-                assert_eq!(
-                    nav.state.borrow().registry.scene_icon("Camera"),
-                    Some("legacy")
-                );
-                let podcast = nav.state.borrow().show_registry.target.clone();
-                let old_editor = nav.registry_scoped();
-                assert!(persist_registry(&old_editor, "podcast", |registry| {
-                    registry.set_scene_icon("Camera", Some("podcast"))
-                }));
-                let source = crate::storage::xdg::registry_path().with_extension("yaml");
-                let mut imported = SceneRegistry::default();
-                imported.set_scene_icon("Camera", Some("imported podcast"));
-                write_registry_yaml_to_path(&source, &imported).unwrap();
-                assert!(import_registry(
-                    &old_editor,
-                    source.clone(),
-                    |result| assert!(result.is_ok())
+                state.connected_endpoint = Some("127.0.0.1:4455".into());
+                state.connected_connection_id = Some("default".into());
+            }
+            let flush = || {
+                let done = Rc::new(RefCell::new(None));
+                super::super::background_io::flush_pending(Duration::from_secs(10), {
+                    let done = done.clone();
+                    move |result| *done.borrow_mut() = Some(result)
+                });
+                assert!(crate::ui::test_support::pump_until(
+                    Duration::from_secs(11),
+                    || done.borrow().is_some()
                 ));
-                select("Gaming");
+                assert_eq!(*done.borrow(), Some(Ok(())));
+            };
+            let select = |name: &str| {
                 apply_event(
                     &nav,
-                    AppEvent::SceneRenamed {
-                        uuid: None,
-                        old: "Camera".into(),
-                        new: "Game".into(),
-                    },
+                    AppEvent::SceneCollectionsUpdated(crate::domain::obs::ObsNamedList {
+                        current: Some(name.into()),
+                        items: vec![name.into()],
+                    }),
                     None,
                 );
+            };
+            select("Podcast");
+            assert_eq!(
+                nav.state.borrow().show_registry.status,
+                RegistryStatus::Loading
+            );
+            assert!(!persist_registry(&nav, "loading edit", |registry| registry
+                .set_scene_icon("Camera", Some("wrong"))));
+            flush();
+            assert_eq!(
+                nav.state.borrow().registry.scene_icon("Camera"),
+                Some("legacy")
+            );
+            let podcast = nav.state.borrow().show_registry.target.clone();
+            let old_editor = nav.registry_scoped();
+            assert!(persist_registry(&old_editor, "podcast", |registry| {
+                registry.set_scene_icon("Camera", Some("podcast"))
+            }));
+            let source = crate::storage::xdg::registry_path().with_extension("yaml");
+            let mut imported = SceneRegistry::default();
+            imported.set_scene_icon("Camera", Some("imported podcast"));
+            write_registry_yaml_to_path(&source, &imported).unwrap();
+            assert!(import_registry(
+                &old_editor,
+                source.clone(),
+                |result| assert!(result.is_ok())
+            ));
+            select("Gaming");
+            apply_event(
+                &nav,
+                AppEvent::SceneRenamed {
+                    uuid: None,
+                    old: "Camera".into(),
+                    new: "Game".into(),
+                },
+                None,
+            );
+            flush();
+            assert!(nav.state.borrow().registry.scenes.is_empty());
+            assert_eq!(
+                podcast.read().unwrap().scene_icon("Camera"),
+                Some("imported podcast")
+            );
+            assert!(!persist_registry(&old_editor, "stale editor", |registry| {
+                registry.set_scene_icon("Camera", Some("wrong"))
+            }));
+            assert!(!import_registry(&old_editor, source, |_| panic!(
+                "stale dialog must not import"
+            )));
+            assert!(persist_registry(&nav, "gaming", |registry| registry
+                .set_scene_icon("Camera", Some("gaming"))));
+            let gaming = nav.state.borrow().show_registry.target.clone();
+            select("Podcast");
+            assert_eq!(
+                nav.state.borrow().registry.scene_icon("Camera"),
+                Some("imported podcast")
+            );
+            flush();
+            assert_eq!(gaming.read().unwrap().scene_icon("Camera"), Some("gaming"));
+            assert_eq!(
+                RegistryTarget::legacy()
+                    .read()
+                    .unwrap()
+                    .scene_icon("Camera"),
+                Some("legacy")
+            );
+
+            // Returning to a cached workspace before its import completes
+            // must not leave the old cache displayed or writable afterward.
+            let source = crate::storage::xdg::registry_path().with_extension("yaml");
+            imported.set_scene_icon("Camera", Some("returned podcast"));
+            write_registry_yaml_to_path(&source, &imported).unwrap();
+            assert!(import_registry(&nav, source, |result| assert!(
+                result.is_ok()
+            )));
+            select("Gaming");
+            select("Podcast");
+            flush();
+            assert_eq!(
+                nav.state.borrow().registry.scene_icon("Camera"),
+                Some("returned podcast")
+            );
+            assert_eq!(
+                podcast.read().unwrap().scene_icon("Camera"),
+                Some("returned podcast")
+            );
+
+            for (connection, endpoint) in [("other", "127.0.0.1:4455"), ("default", "other:4455")] {
+                {
+                    let mut state = nav.state.borrow_mut();
+                    state.invalidate_collection_runtime();
+                    state.connected_connection_id = Some(connection.into());
+                    state.connected_endpoint = Some(endpoint.into());
+                }
+                select("Podcast");
                 flush();
                 assert!(nav.state.borrow().registry.scenes.is_empty());
-                assert_eq!(
-                    podcast.read().unwrap().scene_icon("Camera"),
-                    Some("imported podcast")
-                );
-                assert!(!persist_registry(&old_editor, "stale editor", |registry| {
-                    registry.set_scene_icon("Camera", Some("wrong"))
-                }));
-                assert!(!import_registry(&old_editor, source, |_| panic!(
-                    "stale dialog must not import"
-                )));
-                assert!(persist_registry(&nav, "gaming", |registry| registry
-                    .set_scene_icon("Camera", Some("gaming"))));
-                let gaming = nav.state.borrow().show_registry.target.clone();
-                select("Podcast");
-                assert_eq!(
-                    nav.state.borrow().registry.scene_icon("Camera"),
-                    Some("imported podcast")
-                );
-                flush();
-                assert_eq!(gaming.read().unwrap().scene_icon("Camera"), Some("gaming"));
-                assert_eq!(
-                    RegistryTarget::legacy()
-                        .read()
-                        .unwrap()
-                        .scene_icon("Camera"),
-                    Some("legacy")
-                );
-
-                // Returning to a cached workspace before its import completes
-                // must not leave the old cache displayed or writable afterward.
-                let source = crate::storage::xdg::registry_path().with_extension("yaml");
-                imported.set_scene_icon("Camera", Some("returned podcast"));
-                write_registry_yaml_to_path(&source, &imported).unwrap();
-                assert!(import_registry(&nav, source, |result| assert!(
-                    result.is_ok()
-                )));
-                select("Gaming");
-                select("Podcast");
-                flush();
-                assert_eq!(
-                    nav.state.borrow().registry.scene_icon("Camera"),
-                    Some("returned podcast")
-                );
-                assert_eq!(
-                    podcast.read().unwrap().scene_icon("Camera"),
-                    Some("returned podcast")
-                );
-
-                for (connection, endpoint) in
-                    [("other", "127.0.0.1:4455"), ("default", "other:4455")]
-                {
-                    {
-                        let mut state = nav.state.borrow_mut();
-                        state.invalidate_collection_runtime();
-                        state.connected_connection_id = Some(connection.into());
-                        state.connected_endpoint = Some(endpoint.into());
-                    }
-                    select("Podcast");
-                    flush();
-                    assert!(nav.state.borrow().registry.scenes.is_empty());
-                }
-                let path = crate::storage::xdg::show_workspaces_path();
-                let original = std::fs::read(&path).unwrap();
-                std::fs::write(&path, b"invalid workspace store").unwrap();
-                select("Broken");
-                flush();
-                assert!(matches!(
-                    nav.state.borrow().show_registry.status,
-                    RegistryStatus::Failed(_)
-                ));
-                assert!(!persist_registry(&nav, "failed load edit", |registry| {
-                    registry.set_scene_icon("Camera", Some("wrong"))
-                }));
-                assert_eq!(std::fs::read(&path).unwrap(), b"invalid workspace store");
-                std::fs::write(&path, original).unwrap();
-                select("Broken");
-                flush();
-                assert_eq!(
-                    nav.state.borrow().show_registry.status,
-                    RegistryStatus::Ready
-                );
-            },
-        );
+            }
+            let path = crate::storage::xdg::show_workspaces_path();
+            let original = std::fs::read(&path).unwrap();
+            std::fs::write(&path, b"invalid workspace store").unwrap();
+            select("Broken");
+            flush();
+            assert!(matches!(
+                nav.state.borrow().show_registry.status,
+                RegistryStatus::Failed(_)
+            ));
+            assert!(!persist_registry(&nav, "failed load edit", |registry| {
+                registry.set_scene_icon("Camera", Some("wrong"))
+            }));
+            assert_eq!(std::fs::read(&path).unwrap(), b"invalid workspace store");
+            std::fs::write(&path, original).unwrap();
+            select("Broken");
+            flush();
+            assert_eq!(
+                nav.state.borrow().show_registry.status,
+                RegistryStatus::Ready
+            );
+        },);
     }
 
     #[test]
     #[ignore = "requires a disposable GTK display; scratch registry and synthetic OBS events"]
     fn native_scene_rename_preserves_imported_curation_and_rejects_retired_scope() {
-        crate::ui::test_support::native_test(
-            "ui::window::tests::native_scene_rename_preserves_imported_curation_and_rejects_retired_scope",
+        crate::ui::native_test!(
+            native_scene_rename_preserves_imported_curation_and_rejects_retired_scope,
             || {
-                use crate::storage::registry::{read_registry, write_registry_yaml_to_path, SceneRegistry};
+                use crate::storage::registry::{
+                    read_registry, write_registry_yaml_to_path, SceneRegistry,
+                };
                 let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
                 {
                     let mut state = nav.state.borrow_mut();
-                    state.obs_status = ObsStatus::Connected { obs_version: "fixture".into() };
+                    state.obs_status = ObsStatus::Connected {
+                        obs_version: "fixture".into(),
+                    };
                     state.scene_collections.current = Some("Show".into());
                     state.registry.set_scene_icon("Camera", Some("camera"));
                     state.registry.scene_order = vec!["Camera".into()];
@@ -1929,10 +1990,21 @@ mod tests {
                         let done = done.clone();
                         move |result| *done.borrow_mut() = Some(result)
                     });
-                    assert!(crate::ui::test_support::pump_until(Duration::from_secs(6), || done.borrow().is_some()));
+                    assert!(crate::ui::test_support::pump_until(
+                        Duration::from_secs(6),
+                        || done.borrow().is_some()
+                    ));
                     assert_eq!(*done.borrow(), Some(Ok(())));
                 };
-                apply_event(&nav, AppEvent::SceneRenamed { uuid: None, old: "Camera".into(), new: "Guest".into() }, None);
+                apply_event(
+                    &nav,
+                    AppEvent::SceneRenamed {
+                        uuid: None,
+                        old: "Camera".into(),
+                        new: "Guest".into(),
+                    },
+                    None,
+                );
                 flush();
                 assert_eq!(read_registry().scene_icon("Guest"), Some("camera"));
                 assert_eq!(read_registry().scene_order, ["Guest"]);
@@ -1941,23 +2013,62 @@ mod tests {
                 let mut imported = SceneRegistry::default();
                 imported.set_scene_icon("Guest", Some("imported"));
                 write_registry_yaml_to_path(&source, &imported).unwrap();
-                assert!(super::super::persist::import_registry(&nav, source.clone(), |result| assert!(result.is_ok())));
-                apply_event(&nav, AppEvent::SceneRenamed { uuid: None, old: "Guest".into(), new: "Host".into() }, None);
-                assert_eq!(nav.state.borrow().registry.scene_icon("Guest"), Some("camera"));
+                assert!(super::super::persist::import_registry(
+                    &nav,
+                    source.clone(),
+                    |result| assert!(result.is_ok())
+                ));
+                apply_event(
+                    &nav,
+                    AppEvent::SceneRenamed {
+                        uuid: None,
+                        old: "Guest".into(),
+                        new: "Host".into(),
+                    },
+                    None,
+                );
+                assert_eq!(
+                    nav.state.borrow().registry.scene_icon("Guest"),
+                    Some("camera")
+                );
                 flush();
-                assert_eq!(nav.state.borrow().registry.scene_icon("Host"), Some("imported"));
+                assert_eq!(
+                    nav.state.borrow().registry.scene_icon("Host"),
+                    Some("imported")
+                );
                 assert_eq!(read_registry().scene_icon("Host"), Some("imported"));
                 assert!(read_registry().scene_icon("Guest").is_none());
 
-                apply_event(&nav, AppEvent::SessionEvent {
-                    generation: u64::MAX, collection: Some(0),
-                    event: Box::new(AppEvent::SceneRenamed { uuid: None, old: "Host".into(), new: "Wrong".into() })
-                }, None);
+                apply_event(
+                    &nav,
+                    AppEvent::SessionEvent {
+                        generation: u64::MAX,
+                        collection: Some(0),
+                        event: Box::new(AppEvent::SceneRenamed {
+                            uuid: None,
+                            old: "Host".into(),
+                            new: "Wrong".into(),
+                        }),
+                    },
+                    None,
+                );
                 assert!(nav.state.borrow().registry.scene_icon("Wrong").is_none());
 
                 write_registry_yaml_to_path(&source, &read_registry()).unwrap();
-                assert!(super::super::persist::import_registry(&nav, source, |result| assert!(result.is_ok())));
-                apply_event(&nav, AppEvent::SceneRenamed { uuid: None, old: "Host".into(), new: "Retired".into() }, None);
+                assert!(super::super::persist::import_registry(
+                    &nav,
+                    source,
+                    |result| assert!(result.is_ok())
+                ));
+                apply_event(
+                    &nav,
+                    AppEvent::SceneRenamed {
+                        uuid: None,
+                        old: "Host".into(),
+                        new: "Retired".into(),
+                    },
+                    None,
+                );
                 nav.state.borrow_mut().invalidate_collection_runtime();
                 flush();
                 assert_eq!(read_registry().scene_icon("Host"), Some("imported"));
@@ -1995,8 +2106,8 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; synthetic OBS events"]
     fn native_audio_events_and_background_reads_do_not_blink_pages() {
-        crate::ui::test_support::native_test(
-            "ui::window::tests::native_audio_events_and_background_reads_do_not_blink_pages",
+        crate::ui::native_test!(
+            native_audio_events_and_background_reads_do_not_blink_pages,
             || {
                 let (nav, stack, _runtime, _events) = crate::ui::test_support::navigation();
                 {
@@ -2226,8 +2337,8 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; no OBS connection"]
     fn native_refresh_button_waits_for_new_data_before_redrawing() {
-        crate::ui::test_support::native_test(
-            "ui::window::tests::native_refresh_button_waits_for_new_data_before_redrawing",
+        crate::ui::native_test!(
+            native_refresh_button_waits_for_new_data_before_redrawing,
             || {
                 fn find(widget: &gtk4::Widget) -> Option<gtk4::Button> {
                     if let Some(button) = widget.downcast_ref::<gtk4::Button>() {
@@ -2282,8 +2393,8 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; synthetic state, no OBS connection"]
     fn native_identical_inventory_readback_keeps_live_preview_paintables() {
-        crate::ui::test_support::native_test(
-            "ui::window::tests::native_identical_inventory_readback_keeps_live_preview_paintables",
+        crate::ui::native_test!(
+            native_identical_inventory_readback_keeps_live_preview_paintables,
             || {
                 let (nav, stack, _runtime, _events) = crate::ui::test_support::navigation();
                 {
@@ -2362,99 +2473,207 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; fake config/password, no OBS"]
     fn native_assembled_window_releases_shell_sources_while_stats_popout_survives() {
-        crate::ui::test_support::native_test(
-            "ui::window::tests::native_assembled_window_releases_shell_sources_while_stats_popout_survives",
+        crate::ui::native_test!(
+            native_assembled_window_releases_shell_sources_while_stats_popout_survives,
             || {
-                use crate::controller::dependencies::{AppConfigProvider, ControllerDependencies, ObsPasswordProvider};
+                use crate::controller::dependencies::{
+                    AppConfigProvider, ControllerDependencies, ObsPasswordProvider,
+                };
                 use crate::storage::config::AppConfig;
                 struct NoServices;
                 impl AppConfigProvider for NoServices {
-                    fn load_config(&self) -> AppConfig { panic!("fixture must not read configuration") }
+                    fn load_config(&self) -> AppConfig {
+                        panic!("fixture must not read configuration")
+                    }
                 }
                 impl ObsPasswordProvider for NoServices {
-                    fn obs_password(&self, _connection_id: &str) -> Result<Option<String>, crate::infra::error::AppError> { panic!("fixture must not access keyring") }
+                    fn obs_password(
+                        &self,
+                        _connection_id: &str,
+                    ) -> Result<Option<String>, crate::infra::error::AppError> {
+                        panic!("fixture must not access keyring")
+                    }
                 }
-                fn find(widget: &gtk4::Widget, predicate: &impl Fn(&gtk4::Widget) -> bool) -> Option<gtk4::Widget> {
-                    if predicate(widget) { return Some(widget.clone()); }
+                fn find(
+                    widget: &gtk4::Widget,
+                    predicate: &impl Fn(&gtk4::Widget) -> bool,
+                ) -> Option<gtk4::Widget> {
+                    if predicate(widget) {
+                        return Some(widget.clone());
+                    }
                     let mut child = widget.first_child();
                     while let Some(widget) = child {
                         child = widget.next_sibling();
-                        if let Some(found) = find(&widget, predicate) { return Some(found); }
+                        if let Some(found) = find(&widget, predicate) {
+                            return Some(found);
+                        }
                     }
                     None
                 }
-                let app = adw::Application::builder().application_id("io.github.worxbend.scenedeck.ShellFixture").flags(gio::ApplicationFlags::NON_UNIQUE).build();
+                let app = adw::Application::builder()
+                    .application_id("io.github.worxbend.scenedeck.ShellFixture")
+                    .flags(gio::ApplicationFlags::NON_UNIQUE)
+                    .build();
                 app.register(None::<&gio::Cancellable>).unwrap();
-                let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
                 let (tx, rx) = mpsc::sync_channel(128);
-                let controller = Rc::new(RefCell::new(AppController::with_dependencies(runtime.handle().clone(), tx.clone(), ControllerDependencies::new(std::sync::Arc::new(NoServices), std::sync::Arc::new(NoServices)))));
+                let controller = Rc::new(RefCell::new(AppController::with_dependencies(
+                    runtime.handle().clone(),
+                    tx.clone(),
+                    ControllerDependencies::new(
+                        std::sync::Arc::new(NoServices),
+                        std::sync::Arc::new(NoServices),
+                    ),
+                )));
                 let weak_controller = Rc::downgrade(&controller);
                 let mut initial = app_state();
                 initial.config.onboarding.welcome_shown = true;
-                initial.scene_inventory.scenes.push(crate::domain::scene::Scene { uuid: None, id: "Fixture".into() });
+                initial
+                    .scene_inventory
+                    .scenes
+                    .push(crate::domain::scene::Scene {
+                        uuid: None,
+                        id: "Fixture".into(),
+                    });
                 let state = Rc::new(RefCell::new(initial));
                 let window = build_main_window(&app, state.clone(), controller.clone(), rx);
                 crate::ui::test_support::pump(Duration::from_millis(120));
-                let stack = find(window.upcast_ref(), &|w| w.has_css_class("scenedeck-content-stack")).unwrap().downcast::<gtk4::Stack>().unwrap();
-                let split = find(window.upcast_ref(), &|w| w.is::<adw::NavigationSplitView>()).unwrap();
+                let stack = find(window.upcast_ref(), &|w| {
+                    w.has_css_class("scenedeck-content-stack")
+                })
+                .unwrap()
+                .downcast::<gtk4::Stack>()
+                .unwrap();
+                let split =
+                    find(window.upcast_ref(), &|w| w.is::<adw::NavigationSplitView>()).unwrap();
                 let stats = stack.child_by_name(Page::Stats.id()).unwrap();
                 stack.set_visible_child_name(Page::Stats.id());
-                let popout_button = find(&stats, &|w| w.downcast_ref::<gtk4::Button>().is_some_and(|b| b.icon_name().as_deref() == Some("window-new-symbolic"))).unwrap().downcast::<gtk4::Button>().unwrap();
+                let popout_button = find(&stats, &|w| {
+                    w.downcast_ref::<gtk4::Button>()
+                        .is_some_and(|b| b.icon_name().as_deref() == Some("window-new-symbolic"))
+                })
+                .unwrap()
+                .downcast::<gtk4::Button>()
+                .unwrap();
                 popout_button.emit_clicked();
                 crate::ui::test_support::pump(Duration::from_millis(80));
-                let popout = app.windows().into_iter().find(|w| w != window.upcast_ref::<gtk4::Window>()).expect("real Stats pop-out");
+                let popout = app
+                    .windows()
+                    .into_iter()
+                    .find(|w| w != window.upcast_ref::<gtk4::Window>())
+                    .expect("real Stats pop-out");
                 let weak_window = window.downgrade();
                 let weak_stack = stack.downgrade();
                 let weak_split = split.downgrade();
                 let live = stack.child_by_name(Page::Live.id()).unwrap().downgrade();
-                let status = find(window.upcast_ref(), &|w| w.has_css_class("scenedeck-status-bar")).expect("production status bar").downgrade();
+                let status = find(window.upcast_ref(), &|w| {
+                    w.has_css_class("scenedeck-status-bar")
+                })
+                .expect("production status bar")
+                .downgrade();
                 let sources_page = stack.child_by_name(Page::Sources.id()).unwrap().downgrade();
                 drop((stack, split, stats, popout_button));
                 window.close();
                 let weak_state = Rc::downgrade(&state);
                 drop((window, state, controller));
                 crate::ui::test_support::pump(Duration::from_millis(250));
-                assert!(popout.is_visible(), "closing the shell must not close Stats");
-                assert!(weak_window.upgrade().is_none(), "application action retained shell");
+                assert!(
+                    popout.is_visible(),
+                    "closing the shell must not close Stats"
+                );
+                assert!(
+                    weak_window.upgrade().is_none(),
+                    "application action retained shell"
+                );
                 assert!(weak_stack.upgrade().is_none(), "assembled stack retained");
-                assert!(weak_split.upgrade().is_none(), "split signal cycle retained shell");
+                assert!(
+                    weak_split.upgrade().is_none(),
+                    "split signal cycle retained shell"
+                );
                 assert!(live.upgrade().is_none(), "workspace source retained Live");
-                assert!(status.upgrade().is_none(), "output clock retained status bar");
-                weak_state.upgrade().unwrap().borrow_mut().apply_connected(crate::controller::event::ConnectionInfo {
-                    connection_id: "report-fixture".into(), endpoint: "fixture:4455".into(), obs_version: "fixture".into(), websocket_version: "5".into(), available_requests: Vec::new(), supported_image_formats: Vec::new(),
-                });
+                assert!(
+                    status.upgrade().is_none(),
+                    "output clock retained status bar"
+                );
+                weak_state.upgrade().unwrap().borrow_mut().apply_connected(
+                    crate::controller::event::ConnectionInfo {
+                        connection_id: "report-fixture".into(),
+                        endpoint: "fixture:4455".into(),
+                        obs_version: "fixture".into(),
+                        websocket_version: "5".into(),
+                        available_requests: Vec::new(),
+                        supported_image_formats: Vec::new(),
+                    },
+                );
                 let sample = crate::domain::stats::ObsStats {
-                    disk_space_mb: Some(1024.0), cpu_usage_percent: 41.0,
-                    memory_usage_mb: 512.0, configured_fps: Some(60.0), active_fps: 60.0,
-                    average_frame_render_time_ms: 2.0, render_skipped_frames: 0,
-                    render_total_frames: 60, output_skipped_frames: 0, output_total_frames: 60,
+                    disk_space_mb: Some(1024.0),
+                    cpu_usage_percent: 41.0,
+                    memory_usage_mb: 512.0,
+                    configured_fps: Some(60.0),
+                    active_fps: 60.0,
+                    average_frame_render_time_ms: 2.0,
+                    render_skipped_frames: 0,
+                    render_total_frames: 60,
+                    output_skipped_frames: 0,
+                    output_total_frames: 60,
                 };
                 for cpu in [41.0, 42.0] {
                     tx.try_send(AppEvent::SessionEvent {
-                        generation: 0, collection: Some(0),
+                        generation: 0,
+                        collection: Some(0),
                         event: Box::new(AppEvent::Observation {
                             revision: 1,
                             event: Box::new(AppEvent::StatsUpdated {
- observed_at: std::time::Instant::now(),
-                                stats: crate::domain::stats::ObsStats { cpu_usage_percent: cpu, ..sample },
-                                bitrate_kbps: None, stream: None,
+                                observed_at: std::time::Instant::now(),
+                                stats: crate::domain::stats::ObsStats {
+                                    cpu_usage_percent: cpu,
+                                    ..sample
+                                },
+                                bitrate_kbps: None,
+                                stream: None,
                             }),
                         }),
-                    }).expect("surviving Stats must keep the application receiver alive");
+                    })
+                    .expect("surviving Stats must keep the application receiver alive");
                     crate::ui::test_support::pump(Duration::from_millis(80));
-                    let expected = fl!(LANGUAGE_LOADER, "stats-value-percent", value = format!("{cpu:.1}"));
-                    assert!(find(popout.upcast_ref(), &|w| w.downcast_ref::<gtk4::Label>().is_some_and(|label| label.text() == expected)).is_some(), "post-shell sample was not rendered in Stats");
+                    let expected = fl!(
+                        LANGUAGE_LOADER,
+                        "stats-value-percent",
+                        value = format!("{cpu:.1}")
+                    );
+                    assert!(
+                        find(popout.upcast_ref(), &|w| w
+                            .downcast_ref::<gtk4::Label>()
+                            .is_some_and(|label| label.text() == expected))
+                        .is_some(),
+                        "post-shell sample was not rendered in Stats"
+                    );
                 }
                 tx.try_send(AppEvent::SessionEvent {
-                    generation: 1, collection: None,
-                    event: Box::new(AppEvent::StatsUpdated { observed_at: std::time::Instant::now(), stats: sample, bitrate_kbps: None, stream: None }),
-                }).unwrap();
+                    generation: 1,
+                    collection: None,
+                    event: Box::new(AppEvent::StatsUpdated {
+                        observed_at: std::time::Instant::now(),
+                        stats: sample,
+                        bitrate_kbps: None,
+                        stream: None,
+                    }),
+                })
+                .unwrap();
                 crate::ui::test_support::pump(Duration::from_millis(80));
-                assert_eq!(weak_state.upgrade().unwrap().borrow().stats_history.len(), 2, "closed-shell reconciliation must still reject replaced-session publications");
+                assert_eq!(
+                    weak_state.upgrade().unwrap().borrow().stats_history.len(),
+                    2,
+                    "closed-shell reconciliation must still reject replaced-session publications"
+                );
                 assert_eq!(weak_state.upgrade().unwrap().borrow().reports.entries.back().unwrap().samples_seen, 2, "reports collect accepted samples after shell closure and reject replaced-session measurements");
                 // Monitoring and its warning surface survive without a shell or an active Sources page.
                 {
-                    let state = weak_state.upgrade().unwrap(); let mut state = state.borrow_mut();
+                    let state = weak_state.upgrade().unwrap();
+                    let mut state = state.borrow_mut();
                     let fixture = crate::ui::action_catalog::tests::connected();
                     state.obs_status = fixture.obs_status;
                     state.scene_collections = fixture.scene_collections;
@@ -2464,30 +2683,75 @@ mod tests {
                     state.show_registry.status = crate::controller::state::RegistryStatus::Ready;
                     state.workspace.audio = fixture.workspace.audio;
                     state.workspace.input_catalog = fixture.workspace.input_catalog;
-                    state.workspace.observed_at = Some(Instant::now()); state.workspace.dirty = false;
+                    state.workspace.observed_at = Some(Instant::now());
+                    state.workspace.dirty = false;
                     state.registry.audio_alerts = vec![crate::domain::health::AudioRule {
-                        target: crate::domain::operator_action::ActionTarget { name: "Microphone".into(), uuid: Some("input-1".into()) },
-                        enabled: true, silence: true, clipping: true,
+                        target: crate::domain::operator_action::ActionTarget {
+                            name: "Microphone".into(),
+                            uuid: Some("input-1".into()),
+                        },
+                        enabled: true,
+                        silence: true,
+                        clipping: true,
                     }];
                     assert!(state.observe_audio_health(Instant::now() - Duration::from_secs(2)));
                 }
                 for observed_at in [Instant::now() - Duration::from_secs(1), Instant::now()] {
-                    tx.try_send(AppEvent::InputLevelsUpdated { levels: vec![crate::domain::meter::InputLevels::from_mul("Microphone".into(), &[[1.0; 3]])], observed_at }).unwrap();
+                    tx.try_send(AppEvent::InputLevelsUpdated {
+                        levels: vec![crate::domain::meter::InputLevels::from_mul(
+                            "Microphone".into(),
+                            &[[1.0; 3]],
+                        )],
+                        observed_at,
+                    })
+                    .unwrap();
                     crate::ui::test_support::pump(Duration::from_millis(100));
                 }
                 crate::ui::test_support::pump(Duration::from_millis(300));
-                let health = find(popout.upcast_ref(), &|w| w.widget_name() == "health-alerts").unwrap();
-                assert!(health.is_visible(), "detached Stats must display new health incidents");
-                let expected = fl!(LANGUAGE_LOADER, "health-audio-clipping", input = "Microphone");
-                assert!(find(&health, &|w| w.downcast_ref::<gtk4::Label>().is_some_and(|label| label.text().contains(&expected))).is_some());
+                let health =
+                    find(popout.upcast_ref(), &|w| w.widget_name() == "health-alerts").unwrap();
+                assert!(
+                    health.is_visible(),
+                    "detached Stats must display new health incidents"
+                );
+                let expected = fl!(
+                    LANGUAGE_LOADER,
+                    "health-audio-clipping",
+                    input = "Microphone"
+                );
+                assert!(find(&health, &|w| w
+                    .downcast_ref::<gtk4::Label>()
+                    .is_some_and(|label| label.text().contains(&expected)))
+                .is_some());
                 drop(health);
                 tx.try_send(AppEvent::Disconnected).unwrap();
                 crate::ui::test_support::pump(Duration::from_millis(80));
-                assert!(matches!(weak_state.upgrade().unwrap().borrow().obs_status, ObsStatus::Disconnected));
+                assert!(matches!(
+                    weak_state.upgrade().unwrap().borrow().obs_status,
+                    ObsStatus::Disconnected
+                ));
                 assert!(weak_state.upgrade().unwrap().borrow().obs_stats.is_none());
-                assert!(weak_state.upgrade().unwrap().borrow().reports.entries.back().unwrap().ended_unix_ms.is_some(), "disconnect finalizes the report with only detached Stats open");
+                assert!(
+                    weak_state
+                        .upgrade()
+                        .unwrap()
+                        .borrow()
+                        .reports
+                        .entries
+                        .back()
+                        .unwrap()
+                        .ended_unix_ms
+                        .is_some(),
+                    "disconnect finalizes the report with only detached Stats open"
+                );
                 let weak_popout = popout.downgrade();
-                let weak_popout_content = popout.clone().downcast::<adw::Window>().unwrap().content().unwrap().downgrade();
+                let weak_popout_content = popout
+                    .clone()
+                    .downcast::<adw::Window>()
+                    .unwrap()
+                    .content()
+                    .unwrap()
+                    .downgrade();
                 popout.close();
                 drop(popout);
                 // Accepted saves may retain navigation until GTK publishes their completion.
@@ -2495,19 +2759,33 @@ mod tests {
                 crate::ui::background_io::flush_pending(Duration::from_secs(10), {
                     let drained = drained.clone();
                     move |outcome| {
-                        outcome.expect("accepted saves must drain before checking controller lifetime");
+                        outcome.expect(
+                            "accepted saves must drain before checking controller lifetime",
+                        );
                         drained.set(true);
                     }
                 });
                 let deadline = Instant::now() + Duration::from_secs(15);
                 while !drained.get() {
-                    assert!(Instant::now() < deadline, "accepted-save publication deadline");
+                    assert!(
+                        Instant::now() < deadline,
+                        "accepted-save publication deadline"
+                    );
                     glib::MainContext::default().iteration(false);
                     std::thread::yield_now();
                 }
-                assert!(sources_page.upgrade().is_none(), "Sources page retained shell");
-                assert!(weak_popout.upgrade().is_none(), "closed Stats window retained");
-                assert!(weak_popout_content.upgrade().is_none(), "closed Stats content retained");
+                assert!(
+                    sources_page.upgrade().is_none(),
+                    "Sources page retained shell"
+                );
+                assert!(
+                    weak_popout.upgrade().is_none(),
+                    "closed Stats window retained"
+                );
+                assert!(
+                    weak_popout_content.upgrade().is_none(),
+                    "closed Stats content retained"
+                );
                 // Sources' media poll owns navigation, but only weakly reaches its root.
                 // Its one-second terminal tick is independent of the save barrier above.
                 // Require the root to be gone first, then give that source a bounded
@@ -2518,8 +2796,17 @@ mod tests {
                     std::thread::sleep(Duration::from_millis(2));
                 }
                 assert!(weak_controller.upgrade().is_none(), "closed shell/pop-out retained controller after saves and terminal source ticks drained");
-                assert!(weak_state.upgrade().is_none(), "application pump retained state after last window closed");
-                assert!(matches!(tx.try_send(AppEvent::GraphInvalidated), Err(mpsc::TrySendError::Disconnected(_))), "last window removal must retire the application event receiver");
+                assert!(
+                    weak_state.upgrade().is_none(),
+                    "application pump retained state after last window closed"
+                );
+                assert!(
+                    matches!(
+                        tx.try_send(AppEvent::GraphInvalidated),
+                        Err(mpsc::TrySendError::Disconnected(_))
+                    ),
+                    "last window removal must retire the application event receiver"
+                );
             },
         );
     }

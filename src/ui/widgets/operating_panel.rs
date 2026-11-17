@@ -1616,39 +1616,66 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; synthetic source observations"]
     fn native_visibility_and_filter_readback_retain_widgets_without_echoing_commands() {
-        crate::ui::test_support::native_test(
-            "ui::widgets::operating_panel::tests::native_visibility_and_filter_readback_retain_widgets_without_echoing_commands",
+        crate::ui::native_test!(
+            native_visibility_and_filter_readback_retain_widgets_without_echoing_commands,
             || {
                 use super::*;
-                use crate::domain::control::{ControlSnapshot, SourceItem, SourceFilter};
+                use crate::domain::control::{ControlSnapshot, SourceFilter, SourceItem};
                 let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
                 {
                     let mut state = nav.state.borrow_mut();
-                    state.obs_status = ObsStatus::Connected { obs_version: "fixture".into() };
+                    state.obs_status = ObsStatus::Connected {
+                        obs_version: "fixture".into(),
+                    };
                     state.scene_collections.current = Some("Fixture".into());
-                    state.available_requests = vec!["SetSceneItemEnabled".into(), "SetSourceFilterEnabled".into()];
+                    state.available_requests = vec![
+                        "SetSceneItemEnabled".into(),
+                        "SetSourceFilterEnabled".into(),
+                    ];
                     state.workspace.observed_at = Some(std::time::Instant::now());
                     state.workspace.snapshot = Some(ControlSnapshot {
                         scene: Some("Main".into()),
                         items: vec![SourceItem {
-                            owner: "Main".into(), item_id: 1, input: "Camera".into(), input_uuid: String::new(),
-                            kind: None, path: vec!["Main".into()], enabled: true, ancestor_enabled: true,
-                            is_group: false, is_scene: false,
-                        }], ..Default::default()
+                            owner: "Main".into(),
+                            item_id: 1,
+                            input: "Camera".into(),
+                            input_uuid: String::new(),
+                            kind: None,
+                            path: vec!["Main".into()],
+                            enabled: true,
+                            ancestor_enabled: true,
+                            is_group: false,
+                            is_scene: false,
+                        }],
+                        ..Default::default()
                     });
                     state.workspace.selected_input = Some("Camera".into());
                     state.workspace.detail = Some(SourceDetail {
-                        input: "Camera".into(), filters: vec![SourceFilter { name: "Crop".into(), kind: "crop_filter".into(), enabled: true }],
+                        input: "Camera".into(),
+                        filters: vec![SourceFilter {
+                            name: "Crop".into(),
+                            kind: "crop_filter".into(),
+                            enabled: true,
+                        }],
                         text: Some("Original".into()),
-                        audio: Some(crate::domain::control::AudioSettings { balance: 0.5, sync_offset_ms: 0, monitor: AudioMonitor::Off, tracks: [true; 6] }),
+                        audio: Some(crate::domain::control::AudioSettings {
+                            balance: 0.5,
+                            sync_offset_ms: 0,
+                            monitor: AudioMonitor::Off,
+                            tracks: [true; 6],
+                        }),
                         ..Default::default()
                     });
                 }
                 let (page, refresh) = build(nav.clone());
                 let mut checks = Vec::new();
                 visit(&page, &mut |widget| {
-                    if widget.widget_name().starts_with("control-focus-item-") || widget.widget_name().starts_with("control-focus-filter-") {
-                        if let Some(check) = widget.downcast_ref::<CheckButton>() { checks.push(check.clone()); }
+                    if widget.widget_name().starts_with("control-focus-item-")
+                        || widget.widget_name().starts_with("control-focus-filter-")
+                    {
+                        if let Some(check) = widget.downcast_ref::<CheckButton>() {
+                            checks.push(check.clone());
+                        }
                     }
                 });
                 assert_eq!(checks.len(), 2);
@@ -1658,32 +1685,55 @@ mod tests {
                     {
                         let mut state = nav.state.borrow_mut();
                         state.workspace.snapshot.as_mut().unwrap().items[0].enabled = enabled;
-                        state.workspace.snapshot.as_mut().unwrap().items[0].ancestor_enabled = enabled;
+                        state.workspace.snapshot.as_mut().unwrap().items[0].ancestor_enabled =
+                            enabled;
                         let detail = state.workspace.detail.as_mut().unwrap();
                         detail.filters[0].enabled = enabled;
                         detail.text = Some(if enabled { "Enabled" } else { "Disabled" }.into());
                         let audio = detail.audio.as_mut().unwrap();
-                        audio.monitor = if enabled { AudioMonitor::MonitorOnly } else { AudioMonitor::Off };
+                        audio.monitor = if enabled {
+                            AudioMonitor::MonitorOnly
+                        } else {
+                            AudioMonitor::Off
+                        };
                         audio.sync_offset_ms = if enabled { 150 } else { 250 };
                         audio.balance = if enabled { 0.25 } else { 0.75 };
                         audio.tracks = [enabled; 6];
                     }
                     refresh();
                     assert_eq!(page.first_child(), first);
-                    assert!(checks.iter().all(|check| check.parent().is_some() && check.is_active() == enabled));
+                    assert!(checks
+                        .iter()
+                        .all(|check| check.parent().is_some() && check.is_active() == enabled));
                     visit(&page, &mut |widget| {
                         if let Some(view) = widget.downcast_ref::<gtk4::TextView>() {
                             let buffer = view.buffer();
-                            assert_eq!(buffer.text(&buffer.start_iter(), &buffer.end_iter(), true), if enabled { "Enabled" } else { "Disabled" });
+                            assert_eq!(
+                                buffer.text(&buffer.start_iter(), &buffer.end_iter(), true),
+                                if enabled { "Enabled" } else { "Disabled" }
+                            );
                         }
                         if widget.widget_name() == "control-focus-monitor-Camera" {
-                            assert_eq!(widget.downcast_ref::<DropDown>().unwrap().selected(), u32::from(enabled));
+                            assert_eq!(
+                                widget.downcast_ref::<DropDown>().unwrap().selected(),
+                                u32::from(enabled)
+                            );
                         }
-                        if widget.widget_name().starts_with("control-focus-track-Camera-") {
-                            assert_eq!(widget.downcast_ref::<CheckButton>().unwrap().is_active(), enabled);
+                        if widget
+                            .widget_name()
+                            .starts_with("control-focus-track-Camera-")
+                        {
+                            assert_eq!(
+                                widget.downcast_ref::<CheckButton>().unwrap().is_active(),
+                                enabled
+                            );
                         }
                     });
-                    assert_eq!(nav.state.borrow().workspace.sequence, sequence, "readback emitted a command");
+                    assert_eq!(
+                        nav.state.borrow().workspace.sequence,
+                        sequence,
+                        "readback emitted a command"
+                    );
                     assert!(nav.state.borrow().workspace.activity.entries.is_empty());
                 }
             },

@@ -917,8 +917,8 @@ mod tests {
     #[test]
     #[ignore = "requires a native GTK display"]
     fn native_popout_window_does_not_own_its_strong_window_slot() {
-        crate::ui::test_support::native_test(
-            "ui::pages::stats::tests::native_popout_window_does_not_own_its_strong_window_slot",
+        crate::ui::native_test!(
+            native_popout_window_does_not_own_its_strong_window_slot,
             || {
                 let (nav, stack, _runtime, _events) = crate::ui::test_support::navigation();
                 let weak_state = Rc::downgrade(&nav.state);
@@ -977,25 +977,32 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display"]
     fn native_popout_application_removal_releases_refresh_subscription() {
-        crate::ui::test_support::native_test(
-            "ui::pages::stats::tests::native_popout_application_removal_releases_refresh_subscription",
+        crate::ui::native_test!(
+            native_popout_application_removal_releases_refresh_subscription,
             || {
                 let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
                 let app = adw::Application::builder()
                     .application_id("io.github.worxbend.scenedeck.StatsRemovalFixture")
-                    .flags(gio::ApplicationFlags::NON_UNIQUE).build();
+                    .flags(gio::ApplicationFlags::NON_UNIQUE)
+                    .build();
                 app.register(None::<&gio::Cancellable>).unwrap();
                 let window_slot = Rc::new(RefCell::new(None));
                 let refresh_slot = Rc::new(RefCell::new(None));
                 let button = build_popout_button(&nav, &window_slot, &refresh_slot);
-                let host = adw::ApplicationWindow::builder().application(&app).content(&button).build();
+                let host = adw::ApplicationWindow::builder()
+                    .application(&app)
+                    .content(&button)
+                    .build();
                 host.present();
                 button.emit_clicked();
                 let popout = window_slot.borrow().as_ref().unwrap().clone();
                 assert!(refresh_slot.borrow().is_some());
                 app.remove_window(&popout);
                 assert!(window_slot.borrow().is_none());
-                assert!(refresh_slot.borrow().is_none(), "removed Stats still subscribed to application telemetry");
+                assert!(
+                    refresh_slot.borrow().is_none(),
+                    "removed Stats still subscribed to application telemetry"
+                );
                 let weak_content = popout.content().unwrap().downgrade();
                 popout.destroy();
                 drop(popout);
@@ -1043,31 +1050,83 @@ mod tests {
     #[test]
     #[ignore = "requires a native GTK display"]
     fn native_stats_fixture_exposes_congestion_and_configured_fps_health() {
-        crate::ui::test_support::native_test("ui::pages::stats::tests::native_stats_fixture_exposes_congestion_and_configured_fps_health", || {
-            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
-            let gauges = build_gauges(&nav);
-            assert!(gauges.all.iter().all(|gauge| gauge.widget().tooltip_text().unwrap().contains(&fl!(LANGUAGE_LOADER, "output-state-unknown"))));
-            let stream = crate::domain::stats::StreamHealth {
-                active: true, reconnecting: false, congestion: 0.8, skipped_frames: 0,
-                total_frames: 100, bytes: 1000,
-            };
-            nav.state.borrow_mut().stats_history.push(stats_sample(Some(120.0)), None, Some(stream));
-            for gauge in &gauges.all { gauge.redraw(); }
-            assert!(gauges.all[0].widget().tooltip_text().unwrap().contains("120"));
-            assert!(gauges.all[0].widget().tooltip_text().unwrap().contains(&fl!(LANGUAGE_LOADER, "edge-status-ok-label")));
-            let congestion = gauges.all[3].widget();
-            assert!(congestion.tooltip_text().unwrap().contains(&fl!(LANGUAGE_LOADER, "stats-gauge-congestion")));
-            assert!(congestion.tooltip_text().unwrap().contains("80%"));
-            assert!(congestion.tooltip_text().unwrap().contains(&fl!(LANGUAGE_LOADER, "diag-label-error")));
-            for property in [gtk4::AccessibleProperty::Label, gtk4::AccessibleProperty::Description,
-                gtk4::AccessibleProperty::ValueNow, gtk4::AccessibleProperty::ValueText] {
-                assert!(gtk4::test_accessible_has_property(congestion, property));
+        crate::ui::native_test!(
+            native_stats_fixture_exposes_congestion_and_configured_fps_health,
+            || {
+                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+                let gauges = build_gauges(&nav);
+                assert!(gauges.all.iter().all(|gauge| gauge
+                    .widget()
+                    .tooltip_text()
+                    .unwrap()
+                    .contains(&fl!(LANGUAGE_LOADER, "output-state-unknown"))));
+                let stream = crate::domain::stats::StreamHealth {
+                    active: true,
+                    reconnecting: false,
+                    congestion: 0.8,
+                    skipped_frames: 0,
+                    total_frames: 100,
+                    bytes: 1000,
+                };
+                nav.state.borrow_mut().stats_history.push(
+                    stats_sample(Some(120.0)),
+                    None,
+                    Some(stream),
+                );
+                for gauge in &gauges.all {
+                    gauge.redraw();
+                }
+                assert!(gauges.all[0]
+                    .widget()
+                    .tooltip_text()
+                    .unwrap()
+                    .contains("120"));
+                assert!(gauges.all[0]
+                    .widget()
+                    .tooltip_text()
+                    .unwrap()
+                    .contains(&fl!(LANGUAGE_LOADER, "edge-status-ok-label")));
+                let congestion = gauges.all[3].widget();
+                assert!(congestion
+                    .tooltip_text()
+                    .unwrap()
+                    .contains(&fl!(LANGUAGE_LOADER, "stats-gauge-congestion")));
+                assert!(congestion.tooltip_text().unwrap().contains("80%"));
+                assert!(congestion
+                    .tooltip_text()
+                    .unwrap()
+                    .contains(&fl!(LANGUAGE_LOADER, "diag-label-error")));
+                for property in [
+                    gtk4::AccessibleProperty::Label,
+                    gtk4::AccessibleProperty::Description,
+                    gtk4::AccessibleProperty::ValueNow,
+                    gtk4::AccessibleProperty::ValueText,
+                ] {
+                    assert!(gtk4::test_accessible_has_property(congestion, property));
+                }
+                nav.state.borrow_mut().stats_history.push(
+                    stats_sample(None),
+                    None,
+                    Some(crate::domain::stats::StreamHealth {
+                        congestion: 0.1,
+                        ..stream
+                    }),
+                );
+                for gauge in &gauges.all {
+                    gauge.redraw();
+                }
+                assert!(gauges.all[0]
+                    .widget()
+                    .tooltip_text()
+                    .unwrap()
+                    .contains(&fl!(LANGUAGE_LOADER, "output-state-unknown")));
+                assert!(gauges.all[3]
+                    .widget()
+                    .tooltip_text()
+                    .unwrap()
+                    .contains("10%"));
             }
-            nav.state.borrow_mut().stats_history.push(stats_sample(None), None, Some(crate::domain::stats::StreamHealth { congestion: 0.1, ..stream }));
-            for gauge in &gauges.all { gauge.redraw(); }
-            assert!(gauges.all[0].widget().tooltip_text().unwrap().contains(&fl!(LANGUAGE_LOADER, "output-state-unknown")));
-            assert!(gauges.all[3].widget().tooltip_text().unwrap().contains("10%"));
-        });
+        );
     }
 
     #[test]

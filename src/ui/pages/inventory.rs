@@ -1511,52 +1511,97 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display and isolated registry storage"]
     fn native_scene_search_keeps_focus_empty_results_and_scope_fencing() {
-        crate::ui::test_support::native_test(
-            "ui::pages::inventory::tests::native_scene_search_keeps_focus_empty_results_and_scope_fencing",
+        crate::ui::native_test!(
+            native_scene_search_keeps_focus_empty_results_and_scope_fencing,
             || {
-                use adw::prelude::*;
                 use crate::domain::scene::Scene;
                 use crate::ui::test_support::{navigation, pump, pump_until};
+                use adw::prelude::*;
                 use std::time::Duration;
                 let (nav, stack, _runtime, _events) = navigation();
                 {
                     let mut state = nav.state.borrow_mut();
-                    state.scene_inventory.scenes = ["Intro", "Guest Camera", "Other"].map(|id| Scene { id: id.into(), uuid: None }).into();
-                    state.registry.set_scene_tags("Guest Camera", ["Interview".into()]);
+                    state.scene_inventory.scenes = ["Intro", "Guest Camera", "Other"]
+                        .map(|id| Scene {
+                            id: id.into(),
+                            uuid: None,
+                        })
+                        .into();
+                    state
+                        .registry
+                        .set_scene_tags("Guest Camera", ["Interview".into()]);
                     state.registry.set_scene_favorite("Guest Camera", true);
-                    state.registry.scene_order = vec!["Intro".into(), "Guest Camera".into(), "Other".into()];
+                    state.registry.scene_order =
+                        vec!["Intro".into(), "Guest Camera".into(), "Other".into()];
                 }
                 let (page, refresh) = super::build(nav.clone());
                 stack.add_named(&page, Some("inventory"));
-                let window = gtk4::Window::builder().default_width(640).default_height(700).child(&stack).build();
+                let window = gtk4::Window::builder()
+                    .default_width(640)
+                    .default_height(700)
+                    .child(&stack)
+                    .build();
                 window.present();
                 pump(Duration::from_millis(100));
-                let search = find(&page, "deck-search").unwrap().downcast::<gtk4::SearchEntry>().unwrap();
+                let search = find(&page, "deck-search")
+                    .unwrap()
+                    .downcast::<gtk4::SearchEntry>()
+                    .unwrap();
                 search.grab_focus();
                 search.set_text("INTERVIEW guest");
-                assert!(pump_until(Duration::from_secs(2), || nav.state.borrow().registry.scene_filter.query == "INTERVIEW guest"));
+                assert!(pump_until(Duration::from_secs(2), || nav
+                    .state
+                    .borrow()
+                    .registry
+                    .scene_filter
+                    .query
+                    == "INTERVIEW guest"));
                 assert!(find(&page, "scene-order-Intro").is_none());
                 assert!(find(&page, "scene-order-Guest Camera").is_some());
                 assert!(!super::reorder_scenes(&nav, "Guest Camera", "Intro", false));
                 search.set_text("zero matches");
-                assert!(pump_until(Duration::from_secs(2), || nav.state.borrow().registry.scene_filter.query == "zero matches"));
+                assert!(pump_until(Duration::from_secs(2), || nav
+                    .state
+                    .borrow()
+                    .registry
+                    .scene_filter
+                    .query
+                    == "zero matches"));
                 assert!(find(&page, "deck-no-results").unwrap().is_visible());
-                assert_eq!(find(&page, "deck-search").unwrap(), search.clone().upcast::<gtk4::Widget>());
-                assert!(gtk4::prelude::RootExt::focus(&window).is_some_and(|focus| focus == search.clone().upcast::<gtk4::Widget>() || focus.is_ancestor(&search)));
-                find(&page, "deck-reset").unwrap().downcast::<gtk4::Button>().unwrap().emit_clicked();
+                assert_eq!(
+                    find(&page, "deck-search").unwrap(),
+                    search.clone().upcast::<gtk4::Widget>()
+                );
+                assert!(gtk4::prelude::RootExt::focus(&window)
+                    .is_some_and(|focus| focus == search.clone().upcast::<gtk4::Widget>()
+                        || focus.is_ancestor(&search)));
+                find(&page, "deck-reset")
+                    .unwrap()
+                    .downcast::<gtk4::Button>()
+                    .unwrap()
+                    .emit_clicked();
                 assert_eq!(search.text(), "");
                 assert!(find(&page, "scene-order-Intro").is_some());
                 assert!(!find(&page, "deck-no-results").unwrap().is_visible());
-                assert_eq!(nav.state.borrow().registry.scene_order, ["Intro", "Guest Camera", "Other"]);
+                assert_eq!(
+                    nav.state.borrow().registry.scene_order,
+                    ["Intro", "Guest Camera", "Other"]
+                );
                 search.set_text("draft before debounce");
-                nav.state.borrow_mut().registry.set_scene_role("Other", Some(SceneRole::Debug));
+                nav.state
+                    .borrow_mut()
+                    .registry
+                    .set_scene_role("Other", Some(SceneRole::Debug));
                 refresh();
                 assert_eq!(search.text(), "draft before debounce");
                 nav.state.borrow_mut().show_registry.generation += 1;
                 refresh();
                 search.emit_by_name::<()>("search-changed", &[]);
                 assert_eq!(nav.state.borrow().registry.scene_filter.query, "");
-                assert!(pump_until(Duration::from_secs(5), || crate::ui::persist::registry_save_status() == crate::ui::persist::RegistrySaveStatus::Saved));
+                assert!(pump_until(Duration::from_secs(5), || {
+                    crate::ui::persist::registry_save_status()
+                        == crate::ui::persist::RegistrySaveStatus::Saved
+                }));
                 window.destroy();
             },
         );
@@ -1565,36 +1610,64 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display and isolated registry storage"]
     fn native_scene_tags_and_favorite_preserve_editor_and_reject_retired_callbacks() {
-        crate::ui::test_support::native_test(
-            "ui::pages::inventory::tests::native_scene_tags_and_favorite_preserve_editor_and_reject_retired_callbacks",
+        crate::ui::native_test!(
+            native_scene_tags_and_favorite_preserve_editor_and_reject_retired_callbacks,
             || {
-                use adw::prelude::*;
                 use crate::domain::scene::Scene;
                 use crate::ui::test_support::{navigation, pump, pump_until};
+                use adw::prelude::*;
                 use std::time::Duration;
                 let (nav, stack, _runtime, _events) = navigation();
-                nav.state.borrow_mut().scene_inventory.scenes = vec![Scene { id: "Main".into(), uuid: None }];
-                nav.state.borrow_mut().registry.set_scene_icon("Main", Some("camera"));
+                nav.state.borrow_mut().scene_inventory.scenes = vec![Scene {
+                    id: "Main".into(),
+                    uuid: None,
+                }];
+                nav.state
+                    .borrow_mut()
+                    .registry
+                    .set_scene_icon("Main", Some("camera"));
                 let (page, refresh) = super::build(nav.clone());
                 stack.add_named(&page, Some("inventory"));
-                let window = gtk4::Window::builder().default_width(640).default_height(700).child(&stack).build();
+                let window = gtk4::Window::builder()
+                    .default_width(640)
+                    .default_height(700)
+                    .child(&stack)
+                    .build();
                 window.present();
                 pump(Duration::from_millis(100));
-                let options = find(&page, "inventory-options-Main").unwrap().downcast::<gtk4::MenuButton>().unwrap();
+                let options = find(&page, "inventory-options-Main")
+                    .unwrap()
+                    .downcast::<gtk4::MenuButton>()
+                    .unwrap();
                 options.popup();
                 pump(Duration::from_millis(60));
                 let popup = options.popover().unwrap();
-                let tags = find(popup.upcast_ref(), "inventory-tags-Main").unwrap().downcast::<gtk4::Entry>().unwrap();
-                let favorite = find(popup.upcast_ref(), "inventory-favorite-Main").unwrap().downcast::<gtk4::CheckButton>().unwrap();
-                let apply = find(popup.upcast_ref(), "inventory-apply-tags-Main").unwrap().downcast::<gtk4::Button>().unwrap();
+                let tags = find(popup.upcast_ref(), "inventory-tags-Main")
+                    .unwrap()
+                    .downcast::<gtk4::Entry>()
+                    .unwrap();
+                let favorite = find(popup.upcast_ref(), "inventory-favorite-Main")
+                    .unwrap()
+                    .downcast::<gtk4::CheckButton>()
+                    .unwrap();
+                let apply = find(popup.upcast_ref(), "inventory-apply-tags-Main")
+                    .unwrap()
+                    .downcast::<gtk4::Button>()
+                    .unwrap();
                 tags.set_text(" Podcast , , podcast, Київ ");
                 favorite.set_active(true);
-                assert!(popup.is_mapped(), "favorite updates must keep the tag draft open");
+                assert!(
+                    popup.is_mapped(),
+                    "favorite updates must keep the tag draft open"
+                );
                 assert_eq!(tags.text(), " Podcast , , podcast, Київ ");
                 apply.emit_clicked();
                 assert!(popup.is_mapped());
                 assert_eq!(tags.text(), "Podcast, Київ");
-                let summary = find(&page, "inventory-curation-Main").unwrap().downcast::<gtk4::Label>().unwrap();
+                let summary = find(&page, "inventory-curation-Main")
+                    .unwrap()
+                    .downcast::<gtk4::Label>()
+                    .unwrap();
                 assert!(summary.text().contains("Podcast, Київ"));
                 assert!(!summary.uses_markup());
                 tags.set_text("unfinished draft");
@@ -1605,9 +1678,15 @@ mod tests {
                 refresh();
                 apply.emit_clicked();
                 favorite.set_active(false);
-                assert_eq!(nav.state.borrow().registry.scenes["Main"].tags, ["Podcast", "Київ"]);
+                assert_eq!(
+                    nav.state.borrow().registry.scenes["Main"].tags,
+                    ["Podcast", "Київ"]
+                );
                 assert!(nav.state.borrow().registry.scenes["Main"].favorite);
-                assert!(pump_until(Duration::from_secs(5), || crate::ui::persist::registry_save_status() == crate::ui::persist::RegistrySaveStatus::Saved));
+                assert!(pump_until(Duration::from_secs(5), || {
+                    crate::ui::persist::registry_save_status()
+                        == crate::ui::persist::RegistrySaveStatus::Saved
+                }));
                 let saved = crate::storage::registry::read_registry();
                 assert_eq!(saved.scene_icon("Main"), Some("camera"));
                 assert_eq!(saved.scenes["Main"].tags, ["Podcast", "Київ"]);
@@ -1620,15 +1699,18 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display and isolated registry storage"]
     fn native_retained_identity_is_literal_and_removable_without_changing_replacement() {
-        crate::ui::test_support::native_test(
-            "ui::pages::inventory::tests::native_retained_identity_is_literal_and_removable_without_changing_replacement",
+        crate::ui::native_test!(
+            native_retained_identity_is_literal_and_removable_without_changing_replacement,
             || {
-                use adw::prelude::*;
                 use crate::domain::scene::{Scene, SceneInventory};
+                use adw::prelude::*;
                 let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
                 let name = "<b>Old camera & guest</b>";
                 let inventory = |uuid: &str| SceneInventory {
-                    scenes: vec![Scene { id: name.into(), uuid: Some(uuid.into()) }],
+                    scenes: vec![Scene {
+                        id: name.into(),
+                        uuid: Some(uuid.into()),
+                    }],
                     ..Default::default()
                 };
                 {
@@ -1642,21 +1724,29 @@ mod tests {
                 let (page, _) = super::build(nav.clone());
                 let group = find(&page, "inventory-stale").unwrap();
                 fn row(widget: &gtk4::Widget) -> Option<adw::ActionRow> {
-                    if let Ok(row) = widget.clone().downcast::<adw::ActionRow>() { return Some(row); }
+                    if let Ok(row) = widget.clone().downcast::<adw::ActionRow>() {
+                        return Some(row);
+                    }
                     let mut child = widget.first_child();
                     while let Some(widget) = child {
-                        if let Some(found) = row(&widget) { return Some(found); }
+                        if let Some(found) = row(&widget) {
+                            return Some(found);
+                        }
                         child = widget.next_sibling();
                     }
                     None
                 }
                 fn remove_button(widget: &gtk4::Widget) -> Option<gtk4::Button> {
                     if let Ok(button) = widget.clone().downcast::<gtk4::Button>() {
-                        if button.icon_name().as_deref() == Some("list-remove-symbolic") { return Some(button); }
+                        if button.icon_name().as_deref() == Some("list-remove-symbolic") {
+                            return Some(button);
+                        }
                     }
                     let mut child = widget.first_child();
                     while let Some(widget) = child {
-                        if let Some(found) = remove_button(&widget) { return Some(found); }
+                        if let Some(found) = remove_button(&widget) {
+                            return Some(found);
+                        }
                         child = widget.next_sibling();
                     }
                     None
@@ -1666,12 +1756,22 @@ mod tests {
                 assert!(!retained.uses_markup());
                 remove_button(&group).unwrap().emit_clicked();
                 assert!(nav.state.borrow().registry.retained_scenes.is_empty());
-                assert_eq!(nav.state.borrow().registry.scene_icon(name), Some("replacement"));
+                assert_eq!(
+                    nav.state.borrow().registry.scene_icon(name),
+                    Some("replacement")
+                );
                 assert!(find(&page, "inventory-stale").is_none());
-                assert!(crate::ui::test_support::pump_until(std::time::Duration::from_secs(5), || {
-                    crate::ui::persist::registry_save_status() == crate::ui::persist::RegistrySaveStatus::Saved
-                }));
-                assert_eq!(crate::storage::registry::read_registry().scene_icon(name), Some("replacement"));
+                assert!(crate::ui::test_support::pump_until(
+                    std::time::Duration::from_secs(5),
+                    || {
+                        crate::ui::persist::registry_save_status()
+                            == crate::ui::persist::RegistrySaveStatus::Saved
+                    }
+                ));
+                assert_eq!(
+                    crate::storage::registry::read_registry().scene_icon(name),
+                    Some("replacement")
+                );
             },
         );
     }
@@ -1679,77 +1779,73 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; no OBS or keyring access"]
     fn native_inventory_rebuild_releases_yaml_rows_and_root() {
-        crate::ui::test_support::native_test(
-            "ui::pages::inventory::tests::native_inventory_rebuild_releases_yaml_rows_and_root",
-            || {
-                use crate::ui::test_support::{navigation, pump};
-                use adw::prelude::*;
-                use std::time::Duration;
-                let (nav, stack, _runtime, _events) = navigation();
-                for id in ["Intro", "Main"] {
-                    nav.state.borrow_mut().scene_inventory.scenes.push(
-                        crate::domain::scene::Scene {
-                            uuid: None,
-                            id: id.into(),
-                        },
-                    );
-                }
+        crate::ui::native_test!(native_inventory_rebuild_releases_yaml_rows_and_root, || {
+            use crate::ui::test_support::{navigation, pump};
+            use adw::prelude::*;
+            use std::time::Duration;
+            let (nav, stack, _runtime, _events) = navigation();
+            for id in ["Intro", "Main"] {
                 nav.state
                     .borrow_mut()
-                    .registry
-                    .set_scene_role("Missing <b>scene</b>", Some(SceneRole::Primary));
-                let (page, refresh) = super::build(nav.clone());
-                stack.add_named(&page, Some("inventory"));
-                let window = gtk4::Window::builder()
-                    .default_width(1000)
-                    .default_height(700)
-                    .child(&stack)
-                    .build();
-                window.present();
-                pump(Duration::from_millis(80));
-                fn descendants(
-                    widget: &gtk4::Widget,
-                    tracked: &mut Vec<glib::WeakRef<gtk4::Widget>>,
-                ) {
-                    if widget.widget_name() == "inventory-yaml-actions"
-                        || widget.has_css_class("inventory-list")
-                        || widget.widget_name().starts_with("scene-order-")
-                    {
-                        tracked.push(widget.downgrade());
-                    }
-                    let mut child = widget.first_child();
-                    while let Some(widget) = child {
-                        child = widget.next_sibling();
-                        descendants(&widget, tracked);
-                    }
+                    .scene_inventory
+                    .scenes
+                    .push(crate::domain::scene::Scene {
+                        uuid: None,
+                        id: id.into(),
+                    });
+            }
+            nav.state
+                .borrow_mut()
+                .registry
+                .set_scene_role("Missing <b>scene</b>", Some(SceneRole::Primary));
+            let (page, refresh) = super::build(nav.clone());
+            stack.add_named(&page, Some("inventory"));
+            let window = gtk4::Window::builder()
+                .default_width(1000)
+                .default_height(700)
+                .child(&stack)
+                .build();
+            window.present();
+            pump(Duration::from_millis(80));
+            fn descendants(widget: &gtk4::Widget, tracked: &mut Vec<glib::WeakRef<gtk4::Widget>>) {
+                if widget.widget_name() == "inventory-yaml-actions"
+                    || widget.has_css_class("inventory-list")
+                    || widget.widget_name().starts_with("scene-order-")
+                {
+                    tracked.push(widget.downgrade());
                 }
-                for _ in 0..3 {
-                    let mut old = Vec::new();
-                    descendants(&page, &mut old);
-                    assert!(old.len() >= 4, "real mapped YAML/list/scene rows required");
-                    gtk4::prelude::GtkWindowExt::set_focus(&window, gtk4::Widget::NONE);
-                    // Only a real scope retirement replaces the full page now.
-                    nav.state.borrow_mut().workspace.epoch += 1;
-                    refresh();
-                    pump(Duration::from_millis(80));
-                    assert!(
-                        old.iter().all(|widget| widget.upgrade().is_none()),
-                        "detached Inventory descendants retained"
-                    );
+                let mut child = widget.first_child();
+                while let Some(widget) = child {
+                    child = widget.next_sibling();
+                    descendants(&widget, tracked);
                 }
-                let weak = page.downgrade();
-                window.set_child(gtk4::Widget::NONE);
-                window.destroy();
-                stack.remove(&page);
-                drop(page);
+            }
+            for _ in 0..3 {
+                let mut old = Vec::new();
+                descendants(&page, &mut old);
+                assert!(old.len() >= 4, "real mapped YAML/list/scene rows required");
+                gtk4::prelude::GtkWindowExt::set_focus(&window, gtk4::Widget::NONE);
+                // Only a real scope retirement replaces the full page now.
+                nav.state.borrow_mut().workspace.epoch += 1;
                 refresh();
                 pump(Duration::from_millis(80));
                 assert!(
-                    weak.upgrade().is_none(),
-                    "Inventory root retained by row or callback"
+                    old.iter().all(|widget| widget.upgrade().is_none()),
+                    "detached Inventory descendants retained"
                 );
-            },
-        );
+            }
+            let weak = page.downgrade();
+            window.set_child(gtk4::Widget::NONE);
+            window.destroy();
+            stack.remove(&page);
+            drop(page);
+            refresh();
+            pump(Duration::from_millis(80));
+            assert!(
+                weak.upgrade().is_none(),
+                "Inventory root retained by row or callback"
+            );
+        },);
     }
 
     #[test]
@@ -1764,24 +1860,37 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; no OBS or keyring access"]
     fn native_unchanged_inventory_refresh_keeps_rows_and_open_popovers() {
-        crate::ui::test_support::native_test(
-            "ui::pages::inventory::tests::native_unchanged_inventory_refresh_keeps_rows_and_open_popovers",
+        crate::ui::native_test!(
+            native_unchanged_inventory_refresh_keeps_rows_and_open_popovers,
             || {
-                use adw::prelude::*;
                 use crate::domain::scene::Scene;
                 use crate::ui::test_support::{navigation, pump};
+                use adw::prelude::*;
                 use std::time::Duration;
                 let (nav, stack, _runtime, _events) = navigation();
-                nav.state.borrow_mut().scene_inventory.scenes = vec![Scene { uuid: None, id: "Main".into() }];
+                nav.state.borrow_mut().scene_inventory.scenes = vec![Scene {
+                    uuid: None,
+                    id: "Main".into(),
+                }];
                 let (page, refresh) = super::build(nav.clone());
                 let row = find(&page, "scene-order-Main").unwrap();
                 stack.add_named(&page, Some("inventory"));
-                let window = gtk4::Window::builder().default_width(640).default_height(700).child(&stack).build();
+                let window = gtk4::Window::builder()
+                    .default_width(640)
+                    .default_height(700)
+                    .child(&stack)
+                    .build();
                 window.present();
                 pump(Duration::from_millis(120));
-                assert_eq!(find(&page, "scene-order-Main").unwrap(), row,
-                    "mapping an already current page must not replace its scene rows");
-                let options = find(&page, "inventory-options-Main").unwrap().downcast::<gtk4::MenuButton>().unwrap();
+                assert_eq!(
+                    find(&page, "scene-order-Main").unwrap(),
+                    row,
+                    "mapping an already current page must not replace its scene rows"
+                );
+                let options = find(&page, "inventory-options-Main")
+                    .unwrap()
+                    .downcast::<gtk4::MenuButton>()
+                    .unwrap();
                 options.popup();
                 pump(Duration::from_millis(60));
                 let popup = options.popover().unwrap();
@@ -1802,70 +1911,97 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display and isolated registry storage"]
     fn native_inventory_changes_reconcile_without_replacing_the_page() {
-        crate::ui::test_support::native_test("ui::pages::inventory::tests::native_inventory_changes_reconcile_without_replacing_the_page", || {
-            use adw::prelude::*;
-            use crate::domain::scene::Scene;
-            use crate::ui::test_support::{navigation, pump};
-            use std::time::Duration;
-            let (nav, stack, _runtime, _events) = navigation();
-            nav.state.borrow_mut().scene_inventory.scenes = vec![Scene { uuid: None, id: "Main".into() }, Scene { uuid: None, id: "Other".into() }];
-            let (page, refresh) = super::build(nav.clone());
-            stack.add_named(&page, Some("inventory"));
-            let window = gtk4::Window::builder().default_width(640).default_height(700).child(&stack).build();
-            window.present();
-            pump(Duration::from_millis(100));
-            let main = find(&page, "scene-order-Main").unwrap();
-            let other = find(&page, "scene-order-Other").unwrap();
-            let yaml = find(&page, "inventory-yaml-actions").unwrap();
-            let selector = find(&page, "inventory-role-Main").unwrap().downcast::<gtk4::DropDown>().unwrap();
-            nav.state.borrow_mut().registry.set_scene_role("Main", Some(SceneRole::Primary));
-            refresh();
-            assert_eq!(selector.selected(), super::role_row(Some(SceneRole::Primary)));
-            assert_eq!(find(&page, "scene-order-Main").unwrap(), main);
-            assert_eq!(find(&page, "scene-order-Other").unwrap(), other);
-            nav.state.borrow_mut().scene_inventory.scenes.push(Scene { uuid: None, id: "New".into() });
-            refresh();
-            assert!(super::reorder_scenes(&nav, "New", "Main", false), "retained handlers must use current membership");
-            super::rebuild(page.downcast_ref::<gtk4::Box>().unwrap(), &nav);
-            assert_eq!(find(&page, "scene-order-New").unwrap().downcast::<gtk4::ListBoxRow>().unwrap().index(), 0);
-            assert_eq!(find(&page, "scene-order-Main").unwrap(), main);
-            nav.state.borrow_mut().registry.set_scene_icon("Other", Some("nf-md-camera"));
-            refresh();
-            assert_ne!(find(&page, "scene-order-Other").unwrap(), other);
-            assert_eq!(find(&page, "scene-order-Main").unwrap(), main);
-            nav.state.borrow_mut().registry.set_scene_role("Missing", Some(SceneRole::Archive));
-            refresh();
-            assert!(find(&page, "inventory-stale").is_some());
-            nav.state.borrow_mut().registry.scenes.remove("Missing");
-            refresh();
-            assert!(find(&page, "inventory-stale").is_none());
-            assert_eq!(find(&page, "inventory-yaml-actions").unwrap(), yaml);
-            nav.state.borrow_mut().workspace.epoch += 1;
-            refresh();
-            assert_ne!(find(&page, "scene-order-Main").unwrap(), main, "scope retirement must rebind controls");
-            window.destroy();
-            pump(Duration::from_millis(120));
-        });
-    }
-
-    #[test]
-    fn inventory_uses_native_rows_without_width_configuration() {
-        let source = include_str!("inventory.rs");
-        let production = source.split("#[cfg(test)]").next().unwrap();
-        for removed in [
-            "ColumnView",
-            "build_column_controls",
-            "set_fixed_width",
-            "config.inventory",
-        ] {
-            assert!(
-                !production.contains(removed),
-                "Inventory must reflow native list rows, not {removed}"
-            );
-        }
-        assert!(
-            production.contains("ListBox"),
-            "Inventory needs native list rows"
+        crate::ui::native_test!(
+            native_inventory_changes_reconcile_without_replacing_the_page,
+            || {
+                use crate::domain::scene::Scene;
+                use crate::ui::test_support::{navigation, pump};
+                use adw::prelude::*;
+                use std::time::Duration;
+                let (nav, stack, _runtime, _events) = navigation();
+                nav.state.borrow_mut().scene_inventory.scenes = vec![
+                    Scene {
+                        uuid: None,
+                        id: "Main".into(),
+                    },
+                    Scene {
+                        uuid: None,
+                        id: "Other".into(),
+                    },
+                ];
+                let (page, refresh) = super::build(nav.clone());
+                stack.add_named(&page, Some("inventory"));
+                let window = gtk4::Window::builder()
+                    .default_width(640)
+                    .default_height(700)
+                    .child(&stack)
+                    .build();
+                window.present();
+                pump(Duration::from_millis(100));
+                let main = find(&page, "scene-order-Main").unwrap();
+                let other = find(&page, "scene-order-Other").unwrap();
+                let yaml = find(&page, "inventory-yaml-actions").unwrap();
+                let selector = find(&page, "inventory-role-Main")
+                    .unwrap()
+                    .downcast::<gtk4::DropDown>()
+                    .unwrap();
+                nav.state
+                    .borrow_mut()
+                    .registry
+                    .set_scene_role("Main", Some(SceneRole::Primary));
+                refresh();
+                assert_eq!(
+                    selector.selected(),
+                    super::role_row(Some(SceneRole::Primary))
+                );
+                assert_eq!(find(&page, "scene-order-Main").unwrap(), main);
+                assert_eq!(find(&page, "scene-order-Other").unwrap(), other);
+                nav.state.borrow_mut().scene_inventory.scenes.push(Scene {
+                    uuid: None,
+                    id: "New".into(),
+                });
+                refresh();
+                assert!(
+                    super::reorder_scenes(&nav, "New", "Main", false),
+                    "retained handlers must use current membership"
+                );
+                super::rebuild(page.downcast_ref::<gtk4::Box>().unwrap(), &nav);
+                assert_eq!(
+                    find(&page, "scene-order-New")
+                        .unwrap()
+                        .downcast::<gtk4::ListBoxRow>()
+                        .unwrap()
+                        .index(),
+                    0
+                );
+                assert_eq!(find(&page, "scene-order-Main").unwrap(), main);
+                nav.state
+                    .borrow_mut()
+                    .registry
+                    .set_scene_icon("Other", Some("nf-md-camera"));
+                refresh();
+                assert_ne!(find(&page, "scene-order-Other").unwrap(), other);
+                assert_eq!(find(&page, "scene-order-Main").unwrap(), main);
+                nav.state
+                    .borrow_mut()
+                    .registry
+                    .set_scene_role("Missing", Some(SceneRole::Archive));
+                refresh();
+                assert!(find(&page, "inventory-stale").is_some());
+                nav.state.borrow_mut().registry.scenes.remove("Missing");
+                refresh();
+                assert!(find(&page, "inventory-stale").is_none());
+                assert_eq!(find(&page, "inventory-yaml-actions").unwrap(), yaml);
+                nav.state.borrow_mut().workspace.epoch += 1;
+                refresh();
+                assert_ne!(
+                    find(&page, "scene-order-Main").unwrap(),
+                    main,
+                    "scope retirement must rebind controls"
+                );
+                window.destroy();
+                pump(Duration::from_millis(120));
+            }
         );
     }
 
@@ -1944,91 +2080,184 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; no OBS or keyring access"]
     fn native_inventory_rows_reflow_without_horizontal_scrolling() {
-        crate::ui::test_support::native_test(
-            "ui::pages::inventory::tests::native_inventory_rows_reflow_without_horizontal_scrolling",
+        crate::ui::native_test!(
+            native_inventory_rows_reflow_without_horizontal_scrolling,
             || {
-                use adw::prelude::*;
                 use crate::domain::{appearance::Language, scene::Scene};
                 use crate::ui::test_support::{navigation, pump};
+                use adw::prelude::*;
                 use std::time::Duration;
                 // Real long, malformed markup and unbroken names must remain literal.
                 let scene = "<b>Studio & Hauptübertragung</b> — SehrLangerSzenennameOhneTrennzeichenFürDieDeutscheÜbertragung";
-                for (language, locale, dpi) in [(Language::En, "en", 98_304), (Language::De, "de-200", 196_608)] {
+                for (language, locale, dpi) in [
+                    (Language::En, "en", 98_304),
+                    (Language::De, "de-200", 196_608),
+                ] {
                     crate::infra::i18n::init(language);
                     let settings = gtk4::Settings::default().unwrap();
                     settings.set_property("gtk-font-name", "Sans 10");
                     settings.set_property("gtk-xft-dpi", dpi);
                     for width in [360, 640, 1100] {
                         let (nav, stack, _runtime, _events) = navigation();
-                        nav.state.borrow_mut().scene_inventory.scenes = vec![Scene { uuid: None, id: scene.into() }, Scene { uuid: None, id: "Main".into() }];
-                        nav.state.borrow_mut().registry.set_scene_role(scene, Some(SceneRole::Primary));
-                        nav.state.borrow_mut().registry.set_scene_role("Missing <b>scene & literal", Some(SceneRole::Primary));
+                        nav.state.borrow_mut().scene_inventory.scenes = vec![
+                            Scene {
+                                uuid: None,
+                                id: scene.into(),
+                            },
+                            Scene {
+                                uuid: None,
+                                id: "Main".into(),
+                            },
+                        ];
+                        nav.state
+                            .borrow_mut()
+                            .registry
+                            .set_scene_role(scene, Some(SceneRole::Primary));
+                        nav.state
+                            .borrow_mut()
+                            .registry
+                            .set_scene_role("Missing <b>scene & literal", Some(SceneRole::Primary));
                         // Compatibility-only persisted settings must have no effect on layout.
-                        nav.state.borrow_mut().config = serde_json::from_str(r#"{"inventory":{"name_width":1000,"role_width":600}}"#).unwrap();
+                        nav.state.borrow_mut().config = serde_json::from_str(
+                            r#"{"inventory":{"name_width":1000,"role_width":600}}"#,
+                        )
+                        .unwrap();
                         let saved = serde_json::to_value(&nav.state.borrow().config).unwrap();
                         let (page, refresh) = super::build(nav.clone());
                         stack.add_named(&page, Some("inventory"));
-                        let window = gtk4::Window::builder().default_width(width).default_height(900).child(&stack).build();
+                        let window = gtk4::Window::builder()
+                            .default_width(width)
+                            .default_height(900)
+                            .child(&stack)
+                            .build();
                         window.add_css_class("scenedeck-root");
                         let provider = gtk4::CssProvider::new();
-                        provider.load_from_data(include_str!("../../../assets/scenedeck.css"));
-                        gtk4::style_context_add_provider_for_display(&gtk4::prelude::WidgetExt::display(&window), &provider, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
+                        provider.load_from_data(include_str!(concat!(
+                            env!("CARGO_MANIFEST_DIR"),
+                            "/assets/scenedeck.css"
+                        )));
+                        gtk4::style_context_add_provider_for_display(
+                            &gtk4::prelude::WidgetExt::display(&window),
+                            &provider,
+                            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+                        );
                         window.present();
                         pump(Duration::from_millis(200));
-                        assert!(window.width() <= width, "window minimum escaped requested {width}: {}", window.width());
+                        assert!(
+                            window.width() <= width,
+                            "window minimum escaped requested {width}: {}",
+                            window.width()
+                        );
                         assert_native_list(&page);
-                        for name in [format!("scene-order-{scene}"), format!("inventory-name-{scene}"), format!("inventory-description-{scene}"), format!("inventory-role-{scene}"), format!("inventory-icon-{scene}"), format!("inventory-options-{scene}"), "inventory-yaml-actions".into(), "inventory-export".into(), "inventory-import".into()] {
-                            let widget = find(&page, &name).unwrap_or_else(|| panic!("missing {name}"));
+                        for name in [
+                            format!("scene-order-{scene}"),
+                            format!("inventory-name-{scene}"),
+                            format!("inventory-description-{scene}"),
+                            format!("inventory-role-{scene}"),
+                            format!("inventory-icon-{scene}"),
+                            format!("inventory-options-{scene}"),
+                            "inventory-yaml-actions".into(),
+                            "inventory-export".into(),
+                            "inventory-import".into(),
+                        ] {
+                            let widget =
+                                find(&page, &name).unwrap_or_else(|| panic!("missing {name}"));
                             let bounds = widget.compute_bounds(&page).unwrap();
-                            assert!(bounds.width() > 0.0 && bounds.height() > 0.0, "unallocated {name}");
-                            assert!(bounds.x() >= 0.0 && bounds.x() + bounds.width() <= page.width() as f32 + 1.0,
-                                "{locale}/{width}: {name} escaped viewport: {bounds:?}");
+                            assert!(
+                                bounds.width() > 0.0 && bounds.height() > 0.0,
+                                "unallocated {name}"
+                            );
+                            assert!(
+                                bounds.x() >= 0.0
+                                    && bounds.x() + bounds.width() <= page.width() as f32 + 1.0,
+                                "{locale}/{width}: {name} escaped viewport: {bounds:?}"
+                            );
                         }
-                        let layout = find(&page, &format!("inventory-row-layout-{scene}")).unwrap().downcast::<gtk4::Box>().unwrap();
-                        assert_eq!(layout.orientation(), if width == 1100 && locale == "en" { gtk4::Orientation::Horizontal } else { gtk4::Orientation::Vertical });
+                        let layout = find(&page, &format!("inventory-row-layout-{scene}"))
+                            .unwrap()
+                            .downcast::<gtk4::Box>()
+                            .unwrap();
+                        assert_eq!(
+                            layout.orientation(),
+                            if width == 1100 && locale == "en" {
+                                gtk4::Orientation::Horizontal
+                            } else {
+                                gtk4::Orientation::Vertical
+                            }
+                        );
                         if width == 1100 {
                             let selector = find(&page, &format!("inventory-role-{scene}")).unwrap();
                             assert!(selector.grab_focus());
                             pump(Duration::from_millis(80));
                             let focused = gtk4::prelude::RootExt::focus(&window).unwrap();
-                            assert!(focused == selector || focused.is_ancestor(&selector), "role focus must be established before resizing");
+                            assert!(
+                                focused == selector || focused.is_ancestor(&selector),
+                                "role focus must be established before resizing"
+                            );
                             for resized_width in [360, 1100] {
                                 window.set_default_size(resized_width, 900);
                                 pump(Duration::from_millis(150));
                                 assert_eq!(window.width(), resized_width);
                                 assert_native_list(&page);
-                                assert_eq!(find(&page, &format!("inventory-role-{scene}")).unwrap(), selector,
-                                    "resizing must retain the actual editing widget");
+                                assert_eq!(
+                                    find(&page, &format!("inventory-role-{scene}")).unwrap(),
+                                    selector,
+                                    "resizing must retain the actual editing widget"
+                                );
                                 let focus = gtk4::prelude::RootExt::focus(&window).unwrap();
                                 assert!(focus == selector || focus.is_ancestor(&selector), "{locale}/{resized_width}: resizing lost role focus to {} ({:?}); selector bounds {:?}", focus.widget_name(), focus.type_(), selector.compute_bounds(&page));
-                                assert_eq!(layout.orientation(), if resized_width == 1100 && locale == "en" {
-                                    gtk4::Orientation::Horizontal
-                                } else {
-                                    gtk4::Orientation::Vertical
-                                });
+                                assert_eq!(
+                                    layout.orientation(),
+                                    if resized_width == 1100 && locale == "en" {
+                                        gtk4::Orientation::Horizontal
+                                    } else {
+                                        gtk4::Orientation::Vertical
+                                    }
+                                );
                             }
                         }
-                        let title = find(&page, &format!("inventory-name-{scene}")).unwrap().downcast::<gtk4::Label>().unwrap();
+                        let title = find(&page, &format!("inventory-name-{scene}"))
+                            .unwrap()
+                            .downcast::<gtk4::Label>()
+                            .unwrap();
                         assert_eq!(title.text(), scene);
                         assert!(!title.uses_markup());
-                        for name in ["inventory-export".to_string(), format!("inventory-role-{scene}"), format!("inventory-options-{scene}")] {
+                        for name in [
+                            "inventory-export".to_string(),
+                            format!("inventory-role-{scene}"),
+                            format!("inventory-options-{scene}"),
+                        ] {
                             let widget = find(&page, &name).unwrap();
                             assert!(widget.grab_focus(), "{name} not keyboard reachable");
                             refresh();
                             pump(Duration::from_millis(100));
                             let target = find(&page, &name).unwrap();
                             let focus = gtk4::prelude::RootExt::focus(&window).unwrap();
-                            assert!(focus == target || focus.is_ancestor(&target), "refresh lost {name}");
+                            assert!(
+                                focus == target || focus.is_ancestor(&target),
+                                "refresh lost {name}"
+                            );
                         }
-                        assert_eq!(serde_json::to_value(&nav.state.borrow().config).unwrap(), saved);
+                        assert_eq!(
+                            serde_json::to_value(&nav.state.borrow().config).unwrap(),
+                            saved
+                        );
                         // Capture the top of the list rather than the focused bottom row.
                         gtk4::prelude::GtkWindowExt::set_focus(&window, gtk4::Widget::NONE);
-                        find(&page, "inventory-scroll").unwrap().downcast::<gtk4::ScrolledWindow>().unwrap().vadjustment().set_value(0.0);
+                        find(&page, "inventory-scroll")
+                            .unwrap()
+                            .downcast::<gtk4::ScrolledWindow>()
+                            .unwrap()
+                            .vadjustment()
+                            .set_value(0.0);
                         pump(Duration::from_millis(80));
                         capture(&window, &format!("inventory-{locale}-{width}"));
                         window.set_child(gtk4::Widget::NONE);
                         window.destroy();
-                        gtk4::style_context_remove_provider_for_display(&gtk4::prelude::WidgetExt::display(&window), &provider);
+                        gtk4::style_context_remove_provider_for_display(
+                            &gtk4::prelude::WidgetExt::display(&window),
+                            &provider,
+                        );
                         drop(refresh);
                         stack.remove(&page);
                         drop(page);
@@ -2042,33 +2271,73 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display and isolated XDG paths"]
     fn native_inventory_keyboard_reorder_preserves_focus_and_admits_edits() {
-        crate::ui::test_support::native_test(
-            "ui::pages::inventory::tests::native_inventory_keyboard_reorder_preserves_focus_and_admits_edits",
+        crate::ui::native_test!(
+            native_inventory_keyboard_reorder_preserves_focus_and_admits_edits,
             || {
-                use adw::prelude::*;
                 use crate::domain::scene::Scene;
                 use crate::ui::test_support::{navigation, pump};
+                use adw::prelude::*;
                 use std::time::Duration;
                 let (nav, stack, _runtime, _events) = navigation();
-                nav.state.borrow_mut().scene_inventory.scenes = vec![Scene { uuid: None, id: "Intro".into() }, Scene { uuid: None, id: "Main".into() }];
+                nav.state.borrow_mut().scene_inventory.scenes = vec![
+                    Scene {
+                        uuid: None,
+                        id: "Intro".into(),
+                    },
+                    Scene {
+                        uuid: None,
+                        id: "Main".into(),
+                    },
+                ];
                 let (page, _refresh) = super::build(nav.clone());
                 stack.add_named(&page, Some("inventory"));
-                let window = gtk4::Window::builder().default_width(360).default_height(700).child(&stack).build();
+                let window = gtk4::Window::builder()
+                    .default_width(360)
+                    .default_height(700)
+                    .child(&stack)
+                    .build();
                 window.present();
                 pump(Duration::from_millis(100));
-                let role = find(&page, "inventory-role-Main").unwrap().downcast::<gtk4::DropDown>().unwrap();
+                let role = find(&page, "inventory-role-Main")
+                    .unwrap()
+                    .downcast::<gtk4::DropDown>()
+                    .unwrap();
                 role.set_selected(super::role_row(Some(SceneRole::Primary)));
-                assert_eq!(nav.state.borrow().registry.scenes["Main"].role, Some(SceneRole::Primary));
-                let description = find(&page, "inventory-description-Main").unwrap().downcast::<gtk4::Label>().unwrap();
-                assert_eq!(description.text().as_str(), SceneRole::Primary.description());
-                let options = find(&page, "inventory-options-Main").unwrap().downcast::<gtk4::MenuButton>().unwrap();
+                assert_eq!(
+                    nav.state.borrow().registry.scenes["Main"].role,
+                    Some(SceneRole::Primary)
+                );
+                let description = find(&page, "inventory-description-Main")
+                    .unwrap()
+                    .downcast::<gtk4::Label>()
+                    .unwrap();
+                assert_eq!(
+                    description.text().as_str(),
+                    SceneRole::Primary.description()
+                );
+                let options = find(&page, "inventory-options-Main")
+                    .unwrap()
+                    .downcast::<gtk4::MenuButton>()
+                    .unwrap();
                 options.popup();
                 pump(Duration::from_millis(80));
-                let up = find(options.popover().unwrap().upcast_ref(), "inventory-move-up-Main").unwrap().downcast::<gtk4::Button>().unwrap();
+                let up = find(
+                    options.popover().unwrap().upcast_ref(),
+                    "inventory-move-up-Main",
+                )
+                .unwrap()
+                .downcast::<gtk4::Button>()
+                .unwrap();
                 assert!(up.grab_focus());
                 up.emit_clicked();
                 // Acceptance is synchronous, before any idle rebuild or disk publication.
-                assert_eq!(nav.state.borrow().registry.ordered_scene_ids(["Intro", "Main"]), ["Main", "Intro"]);
+                assert_eq!(
+                    nav.state
+                        .borrow()
+                        .registry
+                        .ordered_scene_ids(["Intro", "Main"]),
+                    ["Main", "Intro"]
+                );
                 drop(up);
                 drop(options);
                 drop(role);

@@ -640,8 +640,8 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable native GTK display"]
     fn native_explicit_theme_modes_style_controls_and_release_the_system_override() {
-        crate::ui::test_support::native_test(
-            "ui::theme::tests::native_explicit_theme_modes_style_controls_and_release_the_system_override",
+        crate::ui::native_test!(
+            native_explicit_theme_modes_style_controls_and_release_the_system_override,
             || {
                 use crate::domain::appearance::{ThemeMode, ThemePreference};
 
@@ -665,8 +665,12 @@ mod tests {
                     );
                     match mode {
                         ThemeMode::Dark => assert!(style.is_dark(), "native controls stayed light"),
-                        ThemeMode::Light => assert!(!style.is_dark(), "native controls stayed dark"),
-                        ThemeMode::System => assert_eq!(style.color_scheme(), adw::ColorScheme::Default),
+                        ThemeMode::Light => {
+                            assert!(!style.is_dark(), "native controls stayed dark")
+                        }
+                        ThemeMode::System => {
+                            assert_eq!(style.color_scheme(), adw::ColorScheme::Default)
+                        }
                     }
                 }
             },

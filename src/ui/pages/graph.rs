@@ -795,8 +795,8 @@ mod tests {
     #[test]
     #[ignore = "requires a native GTK display"]
     fn native_graph_distinguishes_missing_empty_failed_and_reset_topology() {
-        crate::ui::test_support::native_test(
-            "ui::pages::graph::tests::native_graph_distinguishes_missing_empty_failed_and_reset_topology",
+        crate::ui::native_test!(
+            native_graph_distinguishes_missing_empty_failed_and_reset_topology,
             || {
                 let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
                 let container = GtkBox::new(Orientation::Vertical, 0);
@@ -805,7 +805,9 @@ mod tests {
                 assert!(page_text(container.upcast_ref()).contains("Scene topology not observed"));
                 assert!(!page_text(container.upcast_ref()).contains("No nested scene dependencies"));
                 nav.state.borrow_mut().scene_inventory = inventory([]);
-                nav.state.borrow_mut().set_topology_ready(SceneGraph::default());
+                nav.state
+                    .borrow_mut()
+                    .set_topology_ready(SceneGraph::default());
                 crate::ui::clear_children(&container);
                 populate(&container, &nav);
                 assert!(page_text(container.upcast_ref()).contains("No scenes observed"));
@@ -817,7 +819,9 @@ mod tests {
                 crate::ui::clear_children(&container);
                 populate(&container, &nav);
                 assert!(page_text(container.upcast_ref()).contains("Scene Dependencies"));
-                nav.state.borrow_mut().set_topology_failed("Group <b>& read failed".into());
+                nav.state
+                    .borrow_mut()
+                    .set_topology_failed("Group <b>& read failed".into());
                 crate::ui::clear_children(&container);
                 populate(&container, &nav);
                 let text = page_text(container.upcast_ref());
@@ -828,7 +832,9 @@ mod tests {
                 crate::ui::clear_children(&container);
                 populate(&container, &nav);
                 assert!(page_text(container.upcast_ref()).contains("Reading scene topology"));
-                nav.state.borrow_mut().set_topology_ready(SceneGraph::default());
+                nav.state
+                    .borrow_mut()
+                    .set_topology_ready(SceneGraph::default());
                 crate::ui::clear_children(&container);
                 populate(&container, &nav);
                 assert!(page_text(container.upcast_ref()).contains("Scene Dependencies"));
@@ -836,7 +842,9 @@ mod tests {
                 crate::ui::clear_children(&container);
                 populate(&container, &nav);
                 assert!(page_text(container.upcast_ref()).contains("Scene topology not observed"));
-                nav.state.borrow_mut().reset_obs_session(ObsStatus::Disconnected);
+                nav.state
+                    .borrow_mut()
+                    .reset_obs_session(ObsStatus::Disconnected);
                 crate::ui::clear_children(&container);
                 populate(&container, &nav);
                 assert!(page_text(container.upcast_ref()).contains("Scene topology not observed"));
@@ -860,28 +868,25 @@ mod tests {
     #[test]
     #[ignore = "requires a native GTK display"]
     fn native_graph_gesture_releases_its_canvas_and_model() {
-        crate::ui::test_support::native_test(
-            "ui::pages::graph::tests::native_graph_gesture_releases_its_canvas_and_model",
-            || {
-                let model = Rc::new(RefCell::new(GraphModel::build(
-                    &SceneGraph::default(),
-                    &inventory(["Main"]),
-                    &registry([]),
-                )));
-                let weak_model = Rc::downgrade(&model);
-                let canvas = DrawingArea::new();
-                canvas.set_draw_func({
-                    let model = model.clone();
-                    move |_, ctx, width, height| draw_canvas(ctx, width, height, &model.borrow())
-                });
-                install_drag_controller(&canvas, &model);
-                let weak_canvas = canvas.downgrade();
-                drop(model);
-                drop(canvas);
-                assert!(weak_canvas.upgrade().is_none());
-                assert!(weak_model.upgrade().is_none());
-            },
-        );
+        crate::ui::native_test!(native_graph_gesture_releases_its_canvas_and_model, || {
+            let model = Rc::new(RefCell::new(GraphModel::build(
+                &SceneGraph::default(),
+                &inventory(["Main"]),
+                &registry([]),
+            )));
+            let weak_model = Rc::downgrade(&model);
+            let canvas = DrawingArea::new();
+            canvas.set_draw_func({
+                let model = model.clone();
+                move |_, ctx, width, height| draw_canvas(ctx, width, height, &model.borrow())
+            });
+            install_drag_controller(&canvas, &model);
+            let weak_canvas = canvas.downgrade();
+            drop(model);
+            drop(canvas);
+            assert!(weak_canvas.upgrade().is_none());
+            assert!(weak_model.upgrade().is_none());
+        },);
     }
 
     #[test]
