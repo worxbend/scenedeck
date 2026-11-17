@@ -6,7 +6,7 @@ import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 
-EXPIRES = datetime(2026, 11, 20, tzinfo=timezone.utc)
+EXPIRES = datetime(2026, 12, 20, tzinfo=timezone.utc)
 REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
 # These checksums pin the published manifests, including both proc-macro declarations.
 REVIEWED = {
@@ -59,14 +59,14 @@ def validate(deny, lock, exception, now):
     if now.utcoffset() is None:
         raise ValueError("the policy clock must be timezone-aware (UTC)")
     if now >= EXPIRES:
-        raise ValueError("RUSTSEC-2026-0374 exception expired at 2026-11-20 00:00:00 UTC")
+        raise ValueError("RUSTSEC-2026-0374 exception expired at 2026-12-20 00:00:00 UTC")
     fields = {"id", "owner", "reason", "expires"}
     if set(exception) != fields or any(
         not isinstance(exception[field], str) or not exception[field].strip() for field in fields
     ):
         raise ValueError("approval must contain a nonempty id, owner, reason and expiry")
-    if exception["id"] != "RUSTSEC-2026-0374" or exception["expires"] != "2026-11-20":
-        raise ValueError("approval is only for RUSTSEC-2026-0374 until 2026-11-20 UTC")
+    if exception["id"] != "RUSTSEC-2026-0374" or exception["expires"] != "2026-12-20":
+        raise ValueError("approval is only for RUSTSEC-2026-0374 until 2026-12-20 UTC")
     reason = (f"{exception['reason']} Owner: {exception['owner']}. "
               f"Expires: {exception['expires']} 00:00:00 UTC.")
     if deny.get("advisories") != {
@@ -92,7 +92,7 @@ def main():
     except (OSError, ValueError) as error:
         print(f"advisory exception check failed: {error}", file=sys.stderr)
         return 1
-    print("RUSTSEC-2026-0374 exception valid until 2026-11-20 00:00:00 UTC")
+    print("RUSTSEC-2026-0374 exception valid until 2026-12-20 00:00:00 UTC")
     return 0
 
 

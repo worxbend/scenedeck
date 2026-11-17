@@ -24,7 +24,7 @@ class AdvisoryExceptions(unittest.TestCase):
             "id": ADVISORY,
             "owner": "SceneDeck maintainer",
             "reason": "Maintenance-only; published localization proc macros have no compatible fixed release.",
-            "expires": "2026-11-20",
+            "expires": "2026-12-20",
         }
         self.deny["advisories"] = {
             "version": 2,
@@ -32,7 +32,7 @@ class AdvisoryExceptions(unittest.TestCase):
             "unused-ignored-advisory": "deny",
             "ignore": [{"id": ADVISORY, "reason": self.deny_reason()}],
         }
-        self.before = datetime(2026, 11, 19, 23, 59, 59, tzinfo=timezone.utc)
+        self.before = datetime(2026, 12, 19, 23, 59, 59, tzinfo=timezone.utc)
 
     def deny_reason(self):
         return (f"{self.exception['reason']} Owner: {self.exception['owner']}. "
@@ -49,11 +49,12 @@ class AdvisoryExceptions(unittest.TestCase):
     def test_utc_expiry_boundary(self):
         checker = self.checker()
         for timestamp, expired in [
-            ("2026-11-19T23:59:59.999999+00:00", False),
-            ("2026-11-20T00:00:00+00:00", True),
-            ("2026-11-21T12:00:00+00:00", True),
-            ("2026-11-20T03:00:00+03:00", True),
-            ("2026-11-19T23:00:00-01:00", True),
+            ("2026-11-20T00:00:00+00:00", False),
+            ("2026-12-19T23:59:59.999999+00:00", False),
+            ("2026-12-20T00:00:00+00:00", True),
+            ("2026-12-21T12:00:00+00:00", True),
+            ("2026-12-20T03:00:00+03:00", True),
+            ("2026-12-19T23:00:00-01:00", True),
         ]:
             with self.subTest(timestamp=timestamp):
                 now = datetime.fromisoformat(timestamp)
@@ -77,8 +78,9 @@ class AdvisoryExceptions(unittest.TestCase):
                         checker.validate(self.deny, self.lock, exception, self.before)
         for changes in [
             {"id": "RUSTSEC-2026-9999"},
-            {"expires": "2026-11-21"},
-            {"expires": "2026-11-19"},
+            {"expires": "2026-11-20"},
+            {"expires": "2026-12-21"},
+            {"expires": "2026-12-19"},
             {"expires": "not-a-date"},
             {"expires": "2026-11-20T23:59:59Z"},
             {"extra": "another approval"},
@@ -218,7 +220,7 @@ class AdvisoryExceptions(unittest.TestCase):
         exception = tomllib.loads(record.read_text())
         self.assertEqual(exception["id"], ADVISORY)
         self.assertEqual(exception["owner"], "SceneDeck maintainer")
-        self.assertEqual(exception["expires"], "2026-11-20")
+        self.assertEqual(exception["expires"], "2026-12-20")
         self.checker().validate(tomllib.loads((ROOT / "deny.toml").read_text()), self.lock, exception, self.before)
 
     def test_cli_uses_actual_utc_clock_independent_of_working_directory(self):
@@ -233,7 +235,7 @@ class AdvisoryExceptions(unittest.TestCase):
         self.assertEqual(checked_at.utcoffset(), timezone.utc.utcoffset(checked_at))
         self.assertLessEqual(before, checked_at)
         self.assertLessEqual(checked_at, after)
-        expired = checked_at >= datetime(2026, 11, 20, tzinfo=timezone.utc)
+        expired = checked_at >= datetime(2026, 12, 20, tzinfo=timezone.utc)
         self.assertEqual(completed.returncode, int(expired), completed.stderr)
         self.assertIn("expired" if expired else "valid", completed.stderr if expired else completed.stdout)
 

@@ -1,14 +1,16 @@
 # Temporary advisory exception
 
 Only [RUSTSEC-2026-0374](https://rustsec.org/advisories/RUSTSEC-2026-0374.html)
-is accepted, owned by the **SceneDeck maintainer**, until **2026-11-20
+is accepted, owned by the **SceneDeck maintainer**, until **2026-12-20
 00:00:00 UTC** (exclusive). This is a temporary acceptance of an unmaintained
 build-time parser, not a vulnerability fix or a claim that the parser is safe.
 
 The 2026-10-20 review found no compatible published localization release that
-removes `basic-toml`. The replacement in
-[cargo-i18n PR #176](https://github.com/kellpossible/cargo-i18n/pull/176) was
-unreleased. The reviewed crates.io packages are:
+removes `basic-toml`. The 2026-11-15 re-check found the same graph: crates.io
+still serves `i18n-config` 0.4.8 (checksum unchanged), and
+[cargo-i18n PR #176](https://github.com/kellpossible/cargo-i18n/pull/176)
+merged on 2026-09-26 without a release. The ignore was not widened. The
+reviewed crates.io packages are:
 
 - `basic-toml 0.1.10`, used only by `i18n-config 0.4.8`.
 - `i18n-config 0.4.8`, used only by proc macros `i18n-embed-fl 0.10.1` and
