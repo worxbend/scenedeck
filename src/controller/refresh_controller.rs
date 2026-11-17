@@ -167,7 +167,7 @@ pub(crate) fn bitrate_kbps_since_last_sample(
     bytes: u64,
 ) -> Option<f64> {
     let now = Instant::now();
-    let mut sample = bitrate_sample.lock().ok()?;
+    let mut sample = crate::infra::sync::lock_or_recover(bitrate_sample.as_ref());
     let previous = *sample;
     *sample = Some((now, bytes));
 

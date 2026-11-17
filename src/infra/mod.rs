@@ -3,3 +3,4 @@
 pub(crate) mod error;
 pub(crate) mod i18n;
 pub(crate) mod logging;
+pub(crate) mod sync;

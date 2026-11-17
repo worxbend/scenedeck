@@ -393,7 +393,7 @@ impl AppController {
     /// The lock is taken and released here; the returned client is a cheap
     /// handle, so nothing holds the mutex across an await.
     fn connected_client(&self) -> Option<ObsClient> {
-        self.client_slot.lock().ok().and_then(|slot| slot.clone())
+        crate::infra::sync::lock_or_recover(self.client_slot.as_ref()).clone()
     }
 
     /// Run `f` against the connected client and spawn the future it builds.

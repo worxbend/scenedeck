@@ -11,7 +11,7 @@ impl WorkspaceController {
         self.preset_cancellation.fetch_add(1, Ordering::AcqRel);
     }
     pub(crate) fn preset(&mut self, plan: PresetPlan) {
-        let client = self.slot.lock().ok().and_then(|slot| slot.clone());
+        let client = crate::infra::sync::lock_or_recover(self.slot.as_ref()).clone();
         let tx = self.tx.scoped(&self.scope);
         let busy = self
             .preset_task

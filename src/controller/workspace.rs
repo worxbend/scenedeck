@@ -131,7 +131,7 @@ impl WorkspaceController {
         if scope.collection.is_empty() {
             return;
         }
-        let Some(client) = self.slot.lock().ok().and_then(|slot| slot.clone()) else {
+        let Some(client) = crate::infra::sync::lock_or_recover(self.slot.as_ref()).clone() else {
             return;
         };
         self.audio_tasks.retain(|task| !task.is_finished());
@@ -195,7 +195,7 @@ impl WorkspaceController {
         let Some(input) = request.input.clone() else {
             return;
         };
-        let Some(client) = self.slot.lock().ok().and_then(|slot| slot.clone()) else {
+        let Some(client) = crate::infra::sync::lock_or_recover(self.slot.as_ref()).clone() else {
             return;
         };
         let cancellation = self.cancellation.clone();
@@ -250,7 +250,7 @@ impl WorkspaceController {
             }
             queued.running = true;
         }
-        let client = self.slot.lock().ok().and_then(|slot| slot.clone());
+        let client = crate::infra::sync::lock_or_recover(self.slot.as_ref()).clone();
         let queued = self.queued.clone();
         let current_revision = self.revision.clone();
         let cancellation = self.cancellation.clone();

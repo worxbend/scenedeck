@@ -161,7 +161,7 @@ thread_local! {
 fn run_config_batch(slot: Arc<ConfigSlot>) {
     serial_queue(SerialLane::Config).enqueue(Box::new(move || loop {
         let work = {
-            let mut batch = slot.lock().expect("config snapshot lock");
+            let mut batch = crate::infra::sync::lock_or_recover(slot.as_ref());
             let Some(work) = batch.latest.take() else {
                 batch.running = false;
                 #[cfg(test)]
@@ -180,11 +180,11 @@ fn run_config_batch(slot: Arc<ConfigSlot>) {
             Ok(Ok(())) => {}
             Ok(Err(error)) => {
                 tracing::warn!(%error, "failed to save configuration");
-                slot.lock().expect("config snapshot lock").failed = true;
+                crate::infra::sync::lock_or_recover(slot.as_ref()).failed = true;
             }
             Err(_) => {
                 tracing::error!("config snapshot worker panicked");
-                slot.lock().expect("config snapshot lock").failed = true;
+                crate::infra::sync::lock_or_recover(slot.as_ref()).failed = true;
             }
         }
     }));
@@ -196,7 +196,7 @@ pub(crate) fn run_config_snapshot(work: impl FnOnce() -> std::io::Result<()> + S
     let slot = CONFIG_TAIL.with(|tail| tail.borrow().upgrade());
     if let Some(slot) = slot {
         let start_worker = {
-            let mut batch = slot.lock().expect("config snapshot lock");
+            let mut batch = crate::infra::sync::lock_or_recover(slot.as_ref());
             batch.latest = Some(Box::new(work));
             !std::mem::replace(&mut batch.running, true)
         };
@@ -218,7 +218,7 @@ pub(crate) fn run_config_snapshot(work: impl FnOnce() -> std::io::Result<()> + S
     let mut pending = Some(PendingJob::new());
     let publication = slot.clone();
     glib::timeout_add_local(Duration::from_millis(20), move || {
-        let batch = publication.lock().expect("config snapshot lock");
+        let batch = crate::infra::sync::lock_or_recover(publication.as_ref());
         if batch.running {
             return glib::ControlFlow::Continue;
         }

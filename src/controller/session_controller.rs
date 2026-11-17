@@ -237,9 +237,7 @@ impl SessionController {
     }
 
     fn clear_bitrate_sample(&self) {
-        if let Ok(mut sample) = self.bitrate_sample.lock() {
-            *sample = None;
-        }
+        *crate::infra::sync::lock_or_recover(self.bitrate_sample.as_ref()) = None;
     }
 }
 

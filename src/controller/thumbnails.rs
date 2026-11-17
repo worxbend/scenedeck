@@ -46,7 +46,7 @@ impl ThumbnailController {
         self.cancelled.store(true, Ordering::Relaxed);
     }
     pub(crate) fn request(&mut self, request: ThumbnailRequest) {
-        let client = self.slot.lock().ok().and_then(|slot| slot.clone());
+        let client = crate::infra::sync::lock_or_recover(self.slot.as_ref()).clone();
         if self.task.as_ref().is_some_and(|task| !task.is_finished()) {
             if self
                 .worker_client

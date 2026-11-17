@@ -172,34 +172,26 @@ impl OutputController {
 
     pub(crate) fn client(&self) -> Option<OutputCommandClient> {
         #[cfg(test)]
-        if let Some(client) = self
-            .client_override
-            .lock()
-            .ok()
-            .and_then(|slot| slot.clone())
+        if let Some(client) =
+            crate::infra::sync::lock_or_recover(self.client_override.as_ref()).clone()
         {
             return Some(client);
         }
 
-        self.client_slot
-            .lock()
-            .ok()
-            .and_then(|slot| slot.clone())
+        crate::infra::sync::lock_or_recover(self.client_slot.as_ref())
+            .clone()
             .map(OutputCommandClient::Obs)
     }
 
     pub(crate) fn clear_pending(&self) {
-        if let Ok(mut pending) = self.pending.lock() {
-            pending.stream = None;
-            pending.record = None;
-        }
+        let mut pending = crate::infra::sync::lock_or_recover(self.pending.as_ref());
+        pending.stream = None;
+        pending.record = None;
     }
 
     #[cfg(test)]
     pub(crate) fn set_client_override(&self, client: OutputCommandClient) {
-        if let Ok(mut slot) = self.client_override.lock() {
-            *slot = Some(client);
-        }
+        *crate::infra::sync::lock_or_recover(self.client_override.as_ref()) = Some(client);
     }
 }
 
@@ -416,7 +408,7 @@ impl OutputPending {
 }
 
 fn mark_pending(pending: &Arc<Mutex<OutputPending>>, kind: OutputKind) -> Option<u64> {
-    let mut pending = pending.lock().ok()?;
+    let mut pending = crate::infra::sync::lock_or_recover(pending.as_ref());
     if pending.slot(kind).is_some() {
         return None;
     }
@@ -430,11 +422,10 @@ fn mark_pending(pending: &Arc<Mutex<OutputPending>>, kind: OutputKind) -> Option
 }
 
 fn clear_pending(pending: &Arc<Mutex<OutputPending>>, kind: OutputKind, operation: u64) {
-    if let Ok(mut pending) = pending.lock() {
-        let slot = pending.slot(kind);
-        if *slot == Some(operation) {
-            *slot = None;
-        }
+    let mut pending = crate::infra::sync::lock_or_recover(pending.as_ref());
+    let slot = pending.slot(kind);
+    if *slot == Some(operation) {
+        *slot = None;
     }
 }
 
