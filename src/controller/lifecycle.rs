@@ -1,4 +1,27 @@
 //! Connection identity, command cancellation, and client-slot ownership.
+//!
+//! Poison policy. These critical sections assign whole values, so a poisoned
+//! lock is not a live bug. What a recovered value means still differs:
+//!
+//! - `owner`, `slot`, `tasks`, `terminal_reason` use
+//!   [`lock_or_recover`](crate::infra::sync::lock_or_recover). Each stores one
+//!   replaced value: a generation, a client handle, an abort list, or a reason.
+//! - `evidence` and `terminals.pending` keep `expect`. A journal entry or a
+//!   retirement record can be mid-update. Publishing that would report the
+//!   wrong command outcome, so those locks panic.
+//!
+//! Overflow still panics on purpose (`session generation exhausted`,
+//! `operation IDs exhausted`). That is not a lock failure.
+//!
+//! Lock order while one guard is still held:
+//!
+//! - `owner` then `slot` (`next`, `install`, `retire`)
+//! - `tasks` then `owner` (`spawn_reserved` calls `is_active`)
+//! - `evidence` then `owner` (`operation` calls `is_active`)
+//! - `evidence` then `terminals.pending` (`finish_evidence`)
+//!
+//! `terminal_reason` is dropped before `evidence`. `retire` finishes evidence
+//! before it locks `tasks`, then locks `owner`.
 
 use std::collections::VecDeque;
 use std::future::Future;
@@ -8,6 +31,7 @@ use tokio::runtime::Handle;
 use tokio::sync::Notify;
 use tokio::task::{AbortHandle, JoinHandle};
 
+use crate::infra::sync::lock_or_recover;
 use crate::obs::client::ObsClient;
 
 #[derive(Clone)]
@@ -147,9 +171,9 @@ impl SessionScope {
 
     pub(crate) fn next(&self) -> Self {
         let generation = {
-            let mut owner = self.owner.lock().expect("session ownership");
+            let mut owner = lock_or_recover(self.owner.as_ref());
             *owner = owner.checked_add(1).expect("session generation exhausted");
-            *self.slot.lock().expect("OBS client slot") = None;
+            *lock_or_recover(self.slot.as_ref()) = None;
             *owner
         };
         self.retire();
@@ -211,7 +235,7 @@ impl SessionScope {
     }
 
     pub(crate) fn owns_generation(&self, generation: u64) -> bool {
-        *self.owner.lock().expect("session ownership") == generation
+        *lock_or_recover(self.owner.as_ref()) == generation
     }
 
     pub(crate) fn is_current(&self) -> bool {
@@ -223,11 +247,11 @@ impl SessionScope {
     }
 
     pub(crate) fn install(&self, client: ObsClient) -> bool {
-        let owner = self.owner.lock().expect("session ownership");
+        let owner = lock_or_recover(self.owner.as_ref());
         if *owner != self.generation || !self.active.load(Ordering::Acquire) {
             return false;
         }
-        *self.slot.lock().expect("OBS client slot") = Some(client);
+        *lock_or_recover(self.slot.as_ref()) = Some(client);
         true
     }
 
@@ -236,27 +260,21 @@ impl SessionScope {
             self.finish_evidence();
         }
         self.cancelled.notify_waiters();
-        for task in self.tasks.lock().expect("session tasks").iter() {
+        for task in lock_or_recover(self.tasks.as_ref()).iter() {
             task.abort();
         }
-        let owner = self.owner.lock().expect("session ownership");
+        let owner = lock_or_recover(self.owner.as_ref());
         if *owner == self.generation {
-            *self.slot.lock().expect("OBS client slot") = None;
+            *lock_or_recover(self.slot.as_ref()) = None;
         }
     }
 
     pub(crate) fn set_terminal_reason(&self, reason: String) {
-        self.terminal_reason
-            .lock()
-            .expect("session terminal reason")
-            .get_or_insert(reason);
+        lock_or_recover(self.terminal_reason.as_ref()).get_or_insert(reason);
     }
 
     pub(crate) fn has_terminal_reason(&self) -> bool {
-        self.terminal_reason
-            .lock()
-            .expect("session terminal reason")
-            .is_some()
+        lock_or_recover(self.terminal_reason.as_ref()).is_some()
     }
 
     pub(crate) fn operation(
@@ -295,11 +313,7 @@ impl SessionScope {
     }
 
     fn finish_evidence(&self) {
-        let reason = self
-            .terminal_reason
-            .lock()
-            .expect("session terminal reason")
-            .clone();
+        let reason = lock_or_recover(self.terminal_reason.as_ref()).clone();
         let mut journal = self.evidence.lock().expect("operation evidence");
         if journal.entries.is_empty() && reason.is_none() {
             return;
@@ -381,10 +395,7 @@ impl SessionScope {
     }
 
     pub(crate) async fn quiesce(&self) {
-        while self
-            .tasks
-            .lock()
-            .expect("session tasks")
+        while lock_or_recover(self.tasks.as_ref())
             .iter()
             .any(|task| !task.is_finished())
         {
@@ -397,7 +408,7 @@ impl SessionScope {
         F: Future<Output = ()> + Send + 'static,
     {
         {
-            let mut tasks = self.tasks.lock().expect("session tasks");
+            let mut tasks = lock_or_recover(self.tasks.as_ref());
             tasks.retain(|task| !task.is_finished());
             if tasks.len() >= 64 {
                 tracing::warn!("session command admission refused (busy)");
@@ -413,7 +424,7 @@ impl SessionScope {
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        let mut tasks = self.tasks.lock().expect("session tasks");
+        let mut tasks = lock_or_recover(self.tasks.as_ref());
         tasks.retain(|task| !task.is_finished());
         if !self.is_active() {
             return None;
@@ -479,6 +490,40 @@ mod tests {
             .unwrap();
         scope.retire();
         scope.quiesce().await;
+    }
+
+    #[test]
+    fn poisoned_evidence_still_answers_scope_queries() {
+        let scope = SessionScope::initial(Arc::new(Mutex::new(None)));
+        let evidence = Arc::clone(&scope.evidence);
+        let worker = std::thread::spawn(move || {
+            let _guard = evidence.lock().expect("lock before poison");
+            panic!("poison evidence");
+        });
+        assert!(worker.join().is_err());
+        assert!(scope.evidence.is_poisoned());
+        // `AppController::accepts_scope` reads only these three.
+        assert!(scope.is_active());
+        assert!(scope.owns_generation(scope.generation()));
+        assert_eq!(scope.collection(), 0);
+        let evidence_still_panics = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = scope.evidence.lock().expect("operation evidence");
+        }));
+        assert!(evidence_still_panics.is_err());
+    }
+
+    #[test]
+    fn poisoned_owner_still_answers_scope_queries() {
+        let scope = SessionScope::initial(Arc::new(Mutex::new(None)));
+        let owner = Arc::clone(&scope.owner);
+        let worker = std::thread::spawn(move || {
+            let _guard = owner.lock().expect("lock before poison");
+            panic!("poison owner");
+        });
+        assert!(worker.join().is_err());
+        assert!(scope.is_active());
+        assert!(scope.owns_generation(scope.generation()));
+        assert!(!scope.owner.is_poisoned());
     }
 
     #[tokio::test]
