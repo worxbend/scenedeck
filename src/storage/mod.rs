@@ -10,3 +10,6 @@ pub(crate) mod secret;
 pub(crate) mod show_workspaces;
 pub(crate) mod small_file;
 pub(crate) mod xdg;
+
+#[cfg(test)]
+mod golden;

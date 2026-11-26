@@ -1,0 +1,94 @@
+{
+  "session_history": {
+    "enabled": true,
+    "retain_sessions": 4
+  },
+  "version": 5,
+  "obs": {
+    "host": "obs.example",
+    "port": 4456
+  },
+  "connection_id": "show",
+  "connections": [
+    {
+      "id": "show",
+      "name": "Show",
+      "obs": {
+        "host": "obs.example",
+        "port": 4456
+      }
+    }
+  ],
+  "preflight_plans": [
+    {
+      "connection": "show",
+      "endpoint": "obs.example:4456",
+      "plan": {
+        "expected_collection": "Show",
+        "required_scenes": [
+          {
+            "name": "Intro",
+            "uuid": "scene-1"
+          }
+        ],
+        "check_microphone": false,
+        "microphone": {
+          "name": "Mic",
+          "uuid": "input-1"
+        },
+        "minimum_disk_mib": 2048,
+        "manual_items": [
+          "lights"
+        ],
+        "review_before_output": true
+      }
+    }
+  ],
+  "legacy_registry_endpoint": "obs.example:4456",
+  "live": {
+    "scene_previews": true,
+    "show_roles": [
+      "primary",
+      "secondary"
+    ],
+    "audio_inputs": [
+      "Mic"
+    ],
+    "allow_switching_only": [
+      "primary"
+    ]
+  },
+  "outputs": {
+    "confirm_start_stream": true,
+    "confirm_stop_stream": false,
+    "confirm_start_recording": true,
+    "confirm_stop_recording": false
+  },
+  "appearance": {
+    "mode": "dark",
+    "theme": "night",
+    "ui_density": "compact",
+    "motion": "reduced",
+    "custom_css": {
+      "enabled": true,
+      "light_path": "/tmp/scenedeck-light.css",
+      "dark_path": "/tmp/scenedeck-dark.css"
+    }
+  },
+  "language": "de-ch",
+  "mixer": {
+    "mode": "pinned",
+    "selected_scene": "Intro",
+    "pinned_scene": "Break",
+    "grouping": "scene_path"
+  },
+  "hotkeys": {
+    "enabled": false,
+    "style": "leader",
+    "leader": "comma",
+    "leader_timeout_ms": 800
+  },
+  "onboarding": {
+    "welcome_shown": true
+  }
+}

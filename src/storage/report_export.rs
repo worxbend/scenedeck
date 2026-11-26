@@ -231,4 +231,11 @@ mod tests {
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
         std::fs::remove_dir_all(dir).unwrap();
     }
+
+    #[test]
+    fn report_export_fixture_round_trips() {
+        crate::storage::golden::json_round_trip::<crate::domain::session_report::ReportDocument>(
+            include_str!("fixtures/report-export.json"),
+        );
+    }
 }

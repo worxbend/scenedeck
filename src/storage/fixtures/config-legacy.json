@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "theme_mode": "dark",
+  "appearance": {
+    "custom_css": {
+      "enabled": true,
+      "path": "/tmp/scenedeck.css"
+    }
+  }
+}

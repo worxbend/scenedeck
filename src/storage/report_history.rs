@@ -258,4 +258,14 @@ mod tests {
         write(&path, &archive, &archive).unwrap();
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
+
+    #[test]
+    fn session_report_fixture_round_trips() {
+        let fixture = include_str!("fixtures/session-report.json");
+        crate::storage::golden::json_round_trip::<HistoryArchive>(fixture);
+        serde_json::from_str::<HistoryArchive>(fixture)
+            .unwrap()
+            .validate()
+            .unwrap();
+    }
 }

@@ -768,4 +768,50 @@ mod tests {
         // It is an existing config, so it is not a first run.
         assert!(config.onboarding.welcome_shown);
     }
+
+    #[test]
+    fn current_config_fixture_round_trips() {
+        let fixture = include_str!("fixtures/config.json");
+        crate::storage::golden::json_round_trip::<AppConfig>(fixture);
+        let config: AppConfig = serde_json::from_str(fixture).unwrap();
+        assert_eq!(config.version, CURRENT_VERSION);
+    }
+
+    #[test]
+    fn legacy_config_fixture_migrates_theme_mode_and_custom_css_path() {
+        // These keys are `skip_serializing` and rewritten by migration, so the
+        // fixture must not byte-match the current serializer.
+        let fixture = include_str!("fixtures/config-legacy.json");
+        let original: serde_json::Value = serde_json::from_str(fixture).unwrap();
+        assert_eq!(original["theme_mode"], "dark");
+        assert_eq!(
+            original["appearance"]["custom_css"]["path"],
+            "/tmp/scenedeck.css"
+        );
+
+        let (config, persisted) = load_from_temp_file(fixture);
+        let saved: serde_json::Value = serde_json::from_str(&persisted).unwrap();
+        assert_eq!(config.version, CURRENT_VERSION);
+        assert_eq!(config.appearance.mode, ThemeMode::Dark);
+        assert_eq!(
+            config.appearance.custom_css.light_path.as_deref(),
+            Some(std::path::Path::new("/tmp/scenedeck.css"))
+        );
+        assert_eq!(
+            config.appearance.custom_css.dark_path.as_deref(),
+            Some(std::path::Path::new("/tmp/scenedeck.css"))
+        );
+        assert!(saved.get("theme_mode").is_none());
+        assert!(saved["appearance"]["custom_css"].get("path").is_none());
+        assert_eq!(saved["appearance"]["mode"], "dark");
+        assert_eq!(
+            saved["appearance"]["custom_css"]["light_path"],
+            "/tmp/scenedeck.css"
+        );
+        assert_eq!(
+            saved["appearance"]["custom_css"]["dark_path"],
+            "/tmp/scenedeck.css"
+        );
+        assert_eq!(saved["onboarding"]["welcome_shown"], true);
+    }
 }

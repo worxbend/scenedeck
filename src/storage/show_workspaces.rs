@@ -303,4 +303,11 @@ mod tests {
         );
         std::fs::remove_dir_all(dir).unwrap();
     }
+
+    #[test]
+    fn show_workspace_fixture_round_trips() {
+        let fixture = include_str!("fixtures/show-workspaces.json");
+        crate::storage::golden::json_round_trip::<WorkspaceStore>(fixture);
+        validate(&serde_json::from_str(fixture).unwrap()).unwrap();
+    }
 }

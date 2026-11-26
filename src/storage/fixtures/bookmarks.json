@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "next_id": 4,
+  "next_session": 2,
+  "entries": [
+    {
+      "id": 1,
+      "name": "Opening",
+      "created_unix_ms": 1700000001000,
+      "session_id": 1,
+      "session_started_unix_ms": 1700000000000,
+      "session_elapsed_ms": 1000,
+      "connection_id": "show",
+      "endpoint": "obs.example:4456",
+      "collection": "Show",
+      "scene": "Intro",
+      "recording": {
+        "kind": "observed",
+        "duration_ms": 1500,
+        "paused": true,
+        "age_ms": 40
+      }
+    },
+    {
+      "id": 2,
+      "name": "Holding",
+      "created_unix_ms": 1700000001000,
+      "session_id": 1,
+      "session_started_unix_ms": 1700000000000,
+      "session_elapsed_ms": 1000,
+      "connection_id": "show",
+      "endpoint": "obs.example:4456",
+      "collection": "Show",
+      "scene": "Intro",
+      "recording": {
+        "kind": "inactive"
+      }
+    },
+    {
+      "id": 3,
+      "name": "No clock",
+      "created_unix_ms": 1700000001000,
+      "session_id": 1,
+      "session_started_unix_ms": 1700000000000,
+      "session_elapsed_ms": 1000,
+      "connection_id": "show",
+      "endpoint": "obs.example:4456",
+      "collection": "Show",
+      "scene": "Intro",
+      "recording": {
+        "kind": "unavailable"
+      }
+    }
+  ]
+}

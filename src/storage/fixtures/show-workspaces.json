@@ -1,0 +1,207 @@
+{
+  "version": 1,
+  "legacy_owner": {
+    "connection": "show",
+    "endpoint": "obs.example:4456",
+    "collection": "Show"
+  },
+  "entries": [
+    {
+      "key": {
+        "connection": "show",
+        "endpoint": "obs.example:4456",
+        "collection": "Interview"
+      },
+      "registry": {
+        "scenes": {
+          "Intro": {
+            "role": "primary",
+            "tags": [
+              "live"
+            ],
+            "favorite": true,
+            "protected": true,
+            "accent_color": "#336699",
+            "icon": "camera"
+          }
+        },
+        "scene_uuids": {
+          "Intro": "scene-1"
+        },
+        "retained_scenes": [
+          {
+            "name": "Old Intro",
+            "uuid": "scene-1",
+            "entry": {
+              "role": "primary",
+              "tags": [
+                "live"
+              ],
+              "favorite": true,
+              "protected": true,
+              "accent_color": "#336699",
+              "icon": "camera"
+            },
+            "order": 2
+          }
+        ],
+        "scene_order": [
+          "Intro"
+        ],
+        "scene_filter": {
+          "query": "podcast",
+          "favorites_only": true
+        },
+        "decks": {
+          "Interview": {
+            "query": "guest",
+            "favorites_only": true
+          }
+        },
+        "action_bindings": [
+          {
+            "shortcut": {
+              "key": "F8",
+              "modifiers": {
+                "ctrl": true,
+                "alt": false,
+                "shift": false,
+                "logo": false
+              }
+            },
+            "action": {
+              "action": "save-replay"
+            },
+            "enabled": true
+          }
+        ],
+        "quick_actions": [
+          {
+            "action": {
+              "action": "scene",
+              "target": {
+                "name": "Intro",
+                "uuid": "scene-1"
+              }
+            },
+            "enabled": true
+          },
+          {
+            "action": {
+              "action": "open-source",
+              "target": {
+                "name": "Camera",
+                "uuid": "source-1"
+              }
+            },
+            "enabled": true
+          },
+          {
+            "action": {
+              "action": "set-muted",
+              "target": {
+                "name": "Mic",
+                "uuid": "input-1"
+              },
+              "muted": true
+            },
+            "enabled": true
+          },
+          {
+            "action": {
+              "action": "toggle-muted",
+              "target": {
+                "name": "Music",
+                "uuid": "input-2"
+              }
+            },
+            "enabled": true
+          },
+          {
+            "action": {
+              "action": "save-replay"
+            },
+            "enabled": true
+          },
+          {
+            "action": {
+              "action": "restart-media",
+              "target": {
+                "name": "Intro",
+                "uuid": "media-1"
+              }
+            },
+            "enabled": true
+          },
+          {
+            "action": {
+              "action": "set-filter-enabled",
+              "target": {
+                "name": "Camera",
+                "uuid": "source-1"
+              },
+              "filter": "Color",
+              "enabled": true
+            },
+            "enabled": true
+          },
+          {
+            "action": {
+              "action": "toggle-filter",
+              "target": {
+                "name": "Camera",
+                "uuid": "source-1"
+              },
+              "filter": "Crop"
+            },
+            "enabled": true
+          }
+        ],
+        "audio_alerts": [
+          {
+            "target": {
+              "name": "Mic",
+              "uuid": "input-1"
+            },
+            "enabled": true,
+            "silence": true,
+            "clipping": true
+          }
+        ],
+        "audio_presets": {
+          "Show": {
+            "inputs": [
+              {
+                "target": {
+                  "name": "Mic",
+                  "uuid": "input-1"
+                },
+                "muted": true,
+                "gain": 0.5
+              }
+            ]
+          }
+        },
+        "inputs": {
+          "Mic": {
+            "icon": "microphone"
+          }
+        },
+        "rules": {
+          "primary_can_depend_on": [
+            "module"
+          ],
+          "module_can_depend_on": [
+            "raw"
+          ],
+          "forbidden_edges": [
+            [
+              "primary",
+              "debug"
+            ]
+          ]
+        }
+      }
+    }
+  ]
+}

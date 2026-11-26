@@ -115,4 +115,14 @@ mod tests {
         assert!(write(&path, &BookmarkArchive::default()).is_err());
         std::fs::remove_dir_all(dir).unwrap();
     }
+
+    #[test]
+    fn bookmark_fixture_round_trips() {
+        let fixture = include_str!("fixtures/bookmarks.json");
+        crate::storage::golden::json_round_trip::<BookmarkArchive>(fixture);
+        serde_json::from_str::<BookmarkArchive>(fixture)
+            .unwrap()
+            .validate()
+            .unwrap();
+    }
 }

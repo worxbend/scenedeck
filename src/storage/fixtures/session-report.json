@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "version": 1,
+      "id": "1700000000000-1",
+      "session_id": 1,
+      "connection_id": "show",
+      "connection_name": "Show",
+      "endpoint": "obs.example:4456",
+      "started_unix_ms": 1700000000000,
+      "ended_unix_ms": 1700000002000,
+      "interrupted": true,
+      "collection": "Show",
+      "events": [
+        {
+          "timestamp_unix_ms": 1000,
+          "collection": "Show",
+          "event": {
+            "type": "activity",
+            "data": {
+              "timestamp_unix_ms": 1000,
+              "origin": "observed",
+              "description": "scene changed"
+            }
+          }
+        },
+        {
+          "timestamp_unix_ms": 1100,
+          "collection": "Show",
+          "event": {
+            "type": "output",
+            "data": {
+              "id": 1,
+              "kind": "replay_save",
+              "scope": {
+                "endpoint": "obs.example:4456",
+                "collection": "Show"
+              },
+              "status": "observed",
+              "requested_unix_ms": 1000,
+              "updated_unix_ms": 1100,
+              "path": "/tmp/replay.mkv",
+              "detail": "saved"
+            }
+          }
+        },
+        {
+          "timestamp_unix_ms": 1200,
+          "collection": "Show",
+          "event": {
+            "type": "output_acknowledged",
+            "data": {
+              "kind": "record"
+            }
+          }
+        },
+        {
+          "timestamp_unix_ms": 1300,
+          "collection": "Show",
+          "event": {
+            "type": "scene",
+            "data": {
+              "collection": "Show",
+              "scene": "Intro"
+            }
+          }
+        },
+        {
+          "timestamp_unix_ms": 1400,
+          "collection": "Show",
+          "event": {
+            "type": "health",
+            "data": {
+              "kind": "silence",
+              "input": "Mic",
+              "phase": "active"
+            }
+          }
+        },
+        {
+          "timestamp_unix_ms": 1500,
+          "collection": "Show",
+          "event": {
+            "type": "ended",
+            "data": {
+              "reason": "operator"
+            }
+          }
+        }
+      ],
+      "omitted_events": 2,
+      "activity_gaps": 1,
+      "samples": [
+        {
+          "timestamp_unix_ms": 1600,
+          "cpu_percent": 12.5,
+          "fps": 60.0,
+          "render_ms": 4.25,
+          "free_disk_mib": 2048.0,
+          "bitrate_kbps": 6000.0,
+          "render_skipped_frames": 1,
+          "output_skipped_frames": 2,
+          "stream_skipped_frames": 3
+        }
+      ],
+      "samples_seen": 1,
+      "omitted_samples": 0,
+      "peak_cpu_percent": 12.5,
+      "minimum_fps": 60.0,
+      "bookmark_ids": [
+        1
+      ]
+    }
+  ]
+}
