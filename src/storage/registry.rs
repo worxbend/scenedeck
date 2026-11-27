@@ -16,9 +16,16 @@ use thiserror::Error;
 
 use crate::domain::registry::{GraphDependencyPolicy, SceneMetadata, SceneRegistrySnapshot};
 use crate::domain::role::SceneRole;
-use crate::storage::xdg;
+use crate::storage::{schema_version, xdg};
+
+/// Schema version of `registry.json`. A file from before the field existed
+/// has no `version` and reads as this version.
+const REGISTRY_FILE_VERSION: u32 = 1;
 
 /// Root `registry.json` payload.
+///
+/// The file adds `version` (see `RegistryFile`); show-workspace entries and
+/// YAML exports serialize this type as it is.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SceneRegistry {
     /// Per-scene metadata keyed by OBS scene name.
@@ -69,6 +76,14 @@ pub struct SceneRegistry {
     /// Graph validation rules stored as role keys for human-editable files.
     #[serde(default)]
     pub rules: RuleConfig,
+}
+
+/// `registry.json` as written: the schema version, then the registry.
+#[derive(Serialize)]
+struct RegistryFile<'a> {
+    version: u32,
+    #[serde(flatten)]
+    registry: &'a SceneRegistry,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -602,21 +617,36 @@ pub fn try_read_registry() -> Result<SceneRegistry, RegistryStorageError> {
 }
 
 /// Read registry JSON from an explicit path.
+///
+/// A file from a newer build reads as far as this build understands it;
+/// `write_registry_to_path` refuses to replace it.
 pub fn read_registry_from_path(path: &Path) -> Result<SceneRegistry, RegistryStorageError> {
+    match read_registry_text(path)? {
+        Some(raw) => parse_registry(path, &raw),
+        None => Ok(SceneRegistry::default()),
+    }
+}
+
+/// The text of the registry file, or `None` when there is no file yet.
+fn read_registry_text(path: &Path) -> Result<Option<String>, RegistryStorageError> {
     match crate::storage::small_file::read_to_string(
         path,
         crate::storage::small_file::REGISTRY_LIMIT,
     ) {
-        Ok(raw) => serde_json::from_str(&raw).map_err(|source| RegistryStorageError::Parse {
-            path: path.to_path_buf(),
-            source,
-        }),
-        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(SceneRegistry::default()),
+        Ok(raw) => Ok(Some(raw)),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(source) => Err(RegistryStorageError::Read {
             path: path.to_path_buf(),
             source,
         }),
     }
+}
+
+fn parse_registry(path: &Path, raw: &str) -> Result<SceneRegistry, RegistryStorageError> {
+    serde_json::from_str(raw).map_err(|source| RegistryStorageError::Parse {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 #[cfg(test)]
@@ -637,11 +667,16 @@ fn remove_scene_entry_from_path(
 }
 
 /// Pretty-print registry JSON to an explicit path, creating parents as needed.
+///
+/// Refused with `io::ErrorKind::Unsupported` over a file from a newer build:
+/// this build would write back only the fields it knows.
 pub fn write_registry_to_path(path: &Path, registry: &SceneRegistry) -> io::Result<()> {
-    // Every JSON write, including imports and whole-cache snapshots, refuses
-    // to destroy an unreadable original. Missing files still initialize normally.
-    read_registry_from_path(path).map_err(io::Error::other)?;
-    let raw = serde_json::to_string_pretty(registry).map_err(io::Error::other)?;
+    ensure_replaceable(path)?;
+    let file = RegistryFile {
+        version: REGISTRY_FILE_VERSION,
+        registry,
+    };
+    let raw = serde_json::to_string_pretty(&file).map_err(io::Error::other)?;
     crate::storage::small_file::check_size(
         raw.len() as u64,
         crate::storage::small_file::REGISTRY_LIMIT,
@@ -649,6 +684,26 @@ pub fn write_registry_to_path(path: &Path, registry: &SceneRegistry) -> io::Resu
     // Whole-file replacement: a half-written file would be unparsable, and the
     // loaders treat unparsable as absent.
     crate::storage::atomic::write(path, raw.as_bytes())
+}
+
+/// Fail unless the file at `path` is absent or a registry this build can
+/// rewrite without loss.
+///
+/// Every JSON write, including imports and whole-cache snapshots, refuses to
+/// destroy an unreadable original. Missing files still initialize normally.
+fn ensure_replaceable(path: &Path) -> io::Result<()> {
+    let Some(raw) = read_registry_text(path).map_err(io::Error::other)? else {
+        return Ok(());
+    };
+    if let Some(version) = schema_version::newer_version(&raw, REGISTRY_FILE_VERSION) {
+        return Err(schema_version::refuse_newer(
+            path,
+            version,
+            REGISTRY_FILE_VERSION,
+        ));
+    }
+    parse_registry(path, &raw).map_err(io::Error::other)?;
+    Ok(())
 }
 
 /// Read a YAML registry export from an explicit path.
@@ -1537,10 +1592,58 @@ rules:
     }
 
     #[test]
-    fn registry_json_fixture_round_trips() {
-        crate::storage::golden::json_round_trip::<SceneRegistry>(include_str!(
-            "fixtures/registry.json"
-        ));
+    fn registry_json_fixture_round_trips_through_the_file_writer() {
+        let fixture = include_str!("fixtures/registry.json");
+        let (_dir, path) = scratch_file("registry-golden", "json");
+        let registry: SceneRegistry = serde_json::from_str(fixture).unwrap();
+
+        write_registry_to_path(&path, &registry).unwrap();
+
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let original: serde_json::Value = serde_json::from_str(fixture).unwrap();
+        assert_eq!(written, original);
+    }
+
+    #[test]
+    fn an_unversioned_registry_json_is_rewritten_at_the_current_version() {
+        let (_dir, path) = scratch_file("registry-unversioned", "json");
+        std::fs::write(&path, r#"{"scenes":{"Intro":{"tags":["live"]}}}"#).unwrap();
+        let mut registry = read_registry_from_path(&path).unwrap();
+        assert!(registry.set_scene_favorite("Intro", true));
+
+        write_registry_to_path(&path, &registry).unwrap();
+
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(written["version"], REGISTRY_FILE_VERSION);
+        assert_eq!(written["scenes"]["Intro"]["favorite"], true);
+    }
+
+    #[test]
+    fn a_newer_registry_json_is_read_but_never_overwritten() {
+        let (_dir, path) = scratch_file("registry-newer", "json");
+        let original = r#"{"version":999,"scenes":{"Intro":{"tags":["live"]}},"future":true}"#;
+        std::fs::write(&path, original).unwrap();
+        let mut registry = read_registry_from_path(&path).unwrap();
+        assert_eq!(registry.scenes["Intro"].tags, ["live"]);
+        assert!(registry.set_scene_favorite("Intro", true));
+
+        let refused = write_registry_to_path(&path, &registry).unwrap_err();
+
+        assert_eq!(refused.kind(), io::ErrorKind::Unsupported);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn workspace_entries_and_yaml_exports_carry_no_registry_file_version() {
+        let registry = SceneRegistry::default();
+
+        let entry = serde_json::to_value(&registry).unwrap();
+        let yaml = serde_saphyr::to_string(&registry).unwrap();
+
+        assert!(entry.get("version").is_none());
+        assert!(!yaml.contains("version"), "{yaml}");
     }
 
     #[test]

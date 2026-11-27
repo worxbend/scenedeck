@@ -212,6 +212,11 @@ no legacy owner. The original file remains untouched. Other workspaces start
 empty. Corrupt or unsupported workspace data produces an error with Retry in
 Inventory; it is never overwritten with an empty fallback. Manage named connections in Settings.
 
+`registry.json` carries a schema `version`, currently `1`; a file without one
+reads as version `1`. A file from a newer SceneDeck is read as far as this build
+understands it, but registry saves over it fail with Retry instead of dropping
+the newer fields.
+
 All writes and YAML imports capture their destination when accepted. Switching
 while an import is running does not redirect it, and controls from the previous
 workspace cannot edit the newly selected workspace. Loading disables curation
