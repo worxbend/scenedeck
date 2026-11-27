@@ -45,26 +45,30 @@ pub(crate) async fn publish_profiles_after(
     let _ = tx.send(event).await;
 }
 
+/// When the switch landed but the stored audio filter is unusable, the
+/// readback is skipped and reported instead of applying a default filter.
 pub(crate) async fn refresh_after_collection_change(
     operation: Result<(), AppError>,
     client: &ObsClient,
     tx: &EventSender,
-    audio_filter: &[String],
+    audio_filter: Result<Vec<String>, AppError>,
 ) {
-    match operation {
-        Ok(()) => {
+    let failure = match (operation, audio_filter) {
+        (Ok(()), Ok(audio_filter)) => {
             refresh_profile_and_collection_lists(client, tx).await;
-            refresh_live_data(client, tx, audio_filter).await;
+            refresh_live_data(client, tx, &audio_filter).await;
+            return;
         }
-        Err(e) => {
-            let _ = tx
-                .send(AppEvent::CommandFailed {
-                    operation: FailedOperation::Collection,
-                    error: e,
-                })
-                .await;
-        }
-    }
+        (Err(error), _) => AppEvent::CommandFailed {
+            operation: FailedOperation::Collection,
+            error,
+        },
+        (Ok(()), Err(error)) => AppEvent::CommandFailed {
+            operation: FailedOperation::CollectionReadback,
+            error,
+        },
+    };
+    let _ = tx.send(failure).await;
 }
 
 pub(crate) async fn refresh_profile_and_collection_lists(client: &ObsClient, tx: &EventSender) {
@@ -614,5 +618,35 @@ mod tests {
         dirty.invalidate();
         revisions.changed().await.unwrap();
         assert_eq!(*revisions.borrow_and_update(), 257);
+    }
+
+    #[tokio::test]
+    async fn unusable_audio_filter_fails_collection_readback_without_querying_obs() {
+        let obs = crate::obs::testing::scripted::ScriptedObs::by_type([]);
+        let requests = obs.counts();
+        let (client, _server) = obs.connect().await;
+        let (tx, rx) = std::sync::mpsc::sync_channel(8);
+
+        refresh_after_collection_change(
+            Ok(()),
+            &client,
+            &EventSender::new(tx),
+            Err(AppError::storage("config.json is corrupt")),
+        )
+        .await;
+
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(AppEvent::CommandFailed {
+                operation: FailedOperation::CollectionReadback,
+                error: AppError::Storage(_),
+            })
+        ));
+        assert!(rx.try_recv().is_err(), "the failure is the only event");
+        assert_eq!(
+            requests.snapshot().keys().collect::<Vec<_>>(),
+            ["GetVersion"],
+            "no readback request reaches OBS"
+        );
     }
 }

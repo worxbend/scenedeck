@@ -526,11 +526,11 @@ mod tests {
             #[derive(Default)]
             struct Observed(Mutex<Option<(String, String)>>);
             impl AppConfigProvider for Observed {
-                fn load_config(&self) -> AppConfig {
+                fn load_config(&self) -> Result<AppConfig, AppError> {
                     let config = crate::storage::config::read_config().config;
                     *self.0.lock().unwrap() =
                         Some((config.connection_id.clone(), config.obs.host.clone()));
-                    config
+                    Ok(config)
                 }
             }
             impl ObsPasswordProvider for Observed {

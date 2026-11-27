@@ -18,6 +18,7 @@ use crate::controller::output_controller::{
 use crate::controller::refresh_controller::{run_event_loop, BitrateSample};
 use crate::infra::error::AppError;
 use crate::obs::client::ObsClient;
+use crate::storage::config::AppConfig;
 
 pub(crate) const REQUEST_BUDGET: Duration = Duration::from_secs(10);
 const DISCONNECT_BUDGET: Duration = Duration::from_secs(3);
@@ -266,7 +267,13 @@ impl SessionRunner for ObsSessionRunner {
         let bitrate_sample = self.bitrate_sample.clone();
         Box::pin(async move {
             let settings = tokio::task::spawn_blocking(move || {
-                let config = dependencies.load_config();
+                // Connecting keeps its default endpoint so an unusable file
+                // cannot lock the operator out of OBS; the warning records
+                // why the stored endpoint was not used.
+                let config = dependencies.load_config().unwrap_or_else(|error| {
+                    tracing::warn!(%error, "connecting with default settings");
+                    AppConfig::default()
+                });
                 let password = dependencies.obs_password(&config.connection_id)?;
                 Ok::<_, AppError>((config, password))
             })

@@ -161,8 +161,10 @@ impl AppController {
                 let dependencies = self.dependencies.clone();
                 self.spawn_with_client(|c, tx| async move {
                     let result = c.set_current_scene_collection(&name).await;
-                    let audio_filter = load_config_blocking(dependencies).await.live.audio_inputs;
-                    refresh_after_collection_change(result, &c, &tx, &audio_filter).await;
+                    let audio_filter = load_config_blocking(dependencies)
+                        .await
+                        .map(|config| config.live.audio_inputs);
+                    refresh_after_collection_change(result, &c, &tx, audio_filter).await;
                 });
             }
 
@@ -225,11 +227,14 @@ impl AppController {
                     // End the worker before answering, so a request that
                     // arrives during the send starts a new one.
                     drop(jobs);
-                    reject_graph_refresh(&tx).await;
+                    reject_graph_refresh(&tx, not_connected()).await;
                     return;
                 };
                 let scan = async {
-                    let config = load_config_blocking(dependencies.clone()).await;
+                    let config = match load_config_blocking(dependencies.clone()).await {
+                        Ok(config) => config,
+                        Err(error) => return reject_graph_refresh(&tx, error).await,
+                    };
                     let tx = tx.fresh();
                     refresh_profile_and_collection_lists(client, &tx).await;
                     refresh_output_statuses(client, &tx)
@@ -242,7 +247,7 @@ impl AppController {
                     biased;
                     () = scope.cancelled() => {
                         drop(jobs);
-                        reject_graph_refresh(&tx).await;
+                        reject_graph_refresh(&tx, not_connected()).await;
                         return;
                     },
                     () = scan => {}
@@ -257,7 +262,7 @@ impl AppController {
             // No request can be admitted here; still finish Doctor's loading.
             Some(
                 self.runtime
-                    .spawn(async move { reject_graph_refresh(&tx).await }),
+                    .spawn(async move { reject_graph_refresh(&tx, not_connected()).await }),
             )
         });
     }
@@ -290,10 +295,15 @@ impl AppController {
                 };
                 let config = load_config_blocking(dependencies.clone()).await;
                 let revision = client.next_observation();
-                match client
-                    .get_scene_audio_inputs(request.scene(), &config.live.audio_inputs)
-                    .await
-                {
+                let inputs = match config {
+                    Ok(config) => {
+                        client
+                            .get_scene_audio_inputs(request.scene(), &config.live.audio_inputs)
+                            .await
+                    }
+                    Err(error) => Err(error),
+                };
+                match inputs {
                     Ok(inputs) => {
                         let _ = tx
                             .send(AppEvent::Observation {
@@ -425,26 +435,25 @@ async fn report_err<T>(result: Result<T, AppError>, tx: &EventSender) {
     }
 }
 
-async fn reject_graph_refresh(tx: &EventSender) {
+async fn reject_graph_refresh(tx: &EventSender, error: AppError) {
     // A refused send means GTK already moved to a newer session, whose own
     // lifecycle event ends Doctor's loading state.
-    let _ = tx
-        .send(AppEvent::GraphRefreshRejected(AppError::Connection(fl!(
-            LANGUAGE_LOADER,
-            "controller-not-connected"
-        ))))
-        .await;
+    let _ = tx.send(AppEvent::GraphRefreshRejected(error)).await;
 }
 
+fn not_connected() -> AppError {
+    AppError::Connection(fl!(LANGUAGE_LOADER, "controller-not-connected"))
+}
+
+/// The stored config, read on the blocking pool. A failed read or a crashed
+/// storage worker is an error, never a silent default: defaults would apply
+/// the wrong audio filter without telling anyone.
 async fn load_config_blocking(
     dependencies: ControllerDependencies,
-) -> crate::storage::config::AppConfig {
+) -> Result<crate::storage::config::AppConfig, AppError> {
     tokio::task::spawn_blocking(move || dependencies.load_config())
         .await
-        .unwrap_or_else(|e| {
-            tracing::error!(%e, "storage worker failed while loading configuration");
-            Default::default()
-        })
+        .map_err(AppError::storage)?
 }
 
 #[cfg(test)]
@@ -477,11 +486,11 @@ mod tests {
     }
 
     impl crate::controller::dependencies::AppConfigProvider for ThreadRecordingConfigProvider {
-        fn load_config(&self) -> crate::storage::config::AppConfig {
+        fn load_config(&self) -> Result<crate::storage::config::AppConfig, AppError> {
             let worker = std::thread::current().id();
             assert_ne!(worker, self.caller);
             *self.observed.lock().expect("observed worker thread") = Some(worker);
-            Default::default()
+            Ok(Default::default())
         }
     }
 
@@ -506,9 +515,100 @@ mod tests {
             Arc::new(EmptyPasswordProvider),
         );
 
-        runtime.block_on(load_config_blocking(dependencies));
+        runtime
+            .block_on(load_config_blocking(dependencies))
+            .expect("the provider serves a config");
 
         assert!(observed.lock().expect("observed worker thread").is_some());
+    }
+
+    struct PanickingConfigProvider;
+
+    impl crate::controller::dependencies::AppConfigProvider for PanickingConfigProvider {
+        fn load_config(&self) -> Result<crate::storage::config::AppConfig, AppError> {
+            panic!("storage worker crashed")
+        }
+    }
+
+    #[test]
+    fn a_crashed_config_worker_is_a_storage_error_not_default_settings() {
+        let runtime = Runtime::new().expect("test runtime");
+        let dependencies = ControllerDependencies::new(
+            Arc::new(PanickingConfigProvider),
+            Arc::new(EmptyPasswordProvider),
+        );
+
+        let loaded = runtime.block_on(load_config_blocking(dependencies));
+
+        assert!(
+            matches!(loaded, Err(AppError::Storage(_))),
+            "got {loaded:?}"
+        );
+    }
+
+    /// A controller whose installed client talks to an OBS that answers only
+    /// the handshake, while `config.json` cannot be used.
+    async fn connected_controller_with_unusable_config() -> (
+        AppController,
+        mpsc::Receiver<AppEvent>,
+        crate::obs::testing::scripted::RequestCounts,
+    ) {
+        let obs = crate::obs::testing::scripted::ScriptedObs::by_type([]);
+        let requests = obs.counts();
+        let (client, _server) = obs.connect().await;
+        let (tx, rx) = mpsc::sync_channel(16);
+        let controller = AppController::with_dependencies(
+            Handle::current(),
+            tx,
+            ControllerDependencies::new(
+                Arc::new(crate::controller::test_support::deps::UnusableConfigProvider),
+                Arc::new(EmptyPasswordProvider),
+            ),
+        );
+        assert!(controller.session.scope().install(client));
+        (controller, rx, requests)
+    }
+
+    #[tokio::test]
+    async fn graph_refresh_with_an_unusable_config_is_rejected_without_querying_obs() {
+        let (mut controller, rx, requests) = connected_controller_with_unusable_config().await;
+
+        controller.handle(AppCommand::RefreshData);
+
+        let event = recv_event(&rx).await;
+        assert!(
+            matches!(&event, AppEvent::GraphRefreshRejected(AppError::Storage(_))),
+            "expected a storage rejection, got {event:?}"
+        );
+        assert_eq!(
+            requests.snapshot().keys().collect::<Vec<_>>(),
+            ["GetVersion"]
+        );
+        controller.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn mixer_refresh_with_an_unusable_config_fails_without_querying_obs() {
+        let (mut controller, rx, requests) = connected_controller_with_unusable_config().await;
+        let request = app_state().set_mixer_audio_loading("Scene A".to_string());
+
+        controller.handle(AppCommand::RefreshMixerSceneAudio(request.clone()));
+
+        let event = recv_event(&rx).await;
+        let AppEvent::MixerAudioInputsFailed {
+            request: failed,
+            message,
+        } = event
+        else {
+            panic!("expected a mixer failure, got {event:?}");
+        };
+        assert_eq!(failed, request);
+        assert!(message.contains("config.json is corrupt"), "got {message}");
+        assert_eq!(
+            requests.snapshot().keys().collect::<Vec<_>>(),
+            ["GetVersion"]
+        );
+        controller.shutdown().await.unwrap();
     }
 
     #[derive(Debug)]

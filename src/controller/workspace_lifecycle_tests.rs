@@ -162,7 +162,7 @@ async fn profile_collection_rejections_and_profile_readback_errors_are_localized
         )),
         &mock.client,
         &sender,
-        &[],
+        Ok(Vec::new()),
     )
     .await;
     crate::controller::refresh_controller::publish_profiles_after(Ok(()), &mock.client, &sender)
