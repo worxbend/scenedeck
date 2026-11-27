@@ -328,6 +328,12 @@ class NativeAndSourceVerification(unittest.TestCase):
         with self.assertRaises(ValueError):
             native.native_tests(pure + "ui::tests::ignored_without_prefix: test\n")
 
+    def test_measure_prefix_classifies_manual_timing_harnesses_outside_the_native_run(self):
+        listing = native.LOCALE + ": test\nui::tests::native_only: test\nstate::tests::measure_collect: test\n"
+        self.assertEqual(native.native_tests(listing), ["ui::tests::native_only"])
+        with self.assertRaises(ValueError):
+            native.native_tests(listing + "state::tests::timing_without_prefix: test\n")
+
     def test_imported_main_ignores_process_argv(self):
         listing = native.LOCALE + ": test\nui::tests::native_only: test\n"
         calls = []

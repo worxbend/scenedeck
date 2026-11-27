@@ -14,12 +14,18 @@ LOCALE = "infra::i18n::tests::every_shipped_locale_parses_and_loads"
 CARGO = ["cargo", "test", "--workspace", "--all-features", "--locked", "--lib"]
 
 
+def fn_name(test_path):
+    return test_path.rsplit("::", 1)[-1]
+
+
 def native_tests(listing):
     names = re.findall(r"^([\w:]+): test$", listing, re.MULTILINE)
     if names.count(LOCALE) != 1 or len(names) != len(set(names)):
         raise ValueError("ignored inventory must contain exactly one locale test and no duplicates")
-    native = sorted(name for name in names if name.rsplit("::", 1)[-1].startswith("native_"))
-    if not native or any(name != LOCALE and name not in native for name in names):
+    native = sorted(name for name in names if fn_name(name).startswith("native_"))
+    # `measure_` tests are manual timing harnesses; no gate runs them.
+    manual = [name for name in names if fn_name(name).startswith("measure_")]
+    if not native or any(name != LOCALE and name not in native + manual for name in names):
         raise ValueError("unclassified ignored tests: explicitly assign them a validation gate")
     return native
 

@@ -328,3 +328,30 @@ fn health_disappearance_is_not_a_claim_of_recovery() {
         [("network_drops", Some("active")), ("network_drops", None)]
     );
 }
+
+#[test]
+#[ignore = "manual timing harness, not a gate; run with --release and --nocapture"]
+fn measure_collect_report_steady_state_with_a_full_activity_log() {
+    const CALLS: u32 = 10_000;
+    let mut state = state();
+    connect(&mut state, "podcast");
+    for index in 0..crate::domain::workflow::ActivityLog::LIMIT as u64 {
+        state.workspace.activity.push(ActivityRecord {
+            timestamp_unix_ms: index,
+            origin: ActivityOrigin::Observed,
+            description: index.to_string(),
+        });
+    }
+    collect(&mut state);
+    let evidence = state.reports.entries[0].events.len();
+
+    let started = Instant::now();
+    for _ in 0..CALLS {
+        collect(&mut state);
+    }
+    let per_call = started.elapsed() / CALLS;
+
+    // A call that copied new evidence would time the wrong path.
+    assert_eq!(state.reports.entries[0].events.len(), evidence);
+    println!("collect_report steady state, full activity log: {per_call:?} per call");
+}

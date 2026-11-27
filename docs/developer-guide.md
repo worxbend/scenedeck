@@ -52,8 +52,9 @@ python3 tools/test-native.py
 python3 tools/test-native.py --filter mixer   # subset by test-path substring; `a|b` for either
 ```
 
-A native test is an `#[ignore]` test whose fn name starts with `native_`; the
-runner rejects any other ignored test. Its body goes in
+A native test is an `#[ignore]` test whose fn name starts with `native_`. The
+runner also accepts `measure_` timing harnesses (see Performance Measurement)
+without running them, and rejects any other ignored test. Its body goes in
 `crate::ui::native_test!(|| { ... })`, called directly in the test fn. The macro
 derives the test's own path, so moving or renaming the test needs no other edit,
 and the parent fails unless its child process reports exactly one pass.
@@ -109,8 +110,13 @@ RUST_LOG=scenedeck=trace cargo run --release --features perf-trace   # plus span
   `ui/pages/mixer.rs`; both files sit at their production-line ceiling.
 
 Benchmarks cannot reach `pub(crate)` items, because `lib.rs` exposes only
-`run()`. Gate regressions with `ScriptedObs` request counts or with `#[ignore]`d
-timing tests instead.
+`run()`. Gate regressions with `ScriptedObs` request counts instead, and time
+pure paths with `#[ignore]`d harnesses whose fn name starts with `measure_`. No
+gate runs them; run them by hand:
+
+```sh
+cargo test --release --all-features --lib measure_ -- --ignored --nocapture
+```
 
 System-level recipes, run against the release build:
 

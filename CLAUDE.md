@@ -52,6 +52,9 @@ A native test's fn name starts with `native_` and its body goes in
 `crate::ui::native_test!(|| { ... })`; the macro derives the test path, so
 moves and renames need no other edit.
 
+Ignored tests named `measure_*` are manual timing harnesses that no gate runs:
+`cargo test --release --all-features --lib measure_ -- --ignored --nocapture`.
+
 Tests are inline `#[cfg(test)] mod tests` blocks; there is no `tests/`
 directory. CI also runs `cargo audit` and `cargo deny check advisories bans
 licenses sources` (`deny.toml`).
