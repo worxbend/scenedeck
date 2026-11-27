@@ -438,23 +438,18 @@ impl ObsClient {
         include_sources: bool,
     ) -> Result<crate::domain::control::ControlSnapshot, AppError> {
         use crate::domain::control::ControlSnapshot;
-        let scenes = self
+        let mut scene_list = self
             .request(self.inner.scenes().list())
             .await
             .map_err(AppError::request)?;
+        let preview = scene_list.current_preview_scene.take().map(|s| s.name);
+        let inventory = mapper::map_scenes(scene_list);
         let mut snapshot = ControlSnapshot {
-            scenes: scenes
-                .scenes
-                .iter()
-                .map(|scene| crate::domain::scene::Scene {
-                    id: scene.id.name.clone(),
-                    uuid: (!scene.id.uuid.is_nil()).then(|| scene.id.uuid.to_string()),
-                })
-                .collect(),
+            scenes: inventory.scenes,
             ..Default::default()
         };
-        snapshot.studio.program = scenes.current_program_scene.map(|s| s.name);
-        snapshot.studio.preview = scenes.current_preview_scene.map(|s| s.name);
+        snapshot.studio.program = inventory.current_id;
+        snapshot.studio.preview = preview;
         snapshot.scene = scene
             .map(str::to_owned)
             .or_else(|| snapshot.studio.program.clone());
@@ -1068,6 +1063,44 @@ pub(crate) mod control_tests {
             request_data(&requests[5])["mediaAction"],
             "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PAUSE"
         );
+    }
+
+    #[tokio::test]
+    async fn control_snapshot_lists_scenes_in_switcher_order() {
+        let scene = |index: u64, name: &str| {
+            let uuid = format!("00000000-0000-0000-0000-00000000000{index}");
+            json!({"sceneIndex": index, "sceneName": name, "sceneUuid": uuid})
+        };
+        let (client, _server) = ScriptedObs::by_type([
+            (
+                "GetSceneList",
+                Reply::Ok(json!({
+                    "scenes": [scene(0, "Bottom"), scene(1, "Middle"), scene(2, "Top")],
+                    "currentProgramSceneName": "Top",
+                    "currentProgramSceneUuid": "00000000-0000-0000-0000-000000000002",
+                    "currentPreviewSceneName": "Middle",
+                    "currentPreviewSceneUuid": "00000000-0000-0000-0000-000000000001"
+                })),
+            ),
+            ("GetStudioModeEnabled", Reply::err(604)),
+            ("GetSceneTransitionList", Reply::err(604)),
+            ("GetCurrentSceneTransition", Reply::err(604)),
+            ("GetReplayBufferStatus", Reply::err(604)),
+            ("GetLastReplayBufferReplay", Reply::err(604)),
+            ("GetVirtualCamStatus", Reply::err(604)),
+        ])
+        .connect()
+        .await;
+
+        let snapshot = client.get_control_snapshot(None, false).await.unwrap();
+        let inventory = client.get_scene_inventory().await.unwrap();
+
+        let names: Vec<_> = snapshot.scenes.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(names, ["Top", "Middle", "Bottom"]);
+        assert_eq!(snapshot.scenes, inventory.scenes);
+        assert_eq!(snapshot.studio.program.as_deref(), Some("Top"));
+        assert_eq!(snapshot.studio.preview.as_deref(), Some("Middle"));
+        assert_eq!(snapshot.scene.as_deref(), Some("Top"));
     }
 
     #[tokio::test]
