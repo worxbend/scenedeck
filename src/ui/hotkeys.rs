@@ -14,6 +14,7 @@ use crate::controller::state::Page;
 use crate::domain::hotkey::{KeyStroke, KeySymbol, Modifiers, SceneHotkeyConfig};
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::hotkey_service::{HotkeyOutcome, SceneHotkeyResolver};
+use crate::ui::markup::plain_toast;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::pages::live::LivePageHandle;
 
@@ -90,10 +91,7 @@ pub(super) fn install(
                     &crate::ui::action_catalog::CatalogAction::Operator(binding.action),
                 ) {
                     if let Some(toast) = toast.upgrade() {
-                        toast.add_toast(adw::Toast::new(&fl!(
-                            LANGUAGE_LOADER,
-                            "binding-unavailable"
-                        )));
+                        toast.add_toast(plain_toast(&fl!(LANGUAGE_LOADER, "binding-unavailable")));
                     }
                     crate::ui::workspace::refresh(&nav);
                 }

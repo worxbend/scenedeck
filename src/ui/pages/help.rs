@@ -406,6 +406,7 @@ fn topic(
     state: TopicState,
 ) -> ExpanderRow {
     let row = ExpanderRow::builder()
+        .use_markup(false)
         .title(title)
         .subtitle(subtitle)
         .expanded(state == TopicState::Expanded)
@@ -463,4 +464,41 @@ fn body_row(nav: &NavigationContext, body: &str, links: Vec<TopicLink>) -> ListB
         .selectable(false)
         .child(&content)
         .build()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires a native GTK display"]
+    fn native_help_topic_renders_title_and_summary_literally() {
+        crate::ui::native_test!(|| {
+            const TITLE: &str = "Q&A <b>";
+            const SUMMARY: &str = "Scenes & <i>sources</i>";
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+
+            let row = topic(
+                &nav,
+                "help-browser-symbolic",
+                TITLE.to_string(),
+                SUMMARY.to_string(),
+                String::new(),
+                Vec::new(),
+                TopicState::Collapsed,
+            );
+
+            for literal in [TITLE, SUMMARY] {
+                let rendered = crate::ui::test_support::find_where(
+                    row.upcast_ref::<gtk4::Widget>(),
+                    |widget| {
+                        widget
+                            .downcast_ref::<Label>()
+                            .is_some_and(|label| label.text() == literal)
+                    },
+                );
+                assert!(rendered.is_some(), "{literal:?} must render as typed");
+            }
+        });
+    }
 }

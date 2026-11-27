@@ -182,6 +182,51 @@ fn column_view_matches_any_segment_and_a_called_name() {
     }
 }
 
+const TOAST: &[Forbidden] = &[Forbidden::AnySegment("Toast")];
+const STATUS_PAGE: &[Forbidden] = &[Forbidden::AnySegment("StatusPage")];
+
+/// Toasts and status pages show OBS and network text as typed.
+///
+/// `AdwToast:title` and `AdwStatusPage:description` parse Pango markup, and
+/// both often carry a scene name or an error message. A scene named `Q&A`
+/// blanked the Mixer error page and could spoof toast text. The two helpers
+/// are the only places that build either widget.
+#[test]
+fn toasts_and_status_pages_go_through_the_literal_helpers() {
+    let mut offenders = violations("", TOAST, &["ui/markup.rs"]);
+    offenders.extend(violations("", STATUS_PAGE, &["ui/widgets/status_page.rs"]));
+
+    assert!(
+        offenders.is_empty(),
+        "Build toasts with `ui::markup::plain_toast` and status pages with \
+         `ui::widgets::status_page::status_page`:\n{}",
+        offenders.join("\n")
+    );
+}
+
+#[test]
+fn literal_helper_ban_matches_qualified_and_imported_names() {
+    for source in [
+        "fn build() { let _toast = adw::Toast::new(\"x\"); }",
+        "fn build() { let _toast = Toast::builder().build(); }",
+        "use adw::{prelude::*, Toast};",
+    ] {
+        assert!(
+            !source_violations(source, TOAST).is_empty(),
+            "scanner missed {source}"
+        );
+    }
+    for source in [
+        "fn build() { let _page = StatusPage::builder().build(); }",
+        "use adw::{prelude::*, StatusPage};",
+    ] {
+        assert!(
+            !source_violations(source, STATUS_PAGE).is_empty(),
+            "scanner missed {source}"
+        );
+    }
+}
+
 fn crate_modules(names: &[&'static str]) -> Vec<Forbidden<'static>> {
     names.iter().copied().map(Forbidden::PathPrefix).collect()
 }

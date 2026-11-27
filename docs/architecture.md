@@ -229,6 +229,12 @@ lowercase string on disk but is represented as `ThemeMode` in Rust.
 `src/ui/` owns GTK widget construction, CSS loading, page layout, navigation,
 and action registration.
 
+Scene names and error messages come from OBS or the network, so the UI shows
+them as typed. Toasts come from `ui::markup::plain_toast`, which turns markup
+off, and full-page states from `ui::widgets::status_page::status_page`, which
+escapes the description. `rules.rs` keeps every other module from building
+either widget. Rows and labels that show such text set `use_markup(false)`.
+
 Theme loading is handled by `src/ui/theme.rs`. `ThemeManager` applies the base
 SceneDeck CSS, the selected built-in theme family's effective light or dark
 variant, and optional user CSS for the same effective side. `ThemeMode::System`

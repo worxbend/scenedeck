@@ -153,13 +153,16 @@ GTK and libadwaita UI.
 - `sidebar.rs`: sidebar controls and header selectors.
 - `hotkeys.rs`: window-level Live scene shortcut handling.
 - `navigation.rs`: page switching and command dispatch helper.
+- `markup.rs`: the Pango markup boundary: `escape` and `plain_toast`, the
+  only toast constructor, so OBS and network text shows as typed.
 - `actions.rs`: app-level actions and keyboard shortcuts.
 - `background_io.rs`: runs blocking work off the GTK thread, with FIFO lanes
   for ordered config and registry writes, and returns completion callbacks to
   GTK.
 - `pages/`: Live, Stats, Mixer, Graph, Inventory, Doctor, Settings, and Help pages.
 - `widgets/`: reusable scene and audio cards, the volume meter, the icon
-  chooser, the bottom status bar, and the
+  chooser, the bottom status bar, `status_page` (the only status page
+  constructor; it escapes the description), and the
   cairo chart/gauge renderers used by Stats.
 - `test_support.rs` (tests only): the `native_test!` runner that gives each
   native GTK test its own process and a 60 s deadline, the shared

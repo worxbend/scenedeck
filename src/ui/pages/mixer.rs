@@ -9,7 +9,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use adw::{prelude::*, ComboRow, EntryRow, PreferencesGroup, PreferencesPage, StatusPage};
+use adw::{prelude::*, ComboRow, EntryRow, PreferencesGroup, PreferencesPage};
 use gtk4::{Align, Box as GtkBox, Button, FlowBox, StringList};
 
 use crate::controller::command::AppCommand;
@@ -25,6 +25,7 @@ use crate::services::audio_service::AudioService;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::persist::persist_config;
 use crate::ui::widgets::audio_card;
+use crate::ui::widgets::status_page::status_page;
 use crate::ui::{index_of, insert_compact_flow_child, string_list};
 use i18n_embed_fl::fl;
 
@@ -395,13 +396,11 @@ fn populate(root: &GtkBox, nav: &NavigationContext, refresh_tracker: &MixerRefre
         refresh_tracker.groups.borrow_mut().clear();
         *refresh_tracker.controls_signature.borrow_mut() = Some(controls_key);
         if inventory.scenes.is_empty() {
-            let empty = StatusPage::builder()
-                .icon_name("audio-volume-high-symbolic")
-                .title(fl!(LANGUAGE_LOADER, "mixer-empty-title"))
-                .description(fl!(LANGUAGE_LOADER, "mixer-empty-description"))
-                .build();
-            empty.add_css_class("app-status-page");
-            root.append(&empty);
+            root.append(&status_page(
+                "audio-volume-high-symbolic",
+                &fl!(LANGUAGE_LOADER, "mixer-empty-title"),
+                &fl!(LANGUAGE_LOADER, "mixer-empty-description"),
+            ));
             return;
         }
 
@@ -796,13 +795,7 @@ fn append_mixer_inputs(
 }
 
 fn append_mixer_status(root: &GtkBox, icon_name: &str, title: &str, description: &str) {
-    let status = StatusPage::builder()
-        .icon_name(icon_name)
-        .title(title)
-        .description(description)
-        .build();
-    status.add_css_class("app-status-page");
-    root.append(&status);
+    root.append(&status_page(icon_name, title, description));
 }
 
 fn append_mixer_error_status(
@@ -812,17 +805,16 @@ fn append_mixer_error_status(
     scene: &str,
     message: &str,
 ) {
-    let status = StatusPage::builder()
-        .icon_name("dialog-warning-symbolic")
-        .title(fl!(LANGUAGE_LOADER, "mixer-error-title"))
-        .description(fl!(
+    let status = status_page(
+        "dialog-warning-symbolic",
+        &fl!(LANGUAGE_LOADER, "mixer-error-title"),
+        &fl!(
             LANGUAGE_LOADER,
             "mixer-error-description",
             scene = scene,
             message = message
-        ))
-        .build();
-    status.add_css_class("app-status-page");
+        ),
+    );
     let retry_btn = Button::builder()
         .label(fl!(LANGUAGE_LOADER, "mixer-retry-button-label"))
         .tooltip_text(fl!(LANGUAGE_LOADER, "mixer-retry-button-tooltip"))
@@ -2006,6 +1998,42 @@ mod layout_tests {
                 crate::ui::test_support::pump(std::time::Duration::from_millis(20));
                 assert!(weak_page.upgrade().is_none());
             }
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a native GTK display"]
+    fn native_mixer_error_status_shows_obs_scene_and_message_literally() {
+        crate::ui::native_test!(|| {
+            const SCENE: &str = "<b>x</b> & y";
+            const MESSAGE: &str = "read <i>failed</i> & gave up";
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            nav.update(|state| {
+                state.scene_inventory = SceneInventory {
+                    scenes: vec![Scene {
+                        uuid: None,
+                        id: SCENE.to_string(),
+                    }],
+                    current_id: Some(SCENE.to_string()),
+                    previous_id: None,
+                };
+                state.apply_active_audio(Some(SCENE.to_string()), Err(MESSAGE.to_string()));
+            })
+            .expect("no other AppState borrow is live");
+
+            let (page, _refresh, _handle) = build(nav);
+
+            let description =
+                crate::ui::test_support::find_where(page.upcast_ref::<gtk4::Widget>(), |widget| {
+                    widget.downcast_ref::<gtk4::Label>().is_some_and(|label| {
+                        let text = label.text();
+                        text.contains(SCENE) && text.contains(MESSAGE)
+                    })
+                });
+            assert!(
+                description.is_some(),
+                "the error description must show the OBS scene name and message as typed"
+            );
         });
     }
 

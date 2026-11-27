@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use adw::{prelude::*, ActionRow, PreferencesGroup, StatusPage};
+use adw::{prelude::*, ActionRow, PreferencesGroup};
 use gtk4::{
     gdk, Align, Box as GtkBox, Button, ColorDialog, ColorDialogButton, DragSource, DropDown,
     DropTarget, FileDialog, FileFilter, Image, Label, MenuButton, Orientation, PolicyType, Popover,
@@ -19,6 +19,7 @@ use crate::storage::registry::{
 use crate::ui::navigation::NavigationContext;
 use crate::ui::persist::persist_registry;
 use crate::ui::widgets::icon_picker;
+use crate::ui::widgets::status_page::status_page;
 use crate::ui::{index_of, string_list};
 use i18n_embed_fl::fl;
 
@@ -334,11 +335,11 @@ fn populate(
 ) {
     container.append(&build_registry_save_status());
     if let Some(message) = crate::ui::persist::registry_availability_message(nav) {
-        let status = StatusPage::builder()
-            .icon_name("view-list-symbolic")
-            .title(fl!(LANGUAGE_LOADER, "workspace-curation-title"))
-            .description(glib::markup_escape_text(&message))
-            .build();
+        let status = status_page(
+            "view-list-symbolic",
+            &fl!(LANGUAGE_LOADER, "workspace-curation-title"),
+            &message,
+        );
         if matches!(
             nav.state.borrow().show_registry.status,
             crate::controller::state::RegistryStatus::Failed(_)
@@ -359,12 +360,11 @@ fn populate(
 
     // Empty state — OBS not yet connected or no scenes.
     if inventory.scenes.is_empty() {
-        let empty = StatusPage::builder()
-            .icon_name("view-list-symbolic")
-            .title(fl!(LANGUAGE_LOADER, "inventory-empty-state-title"))
-            .description(fl!(LANGUAGE_LOADER, "inventory-empty-state-description"))
-            .build();
-        container.append(&empty);
+        container.append(&status_page(
+            "view-list-symbolic",
+            &fl!(LANGUAGE_LOADER, "inventory-empty-state-title"),
+            &fl!(LANGUAGE_LOADER, "inventory-empty-state-description"),
+        ));
         return;
     }
 

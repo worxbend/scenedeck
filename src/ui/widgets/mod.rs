@@ -14,6 +14,7 @@ pub(crate) mod icon_picker;
 pub(crate) mod operating_panel;
 pub(crate) mod scene_card;
 pub(crate) mod status_bar;
+pub(crate) mod status_page;
 pub(crate) mod volume_meter;
 
 pub(crate) mod output_results_tray;

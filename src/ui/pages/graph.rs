@@ -9,7 +9,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::f64::consts::PI;
 use std::rc::Rc;
 
-use adw::{prelude::*, StatusPage};
+use adw::prelude::*;
 use gtk4::cairo::{Context, FontSlant, FontWeight};
 use gtk4::{
     Align, Box as GtkBox, Button, DrawingArea, GestureDrag, Image, Label, Orientation, PolicyType,
@@ -24,6 +24,7 @@ use crate::domain::scene::SceneInventory;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::services::graph_service::classify_edge;
 use crate::ui::navigation::NavigationContext;
+use crate::ui::widgets::status_page::status_page;
 
 const NODE_WIDTH: f64 = 190.0;
 const NODE_HEIGHT: f64 = 74.0;
@@ -75,22 +76,16 @@ fn populate(container: &GtkBox, nav: &NavigationContext) {
         crate::ui::persist::registry_availability_message(nav)
             .map(|message| (fl!(LANGUAGE_LOADER, "workspace-curation-title"), message))
     }) {
-        let unavailable = StatusPage::builder()
-            .icon_name("view-grid-symbolic")
-            .title(&title)
-            .description(glib::markup_escape_text(&description))
-            .build();
-        container.append(&unavailable);
+        container.append(&status_page("view-grid-symbolic", &title, &description));
         return;
     }
 
     if graph.edges.is_empty() && inventory.scenes.is_empty() {
-        let empty = StatusPage::builder()
-            .icon_name("view-grid-symbolic")
-            .title(fl!(LANGUAGE_LOADER, "topology-empty-title"))
-            .description(fl!(LANGUAGE_LOADER, "topology-empty-description"))
-            .build();
-        container.append(&empty);
+        container.append(&status_page(
+            "view-grid-symbolic",
+            &fl!(LANGUAGE_LOADER, "topology-empty-title"),
+            &fl!(LANGUAGE_LOADER, "topology-empty-description"),
+        ));
         return;
     }
 

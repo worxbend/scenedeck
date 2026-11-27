@@ -28,6 +28,7 @@ use crate::domain::appearance::ThemeMode;
 use crate::domain::output::{OutputKind, OutputStatus};
 use crate::infra::error::AppError;
 use crate::infra::i18n::LANGUAGE_LOADER;
+use crate::ui::markup::plain_toast;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::pages::live::{output_label, LivePageHandle};
 use crate::ui::pages::stats::PopoutSlot as StatsPopoutSlot;
@@ -678,7 +679,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
                     &fl!(LANGUAGE_LOADER, "window-obs-connection-failed"),
                 );
                 if let Some(ui) = ui {
-                    ui.toast.add_toast(adw::Toast::new(&message));
+                    ui.toast.add_toast(plain_toast(&message));
                 }
             }
             nav.state
@@ -774,7 +775,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
             let message = error.user_message();
             nav.state.borrow_mut().set_topology_failed(message.clone());
             if let Some(ui) = ui {
-                ui.toast.add_toast(adw::Toast::new(&message));
+                ui.toast.add_toast(plain_toast(&message));
             }
             if let Some(ui) = ui {
                 ui.refreshers
@@ -883,7 +884,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
         }
         AppEvent::WorkspaceAudioFailed(error) => {
             if let Some(ui) = ui {
-                ui.toast.add_toast(adw::Toast::new(&error));
+                ui.toast.add_toast(plain_toast(&error));
             }
             super::event_reconciliation::audio_failed(&mut nav.state.borrow_mut(), error);
         }
@@ -968,7 +969,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
                 changed
             };
             if let Some(ui) = ui.filter(|_| changed) {
-                ui.toast.add_toast(adw::Toast::new(&message));
+                ui.toast.add_toast(plain_toast(&message));
             }
             if let Some(ui) = ui {
                 refresh_output_status_bar(nav, ui, kind);
@@ -1133,16 +1134,13 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
             // Surface the error as a dismissable toast so it's visible even
             // when the user is on a different page.
             if let Some(ui) = ui {
-                ui.toast.add_toast(
-                    adw::Toast::builder()
-                        .title(fl!(
-                            LANGUAGE_LOADER,
-                            "window-toast-obs-error",
-                            error = message
-                        ))
-                        .timeout(8)
-                        .build(),
-                );
+                let toast = plain_toast(&fl!(
+                    LANGUAGE_LOADER,
+                    "window-toast-obs-error",
+                    error = message
+                ));
+                toast.set_timeout(8);
+                ui.toast.add_toast(toast);
             }
         }
 
@@ -1339,7 +1337,7 @@ fn refresh_output_status_bar(nav: &NavigationContext, ui: &EventUiContext, kind:
 
 fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiContext>) {
     if let (Some(ui), AppEvent::OutputCommandFailed(_, failure)) = (ui, &event) {
-        ui.toast.add_toast(adw::Toast::new(failure.message()));
+        ui.toast.add_toast(plain_toast(failure.message()));
     }
     let kind = nav
         .state
@@ -1421,7 +1419,7 @@ fn format_elapsed(since: Instant) -> String {
 /// Toast and log a failure; the next render shows the log entry.
 fn report_failure(nav: &NavigationContext, ui: Option<&EventUiContext>, message: String) {
     if let Some(ui) = ui {
-        ui.toast.add_toast(adw::Toast::new(&message));
+        ui.toast.add_toast(plain_toast(&message));
     }
     let mut state = nav.state.borrow_mut();
     state

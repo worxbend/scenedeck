@@ -16,6 +16,7 @@ mod event_reconciliation;
 mod global_shortcuts;
 mod health_alerts;
 mod hotkeys;
+mod markup;
 pub(crate) mod navigation;
 mod operator_picker;
 pub(crate) mod pages;
