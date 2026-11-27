@@ -95,13 +95,16 @@ only goes down: lower it in the change that lowers the count, never raise it.
 | `src/services/` | Pure/mostly-pure logic over domain snapshots — Doctor checks, graph edge classification, audio dB conversion and debouncing. |
 | `src/storage/` | Local persistence: `config.json`, `show-workspaces.json`, legacy `registry.json`, XDG paths, Secret Service keyring. Storage structs are the serde representation and convert to domain snapshots before services use them. |
 | `src/ui/` | GTK widget construction, pages, theme/CSS, actions, `background_io.rs`. |
-| `src/infra/` | `error.rs` (`AppError`), `logging.rs`, `i18n.rs`. |
+| `src/infra/` | `error.rs` (`AppError`), `logging.rs`, `i18n.rs`, `sync.rs` (`lock_or_recover`). |
 
 ### Async and threading rules
 
 - Never hold a `std::sync::Mutex` guard across `.await`. The shared client slot
   is `Arc<Mutex<Option<ObsClient>>>`; lock briefly, clone the cheap handle,
   release, then await.
+- Lock ordinary std mutexes with `infra::sync::lock_or_recover`; do not add
+  `.lock().ok()` or `.lock().expect(..)`. `controller/lifecycle.rs` documents
+  its own per-mutex policy.
 - Config reads and Secret Service access from the controller run on Tokio's
   blocking pool, never on the GTK thread.
 - Local persistence is **not** routed through the `AppCommand`/`AppEvent`

@@ -125,6 +125,13 @@ Arc<Mutex<Option<ObsClient>>>
 The mutex is only held long enough to clone the cheap `ObsClient` handle. It
 must not be held across `.await`.
 
+The slot is locked through `infra::sync::lock_or_recover`, and new code locks
+every ordinary `std` mutex the same way. A poisoned lock logs an error and
+returns the guard, so a past panic cannot turn into a silent "no client" or a
+skipped write. `controller/lifecycle.rs` documents its own per-mutex policy.
+The single-flight queue locks in `app_controller.rs` and `workspace.rs`, and
+the retirement reason in `obs/requests.rs`, still `expect`.
+
 Configuration and Secret Service reads needed for connection and OBS refreshes
 run on Tokio's blocking pool rather than the GTK thread. After connection:
 

@@ -87,6 +87,7 @@ Infrastructure helpers.
 
 - `error.rs`: application error type.
 - `logging.rs`: tracing subscriber setup.
+- `sync.rs`: `lock_or_recover`, the poison policy for ordinary `std` mutexes.
 
 `src/obs/`
 
