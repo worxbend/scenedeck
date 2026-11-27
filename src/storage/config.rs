@@ -189,14 +189,31 @@ fn default_confirm_stop_recording() -> bool {
 pub struct LoadedConfig {
     pub config: AppConfig,
     pub startup_notice: Option<ConfigStartupNotice>,
+    /// Disk work the read found necessary but left undone, so a read never
+    /// writes or renames the file.
+    pub pending_repair: Option<PendingRepair>,
+}
+
+/// A change to the config file that only startup performs.
+///
+/// The controller reads the config again on every connect, off the ordered
+/// config lane. A write or rename from there could race a Settings save, or
+/// move away a hand edit made while the app runs.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum PendingRepair {
+    /// Migrations changed the loaded config; saving it records them.
+    WriteMigrated,
+    /// The file does not parse; it has to move aside before any save of the
+    /// defaults lands on it.
+    PreserveUnparsable,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum ConfigStartupNotice {
     FirstLaunch,
     ReadFailed(String),
-    /// The file exists but is not valid JSON. `backup` is where the original
-    /// was moved to, when it could be moved at all.
+    /// The file exists but is not valid JSON. `backup` is where startup moved
+    /// the original, when it could be moved at all.
     ParseFailed {
         detail: String,
         backup: Option<PathBuf>,
@@ -241,45 +258,67 @@ pub fn read_config() -> LoadedConfig {
     read_config_from_path(&xdg::config_path())
 }
 
+/// Read the config without touching the file; see `PendingRepair` for the
+/// disk work this leaves to startup.
 pub fn read_config_from_path(path: &Path) -> LoadedConfig {
     match crate::storage::small_file::read_to_string(path, crate::storage::small_file::CONFIG_LIMIT)
     {
         Ok(raw) => match schema_version::newer_version(&raw, CURRENT_VERSION) {
             Some(version) => load_newer_config(&raw, version),
-            None => load_supported_config(path, &raw),
+            None => load_supported_config(&raw),
         },
         Err(err) if err.kind() == io::ErrorKind::NotFound => LoadedConfig {
             config: AppConfig::default(),
             startup_notice: Some(ConfigStartupNotice::FirstLaunch),
+            pending_repair: None,
         },
         Err(err) => LoadedConfig {
             config: AppConfig::default(),
             startup_notice: Some(ConfigStartupNotice::ReadFailed(err.to_string())),
+            pending_repair: None,
         },
     }
 }
 
-fn load_supported_config(path: &Path, raw: &str) -> LoadedConfig {
+pub fn read_startup_config() -> LoadedConfig {
+    read_startup_config_from_path(&xdg::config_path())
+}
+
+/// Read the config once at startup and move an unparsable file aside.
+///
+/// This runs before the GTK loop exists, so no config save can be queued yet
+/// and the rename cannot race one. The migration write stays pending: the GTK
+/// side performs it through the ordered config lane, where a failure blocks
+/// Close instead of vanishing.
+fn read_startup_config_from_path(path: &Path) -> LoadedConfig {
+    let mut loaded = read_config_from_path(path);
+    if loaded.pending_repair != Some(PendingRepair::PreserveUnparsable) {
+        return loaded;
+    }
+    loaded.pending_repair = None;
+    if let Some(ConfigStartupNotice::ParseFailed { backup, .. }) = &mut loaded.startup_notice {
+        *backup = preserve_unparsable_config(path);
+    }
+    loaded
+}
+
+fn load_supported_config(raw: &str) -> LoadedConfig {
     match serde_json::from_str::<AppConfig>(raw) {
         Ok(mut config) => {
-            // Apply any schema migrations and persist if anything changed.
-            // A failed write-back is harmless: the file is untouched, the
-            // migrated config is used from memory, and the next settings
-            // save (or the next start) writes the migration again.
-            if apply_migrations(&mut config) {
-                let _ = write_config_to_path(path, &config);
-            }
+            let migrated = apply_migrations(&mut config);
             LoadedConfig {
                 config,
                 startup_notice: None,
+                pending_repair: migrated.then_some(PendingRepair::WriteMigrated),
             }
         }
         Err(err) => LoadedConfig {
             config: AppConfig::default(),
             startup_notice: Some(ConfigStartupNotice::ParseFailed {
                 detail: err.to_string(),
-                backup: preserve_unparsable_config(path),
+                backup: None,
             }),
+            pending_repair: Some(PendingRepair::PreserveUnparsable),
         },
     }
 }
@@ -301,6 +340,7 @@ fn load_newer_config(raw: &str, version: u32) -> LoadedConfig {
         Ok(config) => LoadedConfig {
             config,
             startup_notice: Some(ConfigStartupNotice::NewerVersion { version }),
+            pending_repair: None,
         },
         Err(err) => LoadedConfig {
             config: AppConfig::default(),
@@ -308,6 +348,7 @@ fn load_newer_config(raw: &str, version: u32) -> LoadedConfig {
                 detail: err.to_string(),
                 backup: None,
             }),
+            pending_repair: None,
         },
     }
 }
@@ -512,6 +553,56 @@ mod tests {
     }
 
     #[test]
+    fn reading_a_legacy_config_leaves_its_bytes_unchanged() {
+        let dir = crate::storage::test_support::TempDir::new("config-legacy-read");
+        let path = dir.path().join("config.json");
+        let original = include_str!("fixtures/config-legacy.json");
+        std::fs::write(&path, original).unwrap();
+
+        let loaded = read_config_from_path(&path);
+
+        assert_eq!(loaded.config.version, CURRENT_VERSION);
+        assert_eq!(loaded.pending_repair, Some(PendingRepair::WriteMigrated));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn reading_an_unparsable_config_leaves_it_in_place_for_startup_to_move() {
+        let dir = crate::storage::test_support::TempDir::new("config-unparsable-read");
+        let path = dir.path().join("config.json");
+        let original = r#"{ "obs": { "host": "192.168.1.42",, } }"#;
+        std::fs::write(&path, original).unwrap();
+
+        let loaded = read_config_from_path(&path);
+
+        assert!(
+            matches!(
+                loaded.startup_notice,
+                Some(ConfigStartupNotice::ParseFailed { backup: None, .. })
+            ),
+            "{:?}",
+            loaded.startup_notice
+        );
+        assert_eq!(
+            loaded.pending_repair,
+            Some(PendingRepair::PreserveUnparsable)
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        assert!(!dir.path().join("config.json.invalid").exists());
+    }
+
+    #[test]
+    fn a_current_config_needs_no_startup_repair() {
+        let loaded = read_config_from_path(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src/storage/fixtures/config.json"),
+        );
+
+        assert_eq!(loaded.startup_notice, None);
+        assert_eq!(loaded.pending_repair, None);
+    }
+
+    #[test]
     fn future_config_is_not_rewritten_to_materialize_connection_profiles() {
         let original = r#"{"version":999,"obs":{"host":"future.local","port":4455},"future_setting":{"preserve":true}}"#;
         let (config, persisted) = load_from_temp_file(original);
@@ -529,7 +620,7 @@ mod tests {
         let path = dir.path().join("config.json");
         std::fs::write(&path, NEWER_CONFIG).unwrap();
 
-        let mut config = read_config_from_path(&path).config;
+        let mut config = read_startup_config_from_path(&path).config;
         assert_eq!(std::fs::read_to_string(&path).unwrap(), NEWER_CONFIG);
 
         config.outputs.confirm_start_stream = true;
@@ -545,7 +636,7 @@ mod tests {
         let path = dir.path().join("config.json");
         std::fs::write(&path, NEWER_CONFIG).unwrap();
 
-        let loaded = read_config_from_path(&path);
+        let loaded = read_startup_config_from_path(&path);
 
         assert_eq!(
             loaded.startup_notice,
@@ -563,7 +654,7 @@ mod tests {
         let original = r#"{"version":999,"obs":{"port":"renamed in a newer build"}}"#;
         std::fs::write(&path, original).unwrap();
 
-        let loaded = read_config_from_path(&path);
+        let loaded = read_startup_config_from_path(&path);
 
         assert!(
             matches!(
@@ -654,10 +745,11 @@ mod tests {
         assert!(!c.onboarding.welcome_shown);
     }
 
-    /// Writes `contents` to a uniquely named temp file, runs `read_config_from_path`
-    /// over it, and hands back both the loaded config and whatever ended up on
-    /// disk afterwards.  The file is removed before the assertions run so a
-    /// failing test does not leave litter behind.
+    /// Writes `contents` to a uniquely named temp file, loads it the way
+    /// startup does (the read, then the migration write the GTK side performs
+    /// when one is pending), and hands back both the loaded config and
+    /// whatever ended up on disk afterwards.  The file is removed before the
+    /// assertions run so a failing test does not leave litter behind.
     fn load_from_temp_file(contents: &str) -> (AppConfig, String) {
         let path = std::env::temp_dir().join(format!(
             "scenedeck-config-test-{}-{}.json",
@@ -668,7 +760,10 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::write(&path, contents).unwrap();
-        let loaded = read_config_from_path(&path);
+        let loaded = read_startup_config_from_path(&path);
+        if loaded.pending_repair == Some(PendingRepair::WriteMigrated) {
+            write_config_to_path(&path, &loaded.config).unwrap();
+        }
         let persisted = std::fs::read_to_string(&path).unwrap();
         let _ = std::fs::remove_file(path);
         (loaded.config, persisted)
@@ -692,7 +787,7 @@ mod tests {
         let original = br#"{ "obs": { "host": "192.168.1.42",, } }"#;
         std::fs::write(&path, original).unwrap();
 
-        let loaded = read_config_from_path(&path);
+        let loaded = read_startup_config_from_path(&path);
 
         let backup = dir.join("config.json.invalid");
         assert!(backup.exists(), "the unparsable file was not preserved");
@@ -712,6 +807,7 @@ mod tests {
         }
         // The app still starts, on defaults.
         assert_eq!(loaded.config.obs.host, "127.0.0.1");
+        assert_eq!(loaded.pending_repair, None);
 
         std::fs::remove_dir_all(dir).unwrap();
     }

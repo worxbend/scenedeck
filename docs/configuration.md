@@ -164,6 +164,9 @@ Custom CSS follows the same rule by loading `light_path` or `dark_path`.
 
 Unknown or missing fields fall back through Serde defaults. If the app cannot
 read or parse the config, it starts with defaults and reports a startup notice.
+At startup an unparsable file is first moved to `config.json.invalid`, so the
+next save cannot overwrite it. Later reads, such as the one on each connect,
+never write, migrate on disk, or move the file.
 
 A config whose `version` is above the one this build supports was written by a
 newer SceneDeck. This build loads what it understands and shows a startup
@@ -185,8 +188,9 @@ field:
 
 On load, SceneDeck automatically migrates version `1` configs to version `2` by
 moving that value to `appearance.mode`, preserving the existing color
-preference. The migrated config is written back to disk. Unknown old or new
-theme values fall back to `system`.
+preference. Startup writes the migrated config back through the same ordered
+save as the Settings page, so a failed write blocks Close until you retry or
+choose to lose it. Unknown old or new theme values fall back to `system`.
 
 Version `3` added the `onboarding` section. Migrating a version `2` config sets
 `onboarding.welcome_shown` to `true`, because a config file that already exists

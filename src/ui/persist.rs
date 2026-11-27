@@ -467,6 +467,12 @@ pub(crate) fn persist_config(nav: &NavigationContext, update: impl FnOnce(&mut A
         update(&mut state.config);
         state.config.clone()
     };
+    persist_config_snapshot(config);
+}
+
+/// Save a config the caller already holds, with the same failure retention as
+/// `persist_config`.
+pub(crate) fn persist_config_snapshot(config: AppConfig) {
     crate::ui::background_io::run_config_snapshot(move || write_config(&config));
 }
 

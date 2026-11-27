@@ -15,13 +15,13 @@ use crate::controller::app_controller::AppController;
 use crate::controller::event::AppEvent;
 use crate::controller::state::AppState;
 use crate::infra::i18n;
-use crate::storage::config::read_config;
+use crate::storage::config::{read_startup_config, LoadedConfig, PendingRepair};
 use crate::storage::registry::read_registry;
 use crate::storage::secret;
 use crate::ui;
 
 struct StartupData {
-    config: crate::storage::config::LoadedConfig,
+    config: LoadedConfig,
     registry: crate::storage::registry::SceneRegistry,
     password: Option<String>,
     bookmarks: Result<crate::storage::bookmarks::BookmarkArchive, String>,
@@ -40,7 +40,7 @@ pub fn run() {
     let tokio_handle = runtime.handle().clone();
     let (event_tx, event_rx) = mpsc::sync_channel::<AppEvent>(128);
     let startup = std::thread::spawn(|| {
-        let config = read_config();
+        let config = read_startup_config();
         let password =
             secret::get_obs_password(&config.config.connection_id).unwrap_or_else(|error| {
                 tracing::warn!(%error, "could not preload OBS password from keyring");
@@ -62,9 +62,10 @@ pub fn run() {
     .unwrap_or_else(|_| {
         tracing::error!("startup persistence worker panicked; using defaults");
         StartupData {
-            config: crate::storage::config::LoadedConfig {
+            config: LoadedConfig {
                 config: Default::default(),
                 startup_notice: None,
+                pending_repair: None,
             },
             registry: Default::default(),
             password: None,
@@ -450,6 +451,7 @@ fn build_ui(
         startup.password.clone(),
         notice,
     )));
+    persist_startup_migration(loaded);
 
     state.borrow_mut().load_bookmarks(startup.bookmarks.clone());
     state
@@ -459,6 +461,16 @@ fn build_ui(
     let window = ui::build_main_window(app, state, controller, event_rx);
     install_persistence_close_guard(app, &window, owner);
     window
+}
+
+/// Save the config the startup read migrated in memory.
+///
+/// The read never writes. Saving through the ordered config lane once GTK owns
+/// persistence lets a failed write block Close like any Settings save.
+fn persist_startup_migration(loaded: &LoadedConfig) {
+    if loaded.pending_repair == Some(PendingRepair::WriteMigrated) {
+        ui::persist::persist_config_snapshot(loaded.config.clone());
+    }
 }
 
 #[cfg(test)]
@@ -1194,6 +1206,29 @@ mod tests {
             std::fs::remove_dir(&path).unwrap();
             close_failure().unwrap().response("retry");
             iterate_until(|| !window.is_visible());
+            let saved = crate::storage::config::read_config_from_path(&path);
+            assert!(saved.startup_notice.is_none());
+            assert!(saved.config.onboarding.welcome_shown);
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display; scratch config only, no OBS/keyring"]
+    fn native_startup_saves_a_migrated_config_through_the_config_lane() {
+        crate::ui::native_test!(|| {
+            let path = crate::storage::xdg::config_path();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, r#"{"version":2}"#).unwrap();
+            let loaded = read_startup_config();
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"{"version":2}"#);
+
+            persist_startup_migration(&loaded);
+
+            iterate_until(|| {
+                crate::storage::config::read_config_from_path(&path)
+                    .pending_repair
+                    .is_none()
+            });
             let saved = crate::storage::config::read_config_from_path(&path);
             assert!(saved.startup_notice.is_none());
             assert!(saved.config.onboarding.welcome_shown);

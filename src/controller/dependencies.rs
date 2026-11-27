@@ -139,6 +139,7 @@ mod tests {
                 ..AppConfig::default()
             },
             startup_notice,
+            pending_repair: None,
         }
     }
 
