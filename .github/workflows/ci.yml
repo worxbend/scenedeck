@@ -108,6 +108,10 @@ jobs:
       - name: Run clippy (also typechecks every target)
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
+      # Releases ship the default feature set; opt-in features never reach it.
+      - name: Run clippy on the shipped default feature set
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
       - name: Run default tests
         run: cargo test --workspace --all-features --locked
 

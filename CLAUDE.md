@@ -30,6 +30,9 @@ cargo test --workspace --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
+CI also lints the default feature set that releases ship:
+`cargo clippy --workspace --all-targets -- -D warnings`.
+
 Single test / module:
 
 ```sh

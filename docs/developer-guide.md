@@ -37,6 +37,7 @@ cargo check --workspace --all-features --locked
 cargo test --workspace --all-features --locked
 cargo test --workspace --all-features --locked --lib infra::i18n::tests::every_shipped_locale_parses_and_loads -- --exact --ignored --test-threads=1
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo clippy --workspace --all-targets --locked -- -D warnings   # default (shipped) features
 cargo build --locked
 python3 tools/check-advisory-exceptions.py &&
   cargo audit &&

@@ -39,6 +39,7 @@ class WorkflowContracts(unittest.TestCase):
         self.assertEqual(ci["on"]["workflow_call"]["inputs"]["commit"]["required"], "true")
         commands = "\n".join(step.get("run", "") for job in ci["jobs"].values() for step in job["steps"])
         for command in ["cargo fmt --all -- --check", "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
+                        "cargo clippy --workspace --all-targets --locked -- -D warnings",
                         "cargo test --workspace --all-features --locked\n", "cargo audit",
                         "cargo deny --locked --all-features check advisories bans licenses sources", "python3 tools/test-native.py"]:
             self.assertIn(command, commands)
