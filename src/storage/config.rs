@@ -212,6 +212,9 @@ pub enum PendingRepair {
 pub enum ConfigStartupNotice {
     FirstLaunch,
     ReadFailed(String),
+    /// The file is a symbolic link. Config files are opened with O_NOFOLLOW,
+    /// so the link is never read through and every save over it is refused.
+    Symlinked,
     /// The file exists but is not valid JSON. `backup` is where startup moved
     /// the original, when it could be moved at all.
     ParseFailed {
@@ -232,6 +235,7 @@ impl ConfigStartupNotice {
             Self::ReadFailed(err) => {
                 fl!(LANGUAGE_LOADER, "config-read-failed", detail = err.as_str())
             }
+            Self::Symlinked => fl!(LANGUAGE_LOADER, "config-symlinked"),
             Self::ParseFailed { detail, backup } => match backup {
                 Some(backup) => fl!(
                     LANGUAGE_LOADER,
@@ -270,6 +274,11 @@ pub fn read_config_from_path(path: &Path) -> LoadedConfig {
         Err(err) if err.kind() == io::ErrorKind::NotFound => LoadedConfig {
             config: AppConfig::default(),
             startup_notice: Some(ConfigStartupNotice::FirstLaunch),
+            pending_repair: None,
+        },
+        Err(err) if crate::storage::small_file::is_symlink_refusal(path, &err) => LoadedConfig {
+            config: AppConfig::default(),
+            startup_notice: Some(ConfigStartupNotice::Symlinked),
             pending_repair: None,
         },
         Err(err) => LoadedConfig {
@@ -728,6 +737,26 @@ mod tests {
         ));
         assert!(write_config_to_path(&path, &AppConfig::default()).is_err());
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_symlinked_config_reports_the_symlink_and_saves_never_replace_its_target() {
+        let dir = crate::storage::test_support::TempDir::new("config-symlink");
+        let target = dir.path().join("dotfiles-config.json");
+        std::fs::write(&target, br#"{"version":5}"#).unwrap();
+        let path = dir.path().join("config.json");
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+
+        let loaded = read_config_from_path(&path);
+
+        assert_eq!(loaded.startup_notice, Some(ConfigStartupNotice::Symlinked));
+        assert_eq!(loaded.pending_repair, None);
+        assert!(write_config_to_path(&path, &AppConfig::default()).is_err());
+        assert!(std::fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read(&target).unwrap(), br#"{"version":5}"#);
     }
 
     #[test]

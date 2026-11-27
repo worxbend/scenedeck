@@ -41,6 +41,17 @@ pub(crate) fn read_to_string(path: &Path, limit: usize) -> io::Result<String> {
     String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
+/// Whether `read_to_string(path)` failed with `error` because `path` itself is
+/// a symbolic link.
+///
+/// O_NOFOLLOW reports a final-component link as ELOOP, but so does a link loop
+/// in a parent directory. The second lstat tells them apart. It only picks the
+/// message for the operator; the refusal already happened on the open.
+pub(crate) fn is_symlink_refusal(path: &Path, error: &io::Error) -> bool {
+    error.raw_os_error() == Some(libc::ELOOP)
+        && std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
+}
+
 pub(crate) fn check_size(length: u64, limit: usize) -> io::Result<()> {
     if length > limit as u64 {
         Err(too_large())
@@ -100,6 +111,26 @@ mod tests {
             read_to_string(&path, 4).unwrap_err().kind(),
             io::ErrorKind::InvalidData
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn only_a_symlink_at_the_final_component_counts_as_a_symlink_refusal() {
+        let dir = fixture();
+        let regular = dir.join("regular");
+        std::fs::write(&regular, b"safe").unwrap();
+        let link = dir.join("link");
+        std::os::unix::fs::symlink(&regular, &link).unwrap();
+        std::os::unix::fs::symlink(dir.join("loop-b"), dir.join("loop-a")).unwrap();
+        std::os::unix::fs::symlink(dir.join("loop-a"), dir.join("loop-b")).unwrap();
+        let behind_loop = dir.join("loop-a").join("input");
+
+        let link_error = read_to_string(&link, 4).unwrap_err();
+        let loop_error = read_to_string(&behind_loop, 4).unwrap_err();
+
+        assert!(is_symlink_refusal(&link, &link_error));
+        assert_eq!(loop_error.raw_os_error(), Some(libc::ELOOP));
+        assert!(!is_symlink_refusal(&behind_loop, &loop_error));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

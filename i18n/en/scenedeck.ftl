@@ -134,6 +134,7 @@ config-read-failed = Settings could not be read: { $detail }
 config-parse-failed = Settings could not be parsed: { $detail }
 config-parse-failed-backed-up = Settings could not be parsed: { $detail } — the file was kept at { $path } and defaults were loaded.
 config-newer-version = Settings were saved by a newer SceneDeck (settings version { $version }). They are loaded, but changes will not be saved, so the newer settings stay intact.
+config-symlinked = config.json is a symbolic link. SceneDeck does not follow symbolic links, so defaults were loaded and changes will not be saved. Replace the link with a regular file to keep your settings.
 
 ## graph.rs
 

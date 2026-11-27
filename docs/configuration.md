@@ -174,6 +174,12 @@ At startup an unparsable file is first moved to `config.json.invalid`, so the
 next save cannot overwrite it. Later reads, such as the one on each connect,
 never write, migrate on disk, or move the file.
 
+SceneDeck does not follow symbolic links for its config files. If
+`config.json` is a symlink, for example one placed by a dotfile manager, the
+app starts with defaults and Settings says the file is a symbolic link. Saves
+are refused while the link is there, so the linked file is never replaced.
+Replace the link with a regular file to keep settings changes.
+
 A config whose `version` is above the one this build supports was written by a
 newer SceneDeck. This build loads what it understands and shows a startup
 notice in Settings, but never migrates, moves aside, or saves over that file:

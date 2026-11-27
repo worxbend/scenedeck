@@ -73,6 +73,9 @@ fn stored_config(loaded: LoadedConfig) -> Result<AppConfig, AppError> {
         | Some(ConfigStartupNotice::NewerVersion { .. }) => Ok(loaded.config),
         Some(ConfigStartupNotice::ReadFailed(detail))
         | Some(ConfigStartupNotice::ParseFailed { detail, .. }) => Err(AppError::storage(detail)),
+        Some(notice @ ConfigStartupNotice::Symlinked) => {
+            Err(AppError::storage(notice.user_message()))
+        }
     }
 }
 
@@ -180,5 +183,19 @@ mod tests {
                 "got {config:?}"
             );
         }
+    }
+
+    #[test]
+    fn stored_config_refuses_a_symlinked_file_with_its_specific_message() {
+        let config = stored_config(loaded(Some(ConfigStartupNotice::Symlinked)));
+
+        assert!(
+            matches!(
+                &config,
+                Err(AppError::Storage(found))
+                    if *found == ConfigStartupNotice::Symlinked.user_message()
+            ),
+            "got {config:?}"
+        );
     }
 }
