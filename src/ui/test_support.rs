@@ -1,5 +1,6 @@
 use super::navigation::NavigationContext;
 use crate::controller::{app_controller::AppController, event::AppEvent, state::AppState};
+use gtk4::prelude::*;
 use std::{cell::RefCell, rc::Rc, sync::mpsc, time::Duration};
 
 /// Native tests need the isolated display and session bus that
@@ -105,6 +106,43 @@ pub(crate) fn pump_until(timeout: Duration, mut ready: impl FnMut() -> bool) -> 
         pump(Duration::from_millis(10));
     }
     true
+}
+
+/// First widget, `root` included, in depth-first pre-order that `matches`.
+pub(crate) fn find_where(
+    root: &gtk4::Widget,
+    matches: impl Fn(&gtk4::Widget) -> bool,
+) -> Option<gtk4::Widget> {
+    first_match(root, &matches)
+}
+
+fn first_match(
+    widget: &gtk4::Widget,
+    matches: &impl Fn(&gtk4::Widget) -> bool,
+) -> Option<gtk4::Widget> {
+    if matches(widget) {
+        return Some(widget.clone());
+    }
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        if let Some(found) = first_match(&current, matches) {
+            return Some(found);
+        }
+        child = current.next_sibling();
+    }
+    None
+}
+
+pub(crate) fn find_named(root: &gtk4::Widget, name: &str) -> Option<gtk4::Widget> {
+    find_where(root, |widget| widget.widget_name() == name)
+}
+
+/// The widget named `name` as a `T`; panics naming what is missing or mistyped.
+pub(crate) fn expect_named<T: IsA<gtk4::Widget>>(root: &gtk4::Widget, name: &str) -> T {
+    find_named(root, name)
+        .unwrap_or_else(|| panic!("missing widget {name}"))
+        .downcast::<T>()
+        .unwrap_or_else(|widget| panic!("{name} is a {}", widget.type_()))
 }
 
 /// `scenedeck::ui::tests::native_example::anchor` names an item declared in

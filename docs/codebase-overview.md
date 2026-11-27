@@ -147,8 +147,9 @@ GTK and libadwaita UI.
   chooser, the bottom status bar, and the
   cairo chart/gauge renderers used by Stats.
 - `test_support.rs` (tests only): the `native_test!` runner that gives each
-  native GTK test its own process and a 60 s deadline, plus the shared
-  `navigation()` fixture and main-loop `pump` helpers.
+  native GTK test its own process and a 60 s deadline, the shared
+  `navigation()` fixture, main-loop `pump` helpers, and the widget lookups
+  `find_where`, `find_named` and `expect_named`.
 
 ## Assets and Resources
 

@@ -1613,6 +1613,8 @@ fn expand(parent: &GtkBox, title: &str, content: &GtkBox, _expanded: bool) {
 
 #[cfg(test)]
 mod tests {
+    use crate::ui::test_support::{expect_named, find_named, find_where};
+
     #[test]
     #[ignore = "requires a disposable GTK display; synthetic source observations"]
     fn native_visibility_and_filter_readback_retain_widgets_without_echoing_commands() {
@@ -1792,530 +1794,477 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires a native GTK display; run with --test-threads=1"]
+    #[ignore = "requires a disposable GTK display; synthetic source observations"]
     fn native_long_usage_paths_fit_without_hiding_the_editor() {
-        use super::*;
-        use crate::{
-            controller::{app_controller::AppController, state::AppState},
-            domain::control::{ControlSnapshot, SourceItem},
-            storage::{config::AppConfig, registry::SceneRegistry},
-        };
-        const CHILD: &str = "SCENEDECK_SOURCE_USAGE_NATIVE_CHILD";
-        if std::env::var_os(CHILD).is_none() {
-            let output = std::process::Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "ui::widgets::operating_panel::tests::native_long_usage_paths_fit_without_hiding_the_editor", "--ignored", "--test-threads=1"])
-                .env(CHILD, "1").output().unwrap();
-            assert!(
-                output.status.success(),
-                "native Sources child failed: {}\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-            return;
-        }
-        fn pump() {
-            let context = glib::MainContext::default();
-            let end = std::time::Instant::now() + std::time::Duration::from_millis(250);
-            while std::time::Instant::now() < end {
-                while context.pending() {
-                    context.iteration(false);
-                }
-                std::thread::sleep(std::time::Duration::from_millis(2));
-            }
-        }
-        fn named(root: &gtk4::Widget, name: &str) -> gtk4::Widget {
-            let mut found = None;
-            visit(root, &mut |widget| {
-                if widget.widget_name() == name {
-                    found = Some(widget.clone());
-                }
-            });
-            found.expect(name)
-        }
-        crate::ui::test_support::require_native_runner();
-        adw::init().expect("native GTK display");
-        crate::ui::theme::ThemeManager::apply(&Default::default());
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
-            .enable_all()
-            .build()
-            .unwrap();
-        let (tx, _events) = std::sync::mpsc::sync_channel(16);
-        let state = Rc::new(RefCell::new(AppState::new(
-            AppConfig::default(),
-            SceneRegistry::default(),
-            None,
-            None,
-        )));
-        let owner = "Long owner with localized words — Довга назва сцени для перевірки";
-        let item = SourceItem {
-            owner: owner.into(), item_id: 1, input: "Shared caption".into(), input_uuid: String::new(),
-            kind: None, path: vec![owner.into(), "AReallyLongUnbrokenNestedSceneIdentifierThatMustStillWrapWithoutForcingHorizontalClipping".into()],
-            enabled: true, ancestor_enabled: true, is_group: false, is_scene: false,
-        };
-        {
-            let mut state = state.borrow_mut();
-            state.obs_status = ObsStatus::Connected {
-                obs_version: "synthetic fixture".into(),
+        crate::ui::native_test!(|| {
+            use super::*;
+            use crate::{
+                controller::{app_controller::AppController, state::AppState},
+                domain::control::{ControlSnapshot, SourceItem},
+                storage::{config::AppConfig, registry::SceneRegistry},
+                ui::test_support::pump,
             };
-            state.scene_collections.current = Some("Synthetic collection".into());
-            state.workspace.observed_at = Some(std::time::Instant::now());
-            state.workspace.selected_input = Some("Shared caption".into());
-            state.workspace.snapshot = Some(ControlSnapshot {
-                scene: Some(owner.into()),
-                items: vec![item.clone()],
-                ..Default::default()
-            });
-            state.workspace.detail = Some(SourceDetail {
-                input: "Shared caption".into(),
-                text: Some("Editable source text".into()),
-                audio: Some(crate::domain::control::AudioSettings {
-                    monitor: AudioMonitor::Off,
-                    sync_offset_ms: 0,
-                    balance: 0.5,
-                    tracks: [true; 6],
-                }),
-                ..Default::default()
-            });
-            state.workspace.usage = (0..10)
-                .map(|index| {
-                    let mut path = item.clone();
-                    path.item_id += index;
-                    path.path.push(format!("Structural path {index}"));
-                    path
-                })
-                .collect();
-        }
-        let nav = NavigationContext::new(
-            state,
-            gtk4::Stack::new(),
-            Rc::new(RefCell::new(AppController::new(
-                runtime.handle().clone(),
-                tx,
-            ))),
-        );
-        let root = column(0);
-        let local = Rc::new(RefCell::new(LocalState::default()));
-        local.borrow_mut().set_epoch(0);
-        local.borrow_mut().show_detail = true;
-        populate(&root, &nav, &local);
-        let window = gtk4::Window::builder()
-            .default_width(1100)
-            .default_height(740)
-            .child(&root)
-            .build();
-        window.present();
-        for (width, height) in [(1100, 740), (640, 600)] {
-            window.set_default_size(width, height);
-            pump();
-            let usage = named(root.upcast_ref(), "control-focus-usage")
-                .downcast::<gtk4::Expander>()
+            use std::time::Duration;
+            const SETTLE: Duration = Duration::from_millis(250);
+            crate::ui::theme::ThemeManager::apply(&Default::default());
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
                 .unwrap();
-            assert!(
-                !usage.is_expanded(),
-                "secondary paths should start collapsed"
+            let (tx, _events) = std::sync::mpsc::sync_channel(16);
+            let state = Rc::new(RefCell::new(AppState::new(
+                AppConfig::default(),
+                SceneRegistry::default(),
+                None,
+                None,
+            )));
+            let owner = "Long owner with localized words — Довга назва сцени для перевірки";
+            let item = SourceItem {
+                owner: owner.into(), item_id: 1, input: "Shared caption".into(), input_uuid: String::new(),
+                kind: None, path: vec![owner.into(), "AReallyLongUnbrokenNestedSceneIdentifierThatMustStillWrapWithoutForcingHorizontalClipping".into()],
+                enabled: true, ancestor_enabled: true, is_group: false, is_scene: false,
+            };
+            {
+                let mut state = state.borrow_mut();
+                state.obs_status = ObsStatus::Connected {
+                    obs_version: "synthetic fixture".into(),
+                };
+                state.scene_collections.current = Some("Synthetic collection".into());
+                state.workspace.observed_at = Some(std::time::Instant::now());
+                state.workspace.selected_input = Some("Shared caption".into());
+                state.workspace.snapshot = Some(ControlSnapshot {
+                    scene: Some(owner.into()),
+                    items: vec![item.clone()],
+                    ..Default::default()
+                });
+                state.workspace.detail = Some(SourceDetail {
+                    input: "Shared caption".into(),
+                    text: Some("Editable source text".into()),
+                    audio: Some(crate::domain::control::AudioSettings {
+                        monitor: AudioMonitor::Off,
+                        sync_offset_ms: 0,
+                        balance: 0.5,
+                        tracks: [true; 6],
+                    }),
+                    ..Default::default()
+                });
+                state.workspace.usage = (0..10)
+                    .map(|index| {
+                        let mut path = item.clone();
+                        path.item_id += index;
+                        path.path.push(format!("Structural path {index}"));
+                        path
+                    })
+                    .collect();
+            }
+            let nav = NavigationContext::new(
+                state,
+                gtk4::Stack::new(),
+                Rc::new(RefCell::new(AppController::new(
+                    runtime.handle().clone(),
+                    tx,
+                ))),
             );
-            let scroll = named(root.upcast_ref(), "sources-detail-scroll");
-            let editor = named(root.upcast_ref(), "control-focus-text-Shared caption");
-            let bounds = editor.compute_bounds(&scroll).unwrap();
-            assert!(bounds.y() >= 0.0 && bounds.y()+bounds.height() <= scroll.height() as f32,
-                "editor should be visible before expanding ten structural paths at {width}px: {bounds:?}");
+            let root = column(0);
+            let local = Rc::new(RefCell::new(LocalState::default()));
+            local.borrow_mut().set_epoch(0);
+            local.borrow_mut().show_detail = true;
+            populate(&root, &nav, &local);
+            let window = gtk4::Window::builder()
+                .default_width(1100)
+                .default_height(740)
+                .child(&root)
+                .build();
+            window.present();
+            for (width, height) in [(1100, 740), (640, 600)] {
+                window.set_default_size(width, height);
+                pump(SETTLE);
+                let usage =
+                    expect_named::<gtk4::Expander>(root.upcast_ref(), "control-focus-usage");
+                assert!(
+                    !usage.is_expanded(),
+                    "secondary paths should start collapsed"
+                );
+                let scroll =
+                    expect_named::<gtk4::Widget>(root.upcast_ref(), "sources-detail-scroll");
+                let editor = expect_named::<gtk4::Widget>(
+                    root.upcast_ref(),
+                    "control-focus-text-Shared caption",
+                );
+                let bounds = editor.compute_bounds(&scroll).unwrap();
+                assert!(bounds.y() >= 0.0 && bounds.y()+bounds.height() <= scroll.height() as f32,
+                    "editor should be visible before expanding ten structural paths at {width}px: {bounds:?}");
+                usage.set_expanded(true);
+                pump(SETTLE);
+                let button = usage
+                    .child()
+                    .unwrap()
+                    .first_child()
+                    .unwrap()
+                    .downcast::<Button>()
+                    .unwrap();
+                let label = button.child().and_downcast::<gtk4::Label>().unwrap();
+                assert!(
+                    label.layout().line_count() > 1,
+                    "long paths must actually wrap"
+                );
+                let bounds = button.compute_bounds(&scroll).unwrap();
+                assert!(
+                    bounds.x() >= 0.0 && bounds.x() + bounds.width() <= scroll.width() as f32,
+                    "expanded path must fit detail viewport at {width}px: {bounds:?}, viewport={}",
+                    scroll.width()
+                );
+                assert!(button.tooltip_text().unwrap().contains(owner));
+                // Media/readback refresh replaces detail widgets; preserve the user's
+                // explicit expansion rather than closing the path list every second.
+                gtk4::prelude::RootExt::set_focus(&window, gtk4::Widget::NONE);
+                crate::ui::clear_children(&root);
+                populate(&root, &nav, &local);
+                pump(SETTLE);
+                let restored =
+                    expect_named::<gtk4::Expander>(root.upcast_ref(), "control-focus-usage");
+                assert!(
+                    restored.is_expanded(),
+                    "readback rebuild must preserve expanded paths"
+                );
+                restored.set_expanded(false);
+                pump(SETTLE);
+            }
+            window.close();
+
+            // Exercise the actual page refresh closure, including its named focus
+            // capture and idle restoration, rather than only rebuilding test widgets.
+            let (page, refresh) = build(nav.clone());
+            let window = gtk4::Window::builder()
+                .default_width(1100)
+                .default_height(740)
+                .child(&page)
+                .build();
+            window.present();
+            pump(SETTLE);
+            let usage = expect_named::<gtk4::Expander>(&page, "control-focus-usage");
             usage.set_expanded(true);
-            pump();
-            let button = usage
+            pump(SETTLE);
+            let path = usage.child().unwrap().first_child().unwrap();
+            let identity = path.widget_name();
+            assert!(identity.starts_with("control-focus-usage-"));
+            assert!(path.grab_focus());
+            refresh();
+            pump(SETTLE);
+            let restored = gtk4::prelude::RootExt::focus(&window).expect("path focus restored");
+            assert_eq!(
+                restored, path,
+                "unchanged refresh must retain the actual focused path widget"
+            );
+            assert!(
+                restored.is::<Button>(),
+                "focus must remain on the path button, not the expander"
+            );
+            assert_eq!(
+                restored.widget_name(),
+                identity,
+                "focus must retain the same structural path"
+            );
+            // Real page status publications must not replace search, editor or browser
+            // GObjects. Keep an unapplied draft and search focus through the entire
+            // request -> acknowledgement -> identical readback cycle.
+            {
+                let mut state = nav.state.borrow_mut();
+                state.workspace.loading = false;
+                state.workspace.pending = false;
+                state.workspace.dirty = false;
+                state.workspace.observed_at = Some(std::time::Instant::now());
+                state.available_requests.push("SetInputSettings".into());
+                state.available_requests.push("SetSceneItemEnabled".into());
+            }
+            refresh();
+            pump(SETTLE);
+            let search = expect_named::<gtk4::SearchEntry>(&page, "control-focus-search");
+            let editor = expect_named::<gtk4::TextView>(&page, "control-focus-text-Shared caption");
+            let save = expect_named::<gtk4::Widget>(&page, "control-focus-save-Shared caption");
+            let browser = expect_named::<gtk4::Widget>(&page, "sources-list-scroll");
+            let sync_name = format!(
+                "control-focus-number-{}",
+                fl!(LANGUAGE_LOADER, "control-audio-sync")
+            );
+            let sync = expect_named::<SpinButton>(&page, &sync_name);
+            sync.set_value(125.0);
+            // Sync offsets are integer spin buttons: a decimal draft is rejected
+            // by GTK before refresh. A lone sign is a valid incomplete integer edit.
+            sync.set_text("-");
+            assert_eq!(
+                sync.text(),
+                "-",
+                "numeric draft fixture must be accepted before any refresh"
+            );
+            let track = expect_named::<CheckButton>(&page, "control-focus-track-Shared caption-1");
+            track.set_active(false);
+            editor.buffer().set_text("Unapplied caption draft");
+            search.set_text("Shared");
+            pump(SETTLE);
+            assert!(search.grab_focus());
+            let search_focus = gtk4::prelude::RootExt::focus(&window).unwrap();
+            let browser_bounds = browser.compute_bounds(&window).unwrap();
+            for stage in 0..4 {
+                {
+                    let mut state = nav.state.borrow_mut();
+                    state.workspace.sequence += 1;
+                    state.workspace.touch();
+                    state.workspace.loading = stage == 1 || stage == 2;
+                    state.workspace.pending = stage == 1;
+                    state.workspace.result = format!("Synthetic stage {stage}");
+                    if stage == 3 {
+                        state.workspace.observed_at = Some(std::time::Instant::now());
+                    }
+                }
+                refresh();
+                pump(SETTLE);
+                assert_eq!(
+                    expect_named::<gtk4::Widget>(&page, "control-focus-search"),
+                    search.clone().upcast::<gtk4::Widget>()
+                );
+                assert_eq!(
+                    expect_named::<gtk4::Widget>(&page, "control-focus-text-Shared caption"),
+                    editor.clone().upcast::<gtk4::Widget>()
+                );
+                assert_eq!(
+                    expect_named::<gtk4::Widget>(&page, "sources-list-scroll"),
+                    browser
+                );
+                assert_eq!(
+                    browser.compute_bounds(&window).unwrap(),
+                    browser_bounds,
+                    "status readback shifted the Sources browser"
+                );
+                assert_eq!(
+                    gtk4::prelude::RootExt::focus(&window).unwrap(),
+                    search_focus
+                );
+                assert_eq!(
+                    editor.buffer().text(
+                        &editor.buffer().start_iter(),
+                        &editor.buffer().end_iter(),
+                        true
+                    ),
+                    "Unapplied caption draft"
+                );
+                assert_eq!(search.text(), "Shared");
+                assert_eq!(
+                    expect_named::<gtk4::Widget>(&page, &sync_name),
+                    sync.clone().upcast::<gtk4::Widget>()
+                );
+                assert_eq!(sync.text(), "-");
+                assert_eq!(sync.value(), 125.0);
+                assert!(!track.is_active());
+                assert_eq!(save.is_sensitive(), stage != 1);
+                assert_eq!(
+                    expect_named::<gtk4::Widget>(&page, "control-focus-refresh").is_sensitive(),
+                    stage != 1 && stage != 2
+                );
+                assert_eq!(
+                    expect_named::<gtk4::Widget>(&page, "sources-status-loading").is_visible(),
+                    stage == 1 || stage == 2
+                );
+                assert_eq!(
+                    expect_named::<Label>(&page, "sources-status-result").label(),
+                    format!("Synthetic stage {stage}")
+                );
+            }
+            assert!(editor.grab_focus());
+            let editor_focus = gtk4::prelude::RootExt::focus(&window).unwrap();
+            for loading in [true, false] {
+                nav.state.borrow_mut().workspace.loading = loading;
+                refresh();
+                pump(SETTLE);
+                assert_eq!(
+                    gtk4::prelude::RootExt::focus(&window).unwrap(),
+                    editor_focus
+                );
+                assert!(
+                    save.is_sensitive(),
+                    "background reads must preserve valid editors"
+                );
+            }
+            {
+                let mut state = nav.state.borrow_mut();
+                state.workspace.observed_at =
+                    Some(std::time::Instant::now() - std::time::Duration::from_secs(40));
+            }
+            refresh();
+            assert!(!save.is_sensitive());
+            assert!(expect_named::<gtk4::Widget>(&page, "sources-status-stale").is_visible());
+            assert!(expect_named::<Label>(&page, "sources-status-age")
+                .label()
+                .contains("40"));
+            {
+                let mut state = nav.state.borrow_mut();
+                state.workspace.error = Some("Synthetic read failure".into());
+                state.workspace.observed_at = None;
+            }
+            refresh();
+            assert_eq!(
+                expect_named::<gtk4::Widget>(&page, "control-focus-text-Shared caption"),
+                editor.clone().upcast::<gtk4::Widget>()
+            );
+            assert_eq!(
+                expect_named::<Label>(&page, "sources-status-error").label(),
+                "Synthetic read failure"
+            );
+            assert!(!expect_named::<gtk4::Widget>(&page, "sources-status-age").is_visible());
+            {
+                let mut state = nav.state.borrow_mut();
+                state.workspace.error = None;
+                state.workspace.observed_at = Some(std::time::Instant::now());
+                state.workspace.detail.as_mut().unwrap().text = Some("External caption".into());
+            }
+            refresh();
+            let replaced = expect_named::<gtk4::Widget>(&page, "control-focus-text-Shared caption");
+            assert_eq!(
+                replaced,
+                editor.clone().upcast::<gtk4::Widget>(),
+                "text readback must preserve the editor and use current origins for Cancel"
+            );
+            expect_named::<Button>(&page, "control-focus-cancel-Shared caption").emit_clicked();
+            let replaced = replaced.downcast::<gtk4::TextView>().unwrap();
+            assert_eq!(
+                replaced.buffer().text(
+                    &replaced.buffer().start_iter(),
+                    &replaced.buffer().end_iter(),
+                    true
+                ),
+                "External caption"
+            );
+            let old_usage = expect_named::<gtk4::Expander>(&page, "control-focus-usage")
                 .child()
                 .unwrap()
                 .first_child()
                 .unwrap()
                 .downcast::<Button>()
                 .unwrap();
-            let label = button.child().and_downcast::<gtk4::Label>().unwrap();
-            assert!(
-                label.layout().line_count() > 1,
-                "long paths must actually wrap"
+            let old_scope = nav.scoped();
+            nav.state.borrow_mut().workspace.epoch += 1;
+            refresh();
+            assert_ne!(
+                expect_named::<gtk4::Widget>(&page, "control-focus-text-Shared caption"),
+                replaced.upcast::<gtk4::Widget>()
             );
-            let bounds = button.compute_bounds(&scroll).unwrap();
-            assert!(
-                bounds.x() >= 0.0 && bounds.x() + bounds.width() <= scroll.width() as f32,
-                "expanded path must fit detail viewport at {width}px: {bounds:?}, viewport={}",
-                scroll.width()
+            assert!(!old_scope.is_current());
+            let sequence = nav.state.borrow().workspace.sequence;
+            old_usage.emit_clicked();
+            assert_eq!(
+                nav.state.borrow().workspace.sequence,
+                sequence,
+                "detached old callback must reject the new epoch"
             );
-            assert!(button.tooltip_text().unwrap().contains(owner));
-            // Media/readback refresh replaces detail widgets; preserve the user's
-            // explicit expansion rather than closing the path list every second.
-            gtk4::prelude::RootExt::set_focus(&window, gtk4::Widget::NONE);
-            crate::ui::clear_children(&root);
-            populate(&root, &nav, &local);
-            pump();
-            let restored = named(root.upcast_ref(), "control-focus-usage")
-                .downcast::<gtk4::Expander>()
-                .unwrap();
-            assert!(
-                restored.is_expanded(),
-                "readback rebuild must preserve expanded paths"
-            );
-            restored.set_expanded(false);
-            pump();
-        }
-        window.close();
-
-        // Exercise the actual page refresh closure, including its named focus
-        // capture and idle restoration, rather than only rebuilding test widgets.
-        let (page, refresh) = build(nav.clone());
-        let window = gtk4::Window::builder()
-            .default_width(1100)
-            .default_height(740)
-            .child(&page)
-            .build();
-        window.present();
-        pump();
-        let usage = named(&page, "control-focus-usage")
-            .downcast::<gtk4::Expander>()
-            .unwrap();
-        usage.set_expanded(true);
-        pump();
-        let path = usage.child().unwrap().first_child().unwrap();
-        let identity = path.widget_name();
-        assert!(identity.starts_with("control-focus-usage-"));
-        assert!(path.grab_focus());
-        refresh();
-        pump();
-        let restored = gtk4::prelude::RootExt::focus(&window).expect("path focus restored");
-        assert_eq!(
-            restored, path,
-            "unchanged refresh must retain the actual focused path widget"
-        );
-        assert!(
-            restored.is::<Button>(),
-            "focus must remain on the path button, not the expander"
-        );
-        assert_eq!(
-            restored.widget_name(),
-            identity,
-            "focus must retain the same structural path"
-        );
-        // Real page status publications must not replace search, editor or browser
-        // GObjects. Keep an unapplied draft and search focus through the entire
-        // request -> acknowledgement -> identical readback cycle.
-        {
-            let mut state = nav.state.borrow_mut();
-            state.workspace.loading = false;
-            state.workspace.pending = false;
-            state.workspace.dirty = false;
-            state.workspace.observed_at = Some(std::time::Instant::now());
-            state.available_requests.push("SetInputSettings".into());
-            state.available_requests.push("SetSceneItemEnabled".into());
-        }
-        refresh();
-        pump();
-        let search = named(&page, "control-focus-search")
-            .downcast::<gtk4::SearchEntry>()
-            .unwrap();
-        let editor = named(&page, "control-focus-text-Shared caption")
-            .downcast::<gtk4::TextView>()
-            .unwrap();
-        let save = named(&page, "control-focus-save-Shared caption");
-        let browser = named(&page, "sources-list-scroll");
-        let sync_name = format!(
-            "control-focus-number-{}",
-            fl!(LANGUAGE_LOADER, "control-audio-sync")
-        );
-        let sync = named(&page, &sync_name).downcast::<SpinButton>().unwrap();
-        sync.set_value(125.0);
-        // Sync offsets are integer spin buttons: a decimal draft is rejected
-        // by GTK before refresh. A lone sign is a valid incomplete integer edit.
-        sync.set_text("-");
-        assert_eq!(
-            sync.text(),
-            "-",
-            "numeric draft fixture must be accepted before any refresh"
-        );
-        let track = named(&page, "control-focus-track-Shared caption-1")
-            .downcast::<CheckButton>()
-            .unwrap();
-        track.set_active(false);
-        editor.buffer().set_text("Unapplied caption draft");
-        search.set_text("Shared");
-        pump();
-        assert!(search.grab_focus());
-        let search_focus = gtk4::prelude::RootExt::focus(&window).unwrap();
-        let browser_bounds = browser.compute_bounds(&window).unwrap();
-        for stage in 0..4 {
+            // Keep native dropdown interaction alive across media-only replies,
+            // including a reply that was already in flight when the popup opened.
             {
                 let mut state = nav.state.borrow_mut();
-                state.workspace.sequence += 1;
-                state.workspace.touch();
-                state.workspace.loading = stage == 1 || stage == 2;
-                state.workspace.pending = stage == 1;
-                state.workspace.result = format!("Synthetic stage {stage}");
-                if stage == 3 {
-                    state.workspace.observed_at = Some(std::time::Instant::now());
-                }
+                state.current_page = crate::controller::state::Page::Sources;
+                state.workspace.loading = false;
+                state.workspace.dirty = false;
+                state.workspace.observed_at = Some(std::time::Instant::now());
+                state.workspace.selected_input = Some("Media".into());
+                state.workspace.usage.clear();
+                state
+                    .available_requests
+                    .push("SetInputAudioMonitorType".into());
+                state.workspace.detail = Some(SourceDetail {
+                    input: "Media".into(),
+                    media: Some(crate::domain::control::MediaStatus {
+                        state: crate::domain::control::MediaState::Playing,
+                        duration_ms: Some(4000),
+                        cursor_ms: Some(0),
+                    }),
+                    audio: Some(crate::domain::control::AudioSettings {
+                        monitor: AudioMonitor::Off,
+                        sync_offset_ms: 0,
+                        balance: 0.5,
+                        tracks: [true; 6],
+                    }),
+                    ..Default::default()
+                });
             }
+            window.set_default_size(1100, 1100);
             refresh();
-            pump();
-            assert_eq!(
-                named(&page, "control-focus-search"),
-                search.clone().upcast::<gtk4::Widget>()
-            );
-            assert_eq!(
-                named(&page, "control-focus-text-Shared caption"),
-                editor.clone().upcast::<gtk4::Widget>()
-            );
-            assert_eq!(named(&page, "sources-list-scroll"), browser);
-            assert_eq!(
-                browser.compute_bounds(&window).unwrap(),
-                browser_bounds,
-                "status readback shifted the Sources browser"
-            );
-            assert_eq!(
-                gtk4::prelude::RootExt::focus(&window).unwrap(),
-                search_focus
-            );
-            assert_eq!(
-                editor.buffer().text(
-                    &editor.buffer().start_iter(),
-                    &editor.buffer().end_iter(),
-                    true
-                ),
-                "Unapplied caption draft"
-            );
-            assert_eq!(search.text(), "Shared");
-            assert_eq!(
-                named(&page, &sync_name),
-                sync.clone().upcast::<gtk4::Widget>()
-            );
-            assert_eq!(sync.text(), "-");
-            assert_eq!(sync.value(), 125.0);
-            assert!(!track.is_active());
-            assert_eq!(save.is_sensitive(), stage != 1);
-            assert_eq!(
-                named(&page, "control-focus-refresh").is_sensitive(),
-                stage != 1 && stage != 2
-            );
-            assert_eq!(
-                named(&page, "sources-status-loading").is_visible(),
-                stage == 1 || stage == 2
-            );
-            assert_eq!(
-                named(&page, "sources-status-result")
-                    .downcast::<Label>()
+            pump(SETTLE);
+            let selector = expect_named::<gtk4::Widget>(&page, "control-focus-monitor-Media");
+            let popup = find_where(&selector, |widget| widget.is::<gtk4::Popover>())
+                .and_downcast::<gtk4::Popover>()
+                .expect("native dropdown popover");
+            selector
+                .first_child()
+                .and_downcast::<gtk4::ToggleButton>()
+                .unwrap()
+                .set_active(true);
+            pump(SETTLE);
+            assert!(mapped_popover(&page), "dropdown must actually be mapped");
+            for cursor in 1..=6 {
+                nav.state
+                    .borrow_mut()
+                    .workspace
+                    .detail
+                    .as_mut()
                     .unwrap()
-                    .label(),
-                format!("Synthetic stage {stage}")
-            );
-        }
-        assert!(editor.grab_focus());
-        let editor_focus = gtk4::prelude::RootExt::focus(&window).unwrap();
-        for loading in [true, false] {
-            nav.state.borrow_mut().workspace.loading = loading;
+                    .media
+                    .as_mut()
+                    .unwrap()
+                    .cursor_ms = Some(cursor * 250);
+                refresh();
+                pump(SETTLE);
+                assert!(
+                    popup.is_mapped(),
+                    "media tick must not close an open dropdown"
+                );
+                assert_eq!(
+                    expect_named::<gtk4::Widget>(&page, "control-focus-monitor-Media"),
+                    selector
+                );
+            }
+            popup.popdown();
+            pump(SETTLE);
             refresh();
-            pump();
+            pump(SETTLE);
+            let resumed = expect_named::<gtk4::Widget>(&page, "control-focus-monitor-Media");
             assert_eq!(
-                gtk4::prelude::RootExt::focus(&window).unwrap(),
-                editor_focus
+                resumed, selector,
+                "media readback must retain the native selector"
             );
-            assert!(
-                save.is_sensitive(),
-                "background reads must preserve valid editors"
+            assert_eq!(
+                expect_named::<SpinButton>(&page, "control-focus-seek-position-Media").value(),
+                1.5
             );
-        }
-        {
-            let mut state = nav.state.borrow_mut();
-            state.workspace.observed_at =
-                Some(std::time::Instant::now() - std::time::Duration::from_secs(40));
-        }
-        refresh();
-        assert!(!save.is_sensitive());
-        assert!(named(&page, "sources-status-stale").is_visible());
-        assert!(named(&page, "sources-status-age")
-            .downcast::<Label>()
-            .unwrap()
-            .label()
-            .contains("40"));
-        {
-            let mut state = nav.state.borrow_mut();
-            state.workspace.error = Some("Synthetic read failure".into());
-            state.workspace.observed_at = None;
-        }
-        refresh();
-        assert_eq!(
-            named(&page, "control-focus-text-Shared caption"),
-            editor.clone().upcast::<gtk4::Widget>()
-        );
-        assert_eq!(
-            named(&page, "sources-status-error")
-                .downcast::<Label>()
+            let popup = find_where(&resumed, |widget| widget.is::<gtk4::Popover>())
+                .and_downcast::<gtk4::Popover>()
+                .expect("resumed dropdown popover");
+            resumed
+                .first_child()
+                .and_downcast::<gtk4::ToggleButton>()
                 .unwrap()
-                .label(),
-            "Synthetic read failure"
-        );
-        assert!(!named(&page, "sources-status-age").is_visible());
-        {
-            let mut state = nav.state.borrow_mut();
-            state.workspace.error = None;
-            state.workspace.observed_at = Some(std::time::Instant::now());
-            state.workspace.detail.as_mut().unwrap().text = Some("External caption".into());
-        }
-        refresh();
-        let replaced = named(&page, "control-focus-text-Shared caption");
-        assert_eq!(
-            replaced,
-            editor.clone().upcast::<gtk4::Widget>(),
-            "text readback must preserve the editor and use current origins for Cancel"
-        );
-        named(&page, "control-focus-cancel-Shared caption")
-            .downcast::<Button>()
-            .unwrap()
-            .emit_clicked();
-        let replaced = replaced.downcast::<gtk4::TextView>().unwrap();
-        assert_eq!(
-            replaced.buffer().text(
-                &replaced.buffer().start_iter(),
-                &replaced.buffer().end_iter(),
-                true
-            ),
-            "External caption"
-        );
-        let old_usage = named(&page, "control-focus-usage")
-            .downcast::<gtk4::Expander>()
-            .unwrap()
-            .child()
-            .unwrap()
-            .first_child()
-            .unwrap()
-            .downcast::<Button>()
-            .unwrap();
-        let old_scope = nav.scoped();
-        nav.state.borrow_mut().workspace.epoch += 1;
-        refresh();
-        assert_ne!(
-            named(&page, "control-focus-text-Shared caption"),
-            replaced.upcast::<gtk4::Widget>()
-        );
-        assert!(!old_scope.is_current());
-        let sequence = nav.state.borrow().workspace.sequence;
-        old_usage.emit_clicked();
-        assert_eq!(
-            nav.state.borrow().workspace.sequence,
-            sequence,
-            "detached old callback must reject the new epoch"
-        );
-        // Keep native dropdown interaction alive across media-only replies,
-        // including a reply that was already in flight when the popup opened.
-        {
-            let mut state = nav.state.borrow_mut();
-            state.current_page = crate::controller::state::Page::Sources;
-            state.workspace.loading = false;
-            state.workspace.dirty = false;
-            state.workspace.observed_at = Some(std::time::Instant::now());
-            state.workspace.selected_input = Some("Media".into());
-            state.workspace.usage.clear();
-            state
-                .available_requests
-                .push("SetInputAudioMonitorType".into());
-            state.workspace.detail = Some(SourceDetail {
-                input: "Media".into(),
-                media: Some(crate::domain::control::MediaStatus {
-                    state: crate::domain::control::MediaState::Playing,
-                    duration_ms: Some(4000),
-                    cursor_ms: Some(0),
-                }),
-                audio: Some(crate::domain::control::AudioSettings {
-                    monitor: AudioMonitor::Off,
-                    sync_offset_ms: 0,
-                    balance: 0.5,
-                    tracks: [true; 6],
-                }),
-                ..Default::default()
-            });
-        }
-        window.set_default_size(1100, 1100);
-        refresh();
-        pump();
-        let selector = named(&page, "control-focus-monitor-Media");
-        let mut popup = None;
-        visit(&selector, &mut |widget| {
-            if let Some(popover) = widget.downcast_ref::<gtk4::Popover>() {
-                popup = Some(popover.clone());
+                .set_active(true);
+            pump(SETTLE);
+            assert!(popup.is_mapped());
+            {
+                let mut state = nav.state.borrow_mut();
+                state.workspace.error = Some("Synthetic disconnected read".into());
+                state.workspace.observed_at = None;
             }
-        });
-        let popup = popup.expect("native dropdown popover");
-        selector
-            .first_child()
-            .and_downcast::<gtk4::ToggleButton>()
-            .unwrap()
-            .set_active(true);
-        pump();
-        assert!(mapped_popover(&page), "dropdown must actually be mapped");
-        for cursor in 1..=6 {
-            nav.state
-                .borrow_mut()
-                .workspace
-                .detail
-                .as_mut()
-                .unwrap()
-                .media
-                .as_mut()
-                .unwrap()
-                .cursor_ms = Some(cursor * 250);
             refresh();
-            pump();
+            pump(SETTLE);
             assert!(
-                popup.is_mapped(),
-                "media tick must not close an open dropdown"
+                !popup.is_mapped(),
+                "read failure must invalidate an open dropdown immediately"
             );
-            assert_eq!(named(&page, "control-focus-monitor-Media"), selector);
-        }
-        popup.popdown();
-        pump();
-        refresh();
-        pump();
-        let resumed = named(&page, "control-focus-monitor-Media");
-        assert_eq!(
-            resumed, selector,
-            "media readback must retain the native selector"
-        );
-        assert_eq!(
-            named(&page, "control-focus-seek-position-Media")
-                .downcast::<SpinButton>()
-                .unwrap()
-                .value(),
-            1.5
-        );
-        let mut popup = None;
-        visit(&resumed, &mut |widget| {
-            if let Some(popover) = widget.downcast_ref::<gtk4::Popover>() {
-                popup = Some(popover.clone());
-            }
+            assert_eq!(
+                expect_named::<gtk4::Widget>(&page, "control-focus-monitor-Media"),
+                resumed,
+                "status-only failure must disable, not replace the native selector"
+            );
+            assert!(!resumed.is_sensitive());
+            assert!(expect_named::<gtk4::Widget>(&page, "sources-status-error").is_visible());
+            window.close();
         });
-        let popup = popup.unwrap();
-        resumed
-            .first_child()
-            .and_downcast::<gtk4::ToggleButton>()
-            .unwrap()
-            .set_active(true);
-        pump();
-        assert!(popup.is_mapped());
-        {
-            let mut state = nav.state.borrow_mut();
-            state.workspace.error = Some("Synthetic disconnected read".into());
-            state.workspace.observed_at = None;
-        }
-        refresh();
-        pump();
-        assert!(
-            !popup.is_mapped(),
-            "read failure must invalidate an open dropdown immediately"
-        );
-        assert_eq!(
-            named(&page, "control-focus-monitor-Media"),
-            resumed,
-            "status-only failure must disable, not replace the native selector"
-        );
-        assert!(!resumed.is_sensitive());
-        assert!(named(&page, "sources-status-error").is_visible());
-        window.close();
     }
 
     #[test]
@@ -2495,37 +2444,15 @@ mod tests {
         }
     }
 
-    fn find(root: &gtk4::Widget, name: &str) -> Option<gtk4::Widget> {
-        use adw::prelude::*;
-        let mut found = None;
-        super::visit(root, &mut |widget| {
-            if found.is_none() && widget.widget_name() == name {
-                found = Some(widget.clone());
-            }
-        });
-        found
-    }
-
-    fn named<T: gtk4::prelude::IsA<gtk4::Widget>>(root: &gtk4::Widget, name: &str) -> T {
-        use adw::prelude::*;
-        find(root, name)
-            .unwrap_or_else(|| panic!("missing widget {name}"))
-            .downcast::<T>()
-            .unwrap_or_else(|widget| panic!("{name} is a {}", widget.type_()))
-    }
-
     /// Unnamed status labels are only reachable by their text.
     fn label_with_text(root: &gtk4::Widget, text: &str) -> Option<super::Label> {
         use adw::prelude::*;
-        let mut found = None;
-        super::visit(root, &mut |widget| {
-            if let Some(label) = widget.downcast_ref::<super::Label>() {
-                if found.is_none() && label.label() == text {
-                    found = Some(label.clone());
-                }
-            }
-        });
-        found
+        find_where(root, |widget| {
+            widget
+                .downcast_ref::<super::Label>()
+                .is_some_and(|label| label.label() == text)
+        })
+        .and_downcast()
     }
 
     fn buffer_text(view: &gtk4::TextView) -> String {
@@ -2572,33 +2499,38 @@ mod tests {
             let (page, _refresh) = build(nav.clone());
 
             assert_eq!(
-                named::<DropDown>(&page, "control-focus-scene").selected(),
+                expect_named::<DropDown>(&page, "control-focus-scene").selected(),
                 0
             );
-            let camera: CheckButton = named(&page, "control-focus-item-Main-1-Main");
+            let camera: CheckButton = expect_named(&page, "control-focus-item-Main-1-Main");
             assert!(camera.is_active() && camera.is_sensitive());
             assert!(camera.has_css_class("sources-mutation"));
             assert_eq!(camera.tooltip_text().as_deref(), Some("Camera"));
-            let hidden: CheckButton = named(&page, "control-focus-item-Main-3-Main/Group");
+            let hidden: CheckButton = expect_named(&page, "control-focus-item-Main-3-Main/Group");
             assert!(!hidden.is_active());
-            assert!(!named::<Label>(&page, "sources-hidden-parent-Main-1-Main").is_visible());
-            assert!(named::<Label>(&page, "sources-hidden-parent-Main-3-Main/Group").is_visible());
-            let inspect: Button = named(&page, "control-focus-inspect-Main-1-Main");
+            assert!(
+                !expect_named::<Label>(&page, "sources-hidden-parent-Main-1-Main").is_visible()
+            );
+            assert!(
+                expect_named::<Label>(&page, "sources-hidden-parent-Main-3-Main/Group")
+                    .is_visible()
+            );
+            let inspect: Button = expect_named(&page, "control-focus-inspect-Main-1-Main");
             assert!(inspect.is_sensitive());
             assert!(inspect.has_css_class("sources-inspect"));
             assert!(inspect.has_css_class("suggested-action"));
-            let group_inspect: Button = named(&page, "control-focus-inspect-Main-2-Main");
+            let group_inspect: Button = expect_named(&page, "control-focus-inspect-Main-2-Main");
             assert!(!group_inspect.is_sensitive());
             assert!(!group_inspect.has_css_class("sources-inspect"));
-            assert!(find(&page, "sources-list-scroll").is_some());
-            assert!(find(&page, "sources-detail-scroll").is_some());
-            assert!(find(&page, "control-focus-back").is_some());
+            assert!(find_named(&page, "sources-list-scroll").is_some());
+            assert!(find_named(&page, "sources-detail-scroll").is_some());
+            assert!(find_named(&page, "control-focus-back").is_some());
             assert!(
                 label_with_text(&page, &fl!(LANGUAGE_LOADER, "control-request-hint")).is_some(),
                 "a selected source without a detail read asks for one"
             );
 
-            let search: gtk4::SearchEntry = named(&page, "control-focus-search");
+            let search: gtk4::SearchEntry = expect_named(&page, "control-focus-search");
             let row_of = |check: &CheckButton| check.parent().and_then(|line| line.parent());
             let (camera_row, hidden_row) = (row_of(&camera).unwrap(), row_of(&hidden).unwrap());
             let no_matches =
@@ -2650,23 +2582,23 @@ mod tests {
             );
             let (page, refresh) = build(nav.clone());
 
-            let editor: gtk4::TextView = named(&page, "control-focus-text-Caption");
+            let editor: gtk4::TextView = expect_named(&page, "control-focus-text-Caption");
             assert_eq!(buffer_text(&editor), "Hello");
-            let save: Button = named(&page, "control-focus-save-Caption");
+            let save: Button = expect_named(&page, "control-focus-save-Caption");
             assert!(save.is_sensitive());
             assert!(save.has_css_class("sources-mutation"));
             assert!(save.has_css_class("sources-text-save"));
-            let cancel: Button = named(&page, "control-focus-cancel-Caption");
-            let conflict: Label = named(&page, "sources-text-conflict");
+            let cancel: Button = expect_named(&page, "control-focus-cancel-Caption");
+            let conflict: Label = expect_named(&page, "sources-text-conflict");
             assert!(!conflict.is_visible());
-            assert!(find(&page, "source-media-controls").is_none());
-            assert!(find(&page, "control-focus-monitor-Caption").is_none());
+            assert!(find_named(&page, "source-media-controls").is_none());
+            assert!(find_named(&page, "control-focus-monitor-Caption").is_none());
 
             editor.buffer().set_text("Draft");
             edit_detail(&nav, |detail| detail.text = Some("External".into()));
             refresh();
             assert_eq!(
-                named::<gtk4::TextView>(&page, "control-focus-text-Caption"),
+                expect_named::<gtk4::TextView>(&page, "control-focus-text-Caption"),
                 editor
             );
             assert_eq!(buffer_text(&editor), "Draft");
@@ -2694,8 +2626,8 @@ mod tests {
             acknowledge(&nav);
             edit_detail(&nav, |detail| detail.text_from_file = true);
             refresh();
-            assert!(find(&page, "control-focus-text-Caption").is_none());
-            assert!(find(&page, "control-focus-save-Caption").is_none());
+            assert!(find_named(&page, "control-focus-text-Caption").is_none());
+            assert!(find_named(&page, "control-focus-save-Caption").is_none());
             assert!(label_with_text(&page, &fl!(LANGUAGE_LOADER, "control-text-file")).is_some());
         });
     }
@@ -2723,8 +2655,8 @@ mod tests {
             );
             let (page, refresh) = build(nav.clone());
 
-            assert!(find(&page, "source-media-controls").is_some());
-            let status: Label = named(&page, "sources-media-state");
+            assert!(find_named(&page, "source-media-controls").is_some());
+            let status: Label = expect_named(&page, "sources-media-state");
             assert_eq!(status.text(), MediaState::Playing.label());
             for action in [
                 MediaAction::Play,
@@ -2738,13 +2670,14 @@ mod tests {
                     input: "Clip".into(),
                     action,
                 };
-                let button: Button = named(&page, &format!("control-focus-action-{control:?}"));
+                let button: Button =
+                    expect_named(&page, &format!("control-focus-action-{control:?}"));
                 assert!(button.is_sensitive() && button.has_css_class("sources-mutation"));
             }
-            let position: SpinButton = named(&page, "control-focus-seek-position-Clip");
+            let position: SpinButton = expect_named(&page, "control-focus-seek-position-Clip");
             assert_eq!(position.value(), 1.0);
             assert_eq!(position.adjustment().upper(), 4.0);
-            let seek: Button = named(&page, "control-focus-seek-Clip");
+            let seek: Button = expect_named(&page, "control-focus-seek-Clip");
             assert!(seek.is_sensitive() && seek.has_css_class("sources-mutation"));
 
             position.set_value(3.0);
@@ -2764,10 +2697,10 @@ mod tests {
                 media.cursor_ms = Some(2000);
             });
             refresh();
-            assert_eq!(named::<Label>(&page, "sources-media-state"), status);
+            assert_eq!(expect_named::<Label>(&page, "sources-media-state"), status);
             assert_eq!(status.text(), MediaState::Paused.label());
             assert_eq!(
-                named::<SpinButton>(&page, "control-focus-seek-position-Clip"),
+                expect_named::<SpinButton>(&page, "control-focus-seek-position-Clip"),
                 position
             );
             assert_eq!(position.value(), 2.0);
@@ -2776,9 +2709,9 @@ mod tests {
                 detail.media.as_mut().unwrap().duration_ms = None
             });
             refresh();
-            assert!(find(&page, "control-focus-seek-position-Clip").is_none());
-            assert!(find(&page, "control-focus-seek-Clip").is_none());
-            assert!(find(&page, "source-media-controls").is_some());
+            assert!(find_named(&page, "control-focus-seek-position-Clip").is_none());
+            assert!(find_named(&page, "control-focus-seek-Clip").is_none());
+            assert!(find_named(&page, "source-media-controls").is_some());
         });
     }
 
@@ -2808,25 +2741,27 @@ mod tests {
             let sync_title = fl!(LANGUAGE_LOADER, "control-audio-sync");
             let balance_title = fl!(LANGUAGE_LOADER, "control-audio-balance");
 
-            let monitor: DropDown = named(&page, "control-focus-monitor-Mic");
+            let monitor: DropDown = expect_named(&page, "control-focus-monitor-Mic");
             assert_eq!(monitor.selected(), 1);
             assert!(monitor.is_sensitive() && monitor.has_css_class("sources-mutation"));
-            let sync: SpinButton = named(&page, &format!("control-focus-number-{sync_title}"));
+            let sync: SpinButton =
+                expect_named(&page, &format!("control-focus-number-{sync_title}"));
             assert_eq!(sync.value(), 150.0);
-            let sync_apply: Button = named(&page, &format!("control-focus-apply-{sync_title}"));
+            let sync_apply: Button =
+                expect_named(&page, &format!("control-focus-apply-{sync_title}"));
             assert!(
                 !sync_apply.is_sensitive() && !sync_apply.has_css_class("sources-mutation"),
                 "an unsupported request stays disabled"
             );
             let balance: SpinButton =
-                named(&page, &format!("control-focus-number-{balance_title}"));
+                expect_named(&page, &format!("control-focus-number-{balance_title}"));
             assert_eq!(balance.value(), 0.25);
             assert_eq!(balance.digits(), 2);
             let balance_apply: Button =
-                named(&page, &format!("control-focus-apply-{balance_title}"));
+                expect_named(&page, &format!("control-focus-apply-{balance_title}"));
             assert!(!balance_apply.is_sensitive());
             let tracks: Vec<CheckButton> = (0..6)
-                .map(|index| named(&page, &format!("control-focus-track-Mic-{index}")))
+                .map(|index| expect_named(&page, &format!("control-focus-track-Mic-{index}")))
                 .collect();
             assert_eq!(
                 tracks
@@ -2835,7 +2770,7 @@ mod tests {
                     .collect::<Vec<_>>(),
                 [true, false, true, false, true, false]
             );
-            let apply: Button = named(&page, "control-focus-tracks-apply-Mic");
+            let apply: Button = expect_named(&page, "control-focus-tracks-apply-Mic");
             assert!(apply.is_sensitive() && apply.has_css_class("sources-mutation"));
 
             monitor.set_selected(2);
@@ -2901,8 +2836,8 @@ mod tests {
                     audio.balance = balance;
                 });
             };
-            let sync: SpinButton = named(&page, &sync_name);
-            let balance: SpinButton = named(&page, &balance_name);
+            let sync: SpinButton = expect_named(&page, &sync_name);
+            let balance: SpinButton = expect_named(&page, &balance_name);
 
             sync.set_value(300.0);
             // GTK rejects a decimal separator foreign to the locale; a lone
@@ -2910,7 +2845,7 @@ mod tests {
             balance.set_text("-");
             observe_audio(200, 0.75);
             refresh();
-            assert_eq!(named::<SpinButton>(&page, &sync_name), sync);
+            assert_eq!(expect_named::<SpinButton>(&page, &sync_name), sync);
             assert_eq!(
                 sync.value(),
                 300.0,
@@ -2932,10 +2867,10 @@ mod tests {
 
             edit_state(&nav, |state| state.workspace.epoch += 1);
             refresh();
-            let rebuilt: SpinButton = named(&page, &balance_name);
+            let rebuilt: SpinButton = expect_named(&page, &balance_name);
             assert_ne!(rebuilt, balance, "a new epoch rebuilds the editors");
             assert_eq!(rebuilt.value(), 0.75);
-            assert_eq!(named::<SpinButton>(&page, &sync_name).value(), 400.0);
+            assert_eq!(expect_named::<SpinButton>(&page, &sync_name).value(), 400.0);
             window.destroy();
         });
     }
