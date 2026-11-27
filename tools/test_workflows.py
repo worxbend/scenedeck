@@ -139,6 +139,15 @@ class WorkflowContracts(unittest.TestCase):
             self.assertIn("flatpak", commands)
             self.assertIn("ostree", commands)
 
+    def test_shipped_builds_leave_development_features_off(self):
+        # Opt-in features such as perf-trace exist for local measurement only.
+        release = "\n".join(step.get("run", "") for step in workflow("release.yml")["jobs"]["build-linux"]["steps"])
+        flatpak = (ROOT / "packaging/flatpak/io.scenedeck.app.yml").read_text()
+        for text in (release, flatpak):
+            self.assertEqual(re.findall(r"cargo build .*", text), ["cargo build --release --locked"])
+        recipe = yaml.safe_load((ROOT / "snap/snapcraft.yaml").read_text())
+        self.assertNotIn("--all-features", recipe["parts"]["scenedeck"]["rust-cargo-parameters"])
+
     def test_toolchain_and_snap_bootstrap_pin_consistency(self):
         channel = tomllib.loads((ROOT / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
         self.assertEqual(channel, "1.99.1")

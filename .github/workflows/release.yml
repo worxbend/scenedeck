@@ -137,7 +137,7 @@ jobs:
           rsvg-convert -w 256 -h 256 "assets/${APP_ID}.svg" -o "build-assets/${APP_ID}.png"
 
       - name: Build release binary
-        run: cargo build --release --locked --all-features
+        run: cargo build --release --locked
 
       - name: Stage standalone executable
         run: |
