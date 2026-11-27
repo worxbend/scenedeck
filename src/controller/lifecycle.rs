@@ -34,6 +34,13 @@ use tokio::task::{AbortHandle, JoinHandle};
 use crate::infra::sync::lock_or_recover;
 use crate::obs::client::ObsClient;
 
+/// Operations one session journals at once; completed ones make room.
+const JOURNAL_CAPACITY: usize = 64;
+/// Retired sessions the audit keeps, in the queue and in the UI history.
+pub(crate) const TERMINAL_HISTORY: usize = 32;
+/// Optional commands one session runs at once; reserved work bypasses it.
+const TASK_CAPACITY: usize = 64;
+
 #[derive(Clone)]
 pub(crate) struct SessionScope {
     generation: u64,
@@ -286,7 +293,7 @@ impl SessionScope {
         if !self.is_active() {
             return None;
         }
-        if journal.entries.len() == 64 {
+        if journal.entries.len() == JOURNAL_CAPACITY {
             let completed = journal.entries.iter().position(|entry| entry.completed)?;
             journal.entries.remove(completed);
         }
@@ -343,7 +350,7 @@ impl SessionScope {
             .lock()
             .expect("terminal evidence queue");
         let mut terminal = terminal;
-        if queued.len() == 32 {
+        if queued.len() == TERMINAL_HISTORY {
             if let Some(discarded) = queued.pop_front() {
                 terminal.omitted_sessions = discarded.omitted_sessions + 1;
             }
@@ -410,7 +417,7 @@ impl SessionScope {
         {
             let mut tasks = lock_or_recover(self.tasks.as_ref());
             tasks.retain(|task| !task.is_finished());
-            if tasks.len() >= 64 {
+            if tasks.len() >= TASK_CAPACITY {
                 tracing::warn!("session command admission refused (busy)");
                 return None;
             }
@@ -456,7 +463,7 @@ mod tests {
             scope = scope.next();
         }
         let pending = scope.terminals.pending.lock().unwrap();
-        assert_eq!(pending.len(), 32);
+        assert_eq!(pending.len(), TERMINAL_HISTORY);
         assert_eq!(
             pending
                 .iter()
@@ -469,7 +476,7 @@ mod tests {
     #[tokio::test]
     async fn optional_command_saturation_does_not_starve_a_bounded_reserved_worker() {
         let scope = SessionScope::initial(Arc::new(Mutex::new(None)));
-        for _ in 0..64 {
+        for _ in 0..TASK_CAPACITY {
             assert!(scope
                 .spawn(&Handle::current(), std::future::pending())
                 .is_some());

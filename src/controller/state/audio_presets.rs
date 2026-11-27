@@ -265,7 +265,7 @@ mod tests {
         state.reject_preset(plan.epoch, plan.id);
         assert_eq!(state.preset_run.as_ref().unwrap().outcomes[0], observed);
         let mut old = plan;
-        old.reviewed = Instant::now() - std::time::Duration::from_secs(31);
+        old.reviewed = Instant::now() - PRESET_REVIEW_WINDOW - std::time::Duration::from_secs(1);
         assert!(state.start_preset(old).is_none());
     }
 }

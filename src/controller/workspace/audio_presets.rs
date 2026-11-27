@@ -190,7 +190,7 @@ async fn apply_input(
         let result = bounded_workspace_read(
             client,
             client.apply_preset_property(&desired, property, &|| {
-                if !valid() || plan.reviewed.elapsed() > std::time::Duration::from_secs(30) {
+                if !valid() || plan.reviewed.elapsed() > PRESET_REVIEW_WINDOW {
                     return false;
                 }
                 dispatched.store(true, Ordering::Release);

@@ -10,6 +10,9 @@ use std::{
 };
 use tokio::{runtime::Handle, task::JoinHandle};
 
+/// How long one scene thumbnail capture may take before it times out.
+const THUMBNAIL_BUDGET: Duration = Duration::from_secs(2);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ThumbnailRequest {
     pub(crate) epoch: u64,
@@ -91,7 +94,7 @@ impl ThumbnailController {
                         let _ = tx.try_send(AppEvent::ThumbnailLoaded { request: request.clone(), result });
                     }
                 }
-                _ = tokio::time::sleep(Duration::from_secs(2)) => {
+                _ = tokio::time::sleep(THUMBNAIL_BUDGET) => {
                     if !cancelled.swap(true, Ordering::Relaxed) {
                         let _ = tx.try_send(AppEvent::ThumbnailLoaded {
                             request: request.clone(), result: Err("Thumbnail timed out".into()),

@@ -3,6 +3,9 @@ use super::*;
 use crate::domain::workflow::ScopeBinding;
 use std::time::{Duration, Instant};
 
+/// How long a reviewed plan may still dispatch changes to OBS.
+pub(crate) const PRESET_REVIEW_WINDOW: Duration = Duration::from_secs(30);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PlannedInput {
     pub desired: PresetInput,
@@ -22,7 +25,7 @@ impl PresetPlan {
     pub fn valid(&self) -> bool {
         valid_name(&self.name)
             && !self.scope.collection.is_empty()
-            && self.reviewed.elapsed() <= Duration::from_secs(30)
+            && self.reviewed.elapsed() <= PRESET_REVIEW_WINDOW
             && AudioPreset {
                 inputs: self.inputs.iter().map(|row| row.desired.clone()).collect(),
             }

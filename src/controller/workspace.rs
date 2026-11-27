@@ -19,6 +19,9 @@ use tokio::{runtime::Handle, task::JoinHandle};
 
 mod audio_presets;
 
+/// Audio commands in flight at once; more are refused, not queued.
+const AUDIO_TASK_CAPACITY: usize = 16;
+
 #[derive(Debug, Clone)]
 pub struct WorkspaceRequest {
     pub operator_reads: Vec<InputRead>,
@@ -130,7 +133,7 @@ impl WorkspaceController {
             return;
         };
         self.audio_tasks.retain(|task| !task.is_finished());
-        if self.audio_tasks.len() >= 16 {
+        if self.audio_tasks.len() >= AUDIO_TASK_CAPACITY {
             tracing::warn!("audio command admission full");
             return;
         }

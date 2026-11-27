@@ -934,7 +934,7 @@ impl AppState {
             .log(crate::domain::workflow::ActivityOrigin::Connection, audit);
         self.report_terminal_audit(terminal.generation);
         self.session_retirements.push_back(terminal);
-        while self.session_retirements.len() > 32 {
+        while self.session_retirements.len() > super::lifecycle::TERMINAL_HISTORY {
             self.session_retirements.pop_front();
         }
     }
