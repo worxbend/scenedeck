@@ -586,6 +586,9 @@ pub(crate) async fn run_event_loop(
 }
 
 #[cfg(test)]
+mod event_loop_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

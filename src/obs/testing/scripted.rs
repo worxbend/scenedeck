@@ -5,11 +5,13 @@ use std::sync::{Arc, Mutex};
 
 use futures_util::StreamExt;
 use serde_json::Value;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 
 use super::wire::{self, MockSocket, Reply};
 use crate::infra::sync::lock_or_recover;
 use crate::obs::client::ObsClient;
+use crate::obs::event::ObsEventStream;
 
 /// Requests the mock OBS received, keyed by `requestType`.
 #[derive(Clone, Default)]
@@ -68,6 +70,28 @@ impl Script {
     }
 }
 
+/// Sends OBS event frames (see [`wire::event`]) to the connected client,
+/// in push order, between request replies.
+pub(crate) struct EventFeed(UnboundedSender<Value>);
+
+impl EventFeed {
+    pub(crate) fn push(&self, frame: Value) {
+        self.0
+            .send(frame)
+            .expect("scripted OBS stopped before the event was pushed");
+    }
+}
+
+/// A client connected to a [`ScriptedObs`], with the client's OBS event
+/// stream and a feed that pushes events into it.
+pub(crate) struct ScriptedSession {
+    pub(crate) client: ObsClient,
+    pub(crate) events: ObsEventStream,
+    pub(crate) feed: EventFeed,
+    /// Yields every request frame once the server stops.
+    pub(crate) server: JoinHandle<Vec<Value>>,
+}
+
 /// A loopback OBS that answers `GetVersion` (with PNG support) and then
 /// follows its script.
 pub(crate) struct ScriptedObs {
@@ -105,25 +129,50 @@ impl ScriptedObs {
     /// Start the server and connect a real client to it. The handle yields
     /// every request frame once the server stops.
     pub(crate) async fn connect(self) -> (ObsClient, JoinHandle<Vec<Value>>) {
+        let session = self.connect_with_events().await;
+        (session.client, session.server)
+    }
+
+    /// [`Self::connect`], keeping the client's event stream and a feed that
+    /// pushes OBS events into it.
+    pub(crate) async fn connect_with_events(self) -> ScriptedSession {
         let (listener, port) = wire::listen().await;
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let (feed, pushed) = unbounded_channel();
         let server = tokio::spawn(async move {
             let mut socket = wire::accept(listener).await;
-            let requests = self.serve(&mut socket).await;
+            let requests = self.serve(&mut socket, pushed).await;
             // Keep the socket open until `connect` returned, even for an empty
             // script; an error only means the test already dropped the client.
             let _ = ready_rx.await;
             requests
         });
-        let (client, _events) = ObsClient::connect("127.0.0.1", port, None).await.unwrap();
+        let (client, events) = ObsClient::connect("127.0.0.1", port, None).await.unwrap();
         ready_tx.send(()).unwrap();
-        (client, server)
+        ScriptedSession {
+            client,
+            events,
+            feed: EventFeed(feed),
+            server,
+        }
     }
 
-    async fn serve(mut self, socket: &mut MockSocket) -> Vec<Value> {
+    async fn serve(
+        mut self,
+        socket: &mut MockSocket,
+        mut pushed: UnboundedReceiver<Value>,
+    ) -> Vec<Value> {
         let mut requests = Vec::new();
         while !self.script.is_exhausted() {
-            let Some(request) = next_request(socket).await else {
+            // A dropped feed disables its branch; requests keep being served.
+            let request = tokio::select! {
+                request = next_request(socket) => request,
+                Some(frame) = pushed.recv() => {
+                    wire::send_json(socket, &frame).await;
+                    continue;
+                }
+            };
+            let Some(request) = request else {
                 self.script.assert_complete();
                 break;
             };

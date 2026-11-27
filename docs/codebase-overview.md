@@ -58,6 +58,8 @@ Application orchestration.
   graceful disconnect, and the injectable session-runner boundary.
 - `refresh_controller.rs`: OBS list/data refresh helpers, the session-owned
   one-second stats/bitrate poll loop, and OBS event-stream routing.
+  `refresh_controller/event_loop_tests.rs` (tests only) pins one
+  characterization test per `ObsEvent` arm of `run_event_loop`.
 
 `src/domain/`
 
@@ -99,7 +101,8 @@ OBS WebSocket integration.
   response and event frames, and the `GetVersion` payload.
 - `testing/scripted.rs` (tests only): `ScriptedObs`, a loopback OBS that
   answers from a script (strict order or by `requestType`) and counts requests
-  per type.
+  per type. `connect_with_events` also returns the client's event stream and
+  an `EventFeed` that pushes OBS event frames into it.
 
 No other module should import `obws` directly.
 

@@ -146,9 +146,10 @@ testable without a running OBS: `SessionRunner` (`session_controller.rs`),
 `ControllerDependencies` for config/password. Protocol tests use the loopback
 OBS in `src/obs/testing/`: `wire.rs` speaks the handshake and frames,
 `scripted.rs` (`ScriptedObs`) answers requests in strict order or by
-`requestType`, with typed `Reply::Ok`/`Reply::Err`, and counts each request
-type. Prefer extracting a pure decision helper — usually an `AppState`
-method — over testing through GTK callbacks.
+`requestType`, with typed `Reply::Ok`/`Reply::Err`, counts each request
+type, and pushes OBS events through `connect_with_events`. Prefer extracting
+a pure decision helper — usually an `AppState` method — over testing through
+GTK callbacks.
 
 ## Repository docs
 
