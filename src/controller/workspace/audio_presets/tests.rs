@@ -458,3 +458,25 @@ async fn all_64_selected_inputs_receive_results_without_the_single_input_task_li
         .unwrap()
         .starts_with("Set")));
 }
+
+#[tokio::test]
+async fn a_preset_refused_by_a_retired_scope_is_rejected() {
+    let (client, _server) = ScriptedObs::ordered(Vec::new()).connect().await;
+    let (tx, rx) = std::sync::mpsc::sync_channel(8);
+    let slot = Arc::new(Mutex::new(None));
+    let mut controller = WorkspaceController::new(Handle::current(), tx, slot.clone());
+    let retired = crate::controller::lifecycle::SessionScope::initial(slot.clone());
+    retired.retire();
+    controller.set_scope(retired);
+    // The client was read before the scope retired: the spawn is what refuses.
+    *slot.lock().unwrap() = Some(client.clone());
+
+    controller.preset(plan(&client));
+
+    let event = crate::controller::test_support::events::recv_event(&rx).await;
+    assert!(
+        matches!(event, AppEvent::PresetRejected { epoch: 2, run: 1 }),
+        "expected the preset to be rejected, got {event:?}"
+    );
+    assert!(controller.preset_task.is_none());
+}

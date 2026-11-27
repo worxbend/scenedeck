@@ -12,6 +12,7 @@ pub(crate) mod lifecycle;
 pub(crate) mod observations;
 pub(crate) mod output_controller;
 pub(crate) mod refresh_controller;
+pub(crate) mod runtime;
 pub(crate) mod session_controller;
 pub(crate) mod state;
 #[cfg(test)]

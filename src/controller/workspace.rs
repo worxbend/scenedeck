@@ -1,6 +1,7 @@
 //! Session-scoped reads and explicit native operations for the operating workspace.
 
 use crate::controller::event::AppEvent;
+use crate::controller::runtime::single_flight::{Admission, SingleFlight};
 use crate::domain::audio::AudioInput;
 use crate::domain::control::{
     ControlAction, ControlSnapshot, SourceDetail, SourceItem, WorkspaceWarning,
@@ -62,12 +63,6 @@ struct WorkspaceJob {
     tx: crate::controller::event_sender::EventSender,
 }
 
-#[derive(Default)]
-struct WorkspaceQueue {
-    running: bool,
-    pending: Option<WorkspaceJob>,
-}
-
 pub(crate) struct WorkspaceController {
     runtime: Handle,
     tx: crate::controller::event_sender::EventSender,
@@ -78,7 +73,7 @@ pub(crate) struct WorkspaceController {
     audio_tasks: Vec<JoinHandle<()>>,
     preset_task: Option<JoinHandle<()>>,
     preset_cancellation: Arc<std::sync::atomic::AtomicU64>,
-    queued: Arc<Mutex<WorkspaceQueue>>,
+    queued: SingleFlight<WorkspaceJob>,
     cancellation: Arc<std::sync::atomic::AtomicU64>,
     revision: Arc<std::sync::atomic::AtomicU64>,
 }
@@ -99,7 +94,7 @@ impl WorkspaceController {
             audio_tasks: Vec::new(),
             preset_task: None,
             preset_cancellation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            queued: Arc::new(Mutex::new(WorkspaceQueue::default())),
+            queued: SingleFlight::new(),
             cancellation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             revision: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
@@ -113,7 +108,7 @@ impl WorkspaceController {
         self.media_task = None;
         self.audio_tasks.clear();
         self.scope = scope;
-        self.queued = Arc::new(Mutex::new(WorkspaceQueue::default()));
+        self.queued = SingleFlight::new();
     }
 
     pub fn cancel(&mut self) {
@@ -121,7 +116,7 @@ impl WorkspaceController {
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         self.revision
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-        self.queued.lock().expect("workspace queue").pending = None;
+        self.queued.discard_pending();
         // Keep already-dispatched reads alive to drain their protocol entries.
         // Session retirement, unlike UI cancellation, cancels the whole socket.
         self.audio_tasks.clear();
@@ -234,49 +229,33 @@ impl WorkspaceController {
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
             + 1;
         let ticket = self.cancellation.load(std::sync::atomic::Ordering::Acquire);
-        {
-            let mut queued = self.queued.lock().expect("workspace queue");
-            queued.pending = Some(WorkspaceJob {
+        let job = WorkspaceJob {
+            request,
+            action,
+            expected_text,
+            revision,
+            ticket,
+            activation_revision: self.scope.scene_activation_revision(),
+            tx: self.tx.scoped(&self.scope),
+        };
+        let Admission::Started(mut jobs) = self.queued.offer(job) else {
+            return;
+        };
+        let client = crate::infra::sync::lock_or_recover(self.slot.as_ref()).clone();
+        let current_revision = self.revision.clone();
+        let cancellation = self.cancellation.clone();
+        let scope = self.scope.clone();
+        self.task = self.scope.spawn_reserved(&self.runtime, async move {
+            while let Some(WorkspaceJob {
                 request,
                 action,
                 expected_text,
                 revision,
                 ticket,
-                activation_revision: self.scope.scene_activation_revision(),
-                tx: self.tx.scoped(&self.scope),
-            });
-            if queued.running {
-                return;
-            }
-            queued.running = true;
-        }
-        let client = crate::infra::sync::lock_or_recover(self.slot.as_ref()).clone();
-        let queued = self.queued.clone();
-        let current_revision = self.revision.clone();
-        let cancellation = self.cancellation.clone();
-        let scope = self.scope.clone();
-        self.task = self.scope.spawn_reserved(&self.runtime, async move {
-            loop {
-                let job = {
-                    let mut queued = queued.lock().expect("workspace queue");
-                    let job = queued.pending.take();
-                    if job.is_none() {
-                        queued.running = false;
-                    }
-                    job
-                };
-                let Some(WorkspaceJob {
-                    request,
-                    action,
-                    expected_text,
-                    revision,
-                    ticket,
-                    activation_revision,
-                    tx,
-                }) = job
-                else {
-                    break;
-                };
+                activation_revision,
+                tx,
+            }) = jobs.next()
+            {
                 let evidence = action.as_ref().and_then(|_| {
                     tx.operation(
                         super::lifecycle::OperationKind::Workspace {
@@ -405,6 +384,32 @@ impl WorkspaceController {
                 }
             }
         });
+        if self.task.is_none() {
+            self.fail_refused_request();
+        }
+    }
+
+    /// GTK waits for this request's result; a refused worker must still
+    /// answer it.
+    fn fail_refused_request(&self) {
+        let Some(WorkspaceJob {
+            request, action, ..
+        }) = self.queued.take_pending()
+        else {
+            return;
+        };
+        self.tx.publish_refusal(
+            &self.runtime,
+            AppEvent::WorkspaceLoaded {
+                epoch: request.epoch,
+                sequence: request.sequence,
+                result_id: request.result_id,
+                acknowledged: false,
+                uncertain: false,
+                result: Err(fl!(LANGUAGE_LOADER, "controller-not-connected")),
+                action: action.is_some(),
+            },
+        );
     }
 }
 
@@ -876,6 +881,46 @@ mod tests {
             requests[2]["d"]["requestData"],
             json!({"inputName":"Mic","inputMuted":true})
         );
+    }
+
+    fn read_request(sequence: u64) -> WorkspaceRequest {
+        WorkspaceRequest {
+            operator_reads: Vec::new(),
+            target_uuid: None,
+            result_id: None,
+            epoch: 1,
+            sequence,
+            scope: ScopeBinding::default(),
+            scene: None,
+            input: None,
+            screenshot: false,
+            include_sources: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_request_refused_by_a_retired_scope_fails_instead_of_stranding_the_queue() {
+        let (tx, events) = mpsc::sync_channel(8);
+        let slot = Arc::new(Mutex::new(None));
+        let mut controller = WorkspaceController::new(Handle::current(), tx, slot.clone());
+        let retired = crate::controller::lifecycle::SessionScope::initial(slot);
+        retired.retire();
+        controller.set_scope(retired);
+
+        // The second request proves the first refusal did not strand the queue.
+        for expected in [1, 2] {
+            controller.request(read_request(expected), None, None);
+
+            let event = crate::controller::test_support::events::recv_event(&events).await;
+            let AppEvent::WorkspaceLoaded {
+                sequence, result, ..
+            } = event
+            else {
+                panic!("expected a workspace failure, got {event:?}");
+            };
+            assert_eq!(sequence, expected);
+            assert_eq!(result.unwrap_err(), "Not connected to OBS");
+        }
     }
 
     #[tokio::test]

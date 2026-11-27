@@ -11,27 +11,23 @@ impl WorkspaceController {
         self.preset_cancellation.fetch_add(1, Ordering::AcqRel);
     }
     pub(crate) fn preset(&mut self, plan: PresetPlan) {
-        let client = crate::infra::sync::lock_or_recover(self.slot.as_ref()).clone();
-        let tx = self.tx.scoped(&self.scope);
         let busy = self
             .preset_task
             .as_ref()
             .is_some_and(|task| !task.is_finished());
-        if !plan.valid() || client.is_none() || busy || !self.scope.is_active() {
-            // No protocol work is admitted. This result is fenced by run/epoch on GTK.
-            let event = AppEvent::PresetRejected {
-                epoch: plan.epoch,
-                run: plan.id,
-            };
-            self.runtime.spawn(async move {
-                let _ = tx.send(event).await;
-            });
+        let admitted = plan.valid() && !busy;
+        let client = crate::infra::sync::lock_or_recover(self.slot.as_ref()).clone();
+        let Some(client) = client.filter(|_| admitted) else {
+            self.publish_preset_rejection(plan.epoch, plan.id);
             return;
-        }
-        let client = client.unwrap();
+        };
+        let (epoch, run) = (plan.epoch, plan.id);
+        let tx = self.tx.scoped(&self.scope);
         let cancellation = self.preset_cancellation.clone();
         let ticket = cancellation.load(Ordering::Acquire);
         let scope = self.scope.clone();
+        // Spawning is the only scope-activity check, so a scope that retires
+        // after the client was read still answers the run.
         self.preset_task = self.scope.spawn_reserved(&self.runtime, async move {
             for (index, input) in plan.inputs.iter().enumerate() {
                 let topology = scope.graph_revision();
@@ -74,6 +70,15 @@ impl WorkspaceController {
                 }
             }
         });
+        if self.preset_task.is_none() {
+            self.publish_preset_rejection(epoch, run);
+        }
+    }
+
+    /// No protocol work was admitted. GTK fences the result by run and epoch.
+    fn publish_preset_rejection(&self, epoch: u64, run: u64) {
+        self.tx
+            .publish_refusal(&self.runtime, AppEvent::PresetRejected { epoch, run });
     }
 }
 

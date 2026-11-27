@@ -2,6 +2,7 @@
 
 use std::sync::mpsc::{SyncSender, TrySendError};
 use std::time::Duration;
+use tokio::runtime::Handle;
 
 use super::event::AppEvent;
 use super::lifecycle::SessionScope;
@@ -135,6 +136,23 @@ impl EventSender {
             // executor and keeps the queue bounded without dropping a completion.
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
+    }
+
+    /// Publish, from the GTK thread, that a command was refused before any
+    /// protocol work ran.
+    ///
+    /// The refusing scope may already be retired, and a sender scoped to it
+    /// would discard the event. So this sender must be unscoped, and `event`
+    /// must carry the request identity GTK fences on: the Mixer request, the
+    /// workspace epoch and sequence, or the preset epoch and run.
+    pub(crate) fn publish_refusal(&self, runtime: &Handle, event: AppEvent) {
+        debug_assert!(self.scope.is_none(), "a refusal must not be session-fenced");
+        let tx = self.clone();
+        runtime.spawn(async move {
+            // An unscoped send fails only when GTK dropped the receiver at
+            // shutdown; nobody is left to show the refusal.
+            let _ = tx.send(event).await;
+        });
     }
 
     pub(crate) fn try_send(&self, event: AppEvent) -> Result<(), ()> {

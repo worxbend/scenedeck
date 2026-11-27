@@ -29,24 +29,14 @@ use crate::controller::refresh_controller::{
     publish_profiles_after, refresh_after_collection_change, refresh_live_data, refresh_obs_stats,
     refresh_profile_and_collection_lists, BitrateSample,
 };
+use crate::controller::runtime::single_flight::{Admission, SingleFlight};
 use crate::controller::session_controller::SessionController;
+use crate::controller::state::MixerAudioRequest;
 #[cfg(test)]
 use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::infra::error::AppError;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::obs::client::ObsClient;
-
-#[derive(Default)]
-struct RefreshQueue {
-    running: bool,
-    pending: bool,
-}
-
-#[derive(Default)]
-struct MixerQueue {
-    running: bool,
-    pending: Option<(crate::controller::state::MixerAudioRequest, EventSender)>,
-}
 
 pub struct AppController {
     event_tx: EventSender,
@@ -60,8 +50,8 @@ pub struct AppController {
     bitrate_sample: BitrateSample,
     workspace: super::workspace::WorkspaceController,
     thumbnails: super::thumbnails::ThumbnailController,
-    mixer_queue: Arc<Mutex<MixerQueue>>,
-    refresh_queue: Arc<Mutex<RefreshQueue>>,
+    mixer_queue: SingleFlight<(MixerAudioRequest, EventSender)>,
+    refresh_queue: SingleFlight<()>,
     refresh_task: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -101,8 +91,8 @@ impl AppController {
         );
         Self {
             thumbnails,
-            mixer_queue: Arc::new(Mutex::new(MixerQueue::default())),
-            refresh_queue: Arc::new(Mutex::new(RefreshQueue::default())),
+            mixer_queue: SingleFlight::new(),
+            refresh_queue: SingleFlight::new(),
             refresh_task: None,
             event_tx: EventSender::new(event_tx),
             runtime,
@@ -217,15 +207,9 @@ impl AppController {
     // ── Private ───────────────────────────────────────────────────────────────
 
     fn refresh_data(&mut self) {
-        {
-            let mut queue = self.refresh_queue.lock().expect("refresh queue");
-            queue.pending = true;
-            if queue.running {
-                return;
-            }
-            queue.running = true;
-        }
-        let queue = self.refresh_queue.clone();
+        let Admission::Started(mut jobs) = self.refresh_queue.offer(()) else {
+            return;
+        };
         let dependencies = self.dependencies.clone();
         let client = self.connected_client();
         let scope = self.session.scope();
@@ -233,24 +217,15 @@ impl AppController {
         // This is one controller-owned worker, not optional command admission.
         // Even a disconnected/retired scope must finish Doctor's loading state.
         let worker_scope = scope.clone();
+        let worker_tx = tx.clone();
         let worker = async move {
-            let scope = worker_scope;
-            loop {
-                {
-                    let mut queue = queue.lock().expect("refresh queue");
-                    if !std::mem::take(&mut queue.pending) {
-                        queue.running = false;
-                        return;
-                    }
-                }
+            let (scope, tx) = (worker_scope, worker_tx);
+            while jobs.next().is_some() {
                 let Some(client) = client.as_ref().filter(|_| scope.is_active()) else {
-                    let _ = tx
-                        .send(AppEvent::GraphRefreshRejected(AppError::Connection(fl!(
-                            LANGUAGE_LOADER,
-                            "controller-not-connected"
-                        ))))
-                        .await;
-                    queue.lock().expect("refresh queue").running = false;
+                    // End the worker before answering, so a request that
+                    // arrives during the send starts a new one.
+                    drop(jobs);
+                    reject_graph_refresh(&tx).await;
                     return;
                 };
                 let scan = async {
@@ -266,24 +241,25 @@ impl AppController {
                 tokio::select! {
                     biased;
                     () = scope.cancelled() => {
-                        let _ = tx.send(AppEvent::GraphRefreshRejected(AppError::Connection(fl!(LANGUAGE_LOADER, "controller-not-connected")))).await;
-                        let mut queue = queue.lock().expect("refresh queue");
-                        queue.running = false;
-                        queue.pending = false;
+                        drop(jobs);
+                        reject_graph_refresh(&tx).await;
                         return;
                     },
                     () = scan => {}
                 }
             }
         };
-        self.refresh_task = if scope.is_active() {
-            // A reserved single worker is retained by the session until after
-            // disconnect drainage. Scope retirement then cancels and joins it.
-            scope.spawn_reserved(&self.runtime, worker)
-        } else {
+        // A reserved single worker is retained by the session until after
+        // disconnect drainage. Scope retirement then cancels and joins it.
+        // Spawning is the only activity check, so a scope that retires between
+        // a check and the spawn cannot strand the queue.
+        self.refresh_task = scope.spawn_reserved(&self.runtime, worker).or_else(|| {
             // No request can be admitted here; still finish Doctor's loading.
-            Some(self.runtime.spawn(worker))
-        };
+            Some(
+                self.runtime
+                    .spawn(async move { reject_graph_refresh(&tx).await }),
+            )
+        });
     }
 
     fn refresh_stats(&self) {
@@ -293,71 +269,71 @@ impl AppController {
         });
     }
 
-    fn refresh_mixer_scene_audio(&self, request: crate::controller::state::MixerAudioRequest) {
-        let tx = self.event_tx.scoped(&self.session.scope());
-        {
-            let mut queued = self.mixer_queue.lock().expect("mixer queue");
-            queued.pending = Some((request, tx));
-            if queued.running {
-                return;
-            }
-            queued.running = true;
-        }
+    fn refresh_mixer_scene_audio(&self, request: MixerAudioRequest) {
+        let scope = self.session.scope();
+        let job = (request, self.event_tx.scoped(&scope));
+        let Admission::Started(mut jobs) = self.mixer_queue.offer(job) else {
+            return;
+        };
         let dependencies = self.dependencies.clone();
         let client = self.connected_client();
-        let queued = self.mixer_queue.clone();
-        self.session
-            .scope()
-            .spawn_reserved(&self.runtime, async move {
-                loop {
-                    let job = {
-                        let mut queued = queued.lock().expect("mixer queue");
-                        let job = queued.pending.take();
-                        if job.is_none() {
-                            queued.running = false;
-                        }
-                        job
-                    };
-                    let Some((request, tx)) = job else {
-                        break;
-                    };
-                    let Some(client) = &client else {
+        let worker = async move {
+            while let Some((request, tx)) = jobs.next() {
+                let Some(client) = &client else {
+                    let _ = tx
+                        .send(AppEvent::MixerAudioInputsFailed {
+                            request,
+                            message: fl!(LANGUAGE_LOADER, "controller-not-connected"),
+                        })
+                        .await;
+                    continue;
+                };
+                let config = load_config_blocking(dependencies.clone()).await;
+                let revision = client.next_observation();
+                match client
+                    .get_scene_audio_inputs(request.scene(), &config.live.audio_inputs)
+                    .await
+                {
+                    Ok(inputs) => {
+                        let _ = tx
+                            .send(AppEvent::Observation {
+                                revision,
+                                event: Box::new(AppEvent::MixerAudioInputsUpdated {
+                                    request,
+                                    inputs,
+                                }),
+                            })
+                            .await;
+                    }
+                    Err(error) => {
                         let _ = tx
                             .send(AppEvent::MixerAudioInputsFailed {
                                 request,
-                                message: fl!(LANGUAGE_LOADER, "controller-not-connected"),
+                                message: error.user_message(),
                             })
                             .await;
-                        continue;
-                    };
-                    let config = load_config_blocking(dependencies.clone()).await;
-                    let revision = client.next_observation();
-                    match client
-                        .get_scene_audio_inputs(request.scene(), &config.live.audio_inputs)
-                        .await
-                    {
-                        Ok(inputs) => {
-                            let _ = tx
-                                .send(AppEvent::Observation {
-                                    revision,
-                                    event: Box::new(AppEvent::MixerAudioInputsUpdated {
-                                        request,
-                                        inputs,
-                                    }),
-                                })
-                                .await;
-                        }
-                        Err(error) => {
-                            let _ = tx
-                                .send(AppEvent::MixerAudioInputsFailed {
-                                    request,
-                                    message: error.user_message(),
-                                })
-                                .await;
-                        }
                     }
                 }
-            });
+            }
+        };
+        if scope.spawn_reserved(&self.runtime, worker).is_none() {
+            self.fail_refused_mixer_request();
+        }
+    }
+
+    /// The Mixer set its loading state before dispatch; a refused worker must
+    /// still answer that request.
+    fn fail_refused_mixer_request(&self) {
+        let Some((request, _)) = self.mixer_queue.take_pending() else {
+            return;
+        };
+        self.event_tx.publish_refusal(
+            &self.runtime,
+            AppEvent::MixerAudioInputsFailed {
+                request,
+                message: fl!(LANGUAGE_LOADER, "controller-not-connected"),
+            },
+        );
     }
 
     fn sync_session_scope(&mut self) {
@@ -365,8 +341,8 @@ impl AppController {
         // retain admitted reads until drainage, not abort them while rebinding
         // controller queues. Connect already retires the old scope first.
         self.refresh_task.take();
-        self.refresh_queue = Arc::new(Mutex::new(RefreshQueue::default()));
-        self.mixer_queue = Arc::new(Mutex::new(MixerQueue::default()));
+        self.refresh_queue = SingleFlight::new();
+        self.mixer_queue = SingleFlight::new();
         let scope = self.session.scope();
         self.outputs.set_scope(scope.clone());
         self.workspace.set_scope(scope);
@@ -449,6 +425,17 @@ async fn report_err<T>(result: Result<T, AppError>, tx: &EventSender) {
     }
 }
 
+async fn reject_graph_refresh(tx: &EventSender) {
+    // A refused send means GTK already moved to a newer session, whose own
+    // lifecycle event ends Doctor's loading state.
+    let _ = tx
+        .send(AppEvent::GraphRefreshRejected(AppError::Connection(fl!(
+            LANGUAGE_LOADER,
+            "controller-not-connected"
+        ))))
+        .await;
+}
+
 async fn load_config_blocking(
     dependencies: ControllerDependencies,
 ) -> crate::storage::config::AppConfig {
@@ -467,7 +454,9 @@ mod final_regression_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::controller::test_support::events::{wait_until, TEST_DEADLINE};
+    use crate::controller::test_support::events::{
+        recv_event, recv_matching, wait_until, TEST_DEADLINE,
+    };
     use crate::controller::test_support::state::app_state;
     use crate::domain::output::OutputKind;
     use std::sync::mpsc;
@@ -654,6 +643,73 @@ mod tests {
                 *calls.lock().expect("record status calls") += 1;
                 status
             })
+        }
+    }
+
+    struct EndedSessionRunner;
+
+    impl crate::controller::session_controller::SessionRunner for EndedSessionRunner {
+        fn run(&self, _tx: EventSender, _scope: SessionScope) -> BoxFuture<'static, ()> {
+            Box::pin(async {})
+        }
+    }
+
+    /// A controller whose session runner already returned. Its scope is
+    /// retired while no Connect or Disconnect has rebuilt the queues.
+    async fn controller_after_session_ended() -> (AppController, mpsc::Receiver<AppEvent>) {
+        let (tx, rx) = mpsc::sync_channel(16);
+        let mut controller = AppController::new(Handle::current(), tx.clone());
+        controller.session = SessionController::with_runner(
+            Handle::current(),
+            EventSender::new(tx),
+            Arc::new(EndedSessionRunner),
+            SessionScope::initial(controller.client_slot.clone()),
+            Arc::new(Mutex::new(None)),
+        );
+        controller.sync_session_scope();
+        controller.handle(AppCommand::Connect);
+        recv_matching(&rx, |event| {
+            matches!(event, AppEvent::SessionEvent { event, .. } if matches!(**event, AppEvent::Disconnected))
+        })
+        .await;
+        (controller, rx)
+    }
+
+    #[tokio::test]
+    async fn graph_refresh_after_the_session_ended_is_rejected_every_time() {
+        let (mut controller, rx) = controller_after_session_ended().await;
+
+        for attempt in 1..=2 {
+            controller.handle(AppCommand::RefreshData);
+
+            let event = recv_event(&rx).await;
+            assert!(
+                matches!(&event, AppEvent::SessionEvent { event, .. } if matches!(**event, AppEvent::GraphRefreshRejected(_))),
+                "attempt {attempt}: expected a rejected refresh, got {event:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn mixer_refresh_after_the_session_ended_fails_instead_of_loading_forever() {
+        let (mut controller, rx) = controller_after_session_ended().await;
+        let mut state = app_state();
+
+        // The second request proves the first refusal did not strand the queue.
+        for scene in ["Scene A", "Scene B"] {
+            let request = state.set_mixer_audio_loading(scene.to_string());
+            controller.handle(AppCommand::RefreshMixerSceneAudio(request.clone()));
+
+            let event = recv_event(&rx).await;
+            let AppEvent::MixerAudioInputsFailed {
+                request: failed,
+                message,
+            } = event
+            else {
+                panic!("expected a mixer failure for {scene}, got {event:?}");
+            };
+            assert_eq!(failed, request);
+            assert_eq!(message, "Not connected to OBS");
         }
     }
 

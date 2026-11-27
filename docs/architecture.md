@@ -130,8 +130,15 @@ The slot is locked through `infra::sync::lock_or_recover`, and new code locks
 every ordinary `std` mutex the same way. A poisoned lock logs an error and
 returns the guard, so a past panic cannot turn into a silent "no client" or a
 skipped write. `controller/lifecycle.rs` documents its own per-mutex policy.
-The single-flight queue locks in `app_controller.rs` and `workspace.rs`, and
-the retirement reason in `obs/requests.rs`, still `expect`.
+The retirement reason in `obs/requests.rs` still uses `expect`.
+
+The refresh, Mixer and workspace queues share `controller::runtime::single_flight`:
+one worker per queue drains only the newest job. The queue counts as running
+only while that worker lives, so a worker that session retirement aborts
+mid-job frees the queue for the next request. Spawning the worker through the
+session scope is the only activity check. When a retired scope refuses the
+spawn, the queue hands the job back and the controller publishes its failure,
+so a request never stays loading until the next reconnect.
 
 Configuration and Secret Service reads needed for connection and OBS refreshes
 run on Tokio's blocking pool rather than the GTK thread. After connection:

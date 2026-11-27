@@ -59,6 +59,10 @@ Application orchestration.
   graceful disconnect shutdown, and the injectable output-client boundary.
 - `session_controller.rs`: connection task ownership, reconnect replacement,
   graceful disconnect, and the injectable session-runner boundary.
+- `runtime/single_flight.rs`: the single-worker queue behind graph refresh,
+  Mixer audio reads and workspace reads. The queue runs only while its worker
+  lives, and a refused spawn hands the job back so its failure is still
+  published.
 - `refresh_controller.rs`: OBS list/data refresh helpers, the session-owned
   one-second stats/bitrate poll loop, and OBS event-stream routing.
   `refresh_controller/event_loop_tests.rs` (tests only) pins one
