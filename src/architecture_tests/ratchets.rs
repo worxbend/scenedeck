@@ -16,7 +16,7 @@ const OVERSIZED_FILES: &[(&str, usize)] = &[
     ("ui/pages/inventory.rs", 1505),
     ("ui/pages/live.rs", 952),
     ("ui/pages/mixer.rs", 1216),
-    ("ui/pages/settings.rs", 873),
+    ("ui/pages/settings.rs", 826),
     ("ui/pages/stats.rs", 912),
     ("ui/widgets/audio_card.rs", 884),
     ("ui/widgets/operating_panel.rs", 1613),

@@ -19,6 +19,10 @@ use crate::{
     ui::{navigation::NavigationContext, persist::persist_config_with, string_list},
 };
 
+mod password_writes;
+
+use password_writes::PasswordWrites;
+
 trait ConnectionSecrets: Send + Sync {
     fn read(&self, id: &str) -> Result<Option<String>, AppError>;
     fn write(&self, id: &str, password: Option<&str>) -> Result<(), AppError>;
@@ -51,7 +55,7 @@ struct Editor {
     profiles: RefCell<Vec<(String, String)>>,
     updating: Cell<bool>,
     generation: Cell<u64>,
-    writes: RefCell<super::PasswordWrites>,
+    writes: RefCell<PasswordWrites>,
 }
 
 impl Editor {
@@ -144,7 +148,7 @@ impl Editor {
                 match result {
                     Ok(password) => {
                         editor.nav.state.borrow_mut().obs_password = password.clone();
-                        *editor.writes.borrow_mut() = super::PasswordWrites::new(password.clone());
+                        *editor.writes.borrow_mut() = PasswordWrites::new(password.clone());
                         if let Some(row) = editor.password.upgrade() {
                             row.set_text(password.as_deref().unwrap_or(""));
                         }
@@ -154,7 +158,7 @@ impl Editor {
                     }
                     Err(error) => {
                         editor.nav.state.borrow_mut().obs_password = None;
-                        *editor.writes.borrow_mut() = super::PasswordWrites::new(None);
+                        *editor.writes.borrow_mut() = PasswordWrites::new(None);
                         editor.report_secret(Err(error));
                     }
                 }
@@ -378,9 +382,7 @@ fn build_with_secrets(
         profiles: RefCell::new(Vec::new()),
         updating: Cell::new(false),
         generation: Cell::new(0),
-        writes: RefCell::new(super::PasswordWrites::new(
-            nav.state.borrow().obs_password.clone(),
-        )),
+        writes: RefCell::new(PasswordWrites::new(nav.state.borrow().obs_password.clone())),
     });
     editor.refresh_fields();
     picker.connect_selected_notify({
