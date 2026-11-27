@@ -99,6 +99,8 @@ Infrastructure helpers.
 
 - `error.rs`: application error type.
 - `logging.rs`: tracing subscriber setup.
+- `perf.rs`: opt-in `perf-trace` counters (events drained, pump batches,
+  dropped meter frames, `collect_report` calls) and their 10 s rate log.
 - `sync.rs`: `lock_or_recover`, the poison policy for ordinary `std` mutexes.
 
 `src/obs/`

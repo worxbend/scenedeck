@@ -18,6 +18,7 @@ Service backend links the system libdbus), plus `glib-compile-resources`
 ```sh
 cargo run                                    # run the app
 RUST_LOG=scenedeck=trace,obws=debug cargo run  # default is scenedeck=debug,warn
+cargo run --release --features perf-trace    # hot-path counters every 10 s; trace adds span timings
 ```
 
 Validation (same set CI runs; run all four before committing):

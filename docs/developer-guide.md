@@ -88,6 +88,41 @@ Avoid holding `std::sync::Mutex` guards across `.await`. The shared OBS client
 slot is intentionally locked briefly, cloned, and released before async work is
 spawned.
 
+## Performance Measurement
+
+Measure before and after a performance change. The `perf-trace` Cargo feature
+adds instrumentation; it is off in every release build.
+
+```sh
+RUST_LOG=scenedeck=debug cargo run --release --features perf-trace   # counters
+RUST_LOG=scenedeck=trace cargo run --release --features perf-trace   # plus span timings
+```
+
+- Every 10 s, `infra::perf` logs per-second rates at debug: events drained by
+  the GTK pump, pump ticks that applied an event, meter frames the controller
+  could not queue, and `AppState::collect_report` calls.
+- At trace level each span logs a `close` line with `time.busy` and `time.idle`:
+  `apply_event` (field `kind`, the variant inside any `SessionEvent` or
+  `Observation` envelope), `collect_report` and `stage_report_history`.
+- Spans for `rebuild_scene_cards`, `rebuild_audio_cards` and
+  `MixerPageHandle::refresh` arrive with the splits of `ui/pages/live.rs` and
+  `ui/pages/mixer.rs`; both files sit at their production-line ceiling.
+
+Benchmarks cannot reach `pub(crate)` items, because `lib.rs` exposes only
+`run()`. Gate regressions with `ScriptedObs` request counts or with `#[ignore]`d
+timing tests instead.
+
+System-level recipes, run against the release build:
+
+| Question | Recipe |
+|---|---|
+| Idle CPU and context switches | `pidstat -u -w -p "$(pidof scenedeck)" 1` with OBS disconnected |
+| Idle wakeups from timers | `strace -f -c -e trace=ppoll -p "$(pidof scenedeck)"` for 30 s, then Ctrl-C |
+| Frame clock activity | `GTK_DEBUG=interactive`, then the inspector's FPS overlay |
+| Where GTK spends time | `sysprof-cli --gtk -- target/release/scenedeck` |
+| Allocations on a hot path | `heaptrack target/release/scenedeck`, then `heaptrack_gui` |
+| OBS request cost | `ScriptedObs` request counts and injected latency in a test |
+
 ## Common Changes
 
 Add a Live page control:

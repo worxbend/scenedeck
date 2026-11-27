@@ -26,6 +26,8 @@ pub(crate) mod ui;
 /// work, and then hands control to the GTK main loop.
 pub fn run() {
     infra::logging::init();
+    #[cfg(feature = "perf-trace")]
+    infra::perf::start_reporter();
     app::run();
 }
 

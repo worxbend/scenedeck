@@ -14,6 +14,7 @@ The runtime outlives the GTK main loop:
 ```text
 main()
   -> logging::init()
+  -> perf::start_reporter()   (perf-trace builds only)
   -> scenedeck::run()
      -> create Tokio runtime
      -> create adw::Application

@@ -4,6 +4,7 @@ use crate::controller::event_sender::EventSender;
 use crate::controller::output_controller::refresh_output_statuses;
 use crate::controller::session_controller::REQUEST_BUDGET;
 use crate::infra::i18n::LANGUAGE_LOADER;
+use crate::infra::perf::{self, Counter};
 use i18n_embed_fl::fl;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -529,10 +530,14 @@ pub(crate) async fn run_event_loop(
                 }),
             }),
             ObsEvent::InputLevelsUpdated(levels) => {
-                let _ = tx.fresh().try_send(AppEvent::InputLevelsUpdated {
+                let frame = AppEvent::InputLevelsUpdated {
                     levels,
                     observed_at: std::time::Instant::now(),
-                });
+                };
+                // Meter frames are droppable by contract; the next frame replaces this one.
+                if tx.fresh().try_send(frame).is_err() {
+                    perf::count(Counter::MeterFrameDropped);
+                }
                 None
             }
             ObsEvent::SceneRenamed { uuid, old, new } => {

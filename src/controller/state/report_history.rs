@@ -92,6 +92,7 @@ impl AppState {
         history.urgent = true;
     }
 
+    #[cfg_attr(feature = "perf-trace", tracing::instrument(level = "trace", skip_all))]
     pub(crate) fn stage_report_history(&mut self) {
         if !self.config.session_history.enabled {
             return;

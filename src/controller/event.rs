@@ -213,6 +213,32 @@ mod tests {
             }
         }
     }
+
+    #[cfg(feature = "perf-trace")]
+    #[test]
+    fn kind_names_the_variant() {
+        assert_eq!(AppEvent::Disconnected.kind(), "Disconnected");
+        assert_eq!(
+            AppEvent::ReplaySaved("clip.mkv".into()).kind(),
+            "ReplaySaved"
+        );
+    }
+
+    #[cfg(feature = "perf-trace")]
+    #[test]
+    fn kind_names_the_event_inside_session_and_observation_envelopes() {
+        let observed = AppEvent::Observation {
+            revision: 3,
+            event: Box::new(AppEvent::CurrentSceneChanged("Camera".into())),
+        };
+        let delivered = AppEvent::SessionEvent {
+            generation: 1,
+            collection: None,
+            event: Box::new(observed),
+        };
+
+        assert_eq!(delivered.kind(), "CurrentSceneChanged");
+    }
 }
 
 /// What failed, so the UI can label it and run follow-up without string matching.
@@ -385,4 +411,60 @@ pub enum AppEvent {
     },
 
     Error(AppError),
+}
+
+#[cfg(feature = "perf-trace")]
+impl AppEvent {
+    /// The variant name, for perf-trace spans.
+    ///
+    /// `SessionEvent` and `Observation` are delivery envelopes; their cost
+    /// depends on what they carry, so they report the event inside.
+    pub(crate) fn kind(&self) -> &'static str {
+        match self {
+            Self::SessionEvent { event, .. } | Self::Observation { event, .. } => event.kind(),
+            Self::SessionRetired(_) => "SessionRetired",
+            Self::WorkspaceAcknowledged { .. } => "WorkspaceAcknowledged",
+            Self::CommandFailed { .. } => "CommandFailed",
+            Self::EventsResynchronized => "EventsResynchronized",
+            Self::GraphInvalidated => "GraphInvalidated",
+            Self::GraphFailed(_) => "GraphFailed",
+            Self::GraphRefreshRejected(_) => "GraphRefreshRejected",
+            Self::ThumbnailLoaded { .. } => "ThumbnailLoaded",
+            Self::WorkspaceMediaLoaded { .. } => "WorkspaceMediaLoaded",
+            Self::WorkspaceLoaded { .. } => "WorkspaceLoaded",
+            Self::WorkspaceInvalidated => "WorkspaceInvalidated",
+            Self::WorkspaceValuesChanged => "WorkspaceValuesChanged",
+            Self::StudioModeChanged(_) => "StudioModeChanged",
+            Self::VirtualCameraChanged(_) => "VirtualCameraChanged",
+            Self::WorkspaceScopeChanging => "WorkspaceScopeChanging",
+            Self::WorkspaceAudioFailed(_) => "WorkspaceAudioFailed",
+            Self::PresetProgress { .. } => "PresetProgress",
+            Self::PresetRejected { .. } => "PresetRejected",
+            Self::ReplaySaved(_) => "ReplaySaved",
+            Self::Connecting => "Connecting",
+            Self::Connected(_) => "Connected",
+            Self::Disconnected => "Disconnected",
+            Self::SceneInventoryUpdated(_) => "SceneInventoryUpdated",
+            Self::SceneRenamed { .. } => "SceneRenamed",
+            Self::CurrentSceneChanged(_) => "CurrentSceneChanged",
+            Self::ProfilesUpdated(_) => "ProfilesUpdated",
+            Self::SceneCollectionsUpdated(_) => "SceneCollectionsUpdated",
+            Self::ActiveAudioLoading { .. } => "ActiveAudioLoading",
+            Self::ActiveAudioObserved { .. } => "ActiveAudioObserved",
+            Self::MixerAudioInputsUpdated { .. } => "MixerAudioInputsUpdated",
+            Self::MixerAudioInputsFailed { .. } => "MixerAudioInputsFailed",
+            Self::InputMuteChanged { .. } => "InputMuteChanged",
+            Self::InputVolumeChanged { .. } => "InputVolumeChanged",
+            Self::InputLevelsUpdated { .. } => "InputLevelsUpdated",
+            Self::RecordingStopObserved { .. } => "RecordingStopObserved",
+            Self::OutputReadbackFailed { .. } => "OutputReadbackFailed",
+            Self::OutputStatusUpdated(..) => "OutputStatusUpdated",
+            Self::OutputCommandPending(..) => "OutputCommandPending",
+            Self::OutputCommandSucceeded(_) => "OutputCommandSucceeded",
+            Self::OutputCommandFailed(..) => "OutputCommandFailed",
+            Self::GraphUpdated(_) => "GraphUpdated",
+            Self::StatsUpdated { .. } => "StatsUpdated",
+            Self::Error(_) => "Error",
+        }
+    }
 }

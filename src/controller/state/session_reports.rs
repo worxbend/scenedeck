@@ -7,6 +7,7 @@ use crate::domain::{
     output_result::OutputResult,
     session_report::{ReportEvent, ReportSample, SessionReport},
 };
+use crate::infra::perf::{self, Counter};
 use std::{
     collections::{BTreeMap, VecDeque},
     time::Instant,
@@ -268,7 +269,9 @@ impl AppState {
 
     /// Call after each accepted event and on the app-owned health tick. Only new
     /// evidence is copied; a timer tick does not synthesize an OBS measurement.
+    #[cfg_attr(feature = "perf-trace", tracing::instrument(level = "trace", skip_all))]
     pub(crate) fn collect_report(&mut self, now: Instant, unix_ms: u64) {
+        perf::count(Counter::ReportCollection);
         let reports = &mut self.reports;
         if reports.current().is_none() {
             return;

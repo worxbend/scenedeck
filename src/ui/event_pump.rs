@@ -1,6 +1,7 @@
 //! Application-lifetime controller receiver; shell consumers are owned separately.
 
 use crate::controller::event::AppEvent;
+use crate::infra::perf::{self, Counter};
 use adw::prelude::*;
 use std::{cell::RefCell, rc::Rc, sync::mpsc, time::Duration};
 
@@ -44,14 +45,32 @@ fn drain_batch(
     receiver: &mpsc::Receiver<AppEvent>,
     mut apply: impl FnMut(AppEvent),
 ) -> glib::ControlFlow {
+    let mut applied_any = false;
     for _ in 0..128 {
         match receiver.try_recv() {
-            Ok(event) => apply(event),
+            Ok(event) => {
+                apply_one(event, &mut apply);
+                applied_any = true;
+            }
             Err(mpsc::TryRecvError::Empty) => break,
             Err(mpsc::TryRecvError::Disconnected) => return glib::ControlFlow::Break,
         }
     }
+    if applied_any {
+        perf::count(Counter::PumpBatch);
+    }
     glib::ControlFlow::Continue
+}
+
+/// The `apply_event` span covers the whole per-event step, including the
+/// report collection around `ui::window::apply_event`.
+#[cfg_attr(
+    feature = "perf-trace",
+    tracing::instrument(name = "apply_event", level = "trace", skip_all, fields(kind = event.kind()))
+)]
+fn apply_one(event: AppEvent, apply: &mut impl FnMut(AppEvent)) {
+    perf::count(Counter::EventDrained);
+    apply(event);
 }
 
 #[cfg(test)]
