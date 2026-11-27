@@ -25,3 +25,34 @@ before the branch was cut (commits listed where known).
 | P0-T14 | done | 1fecc3b, c258bde, 66202b9, bce8284, 519ee92 | Shared ui, controller and storage test support; storage->controller test edge removed. |
 | P0-T15 | done | f447a6b, 8995729, ce1659f, 98afa37 | Opt-in `perf-trace` feature; releases build default features; CI lints the default feature set. live.rs and mixer.rs spans deferred to their splits (files at ratchet ceiling). |
 | Gate | done | fcaaa34 | Phase gate: SV, full NV, IV, cargo audit and cargo deny green. Doc fix: storage golden fixtures listed in codebase-overview. Rule probe: added debt failed the new rules, then reverted. |
+
+## P1 - Correctness, security and data-safety fixes
+
+| Task | Status | Commits | Notes |
+|---|---|---|---|
+| P1-T01 | done | 578be5c | `ui::markup::plain_toast` and `widgets::status_page`; rule `toasts_and_status_pages_go_through_the_literal_helpers`. transport_bar.rs still calls `glib::markup_escape_text` directly; ActionRow/ExpanderRow markup has no rule. |
+| P1-T02 | done | a2b5770 | `OutputReadbackErrors` is `#[must_use]`; manual RefreshData publishes it. Shared scan left for P7-T07. |
+| P1-T03 | done | ebb32d7, ee59986, 6f2cbf8 | Decision 1: scene cards and hotkeys stay gated on Ready. Became tests, docs and a no-op refactor. Gate rule still lives in several places (P8/P9). |
+| P1-T04 | done | fb532da | `ui::persist::retry_all_durable_writes` re-admits registry, history, exports, config and bookmarks. Anonymous worker panics still need "Close anyway" (P9-T14/T16). |
+| P1-T05 | done | 4024134 | `controller::runtime::SingleFlight` with a `Worker` guard; refused spawns publish their failure. The request in flight when a session ends still gets no answer. |
+| P1-T06 | done | 4aff377 | Controller config reads return `Result`. `ObsSessionRunner` still connects with defaults (logged) when config is unusable. |
+| P1-T07 | done | 70b04f4, 4f4e902 | Pure move into `ui::presenters::output_status`, then one `render_output_slot`. Clock move to `ui/shell/ticks` deferred to the window.rs split. |
+| P1-T08 | done | 97a5294, 7def2c1 | Newer config.json kept intact; registry.json gains a version envelope (format change). |
+| P1-T09 | done | 24c070f | Config reads are pure; migration write and move-aside run only at startup. A second non-primary instance can still move a broken config aside. |
+| P1-T10 | done | f2de086 | Decision 3: `BTreeMap` in the registry snapshot and scene graph; byte-wise scene-id order. |
+| P1-T11 | done | a7384f1 | Control snapshot uses `mapper::map_scenes`. Other inline obws conversions left for obs-acl-08. |
+| P1-T12 | done | 3bbf089, 094f34a | Named capacities; `AdmissionRefused::{Inactive, JournalFull}`; a full journal reports `OutputCommandFailed`. Audio commands on a full journal are still only logged. |
+| P1-T13 | failed | 6dac451, fbe5713 | Partial. Both acceptance criteria hold (`ObsPassword` with redacting Debug; no `obs_password: Option<String>`; AppState Debug test). Step 3 not done: `AppState::obs_password` and the startup keyring read remain. A crashed attempt at step 3 is in `stash@{0}` ("crashed-before-P1-T17"), unreviewed. |
+| P1-T14 | skipped | - | Depends on P1-T13. |
+| P1-T15 | skipped | - | Depends on P1-T14. |
+| P1-T16 | skipped | - | Depends on P1-T13. |
+| P1-T17 | done | e2dc714 | XDG paths: relative values ignored, no working-directory fallback; last resort is `/` with a warning. |
+| P1-T18 | done | 452d0c9 | Relative custom CSS paths refused with a localized warning. A stored relative path warns on every apply. |
+| P1-T19 | done | fd9658a | `storage::registry::import` with a parser budget and caps. Export is not capped, so an over-cap registry exports but will not re-import. |
+| P1-T20 | done | 401ac80 | Show-workspace store capped at 64 with LRU eviction and a toast (format change). `now_unix_ms` duplicated in storage and controller. |
+| P1-T21 | done | 3c9754d | `storage::lock` sibling lock files; Busy shown where save errors already show. Failed `persist_config` saves still have no toast. |
+| P1-T22 | done | c44b93a | Decision 9: symlinks still refused; `ConfigStartupNotice::Symlinked`. Other stores still report a generic ELOOP. |
+| P1-T23 | done | 31eae55 | Unreadable registry.json becomes a startup notice; `startup_notices: Vec<String>`; new `settings/startup_notices.rs`. |
+| P1-T24 | done | 3c24d97 | Scene search saves once after 1 s settle; flushed on close. A query typed under 1 s before a workspace switch stays in memory only. |
+| P1-T25 | done | 6a20eb0 | Decision 8: endpoint and host paths redacted in exports by default, two opt-in check buttons. Free-text redaction only covers values the report holds. |
+| Gate | done | 20bd0c2 | SV, full NV (123 native tests), IV, cargo audit (0.22.2, warnings only) and cargo deny (0.20.2, the CI pin) green. cargo-deny 0.22 reports the RUSTSEC-2026-0374 ignore as not detected (known since P0). Fix: ui/persist.rs had grown from 578 to 723 production lines; pure move of config saves and workspace selection into `persist/config.rs` and `persist/registry_scope.rs` (now 576; test count 1036/125 before and after). Ratchets only went down. Still over 600 and grown this phase, left for their planned splits: storage/registry.rs (646 to 691, P5) and ui/theme.rs (616 to 624). Manual OBS smoke run not done (needs a human). |
