@@ -5,6 +5,7 @@ use crate::controller::session_controller::SessionRunner;
 use crate::controller::state::{
     ActiveAudioStatus, AppState, MixerVisibleAudioStatus, MixerVisibleRenderSource, ObsStatus,
 };
+use crate::controller::test_support::events::{recv_event, recv_matching, TEST_DEADLINE};
 use crate::controller::workspace::{WorkspaceController, WorkspaceRequest};
 use crate::domain::control::ControlAction;
 use crate::domain::output::OutputKind;
@@ -201,13 +202,13 @@ impl Mock {
     async fn signal(&self, signal: Signal) {
         let (done, acknowledged) = oneshot::channel();
         self.signals.send((signal, done)).unwrap();
-        tokio::time::timeout(Duration::from_secs(2), acknowledged)
+        tokio::time::timeout(TEST_DEADLINE, acknowledged)
             .await
             .unwrap()
             .unwrap();
     }
     async fn wait(&mut self, name: &str, count: usize) {
-        tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::time::timeout(TEST_DEADLINE, async {
             while let Some(observed) = self.entered.recv().await {
                 if observed == (name.into(), count) {
                     return;
@@ -222,18 +223,6 @@ impl Mock {
         self.finish.send(()).unwrap();
         self.server.await.unwrap()
     }
-}
-async fn receive(rx: &mpsc::Receiver<AppEvent>) -> AppEvent {
-    tokio::time::timeout(Duration::from_secs(3), async {
-        loop {
-            if let Ok(event) = rx.try_recv() {
-                return event;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap()
 }
 fn peel(event: AppEvent) -> AppEvent {
     match event {
@@ -294,7 +283,7 @@ async fn cancelled_or_collection_invalidated_text_preflight_never_begins_final_w
             scope.advance_collection();
         }
         mock.signal(Signal::Release).await;
-        tokio::time::timeout(Duration::from_secs(2), scope.quiesce())
+        tokio::time::timeout(TEST_DEADLINE, scope.quiesce())
             .await
             .unwrap();
         mock.client.get_version().await.unwrap(); // Drained socket remains reusable.
@@ -338,7 +327,7 @@ async fn cancelled_or_collection_invalidated_media_preflight_never_begins_cursor
             scope.advance_collection();
         }
         mock.signal(Signal::Release).await;
-        tokio::time::timeout(Duration::from_secs(2), scope.quiesce())
+        tokio::time::timeout(TEST_DEADLINE, scope.quiesce())
             .await
             .unwrap();
         mock.client.get_version().await.unwrap();
@@ -427,7 +416,7 @@ async fn queued_primary_scene_switch_cannot_cross_a_collection_boundary() {
     for read in reads {
         read.await.unwrap().unwrap();
     }
-    tokio::time::timeout(Duration::from_secs(3), scope.quiesce())
+    tokio::time::timeout(TEST_DEADLINE, scope.quiesce())
         .await
         .unwrap();
     assert!(mock.client.retirement_reason().is_none());
@@ -450,7 +439,7 @@ fn pump(mock: &mut Mock, tx: mpsc::SyncSender<AppEvent>) -> tokio::task::JoinHan
 }
 async fn graph_ready(rx: &mpsc::Receiver<AppEvent>) {
     loop {
-        let event = peel(receive(rx).await);
+        let event = peel(recv_event(rx).await);
         let event = match event {
             AppEvent::Observation { event, .. } => *event,
             event => event,
@@ -474,7 +463,7 @@ async fn scene_rename_publishes_identity_and_refreshes_topology() {
     let mut renamed = false;
     let mut refreshed = false;
     while !renamed || !refreshed {
-        let event = match peel(receive(&rx).await) {
+        let event = match peel(recv_event(&rx).await) {
             AppEvent::Observation { event, .. } => *event,
             event => event,
         };
@@ -519,7 +508,7 @@ async fn visibility_and_transition_events_do_not_reload_topology_or_scene_mode()
     .await;
     let mut values_changed = false;
     loop {
-        let event = match peel(receive(&rx).await) {
+        let event = match peel(recv_event(&rx).await) {
             AppEvent::Observation { event, .. } => *event,
             event => event,
         };
@@ -560,7 +549,7 @@ async fn program_switch_refreshes_audio_without_reloading_topology_or_setup() {
     graph_ready(&rx).await;
     switch_b(&mock).await;
     loop {
-        let event = match peel(receive(&rx).await) {
+        let event = match peel(recv_event(&rx).await) {
             AppEvent::Observation { event, .. } => *event,
             event => event,
         };
@@ -621,7 +610,7 @@ async fn queued_scene_activation_rejects_authoritative_mode_change_during_collec
     ))
     .await;
     mock.signal(Signal::Release).await;
-    tokio::time::timeout(Duration::from_secs(3), scope.quiesce())
+    tokio::time::timeout(TEST_DEADLINE, scope.quiesce())
         .await
         .unwrap();
     mock.client.get_version().await.unwrap();
@@ -699,11 +688,10 @@ async fn mode_echo_fences_activation(at_final_gate: bool, aba: bool) {
         json!({"studioModeEnabled":true}),
     ))
     .await;
-    loop {
-        if matches!(peel(receive(&rx).await), AppEvent::StudioModeChanged(_)) {
-            break;
-        }
-    }
+    recv_matching(&rx, |event| {
+        matches!(peel(event.clone()), AppEvent::StudioModeChanged(_))
+    })
+    .await;
     if aba {
         mock.signal(Signal::Event(
             "StudioModeStateChanged",
@@ -711,17 +699,16 @@ async fn mode_echo_fences_activation(at_final_gate: bool, aba: bool) {
             json!({"studioModeEnabled":false}),
         ))
         .await;
-        loop {
-            if matches!(peel(receive(&rx).await), AppEvent::StudioModeChanged(_)) {
-                break;
-            }
-        }
+        recv_matching(&rx, |event| {
+            matches!(peel(event.clone()), AppEvent::StudioModeChanged(_))
+        })
+        .await;
     }
     mock.signal(Signal::Release).await;
     for read in reads {
         read.await.unwrap().unwrap();
     }
-    tokio::time::timeout(Duration::from_secs(3), scope.quiesce())
+    tokio::time::timeout(TEST_DEADLINE, scope.quiesce())
         .await
         .unwrap();
     assert!(
@@ -779,7 +766,7 @@ async fn mode_echo_with_full_gtk_queue(at_final_gate: bool) {
         json!({"studioModeEnabled":false}),
     ))
     .await;
-    tokio::time::timeout(Duration::from_secs(2), async {
+    tokio::time::timeout(TEST_DEADLINE, async {
         while scope.scene_activation_revision() == 0 {
             tokio::task::yield_now().await;
         }
@@ -825,12 +812,11 @@ async fn mode_echo_with_full_gtk_queue(at_final_gate: bool) {
     for read in reads {
         read.await.unwrap().unwrap();
     }
-    loop {
-        if matches!(peel(receive(&rx).await), AppEvent::WorkspaceLoaded { .. }) {
-            break;
-        }
-    }
-    tokio::time::timeout(Duration::from_secs(3), scope.quiesce())
+    recv_matching(&rx, |event| {
+        matches!(peel(event.clone()), AppEvent::WorkspaceLoaded { .. })
+    })
+    .await;
+    tokio::time::timeout(TEST_DEADLINE, scope.quiesce())
         .await
         .unwrap();
     mock.client.retire();
@@ -873,7 +859,10 @@ async fn bootstrap_failure_fences_mutations_before_waiting_for_full_gtk_queue() 
             .await
             .is_ok();
     rx.try_recv().unwrap();
-    while !matches!(peel(receive(&rx).await), AppEvent::Error(_)) {}
+    recv_matching(&rx, |event| {
+        matches!(peel(event.clone()), AppEvent::Error(_))
+    })
+    .await;
     task.await.unwrap();
     scope.retire();
     mock.stop().await;
@@ -907,7 +896,7 @@ async fn transport_publication_overflow_retires_instead_of_stalling_mode_ingress
         ))
         .await;
     }
-    tokio::time::timeout(Duration::from_secs(2), task)
+    tokio::time::timeout(TEST_DEADLINE, task)
         .await
         .unwrap()
         .unwrap();
@@ -1037,15 +1026,12 @@ async fn manual_graph_scan_invalidated_midscan_cannot_publish_ready() {
     while rx.try_recv().is_ok() {}
     mock.signal(Signal::Event("SceneListChanged", 4, json!({"scenes":[]})))
         .await;
-    loop {
-        let event = peel(receive(&rx).await);
-        if matches!(event, AppEvent::Observation { event, .. } if matches!(*event, AppEvent::GraphInvalidated))
-        {
-            break;
-        }
-    }
+    recv_matching(&rx, |event| {
+        matches!(peel(event.clone()), AppEvent::Observation { event, .. } if matches!(*event, AppEvent::GraphInvalidated))
+    })
+    .await;
     mock.signal(Signal::ReleaseKind("GetSceneItemList")).await;
-    tokio::time::timeout(Duration::from_secs(3), manual)
+    tokio::time::timeout(TEST_DEADLINE, manual)
         .await
         .unwrap()
         .unwrap();
@@ -1108,7 +1094,7 @@ async fn graph_completion_with_full_gtk_queue(fail: bool) {
     ));
     mock.signal(Signal::Event("SceneListChanged", 4, json!({"scenes":[]})))
         .await;
-    tokio::time::timeout(Duration::from_secs(2), async {
+    tokio::time::timeout(TEST_DEADLINE, async {
         while scope.graph_revision() == scan_revision {
             tokio::task::yield_now().await;
         }
@@ -1153,7 +1139,7 @@ async fn graph_invalidated_midscan_never_publishes_ready_before_followup_complet
     mock.signal(Signal::Event("SceneListChanged", 4, json!({"scenes":[]})))
         .await;
     loop {
-        let event = peel(receive(&rx).await);
+        let event = peel(recv_event(&rx).await);
         let event = match event {
             AppEvent::Observation { revision, event } => {
                 state.reconcile_observation(revision, *event)
@@ -1208,7 +1194,7 @@ async fn echo_pair(mock: &Mock) {
 async fn consume_echo_pair(rx: &mpsc::Receiver<AppEvent>, state: &mut AppState) {
     let mut echoes = 0;
     while echoes < 2 {
-        if let AppEvent::Observation { revision, event } = peel(receive(rx).await) {
+        if let AppEvent::Observation { revision, event } = peel(recv_event(rx).await) {
             let Some(event) = state.reconcile_observation(revision, *event) else {
                 continue;
             };
@@ -1245,7 +1231,7 @@ async fn bootstrap_active_audio_snapshot_merges_newer_mute_and_volume_echoes() {
     mock.wait("GetInputVolume", 1).await;
     // Consume loading, then use the exact production reconciliation API used by GTK.
     loop {
-        if let AppEvent::Observation { revision, event } = receive(&rx).await {
+        if let AppEvent::Observation { revision, event } = recv_event(&rx).await {
             if matches!(*event, AppEvent::ActiveAudioLoading { .. }) {
                 state.reconcile_observation(revision, *event).unwrap();
                 break;
@@ -1256,7 +1242,7 @@ async fn bootstrap_active_audio_snapshot_merges_newer_mute_and_volume_echoes() {
     consume_echo_pair(&rx, &mut state).await;
     mock.signal(Signal::Release).await;
     loop {
-        if let AppEvent::Observation { revision, event } = receive(&rx).await {
+        if let AppEvent::Observation { revision, event } = recv_event(&rx).await {
             if let Some(AppEvent::ActiveAudioObserved { scene, result }) =
                 state.reconcile_observation(revision, *event)
             {
@@ -1314,7 +1300,7 @@ async fn selected_audio_real_command_snapshot_merges_newer_echoes() {
     consume_echo_pair(&rx, &mut state).await;
     mock.signal(Signal::Release).await;
     loop {
-        if let AppEvent::Observation { revision, event } = peel(receive(&rx).await) {
+        if let AppEvent::Observation { revision, event } = peel(recv_event(&rx).await) {
             if let Some(AppEvent::MixerAudioInputsUpdated {
                 request: completed,
                 inputs,
@@ -1364,7 +1350,7 @@ async fn failed_program_audio_clears_previous_controls_and_is_not_successful_emp
         state.set_current_program("A".into());
         // Complete the first real observation using the same state APIs as GTK.
         loop {
-            if let AppEvent::Observation { revision, event } = receive(&rx).await {
+            if let AppEvent::Observation { revision, event } = recv_event(&rx).await {
                 if let Some(AppEvent::ActiveAudioObserved { scene, result }) =
                     state.reconcile_observation(revision, *event)
                 {
@@ -1377,7 +1363,7 @@ async fn failed_program_audio_clears_previous_controls_and_is_not_successful_emp
         graph_ready(&rx).await;
         switch_b(&mock).await;
         loop {
-            if let AppEvent::Observation { revision, event } = receive(&rx).await {
+            if let AppEvent::Observation { revision, event } = recv_event(&rx).await {
                 if let Some(AppEvent::CurrentSceneChanged(scene)) =
                     state.reconcile_observation(revision, *event)
                 {
@@ -1396,7 +1382,7 @@ async fn failed_program_audio_clears_previous_controls_and_is_not_successful_emp
             }
         ));
         loop {
-            if let AppEvent::Observation { revision, event } = receive(&rx).await {
+            if let AppEvent::Observation { revision, event } = recv_event(&rx).await {
                 if let Some(AppEvent::ActiveAudioObserved { scene, result }) =
                     state.reconcile_observation(revision, *event)
                 {
@@ -1469,7 +1455,7 @@ async fn app_disconnect_drains_controller_owned_refresh_before_output_shutdown()
     tokio::task::yield_now().await;
     mock.signal(Signal::Release).await;
     loop {
-        match peel(receive(&rx).await) {
+        match peel(recv_event(&rx).await) {
             AppEvent::Disconnected => break,
             AppEvent::Error(error) => panic!("graceful output shutdown failed: {error}"),
             _ => {}
@@ -1553,18 +1539,15 @@ async fn terminal_case(acknowledged: bool, full: bool, reconnect: bool) {
     tokio::time::timeout(Duration::from_secs(12), first.client.wait_retired())
         .await
         .unwrap();
-    tokio::time::timeout(
-        Duration::from_secs(2),
-        controller.session.scope().cancelled(),
-    )
-    .await
-    .unwrap();
+    tokio::time::timeout(TEST_DEADLINE, controller.session.scope().cancelled())
+        .await
+        .unwrap();
     // Deliberately no GTK drain until after the real owner retires the scope.
     if reconnect {
         controller.handle(AppCommand::Connect);
     }
     let terminal: SessionRetirement = loop {
-        if let AppEvent::SessionRetired(terminal) = receive(&rx).await {
+        if let AppEvent::SessionRetired(terminal) = recv_event(&rx).await {
             if terminal.generation == generation {
                 break terminal;
             }
@@ -1655,7 +1638,7 @@ async fn bootstrap_scene_snapshot_cannot_relabel_stale_program_audio_as_current(
     state.set_current_program("A".into());
     switch_b(&mock).await;
     loop {
-        if let AppEvent::Observation { revision, event } = receive(&rx).await {
+        if let AppEvent::Observation { revision, event } = recv_event(&rx).await {
             if let Some(AppEvent::CurrentSceneChanged(scene)) =
                 state.reconcile_observation(revision, *event)
             {
@@ -1667,7 +1650,7 @@ async fn bootstrap_scene_snapshot_cannot_relabel_stale_program_audio_as_current(
     mock.signal(Signal::Release).await;
     let mut stale_audio_discarded = false;
     loop {
-        if let AppEvent::Observation { revision, event } = receive(&rx).await {
+        if let AppEvent::Observation { revision, event } = recv_event(&rx).await {
             let old_audio = matches!(&*event, AppEvent::ActiveAudioObserved { scene: Some(scene), .. } if scene == "A");
             let reconciled = state.reconcile_observation(revision, *event);
             if old_audio {
@@ -1708,7 +1691,7 @@ async fn program_aba_during_audio_scan_rejects_the_old_same_name_completion() {
     mock.wait("GetInputVolume", 1).await;
     // Establish the actual request identity before invalidating its Program scope.
     loop {
-        if let AppEvent::Observation { revision, event } = receive(&rx).await {
+        if let AppEvent::Observation { revision, event } = recv_event(&rx).await {
             if matches!(*event, AppEvent::ActiveAudioLoading { .. }) {
                 state.reconcile_observation(revision, *event).unwrap();
                 break;
@@ -1724,7 +1707,7 @@ async fn program_aba_during_audio_scan_rejects_the_old_same_name_completion() {
     .await;
     let mut changes = 0;
     while changes < 2 {
-        if let AppEvent::Observation { revision, event } = receive(&rx).await {
+        if let AppEvent::Observation { revision, event } = recv_event(&rx).await {
             if let Some(AppEvent::CurrentSceneChanged(scene)) =
                 state.reconcile_observation(revision, *event)
             {
@@ -1735,7 +1718,7 @@ async fn program_aba_during_audio_scan_rejects_the_old_same_name_completion() {
     }
     mock.signal(Signal::Release).await;
     loop {
-        if let AppEvent::Observation { revision, event } = receive(&rx).await {
+        if let AppEvent::Observation { revision, event } = recv_event(&rx).await {
             if matches!(*event, AppEvent::ActiveAudioObserved { .. }) {
                 assert!(state.reconcile_observation(revision, *event).is_none());
                 break;
@@ -1744,7 +1727,7 @@ async fn program_aba_during_audio_scan_rejects_the_old_same_name_completion() {
     }
     assert!(state.audio_inputs.is_empty());
     loop {
-        if let AppEvent::Observation { revision, event } = receive(&rx).await {
+        if let AppEvent::Observation { revision, event } = recv_event(&rx).await {
             if let Some(AppEvent::ActiveAudioObserved { scene, result }) =
                 state.reconcile_observation(revision, *event)
             {
@@ -1813,14 +1796,11 @@ async fn real_session_retirement_preserves_workspace_ack_and_unknown_outcomes() 
         tokio::time::timeout(Duration::from_secs(12), mock.client.wait_retired())
             .await
             .unwrap();
-        tokio::time::timeout(
-            Duration::from_secs(2),
-            controller.session.scope().cancelled(),
-        )
-        .await
-        .unwrap();
+        tokio::time::timeout(TEST_DEADLINE, controller.session.scope().cancelled())
+            .await
+            .unwrap();
         let terminal = loop {
-            if let AppEvent::SessionRetired(terminal) = receive(&rx).await {
+            if let AppEvent::SessionRetired(terminal) = recv_event(&rx).await {
                 break terminal;
             }
         };
@@ -1873,7 +1853,7 @@ async fn output_status_snapshot_cannot_undo_a_newer_transport_echo() {
     let mut state = state();
     state.health.connected();
     loop {
-        if let AppEvent::Observation { revision, event } = receive(&rx).await {
+        if let AppEvent::Observation { revision, event } = recv_event(&rx).await {
             if let Some(event @ AppEvent::OutputStatusUpdated(OutputKind::Stream, _, _)) =
                 state.reconcile_observation(revision, *event)
             {
@@ -1889,7 +1869,7 @@ async fn output_status_snapshot_cannot_undo_a_newer_transport_echo() {
     }
     mock.signal(Signal::Release).await;
     loop {
-        if let AppEvent::Observation { revision, event } = receive(&rx).await {
+        if let AppEvent::Observation { revision, event } = recv_event(&rx).await {
             if matches!(
                 *event,
                 AppEvent::OutputStatusUpdated(OutputKind::Stream, _, _)
@@ -1924,7 +1904,7 @@ async fn doctor_refresh_without_client_completes_loading_with_failure_even_after
         }
         controller.handle(AppCommand::RefreshData);
         assert!(matches!(
-            peel(receive(&rx).await),
+            peel(recv_event(&rx).await),
             AppEvent::GraphRefreshRejected(_)
         ));
         controller.refresh_task.take().unwrap().await.unwrap();
@@ -1962,13 +1942,10 @@ async fn doctor_refresh_is_one_coalesced_worker_even_at_optional_command_saturat
     mock.signal(Signal::Release).await;
     graph_ready(&rx).await;
     graph_ready(&rx).await;
-    tokio::time::timeout(
-        Duration::from_secs(2),
-        controller.refresh_task.take().unwrap(),
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    tokio::time::timeout(TEST_DEADLINE, controller.refresh_task.take().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
     controller.shutdown().await.unwrap();
     assert_eq!(
         mock.stop()

@@ -14,6 +14,8 @@ pub(crate) mod output_controller;
 pub(crate) mod refresh_controller;
 pub(crate) mod session_controller;
 pub(crate) mod state;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub(crate) mod workspace;
 
 pub(crate) mod thumbnails;

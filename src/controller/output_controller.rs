@@ -552,6 +552,7 @@ pub(crate) async fn refresh_output_statuses(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::controller::test_support::events::recv_event;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::Notify;
 
@@ -581,19 +582,6 @@ mod tests {
         fn get_record_status(&self) -> BoxFuture<'_, Result<OutputStatus, AppError>> {
             Box::pin(async { Ok(OutputStatus::default()) })
         }
-    }
-
-    async fn receive(rx: &std::sync::mpsc::Receiver<AppEvent>) -> AppEvent {
-        tokio::time::timeout(std::time::Duration::from_secs(1), async {
-            loop {
-                if let Ok(event) = rx.try_recv() {
-                    return event;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap()
     }
 
     #[tokio::test]
@@ -647,7 +635,7 @@ mod tests {
             0,
         );
         outputs.set_output(OutputKind::Record, false);
-        state.apply_output_event(&receive(&rx).await, 1);
+        state.apply_output_event(&recv_event(&rx).await, 1);
         fake.requested.notified().await;
         // Another controller restarts recording while the completed stop's response is held.
         state.apply_output_event(
@@ -659,13 +647,13 @@ mod tests {
             2,
         );
         fake.release.notify_one();
-        let ack = receive(&rx).await;
+        let ack = recv_event(&rx).await;
         assert!(matches!(
             ack,
             AppEvent::OutputCommandSucceeded(OutputKind::Record)
         ));
         state.apply_output_event(&ack, 3);
-        let file = receive(&rx).await;
+        let file = recv_event(&rx).await;
         assert!(matches!(file, AppEvent::RecordingStopObserved { .. }));
         state.apply_output_event(&file, 4);
         assert!(
@@ -681,7 +669,7 @@ mod tests {
             .entries()
             .any(|result| result.path.as_deref() == Some("closed.mkv")));
         for now_ms in 5..=6 {
-            state.apply_output_event(&receive(&rx).await, now_ms);
+            state.apply_output_event(&recv_event(&rx).await, now_ms);
         }
         assert!(state.record_status.active);
         outputs.scope.retire();
@@ -701,9 +689,9 @@ mod tests {
         outputs.set_client_override(OutputCommandClient::Fake(fake));
         outputs.set_output(OutputKind::Record, false);
         let admitted_before = std::time::Instant::now();
-        assert!(matches!(receive(&rx).await, AppEvent::GraphInvalidated));
+        assert!(matches!(recv_event(&rx).await, AppEvent::GraphInvalidated));
         let AppEvent::OutputCommandPending(OutputKind::Record, status, admitted_at) =
-            receive(&rx).await
+            recv_event(&rx).await
         else {
             panic!("missing admitted stop")
         };
@@ -744,11 +732,11 @@ mod tests {
         outputs.set_client_override(OutputCommandClient::Fake(fake.clone()));
         outputs.set_output(OutputKind::Stream, true);
         assert!(matches!(
-            receive(&rx).await,
+            recv_event(&rx).await,
             AppEvent::OutputCommandPending(OutputKind::Stream, _, _)
         ));
         assert!(matches!(
-            receive(&rx).await,
+            recv_event(&rx).await,
             AppEvent::OutputCommandSucceeded(OutputKind::Stream)
         ));
         fake.reading.notified().await;
@@ -759,14 +747,14 @@ mod tests {
         );
         fake.release.notify_one();
         assert!(matches!(
-            receive(&rx).await,
+            recv_event(&rx).await,
             AppEvent::OutputStatusUpdated(OutputKind::Record, _, _)
         ));
         let AppEvent::OutputReadbackFailed {
             kind: OutputKind::Stream,
             observed_at,
             ..
-        } = receive(&rx).await
+        } = recv_event(&rx).await
         else {
             panic!("missing failed readback")
         };
@@ -791,8 +779,8 @@ mod tests {
         });
         outputs.set_client_override(OutputCommandClient::Fake(fake.clone()));
         outputs.set_output(OutputKind::Stream, true);
-        let _ = receive(&rx).await;
-        let _ = receive(&rx).await;
+        let _ = recv_event(&rx).await;
+        let _ = recv_event(&rx).await;
         fake.reading.notified().await;
         outputs.scope.retire();
         outputs.scope.quiesce().await;

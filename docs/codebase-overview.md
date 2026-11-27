@@ -63,6 +63,10 @@ Application orchestration.
   one-second stats/bitrate poll loop, and OBS event-stream routing.
   `refresh_controller/event_loop_tests.rs` (tests only) pins one
   characterization test per `ObsEvent` arm of `run_event_loop`.
+- `test_support/` (tests only): fixtures shared by controller tests.
+  `events.rs` holds `TEST_DEADLINE` and the bounded waits `recv_event`,
+  `recv_matching` (async, they yield instead of blocking the runtime) and
+  `wait_until` (synchronous tests only).
 
 `src/domain/`
 

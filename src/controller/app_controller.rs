@@ -464,6 +464,7 @@ mod final_regression_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::controller::test_support::events::{wait_until, TEST_DEADLINE};
     use crate::domain::output::OutputKind;
     use std::sync::mpsc;
     use std::thread::ThreadId;
@@ -686,7 +687,7 @@ mod tests {
     fn receive_events(rx: &mpsc::Receiver<AppEvent>, count: usize, context: &str) -> Vec<AppEvent> {
         (0..count)
             .map(|_| {
-                rx.recv_timeout(Duration::from_secs(2))
+                rx.recv_timeout(TEST_DEADLINE)
                     .unwrap_or_else(|_| panic!("timed out waiting for {context} event"))
             })
             .collect()
@@ -742,18 +743,17 @@ mod tests {
     }
 
     fn wait_for_status_calls(fake: &FakeOutputClient, stream_calls: usize, record_calls: usize) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(2);
-        while std::time::Instant::now() < deadline {
-            if fake.stream_status_call_count() >= stream_calls
+        let reached = wait_until(|| {
+            fake.stream_status_call_count() >= stream_calls
                 && fake.record_status_call_count() >= record_calls
-            {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        });
 
-        assert_eq!(fake.stream_status_call_count(), stream_calls);
-        assert_eq!(fake.record_status_call_count(), record_calls);
+        assert!(
+            reached,
+            "expected {stream_calls} stream and {record_calls} record status calls, saw {} and {}",
+            fake.stream_status_call_count(),
+            fake.record_status_call_count()
+        );
     }
 
     #[test]
@@ -766,7 +766,7 @@ mod tests {
         });
 
         let event = rx
-            .recv_timeout(Duration::from_secs(2))
+            .recv_timeout(TEST_DEADLINE)
             .expect("stream failure event");
         let AppEvent::OutputCommandFailed(OutputKind::Stream, failure) = event else {
             panic!("expected stream command failure event");
@@ -786,7 +786,7 @@ mod tests {
         });
 
         let event = rx
-            .recv_timeout(Duration::from_secs(2))
+            .recv_timeout(TEST_DEADLINE)
             .expect("record failure event");
         let AppEvent::OutputCommandFailed(OutputKind::Record, failure) = event else {
             panic!("expected record command failure event");
@@ -804,9 +804,7 @@ mod tests {
 
         controller.handle(AppCommand::Disconnect);
 
-        let event = rx
-            .recv_timeout(Duration::from_secs(2))
-            .expect("disconnected event");
+        let event = rx.recv_timeout(TEST_DEADLINE).expect("disconnected event");
         assert!(
             matches!(event, AppEvent::SessionEvent { event, .. } if matches!(*event, AppEvent::Disconnected))
         );
