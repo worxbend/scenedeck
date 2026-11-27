@@ -1378,6 +1378,70 @@ mod tests {
         });
     }
 
+    /// Cards take their order and roles from curation, so they wait until it
+    /// is Ready instead of falling back to OBS order.
+    #[test]
+    #[ignore = "requires a native GTK display"]
+    fn native_scene_cards_wait_for_ready_curation() {
+        crate::ui::native_test!(|| {
+            use crate::controller::state::RegistryStatus;
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            nav.update(|state| {
+                state.obs_status = ObsStatus::Connected {
+                    obs_version: "fixture".into(),
+                };
+                state.scene_collections.current = Some("Fixture".into());
+                state.scene_inventory.scenes = vec![Scene {
+                    uuid: None,
+                    id: "Main".into(),
+                }];
+                state.registry.scenes.insert(
+                    "Main".into(),
+                    SceneEntry {
+                        role: Some(SceneRole::Primary),
+                        ..Default::default()
+                    },
+                );
+                let mut snapshot = crate::domain::control::ControlSnapshot::default();
+                snapshot.studio.enabled = Some(false);
+                state.workspace.snapshot = Some(snapshot);
+                state.workspace.observed_at = Some(std::time::Instant::now());
+                state.workspace.observe_scene_controls();
+            })
+            .expect("AppState is not borrowed");
+            let live = build(nav.clone());
+            let inventory = nav.read(|state| state.scene_inventory.clone());
+            rebuild_scene_cards(&live, &inventory, &nav);
+            assert_eq!(live.scene_cards.borrow().len(), 1);
+            assert!(live.scene_cards.borrow()[0].root.is_sensitive());
+
+            for status in [
+                RegistryStatus::Loading,
+                RegistryStatus::Unavailable,
+                RegistryStatus::Failed("corrupt show-workspaces.json".into()),
+            ] {
+                nav.update(|state| state.show_registry.status = status.clone())
+                    .expect("AppState is not borrowed");
+                rebuild_scene_cards(&live, &inventory, &nav);
+                assert!(
+                    live.scene_cards.borrow().is_empty(),
+                    "{status:?} curation rendered scene cards"
+                );
+                let notice = crate::ui::persist::registry_availability_message(&nav)
+                    .unwrap_or_else(|| panic!("{status:?} has no availability notice"));
+                assert!(
+                    crate::ui::test_support::find_where(live.scenes_box.upcast_ref(), |widget| {
+                        widget
+                            .downcast_ref::<Label>()
+                            .is_some_and(|label| label.label() == notice)
+                    })
+                    .is_some(),
+                    "{status:?} notice is not shown in place of the cards"
+                );
+            }
+        });
+    }
+
     #[test]
     fn disconnect_confirmation_respects_stops_and_unknown_states() {
         let mut config = OutputConfig {

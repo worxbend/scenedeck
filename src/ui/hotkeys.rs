@@ -316,6 +316,61 @@ mod tests {
         }
     }
 
+    /// Slots follow curation order, so they stay empty until it is Ready
+    /// rather than binding digits to a guessed order.
+    #[test]
+    #[ignore = "requires a native GTK display"]
+    fn native_slot_hotkeys_wait_for_ready_curation() {
+        crate::ui::native_test!(|| {
+            use crate::controller::state::{ObsStatus, RegistryStatus};
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            nav.update(|state| {
+                state.obs_status = ObsStatus::Connected {
+                    obs_version: "fixture".into(),
+                };
+                state.scene_collections.current = Some("Fixture".into());
+                state.scene_inventory.scenes = vec![crate::domain::scene::Scene {
+                    uuid: None,
+                    id: "Main".into(),
+                }];
+                state.registry.scenes.insert(
+                    "Main".into(),
+                    crate::storage::registry::SceneEntry {
+                        role: Some(crate::domain::role::SceneRole::Primary),
+                        ..Default::default()
+                    },
+                );
+                let mut snapshot = crate::domain::control::ControlSnapshot::default();
+                snapshot.studio.enabled = Some(false);
+                state.workspace.snapshot = Some(snapshot);
+                state.workspace.observed_at = Some(Instant::now());
+                state.workspace.observe_scene_controls();
+            })
+            .expect("AppState is not borrowed");
+            let live = Rc::new(crate::ui::pages::live::build(nav.clone()));
+            let hotkeys = SceneHotkeyConfig::default();
+            let empty_slot = fl!(LANGUAGE_LOADER, "hotkey-hint-empty-slot", slot = "1");
+            let pending_scene = || nav.read(|state| state.workspace.pending_scene.clone());
+
+            for status in [
+                RegistryStatus::Loading,
+                RegistryStatus::Unavailable,
+                RegistryStatus::Failed("corrupt show-workspaces.json".into()),
+            ] {
+                nav.update(|state| state.show_registry.status = status.clone())
+                    .expect("AppState is not borrowed");
+                apply_outcome(&nav, &live, &hotkeys, HotkeyOutcome::Activate(0));
+                assert_eq!(pending_scene(), None, "{status:?} curation admitted a slot");
+                assert_eq!(live.hotkey_hint.text(), empty_slot);
+            }
+
+            nav.update(|state| state.show_registry.status = RegistryStatus::Ready)
+                .expect("AppState is not borrowed");
+            apply_outcome(&nav, &live, &hotkeys, HotkeyOutcome::Activate(0));
+            assert_eq!(pending_scene().as_deref(), Some("Main"));
+        });
+    }
+
     #[test]
     #[ignore = "requires a native GTK display"]
     fn native_rearm_keeps_the_new_notice_until_its_own_expiry() {

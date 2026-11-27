@@ -395,6 +395,46 @@ mod tests {
     }
 
     #[test]
+    fn scene_switch_dispatch_waits_for_ready_curation() {
+        use crate::controller::command::AppCommand;
+        use crate::controller::state::{ObsStatus, RegistryStatus};
+        let (_runtime, nav) = borrow_nav();
+        nav.update(|state| {
+            state.obs_status = ObsStatus::Connected {
+                obs_version: "fixture".into(),
+            };
+            state.scene_collections.current = Some("Show".into());
+            let mut snapshot = crate::domain::control::ControlSnapshot::default();
+            snapshot.studio.enabled = Some(false);
+            state.workspace.snapshot = Some(snapshot);
+            state.workspace.observed_at = Some(std::time::Instant::now());
+            state.workspace.observe_scene_controls();
+        })
+        .expect("AppState is not borrowed");
+        let pending_scene = || nav.read(|state| state.workspace.pending_scene.clone());
+
+        for status in [
+            RegistryStatus::Loading,
+            RegistryStatus::Unavailable,
+            RegistryStatus::Failed("corrupt show-workspaces.json".into()),
+        ] {
+            nav.update(|state| state.show_registry.status = status.clone())
+                .expect("AppState is not borrowed");
+            nav.dispatch(AppCommand::SwitchPrimaryScene("Main".into()));
+            assert_eq!(
+                pending_scene(),
+                None,
+                "{status:?} curation admitted a switch"
+            );
+        }
+
+        nav.update(|state| state.show_registry.status = RegistryStatus::Ready)
+            .expect("AppState is not borrowed");
+        nav.dispatch(AppCommand::SwitchPrimaryScene("Main".into()));
+        assert_eq!(pending_scene().as_deref(), Some("Main"));
+    }
+
+    #[test]
     fn dynamic_navigation_rejects_reconnect_and_another_target_scope() {
         let scope = ScopeBinding {
             endpoint: "obs:4455".into(),
