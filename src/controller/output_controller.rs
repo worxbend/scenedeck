@@ -457,6 +457,7 @@ pub(crate) async fn stop_active_outputs_before_disconnect(client: &OutputCommand
     }
 }
 
+#[must_use = "publish readback failures, or the UI keeps showing the last known output state"]
 pub(crate) struct OutputReadbackErrors {
     stream: Option<(AppError, std::time::Instant)>,
     record: Option<(AppError, std::time::Instant)>,

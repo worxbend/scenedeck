@@ -13,6 +13,8 @@ use crate::domain::control::ControlAction;
 use crate::domain::output::OutputKind;
 use crate::domain::workflow::ScopeBinding;
 use crate::obs::event::ObsEventStream;
+use crate::obs::testing::scripted::ScriptedObs;
+use crate::obs::testing::wire::Reply;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
@@ -1485,6 +1487,97 @@ impl SessionRunner for Runner {
         })
     }
 }
+
+/// Installs one client and holds the session open without an event loop,
+/// so only the command under test reads from OBS.
+struct InstallOnlyRunner(ObsClient);
+impl SessionRunner for InstallOnlyRunner {
+    fn run(&self, _: EventSender, scope: SessionScope) -> BoxFuture<'static, ()> {
+        let client = self.0.clone();
+        Box::pin(async move {
+            assert!(scope.install(client));
+            std::future::pending::<()>().await;
+        })
+    }
+}
+
+#[tokio::test]
+async fn manual_refresh_publishes_a_failed_stream_readback() {
+    let (client, _server) = ScriptedObs::by_type([
+        (
+            "GetProfileList",
+            Reply::Ok(json!({"currentProfileName":"Main","profiles":["Main"]})),
+        ),
+        (
+            "GetSceneCollectionList",
+            Reply::Ok(json!({"currentSceneCollectionName":"Show","sceneCollections":["Show"]})),
+        ),
+        (
+            "GetStreamStatus",
+            Reply::Err {
+                code: 207,
+                comment: "stream output is not ready".into(),
+            },
+        ),
+        (
+            "GetRecordStatus",
+            Reply::Ok(
+                json!({"outputActive":false,"outputPaused":false,"outputTimecode":"00:00:00.000","outputDuration":0,"outputBytes":0}),
+            ),
+        ),
+        (
+            "GetSceneList",
+            Reply::Ok(json!({
+                "currentProgramSceneName":"A",
+                "currentProgramSceneUuid":"00000000-0000-0000-0000-000000000001",
+                "scenes":[{"sceneName":"A","sceneUuid":"00000000-0000-0000-0000-000000000001","sceneIndex":0}],
+            })),
+        ),
+        (
+            "GetSpecialInputs",
+            Reply::Ok(
+                json!({"desktop1":null,"desktop2":null,"mic1":null,"mic2":null,"mic3":null,"mic4":null}),
+            ),
+        ),
+        ("GetSceneItemList", Reply::Ok(json!({"sceneItems":[]}))),
+    ])
+    .connect()
+    .await;
+    let (tx, rx) = mpsc::sync_channel(128);
+    let mut controller =
+        AppController::with_dependencies(Handle::current(), tx.clone(), dependencies());
+    controller.session = SessionController::with_runner(
+        Handle::current(),
+        EventSender::new(tx),
+        Arc::new(InstallOnlyRunner(client)),
+        SessionScope::initial(controller.client_slot.clone()),
+        Arc::new(Mutex::new(None)),
+    );
+    controller.sync_session_scope();
+    controller.handle(AppCommand::Connect);
+    tokio::time::timeout(TEST_DEADLINE, async {
+        while controller.connected_client().is_none() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the session installs its client");
+
+    controller.handle(AppCommand::RefreshData);
+
+    let mut failed_readbacks = Vec::new();
+    loop {
+        match peel(recv_event(&rx).await) {
+            AppEvent::OutputReadbackFailed { kind, .. } => failed_readbacks.push(kind),
+            AppEvent::Observation { event, .. } if matches!(*event, AppEvent::GraphUpdated(_)) => {
+                break
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(failed_readbacks, [OutputKind::Stream]);
+}
+
 async fn terminal_case(acknowledged: bool, full: bool, reconnect: bool) {
     let held = if acknowledged {
         ("GetStreamStatus", 2)

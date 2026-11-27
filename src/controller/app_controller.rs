@@ -257,7 +257,10 @@ impl AppController {
                     let config = load_config_blocking(dependencies.clone()).await;
                     let tx = tx.fresh();
                     refresh_profile_and_collection_lists(client, &tx).await;
-                    refresh_output_statuses(client, &tx).await;
+                    refresh_output_statuses(client, &tx)
+                        .await
+                        .publish(&tx)
+                        .await;
                     refresh_live_data(client, &tx, &config.live.audio_inputs).await;
                 };
                 tokio::select! {
