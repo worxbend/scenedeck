@@ -16,6 +16,11 @@ Fallback path:
 $HOME/.config/scenedeck/config.json
 ```
 
+A relative `XDG_CONFIG_HOME` or `XDG_STATE_HOME` is ignored, as the XDG Base
+Directory spec requires, and SceneDeck never falls back to the directory it was
+started from. With no absolute XDG value and no absolute home directory, paths
+resolve under `/`, so saves fail instead of landing in an unexpected place.
+
 Current schema version: `5`.
 
 Example:
