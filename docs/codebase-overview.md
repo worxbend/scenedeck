@@ -47,6 +47,9 @@ Application orchestration.
 - `event.rs`: events sent back to GTK.
 - `state.rs`: UI-facing app state and its pure transitions (output events,
   command intent, connection and scene-inventory updates).
+  `state/tests/event_sequence.rs` (tests only) replays one OBS session
+  through the reducers `ui/window.rs` calls and compares each step to a
+  golden snapshot.
 - `state/mixer.rs`: Mixer audio view model — request fencing, visibility and
   inspection snapshots.
 - `app_controller.rs`: top-level command routing and small per-command task

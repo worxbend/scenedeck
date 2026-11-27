@@ -1250,6 +1250,8 @@ mod tests {
     use crate::domain::output::OutputRunState;
     use crate::domain::stats::StatsMetric;
 
+    mod event_sequence;
+
     pub(super) fn input(id: &str) -> AudioInput {
         AudioInput::new(id.to_string(), false, 1.0, 0.0)
     }
