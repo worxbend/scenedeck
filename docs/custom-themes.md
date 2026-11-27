@@ -57,6 +57,10 @@ In Settings:
 5. Set Custom Dark CSS Path.
 6. Use Reload Custom CSS after editing a file.
 
+Both paths must be absolute, starting with `/`; `~` and `$XDG_CONFIG_HOME` are
+not expanded. SceneDeck refuses a relative path with a warning instead of
+resolving it against the directory it was started from.
+
 A custom stylesheet must be a regular UTF-8 file no larger than 1 MiB. It must
 be self-contained: `@import` and image `url(...)` dependencies are rejected,
 including CSS-escaped forms. GTK otherwise opens those files synchronously,

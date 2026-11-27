@@ -549,6 +549,7 @@ theme-ubuntu-violet-name = Ubuntu фіолетовий
 theme-ubuntu-violet-desc = Фіолетові поверхні в стилі Ubuntu з теплим акцентом для прямого ефіру.
 theme-custom-css-read-failed = Не вдалося прочитати власний CSS із { $path }: { $err }
 theme-custom-css-no-matching-file = Власний CSS увімкнено, але не встановлено відповідний файл для світлого/темного режиму.
+theme-custom-css-path-not-absolute = Шляхи до власного CSS мають бути абсолютними. Введіть у Налаштуваннях повний шлях, що починається з /.
 theme-css-no-display = { $label } не завантажено, оскільки немає доступного дисплея GTK.
 theme-css-parse-error = Помилка розбору CSS { $label }: { $message }
 ## stats.rs — live streaming telemetry

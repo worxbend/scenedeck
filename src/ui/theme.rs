@@ -191,6 +191,14 @@ impl ThemeManager {
         else {
             return CustomCssLoad::MissingPath;
         };
+        // Settings and config.json both take free text, and a relative path
+        // would resolve against whatever directory SceneDeck was launched from.
+        if !path.is_absolute() {
+            return CustomCssLoad::Failed {
+                path,
+                error: fl!(LANGUAGE_LOADER, "theme-custom-css-path-not-absolute"),
+            };
+        }
         match crate::storage::small_file::read_to_string(
             &path,
             crate::storage::small_file::CSS_LIMIT,
@@ -989,6 +997,34 @@ mod tests {
                 }
                 other => panic!("expected resolved custom path: {other:?}"),
             }
+        }
+    }
+
+    /// `cargo test` runs from the crate root, where this relative path names a
+    /// valid stylesheet; it must still be refused rather than read.
+    #[test]
+    fn relative_custom_css_path_is_refused_without_reading_it() {
+        use super::CustomCssLoad;
+        use crate::domain::appearance::ThemePreference;
+        let relative = std::path::Path::new("examples/themes/my-custom-theme.css");
+        let mut preference = ThemePreference::default();
+        preference.custom_css.enabled = true;
+        preference.custom_css.light_path = Some(relative.to_path_buf());
+
+        let loaded = ThemeManager::load_custom_css(&preference, ThemeVariant::Light);
+
+        match loaded {
+            CustomCssLoad::Failed { path, error } => {
+                assert_eq!(path, relative);
+                assert_eq!(
+                    error,
+                    i18n_embed_fl::fl!(
+                        crate::infra::i18n::LANGUAGE_LOADER,
+                        "theme-custom-css-path-not-absolute"
+                    )
+                );
+            }
+            other => panic!("relative custom CSS path must fail: {other:?}"),
         }
     }
 

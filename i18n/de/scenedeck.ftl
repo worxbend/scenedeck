@@ -543,6 +543,7 @@ theme-ubuntu-violet-name = Ubuntu-Violett
 theme-ubuntu-violet-desc = Von Ubuntu inspirierte violette Oberflächen mit warmem Live-Akzent.
 theme-custom-css-read-failed = Benutzerdefiniertes CSS konnte nicht aus { $path } gelesen werden: { $err }
 theme-custom-css-no-matching-file = Benutzerdefiniertes CSS ist aktiviert, aber es ist keine passende helle/dunkle Datei festgelegt.
+theme-custom-css-path-not-absolute = Pfade zu benutzerdefiniertem CSS müssen absolut sein. Geben Sie in den Einstellungen den vollständigen Pfad ab / ein.
 theme-css-no-display = { $label } wurde nicht geladen, da kein GTK-Display verfügbar ist.
 theme-css-parse-error = { $label } CSS-Parsingfehler: { $message }
 ## stats.rs — live streaming telemetry

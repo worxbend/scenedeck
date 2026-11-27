@@ -445,9 +445,9 @@ are light/dark-aware families, so the selected theme applies its light or dark
 variant based on the effective color scheme. The `OBS` family mirrors OBS
 Studio's own default look, for a control surface that matches the app it drives.
 
-Custom CSS supports separate light and dark file paths. In System mode,
-SceneDeck loads the custom file matching the current libadwaita/system side.
-Use Reload Custom CSS after editing a file. See
+Custom CSS supports separate light and dark file paths, which must be
+absolute. In System mode, SceneDeck loads the custom file matching the current
+libadwaita/system side. Use Reload Custom CSS after editing a file. See
 [custom-themes.md](custom-themes.md) for examples and reset instructions.
 
 OBS host and port are stored in:

@@ -124,10 +124,11 @@ Fields:
   behaves as `reduced` without you having to change anything here. An explicit
   `off` is always honoured and is never promoted back up.
 - `appearance.custom_css.enabled`: whether a user CSS file should be loaded.
-- `appearance.custom_css.light_path`: optional path to a user CSS file used
-  when the effective color scheme is light.
-- `appearance.custom_css.dark_path`: optional path to a user CSS file used when
-  the effective color scheme is dark.
+- `appearance.custom_css.light_path`: optional absolute path to a user CSS
+  file used when the effective color scheme is light.
+- `appearance.custom_css.dark_path`: optional absolute path to a user CSS file
+  used when the effective color scheme is dark. A relative path in either key
+  is refused with a warning, not resolved against the launch directory.
 - `mixer.mode`: `active`, `selected`, or `pinned`.
 - `mixer.selected_scene`: optional scene name used by Selected mode.
 - `mixer.pinned_scene`: optional scene name remembered by Pinned mode.
