@@ -497,30 +497,6 @@ fn build_disconnected_view() -> (GtkBox, Label) {
     (view, detail)
 }
 
-pub(crate) fn output_label(
-    kind: OutputKind,
-    status: &OutputStatus,
-    elapsed: Option<&str>,
-) -> String {
-    let kind = kind.label();
-    let kind = kind.as_str();
-    match elapsed {
-        Some(elapsed) if status.active => fl!(
-            LANGUAGE_LOADER,
-            "live-output-label-with-elapsed",
-            kind = kind,
-            state = status.state.label(),
-            elapsed = elapsed
-        ),
-        _ => fl!(
-            LANGUAGE_LOADER,
-            "live-output-label",
-            kind = kind,
-            state = status.state.label()
-        ),
-    }
-}
-
 fn requires_output_confirmation(kind: OutputKind, active: bool, config: &OutputConfig) -> bool {
     match (kind, active) {
         (OutputKind::Stream, false) => config.confirm_start_stream,
@@ -1617,15 +1593,6 @@ mod tests {
         assert_eq!(shortcut_for_slot(&disabled, 0), None);
     }
 
-    fn output_status(active: bool, state: OutputRunState) -> OutputStatus {
-        OutputStatus {
-            duration_ms: None,
-            active,
-            state,
-            detail: None,
-        }
-    }
-
     #[test]
     fn output_confirmation_defaults_match_output_actions() {
         let config = OutputConfig::default();
@@ -1748,33 +1715,5 @@ mod tests {
     fn active_state_maps_to_output_action() {
         assert_eq!(output_action_for_active_state(false), OutputAction::Start);
         assert_eq!(output_action_for_active_state(true), OutputAction::Stop);
-    }
-
-    #[test]
-    fn output_label_shows_elapsed_time_only_while_active() {
-        assert_eq!(
-            output_label(
-                OutputKind::Stream,
-                &output_status(true, OutputRunState::Active),
-                Some("00:01:23")
-            ),
-            "Stream: Active · 00:01:23"
-        );
-        assert_eq!(
-            output_label(
-                OutputKind::Record,
-                &output_status(false, OutputRunState::Inactive),
-                Some("00:01:23")
-            ),
-            "Record: Inactive"
-        );
-        assert_eq!(
-            output_label(
-                OutputKind::Stream,
-                &output_status(true, OutputRunState::Active),
-                None
-            ),
-            "Stream: Active"
-        );
     }
 }

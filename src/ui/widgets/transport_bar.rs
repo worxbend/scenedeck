@@ -261,7 +261,7 @@ fn update(root: &GtkBox, nav: &NavigationContext, controls: &Controls) {
             button,
             &kind.label(),
             &status.state.label(),
-            &crate::ui::pages::live::output_label(kind, status, None),
+            &crate::ui::presenters::output_status::output_label(kind, status, None),
         );
         button.set_sensitive(
             output_enabled(status, connected)

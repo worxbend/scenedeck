@@ -164,6 +164,8 @@ GTK and libadwaita UI.
   for ordered config and registry writes, and returns completion callbacks to
   GTK.
 - `pages/`: Live, Stats, Mixer, Graph, Inventory, Doctor, Settings, and Help pages.
+- `presenters/`: text formatters shared by several surfaces;
+  `output_status` renders the stream and record labels and elapsed time.
 - `widgets/`: reusable scene and audio cards, the volume meter, the icon
   chooser, the bottom status bar, `status_page` (the only status page
   constructor; it escapes the description), and the

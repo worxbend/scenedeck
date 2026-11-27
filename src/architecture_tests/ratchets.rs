@@ -14,13 +14,13 @@ const OVERSIZED_FILES: &[(&str, usize)] = &[
     ("controller/state.rs", 1224),
     ("obs/client.rs", 885),
     ("ui/pages/inventory.rs", 1505),
-    ("ui/pages/live.rs", 976),
+    ("ui/pages/live.rs", 952),
     ("ui/pages/mixer.rs", 1216),
     ("ui/pages/settings.rs", 873),
     ("ui/pages/stats.rs", 912),
     ("ui/widgets/audio_card.rs", 884),
     ("ui/widgets/operating_panel.rs", 1613),
-    ("ui/window.rs", 1581),
+    ("ui/window.rs", 1570),
 ];
 
 /// Production files stay small enough to read in one sitting.

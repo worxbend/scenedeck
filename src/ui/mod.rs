@@ -22,6 +22,7 @@ mod operator_picker;
 pub(crate) mod pages;
 pub(crate) mod persist;
 mod preflight;
+mod presenters;
 mod quick_actions;
 pub(crate) mod report_history;
 mod session_reports;

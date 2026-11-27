@@ -30,8 +30,9 @@ use crate::infra::error::AppError;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::ui::markup::plain_toast;
 use crate::ui::navigation::NavigationContext;
-use crate::ui::pages::live::{output_label, LivePageHandle};
+use crate::ui::pages::live::LivePageHandle;
 use crate::ui::pages::stats::PopoutSlot as StatsPopoutSlot;
+use crate::ui::presenters::output_status::{format_elapsed, output_label};
 use crate::ui::register_resources;
 use crate::ui::sidebar::{self, HeaderSelectors, SidebarControls, NAV_PAGES};
 use crate::ui::theme::ThemeManager;
@@ -1402,18 +1403,6 @@ fn elapsed_suffix(active_since: Option<Instant>) -> String {
     active_since
         .map(|since| format!(" · {}", format_elapsed(since)))
         .unwrap_or_default()
-}
-
-fn format_elapsed(since: Instant) -> String {
-    let elapsed = since.elapsed().as_secs();
-    let hours = elapsed / 3600;
-    let minutes = (elapsed % 3600) / 60;
-    let seconds = elapsed % 60;
-    if hours > 0 {
-        format!("{hours}:{minutes:02}:{seconds:02}")
-    } else {
-        format!("{minutes}:{seconds:02}")
-    }
 }
 
 /// Toast and log a failure; the next render shows the log entry.

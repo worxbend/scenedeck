@@ -236,6 +236,11 @@ lowercase string on disk but is represented as `ThemeMode` in Rust.
 `src/ui/` owns GTK widget construction, CSS loading, page layout, navigation,
 and action registration.
 
+`src/ui/presenters/` holds text formatters that several GTK surfaces share.
+`presenters::output_status` formats the stream and record labels for the
+transport bar and the window status bar. Presenters take domain values, build
+no widgets and read no `AppState`.
+
 Scene names and error messages come from OBS or the network, so the UI shows
 them as typed. Toasts come from `ui::markup::plain_toast`, which turns markup
 off, and full-page states from `ui::widgets::status_page::status_page`, which
