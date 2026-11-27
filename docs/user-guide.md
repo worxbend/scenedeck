@@ -164,6 +164,10 @@ Inventory page. Card activation switches Program in direct mode or stages
 Preview in Studio mode. Named Program and Preview badges show observed state;
 both can appear on one card.
 
+Cards wait for the collection's curation, because their order and roles come
+from it. While curation loads, or when it cannot be read, Live shows that status
+where the cards would be. A read error offers Retry in Inventory.
+
 If no scene cards appear after connecting, open Inventory and assign the
 `Primary` role to the scenes you want to switch from Live.
 
@@ -193,6 +197,7 @@ Settings → Scene Hotkeys chooses how the digit is pressed:
 Shortcuts act only on the Live page, and the ones that need no modifier stand
 down while a text field has focus. Pressing a digit with no scene behind it
 says so in the caption for a couple of seconds instead of switching anything.
+Until the collection's curation is ready, every slot counts as empty.
 
 ### Audio Cards
 
@@ -687,6 +692,8 @@ If SceneDeck cannot connect:
 If the Live page has no scene cards:
 
 - Connect to OBS.
+- If Live says it is loading curation or could not load the workspace, wait,
+  or use Retry in Inventory.
 - Open Inventory.
 - Assign the `Primary` role to scenes you want on the Live page.
 
