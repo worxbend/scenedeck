@@ -110,6 +110,7 @@ doctor-edge-adjust-suggestion = Modifica la relazione tra scene annidate o aggio
 
 ## controller/app_controller.rs
 controller-not-connected = Non connesso a OBS
+controller-output-journal-full = Troppi comandi OBS sono ancora in attesa di risposta; questo comando non è stato inviato
 
 ## controller/state.rs — Page titles and ObsStatus labels
 page-live = Diretta

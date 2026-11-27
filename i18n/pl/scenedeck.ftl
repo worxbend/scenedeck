@@ -116,6 +116,7 @@ doctor-edge-adjust-suggestion = Dostosuj relację zagnieżdżonych scen lub zakt
 
 ## controller/app_controller.rs
 controller-not-connected = Brak połączenia z OBS
+controller-output-journal-full = Zbyt wiele poleceń OBS wciąż czeka na odpowiedź; to polecenie nie zostało wysłane
 
 ## controller/state.rs — Page titles and ObsStatus labels
 page-live = Na żywo

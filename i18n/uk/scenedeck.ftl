@@ -116,6 +116,7 @@ doctor-edge-adjust-suggestion = Скоригуйте зв'язок вкладе�
 
 ## controller/app_controller.rs
 controller-not-connected = Немає підключення до OBS
+controller-output-journal-full = Забагато команд OBS ще очікують відповіді; цю команду не надіслано
 
 ## controller/state.rs — Page titles and ObsStatus labels
 page-live = Ефір

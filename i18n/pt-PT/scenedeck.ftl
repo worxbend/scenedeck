@@ -113,6 +113,7 @@ doctor-edge-adjust-suggestion = Ajuste a relação de cena aninhada ou atualize 
 
 ## controller/app_controller.rs
 controller-not-connected = Sem ligação ao OBS
+controller-output-journal-full = Demasiados comandos do OBS ainda aguardam resposta; este comando não foi enviado
 
 ## controller/state.rs — Page titles and ObsStatus labels
 page-live = Direto

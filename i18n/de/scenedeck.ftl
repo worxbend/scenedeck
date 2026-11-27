@@ -110,6 +110,7 @@ doctor-edge-adjust-suggestion = Passen Sie die Beziehung der verschachtelten Sze
 
 ## controller/app_controller.rs
 controller-not-connected = Nicht mit OBS verbunden
+controller-output-journal-full = Zu viele OBS-Befehle warten noch auf eine Antwort; dieser Befehl wurde nicht gesendet
 
 ## controller/state.rs — Page titles and ObsStatus labels
 page-live = Live

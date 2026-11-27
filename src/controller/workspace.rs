@@ -141,11 +141,18 @@ impl WorkspaceController {
         let ticket = cancellation.load(std::sync::atomic::Ordering::Acquire);
         let tx = self.tx.scoped(&self.scope);
         if let Some(task) = self.scope.spawn(&self.runtime, async move {
-            let Some(evidence) = tx.operation(
+            let evidence = match tx.operation(
                 super::lifecycle::OperationKind::Audio,
                 client.endpoint().into(),
-            ) else {
-                return;
+            ) {
+                Ok(evidence) => evidence,
+                // Same policy as the task cap above: an audio command is
+                // dropped with a warning, not reported to the operator.
+                Err(super::lifecycle::AdmissionRefused::JournalFull) => {
+                    tracing::warn!("audio command admission refused (journal full)");
+                    return;
+                }
+                Err(super::lifecycle::AdmissionRefused::Inactive) => return,
             };
             let operation = async {
                 validate_scope(&client, &scope).await?;
@@ -259,6 +266,9 @@ impl WorkspaceController {
                 tx,
             }) = jobs.next()
             {
+                // Either refusal surfaces as `controller-workspace-admission-full`
+                // below, whose text already names both a full queue and a retired
+                // scope, so the reason itself is not needed.
                 let evidence = action.as_ref().and_then(|_| {
                     tx.operation(
                         super::lifecycle::OperationKind::Workspace {
@@ -268,6 +278,7 @@ impl WorkspaceController {
                         },
                         request.scope.endpoint.clone(),
                     )
+                    .ok()
                 });
                 let mut acknowledged = false;
                 let result = if let Some(client) = &client {

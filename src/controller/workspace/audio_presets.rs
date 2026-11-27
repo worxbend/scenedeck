@@ -181,7 +181,7 @@ async fn apply_input(
                 },
                 client.endpoint().into(),
             )
-            .ok_or_else(|| fl!(LANGUAGE_LOADER, "controller-workspace-admission-full"))?;
+            .map_err(|_refused| fl!(LANGUAGE_LOADER, "controller-workspace-admission-full"))?;
         let dispatched = AtomicBool::new(false);
         let desired = PresetInput {
             target: identity.target.clone(),

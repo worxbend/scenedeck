@@ -35,7 +35,7 @@ use crate::infra::sync::lock_or_recover;
 use crate::obs::client::ObsClient;
 
 /// Operations one session journals at once; completed ones make room.
-const JOURNAL_CAPACITY: usize = 64;
+pub(crate) const JOURNAL_CAPACITY: usize = 64;
 /// Retired sessions the audit keeps, in the queue and in the UI history.
 pub(crate) const TERMINAL_HISTORY: usize = 32;
 /// Optional commands one session runs at once; reserved work bypasses it.
@@ -116,6 +116,15 @@ impl Default for TerminalQueue {
             changed: tokio::sync::watch::channel(0).0,
         }
     }
+}
+
+/// Why a session refused to journal a new operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AdmissionRefused {
+    /// No live session: none is bound, or it was retired or superseded.
+    Inactive,
+    /// Every journal slot holds an operation that has not completed.
+    JournalFull,
 }
 
 pub(crate) struct OperationLease {
@@ -288,13 +297,17 @@ impl SessionScope {
         &self,
         kind: OperationKind,
         endpoint: String,
-    ) -> Option<OperationLease> {
+    ) -> Result<OperationLease, AdmissionRefused> {
         let mut journal = self.evidence.lock().expect("operation evidence");
         if !self.is_active() {
-            return None;
+            return Err(AdmissionRefused::Inactive);
         }
         if journal.entries.len() == JOURNAL_CAPACITY {
-            let completed = journal.entries.iter().position(|entry| entry.completed)?;
+            let completed = journal
+                .entries
+                .iter()
+                .position(|entry| entry.completed)
+                .ok_or(AdmissionRefused::JournalFull)?;
             journal.entries.remove(completed);
         }
         journal.next = journal
@@ -313,7 +326,7 @@ impl SessionScope {
             completed: false,
             failure: None,
         });
-        Some(OperationLease {
+        Ok(OperationLease {
             id,
             journal: self.evidence.clone(),
         })
@@ -470,6 +483,39 @@ mod tests {
                 .map(|terminal| terminal.omitted_sessions + 1)
                 .sum::<u64>(),
             sessions
+        );
+    }
+
+    #[test]
+    fn full_journal_refuses_admission_until_an_operation_completes() {
+        let scope = SessionScope::initial(Arc::new(Mutex::new(None)));
+        let unfinished: Vec<_> = (0..JOURNAL_CAPACITY)
+            .map(|_| scope.operation(OperationKind::Audio, "fixture".into()))
+            .collect::<Result<_, _>>()
+            .expect("an empty journal admits its capacity");
+
+        assert_eq!(
+            scope
+                .operation(OperationKind::Audio, "fixture".into())
+                .err(),
+            Some(AdmissionRefused::JournalFull)
+        );
+        unfinished[0].finish(Ok(()));
+        assert!(scope
+            .operation(OperationKind::Audio, "fixture".into())
+            .is_ok());
+    }
+
+    #[test]
+    fn retired_session_refuses_admission_as_inactive() {
+        let scope = SessionScope::initial(Arc::new(Mutex::new(None)));
+        scope.retire();
+
+        assert_eq!(
+            scope
+                .operation(OperationKind::Audio, "fixture".into())
+                .err(),
+            Some(AdmissionRefused::Inactive)
         );
     }
 

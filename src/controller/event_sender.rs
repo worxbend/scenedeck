@@ -67,8 +67,11 @@ impl EventSender {
         &self,
         kind: super::lifecycle::OperationKind,
         endpoint: String,
-    ) -> Option<super::lifecycle::OperationLease> {
-        self.scope.as_ref()?.operation(kind, endpoint)
+    ) -> Result<super::lifecycle::OperationLease, super::lifecycle::AdmissionRefused> {
+        self.scope
+            .as_ref()
+            .ok_or(super::lifecycle::AdmissionRefused::Inactive)?
+            .operation(kind, endpoint)
     }
 
     pub(crate) fn terminal_reason(&self, reason: String) {

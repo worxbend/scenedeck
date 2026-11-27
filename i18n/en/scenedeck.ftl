@@ -110,6 +110,7 @@ doctor-edge-adjust-suggestion = Adjust the nested scene relationship or update t
 
 ## controller/app_controller.rs
 controller-not-connected = Not connected to OBS
+controller-output-journal-full = Too many OBS commands are still waiting for an answer; this command was not sent
 
 ## controller/state.rs — Page titles and ObsStatus labels
 page-live = Live

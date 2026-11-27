@@ -7,7 +7,7 @@ use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
 
 use crate::controller::event_sender::EventSender;
-use crate::controller::lifecycle::SessionScope;
+use crate::controller::lifecycle::{AdmissionRefused, SessionScope};
 use crate::controller::session_controller::REQUEST_BUDGET;
 use futures_util::{future::BoxFuture, FutureExt};
 use i18n_embed_fl::fl;
@@ -85,12 +85,19 @@ impl OutputController {
 
         let tx = self.event_tx.scoped(&self.scope);
         let pending = Arc::clone(&self.pending);
-        let Some(evidence) = self
+        let evidence = match self
             .scope
             .operation(operation_kind(kind), client.endpoint())
-        else {
-            clear_pending(&pending, kind, operation);
-            return;
+        {
+            Ok(evidence) => evidence,
+            Err(AdmissionRefused::Inactive) => {
+                clear_pending(&pending, kind, operation);
+                return;
+            }
+            Err(AdmissionRefused::JournalFull) => {
+                self.refuse_on_full_journal(kind, active, operation);
+                return;
+            }
         };
         let admitted_at = std::time::Instant::now();
         let scope = self.scope.clone();
@@ -167,6 +174,32 @@ impl OutputController {
                 readback.publish(&tx).await;
             }
             clear_pending(&pending, kind, operation);
+        });
+    }
+
+    /// The command was never sent, so the failure restores the state the
+    /// output had before it.
+    fn refuse_on_full_journal(&self, kind: OutputKind, active: bool, operation: u64) {
+        tracing::warn!(
+            ?kind,
+            active,
+            "output command refused: operation journal full"
+        );
+        let failure = OutputCommandFailureRecovery::with_failed_command_fallback_status(
+            fl!(LANGUAGE_LOADER, "controller-output-journal-full"),
+            pending_status(active),
+        );
+        let completion = PendingOperation {
+            pending: Arc::clone(&self.pending),
+            kind,
+            operation,
+        };
+        let tx = self.event_tx.scoped(&self.scope);
+        // A full journal usually means the optional task cap is full too. The
+        // pending guard bounds this to one reserved task per output kind.
+        self.scope.spawn_reserved(&self.runtime, async move {
+            let _completion = completion;
+            let _ = tx.send(AppEvent::OutputCommandFailed(kind, failure)).await;
         });
     }
 
@@ -553,6 +586,7 @@ pub(crate) async fn refresh_output_statuses(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::controller::lifecycle::{OperationKind, JOURNAL_CAPACITY};
     use crate::controller::test_support::events::recv_event;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::Notify;
@@ -762,6 +796,43 @@ mod tests {
         outputs.scope.retire();
         outputs.scope.quiesce().await;
         assert!(outputs.pending.lock().unwrap().stream.is_none());
+    }
+
+    #[tokio::test]
+    async fn full_operation_journal_fails_the_output_command_without_sending_it() {
+        let (tx, rx) = std::sync::mpsc::sync_channel(8);
+        let outputs = OutputController::new(Handle::current(), tx, Arc::new(Mutex::new(None)));
+        let fake = Arc::new(GatedOutput {
+            writes: AtomicUsize::new(0),
+            reading: Notify::new(),
+            release: Notify::new(),
+        });
+        outputs.set_client_override(OutputCommandClient::Fake(fake.clone()));
+        let _unfinished: Vec<_> = (0..JOURNAL_CAPACITY)
+            .map(|_| {
+                outputs
+                    .scope
+                    .operation(OperationKind::Audio, "fixture".into())
+            })
+            .collect::<Result<_, _>>()
+            .expect("an empty journal admits its capacity");
+
+        outputs.set_output(OutputKind::Stream, true);
+
+        let AppEvent::OutputCommandFailed(OutputKind::Stream, failure) = recv_event(&rx).await
+        else {
+            panic!("a refused output command must be reported")
+        };
+        assert_eq!(
+            failure.message(),
+            fl!(LANGUAGE_LOADER, "controller-output-journal-full")
+        );
+        assert!(!failure.uncertain(), "the command was never sent");
+        assert_eq!(failure.fallback_status().state, OutputRunState::Inactive);
+        outputs.scope.quiesce().await;
+        assert_eq!(fake.writes.load(Ordering::SeqCst), 0);
+        assert!(outputs.pending.lock().unwrap().stream.is_none());
+        outputs.scope.retire();
     }
 
     #[tokio::test]
