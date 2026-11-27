@@ -208,8 +208,9 @@ $HOME/.config/scenedeck/config.json
 
 Connected scene curation is stored in
 `$XDG_CONFIG_HOME/scenedeck/show-workspaces.json`, keyed by saved connection,
-endpoint and scene collection. Legacy `registry.json` is retained and adopted
-once into the original setup. The scoped registry includes scene metadata, deck
+endpoint and scene collection. It keeps the 64 most recently used workspaces
+and names any it evicts in a notification. Legacy `registry.json` is retained
+and adopted once into the original setup. The scoped registry includes scene metadata, deck
 views, action bindings, quick actions, preflight rules, audio-health selections
 and audio presets.
 

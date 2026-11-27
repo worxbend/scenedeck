@@ -215,6 +215,14 @@ collections automatically selects the matching entry; identical scene names in
 other collections or connections do not share metadata. Changing the endpoint
 also selects separate curation.
 
+The store keeps at most 64 workspaces and holds up to 16 MiB. Each entry
+records `last_used_unix_ms`. Saving a workspace updates it. Opening one updates
+it with the next store write, so reading never costs a write. Entries saved
+before this field existed read as `0`. Creating a workspace past the limit
+removes the least recently used one, but never the workspace being opened or
+the legacy owner. A notification names the collections whose curation was
+removed.
+
 The old `registry.json` is adopted once for the original default connection’s
 first confirmed collection. Version 3 configuration migration records that
 connection’s endpoint in `legacy_registry_endpoint`; fresh installations have

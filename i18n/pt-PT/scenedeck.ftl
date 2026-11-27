@@ -1016,6 +1016,7 @@ workspace-curation-loading = A carregar a organização desta coleção…
 workspace-curation-unavailable = Ligue-se ao OBS e aguarde pela coleção de cenas.
 workspace-curation-failed = Não foi possível carregar este espaço de trabalho: { $error }
 workspace-curation-retry = Tentar novamente
+workspace-evicted = São guardados no máximo { $limit } espaços de trabalho. Foram removidos os usados há mais tempo: { $collections }
 
 # Saved OBS connections
 settings-connections-description = Guarde uma configuração para cada ligação OBS. Selecionar não volta a ligar; use Ligar configuração guardada quando estiver pronto.

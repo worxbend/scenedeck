@@ -45,7 +45,9 @@ ready. Choosing a setup alone keeps the current OBS session connected. The
 status row shows the actual connected setup and endpoint, which can differ from
 the setup selected for the next connection. Connection-specific scene curation
 loads after OBS reports its collection. Renaming a setup keeps its curation and
-credential identity.
+credential identity. SceneDeck keeps curation for the 64 most recently used
+connection and collection pairs. Opening a 65th removes the least recently used
+one, and a notification names its collection.
 
 ## Live Page
 

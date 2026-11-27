@@ -1006,6 +1006,7 @@ workspace-curation-loading = Loading this collection’s curation…
 workspace-curation-unavailable = Connect to OBS and wait for its scene collection.
 workspace-curation-failed = Could not load this workspace: { $error }
 workspace-curation-retry = Retry
+workspace-evicted = Show workspaces are limited to { $limit }. Removed the least recently used: { $collections }
 
 # Saved OBS connections
 settings-connections-description = Save a setup for each OBS connection. Selecting a setup does not reconnect; use Connect saved setup when ready.

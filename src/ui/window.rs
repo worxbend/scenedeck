@@ -1060,7 +1060,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
             }
             let refresh_nav = nav.clone();
             let refresh_ui = ui.cloned();
-            super::persist::select_registry_scope(nav, move || {
+            super::persist::select_registry_scope(nav, ui.map(|ui| ui.toast.clone()), move || {
                 if let Some(ui) = &refresh_ui {
                     let state = refresh_nav.state.borrow();
                     let inventory = state.scene_inventory.clone();

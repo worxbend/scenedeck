@@ -1016,6 +1016,7 @@ workspace-curation-loading = Wczytywanie ustawień tej kolekcji…
 workspace-curation-unavailable = Połącz się z OBS i poczekaj na kolekcję scen.
 workspace-curation-failed = Nie udało się wczytać obszaru roboczego: { $error }
 workspace-curation-retry = Ponów
+workspace-evicted = Limit obszarów roboczych: { $limit }. Usunięto najdawniej używane: { $collections }
 
 # Saved OBS connections
 settings-connections-description = Zapisz ustawienia dla każdego połączenia OBS. Wybór nie łączy ponownie; użyj przycisku Połącz zapisane ustawienia.

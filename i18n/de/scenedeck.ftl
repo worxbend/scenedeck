@@ -1003,6 +1003,7 @@ workspace-curation-loading = Organisation dieser Sammlung wird geladen…
 workspace-curation-unavailable = Verbinde dich mit OBS und warte auf die Szenensammlung.
 workspace-curation-failed = Dieser Arbeitsbereich konnte nicht geladen werden: { $error }
 workspace-curation-retry = Erneut versuchen
+workspace-evicted = Es werden höchstens { $limit } Arbeitsbereiche gespeichert. Die am längsten nicht genutzten wurden entfernt: { $collections }
 
 # Saved OBS connections
 settings-connections-description = Speichere eine Einrichtung für jede OBS-Verbindung. Die Auswahl verbindet nicht erneut; verwende bei Bedarf Gespeicherte Einrichtung verbinden.

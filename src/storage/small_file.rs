@@ -8,6 +8,9 @@ use std::path::Path;
 
 pub(crate) const CONFIG_LIMIT: usize = 1024 * 1024;
 pub(crate) const REGISTRY_LIMIT: usize = 8 * 1024 * 1024;
+/// Room for an adopted legacy registry at its own cap, plus as much again for
+/// every other show workspace.
+pub(crate) const WORKSPACE_STORE_LIMIT: usize = 2 * REGISTRY_LIMIT;
 pub(crate) const YAML_LIMIT: usize = 8 * 1024 * 1024;
 pub(crate) const CSS_LIMIT: usize = 1024 * 1024;
 

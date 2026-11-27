@@ -17,7 +17,7 @@ use std::rc::{Rc, Weak};
 use crate::controller::state::AppState;
 use crate::storage::config::{write_config, AppConfig};
 use crate::storage::registry::SceneRegistry;
-use crate::storage::show_workspaces::RegistryTarget;
+use crate::storage::show_workspaces::{RegistryTarget, WorkspaceKey, MAX_WORKSPACES};
 use crate::ui::background_io::SerialLane;
 use crate::ui::navigation::NavigationContext;
 
@@ -289,7 +289,12 @@ pub(crate) fn registry_availability_message(nav: &NavigationContext) -> Option<S
 
 /// Resolve curation only after OBS reports its actual collection. The registry
 /// lane and import gate keep migration, imports, and accepted edits in order.
-pub(crate) fn select_registry_scope(nav: &NavigationContext, refresh: impl Fn() + 'static) {
+/// `toast` announces workspaces evicted to make room for a new one.
+pub(crate) fn select_registry_scope(
+    nav: &NavigationContext,
+    toast: Option<adw::ToastOverlay>,
+    refresh: impl Fn() + 'static,
+) {
     let Some(target) = nav.state.borrow().desired_registry_target() else {
         return;
     };
@@ -332,6 +337,10 @@ pub(crate) fn select_registry_scope(nav: &NavigationContext, refresh: impl Fn() 
             SerialLane::Registry,
             move || destination.load_or_create(legacy.as_deref()),
             move |result| {
+                let result = result.map(|loaded| {
+                    announce_eviction(toast.as_ref(), &loaded.evicted);
+                    loaded.registry
+                });
                 if nav.is_current() {
                     nav.state
                         .borrow_mut()
@@ -352,6 +361,35 @@ pub(crate) fn select_registry_scope(nav: &NavigationContext, refresh: impl Fn() 
         );
         failed_refresh();
     }
+}
+
+/// The eviction is already on disk, so announce it even when this selection
+/// is stale. Name what went: its curation is gone.
+fn announce_eviction(toast: Option<&adw::ToastOverlay>, evicted: &[WorkspaceKey]) {
+    let Some(message) = eviction_notice(evicted) else {
+        return;
+    };
+    tracing::info!(
+        count = evicted.len(),
+        "evicted least recently used show workspaces"
+    );
+    if let Some(toast) = toast {
+        toast.add_toast(crate::ui::markup::plain_toast(&message));
+    }
+}
+
+fn eviction_notice(evicted: &[WorkspaceKey]) -> Option<String> {
+    use crate::infra::i18n::LANGUAGE_LOADER;
+    use i18n_embed_fl::fl;
+    (!evicted.is_empty()).then(|| {
+        let collections: Vec<&str> = evicted.iter().map(|key| key.collection.as_str()).collect();
+        fl!(
+            LANGUAGE_LOADER,
+            "workspace-evicted",
+            limit = MAX_WORKSPACES.to_string(),
+            collections = collections.join(", ")
+        )
+    })
 }
 
 /// Reconcile only the selected ready registry. This also runs inside the import
@@ -664,6 +702,22 @@ mod tests {
         assert_eq!(a.read().unwrap().scene_icon("Camera"), Some("A"));
         assert_eq!(b.read().unwrap().scene_icon("Camera"), Some("B"));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn eviction_notice_names_every_evicted_collection_and_stays_silent_otherwise() {
+        let key = |collection: &str| WorkspaceKey {
+            connection: "default".into(),
+            endpoint: "obs:4455".into(),
+            collection: collection.into(),
+        };
+
+        let notice = eviction_notice(&[key("Podcast"), key("Gaming")]).unwrap();
+
+        assert!(notice.contains("Podcast"), "{notice}");
+        assert!(notice.contains("Gaming"), "{notice}");
+        assert!(notice.contains(&MAX_WORKSPACES.to_string()), "{notice}");
+        assert_eq!(eviction_notice(&[]), None);
     }
 
     #[test]

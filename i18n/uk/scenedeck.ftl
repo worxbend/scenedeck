@@ -1016,6 +1016,7 @@ workspace-curation-loading = Завантаження налаштувань ц�
 workspace-curation-unavailable = Під’єднайтеся до OBS і зачекайте на колекцію сцен.
 workspace-curation-failed = Не вдалося завантажити робочий простір: { $error }
 workspace-curation-retry = Повторити
+workspace-evicted = Зберігається не більше { $limit } робочих просторів. Вилучено ті, що використовувалися найдавніше: { $collections }
 
 # Saved OBS connections
 settings-connections-description = Збережіть налаштування для кожного підключення OBS. Вибір не перепідключає OBS; натисніть «Підключити збережене», коли будете готові.
