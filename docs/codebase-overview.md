@@ -26,6 +26,19 @@ state, and main window.
 
 Shared application ID, name, and version constants.
 
+`src/architecture_tests/`
+
+Test-only fitness functions that run with `cargo test`.
+
+- `scanner.rs`: `syn`-based scanner over production sources (test-only items
+  excluded): forbidden paths, text ratchets, production line counts.
+- `scanner_tests.rs`: self-tests for the scanner.
+- `rules.rs`: module dependency rules (which `crate::` paths each layer may
+  name).
+- `ratchets.rs`: counts that may fall but never rise: production lines per
+  file (800 for unlisted files), raw `AppState` borrows and `thread_local!`
+  under `src/ui/`, and `fl!(`/`LANGUAGE_LOADER` under `src/domain/`.
+
 `src/controller/`
 
 Application orchestration.

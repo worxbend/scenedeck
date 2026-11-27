@@ -81,7 +81,11 @@ and `dispatch()`.
 
 ### Module boundaries (enforce these)
 
-`src/architecture_tests.rs` checks these on every `cargo test`.
+`src/architecture_tests/` checks these on every `cargo test`: dependency
+directions in `rules.rs`, and ratchets in `ratchets.rs` (production lines per
+file, 800 for unlisted files; raw `AppState` borrows and `thread_local!` under
+`src/ui/`; `fl!(` and `LANGUAGE_LOADER` under `src/domain/`). A ratchet ceiling
+only goes down: lower it in the change that lowers the count, never raise it.
 
 | Path | Owns |
 | --- | --- |

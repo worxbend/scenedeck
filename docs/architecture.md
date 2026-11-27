@@ -151,6 +151,14 @@ On disconnect or event-stream end, the client slot is cleared and a
 
 ## Boundaries
 
+`src/architecture_tests/` enforces these boundaries on every `cargo test`.
+`rules.rs` holds the dependency directions: the domain is innermost, services
+see only the domain, and storage and the OBS adapter see only the domain and
+`infra`. `ratchets.rs` holds counts that may only fall: production lines per
+file, raw `AppState` borrows and `thread_local!` in the UI, and translated text
+in the domain. Lower a ceiling in the same change that lowers its count; never
+raise one.
+
 `src/obs/` is the only boundary that imports `obws`. OBS response types are
 mapped to domain types before crossing into the controller or UI.
 
