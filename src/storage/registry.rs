@@ -791,7 +791,7 @@ mod tests {
 
     #[test]
     fn oversized_registry_and_yaml_writes_preserve_existing_targets() {
-        let path = unique_temp_path("oversized-output", "json");
+        let (_dir, path) = scratch_file("oversized-output", "json");
         std::fs::write(&path, b"{}").unwrap();
         let mut registry = SceneRegistry::default();
         registry.scenes.insert(
@@ -813,12 +813,11 @@ mod tests {
             io::ErrorKind::InvalidData
         );
         assert_eq!(std::fs::read(&path).unwrap(), b"{}");
-        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
     fn every_registry_json_write_refuses_a_corrupt_original() {
-        let path = unique_temp_path("corrupt-all-writes", "json");
+        let (_dir, path) = scratch_file("corrupt-all-writes", "json");
         let original = br#"{"scenes":{"Camera":{"role":"primary"}}, oops"#;
         std::fs::write(&path, original).unwrap();
         for edit in 0..5 {
@@ -856,13 +855,12 @@ mod tests {
             read_registry_from_path(&path).unwrap().scenes["First"].role,
             Some(SceneRole::Primary)
         );
-        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
     fn yaml_export_writes_only_the_explicitly_selected_target() {
         for extension in ["txt", "", "yml", "YAML"] {
-            let path = unique_temp_path("exact-export-target", extension);
+            let (_dir, path) = scratch_file("exact-export-target", extension);
             let sibling = path.with_extension("yaml");
             assert_ne!(path, sibling);
             std::fs::write(&sibling, b"unselected backup").unwrap();
@@ -870,8 +868,6 @@ mod tests {
             write_registry_yaml_to_path(&path, &SceneRegistry::default()).unwrap();
             assert!(read_registry_yaml_from_path(&path).is_ok());
             assert_eq!(std::fs::read(&sibling).unwrap(), b"unselected backup");
-            std::fs::remove_file(path).unwrap();
-            std::fs::remove_file(sibling).unwrap();
         }
     }
 
@@ -950,16 +946,14 @@ mod tests {
     }
     use super::*;
     use crate::domain::registry::RoleDependency;
+    use crate::storage::test_support::TempDir;
 
-    fn unique_temp_path(name: &str, extension: &str) -> std::path::PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "scenedeck-{name}-{}-{nanos}.{extension}",
-            std::process::id(),
-        ))
+    /// A path for a file that does not exist yet, inside a scratch directory
+    /// that is removed when the returned guard drops.
+    fn scratch_file(name: &str, extension: &str) -> (TempDir, std::path::PathBuf) {
+        let dir = TempDir::new(name);
+        let path = dir.path().join(format!("registry.{extension}"));
+        (dir, path)
     }
 
     #[test]
@@ -992,7 +986,7 @@ mod tests {
             .unwrap()
             .action_bindings
             .is_empty());
-        let path = unique_temp_path("action-bindings", "yaml");
+        let (_dir, path) = scratch_file("action-bindings", "yaml");
         write_registry_yaml_to_path(&path, &registry).unwrap();
         let imported = read_registry_yaml_from_path(&path).unwrap();
         assert!(!imported.action_bindings[0].enabled);
@@ -1000,7 +994,6 @@ mod tests {
             imported.action_bindings[0].action,
             registry.action_bindings[0].action
         );
-        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -1027,7 +1020,7 @@ mod tests {
             serde_json::from_str::<SceneRegistry>(&json).unwrap(),
             registry
         );
-        let path = unique_temp_path("audio-alerts", "yaml");
+        let (_dir, path) = scratch_file("audio-alerts", "yaml");
         write_registry_yaml_to_path(&path, &registry).unwrap();
         let imported = read_registry_yaml_from_path(&path).unwrap();
         assert!(!imported.audio_alerts[0].enabled);
@@ -1037,7 +1030,6 @@ mod tests {
         );
         assert!(imported.audio_alerts[0].silence);
         assert!(!imported.audio_alerts[0].clipping);
-        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -1071,7 +1063,7 @@ mod tests {
             serde_json::from_str::<SceneRegistry>(&encoded).unwrap(),
             registry
         );
-        let path = unique_temp_path("quick-actions", "yaml");
+        let (_dir, path) = scratch_file("quick-actions", "yaml");
         write_registry_yaml_to_path(&path, &registry).unwrap();
         let imported = read_registry_yaml_from_path(&path).unwrap();
         assert!(imported.quick_actions.iter().all(|pin| !pin.enabled));
@@ -1087,12 +1079,11 @@ mod tests {
                 .map(|pin| &pin.action)
                 .collect::<Vec<_>>()
         );
-        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
     fn yaml_registry_round_trips() {
-        let path = unique_temp_path("registry-round-trip", "yaml");
+        let (_dir, path) = scratch_file("registry-round-trip", "yaml");
         let mut registry = SceneRegistry::default();
         registry.scenes.insert(
             "Main".into(),
@@ -1120,7 +1111,6 @@ mod tests {
                 .and_then(|entry| entry.accent_color.as_deref()),
             Some("#336699")
         );
-        let _ = std::fs::remove_file(path);
 
         let main = parsed.scenes.get("Main").unwrap();
         assert_eq!(main.role, Some(SceneRole::Primary));
@@ -1171,7 +1161,7 @@ mod tests {
 
     #[test]
     fn legacy_yaml_export_preserves_roles_order_source_metadata_and_rules() {
-        let path = unique_temp_path("legacy-registry", "yaml");
+        let (_dir, path) = scratch_file("legacy-registry", "yaml");
         let exported = r##"---
 scenes:
   'Intro: Привіт':
@@ -1245,27 +1235,24 @@ rules:
         write_registry_yaml_to_path(&path, &imported).unwrap();
         let actual = read_registry_yaml_from_path(&path).unwrap();
         assert_eq!(serde_json::to_value(actual).unwrap(), expected);
-        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
     fn invalid_yaml_returns_invalid_data() {
-        let path = unique_temp_path("registry-invalid", "yaml");
+        let (_dir, path) = scratch_file("registry-invalid", "yaml");
         std::fs::write(&path, "scenes: [").unwrap();
 
         let err = read_registry_yaml_from_path(&path).unwrap_err();
-        let _ = std::fs::remove_file(path);
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]
     fn invalid_json_registry_returns_typed_parse_error() {
-        let path = unique_temp_path("registry-invalid-json", "json");
+        let (_dir, path) = scratch_file("registry-invalid-json", "json");
         std::fs::write(&path, "{").unwrap();
 
         let err = read_registry_from_path(&path).unwrap_err();
-        let _ = std::fs::remove_file(path);
 
         assert!(matches!(err, RegistryStorageError::Parse { .. }));
     }
@@ -1349,7 +1336,7 @@ rules:
 
     #[test]
     fn set_scene_role_from_path_preserves_existing_metadata() {
-        let path = unique_temp_path("registry-set-role", "json");
+        let (_dir, path) = scratch_file("registry-set-role", "json");
         let mut registry = SceneRegistry::default();
         registry.scenes.insert(
             "Main".into(),
@@ -1366,7 +1353,6 @@ rules:
 
         let changed = set_scene_role_from_path(&path, "Main", Some(SceneRole::Secondary)).unwrap();
         let parsed = read_registry_from_path(&path).unwrap();
-        let _ = std::fs::remove_file(path);
 
         assert!(changed);
         let entry = &parsed.scenes["Main"];
@@ -1377,12 +1363,11 @@ rules:
 
     #[test]
     fn set_scene_role_from_path_does_not_overwrite_invalid_registry() {
-        let path = unique_temp_path("registry-set-role-invalid", "json");
+        let (_dir, path) = scratch_file("registry-set-role-invalid", "json");
         std::fs::write(&path, "{").unwrap();
 
         let err = set_scene_role_from_path(&path, "Main", Some(SceneRole::Primary)).unwrap_err();
         let raw = std::fs::read_to_string(&path).unwrap();
-        let _ = std::fs::remove_file(path);
 
         assert!(matches!(
             err,
@@ -1393,7 +1378,7 @@ rules:
 
     #[test]
     fn remove_scene_entry_removes_only_requested_scene() {
-        let path = unique_temp_path("registry-remove-entry", "json");
+        let (_dir, path) = scratch_file("registry-remove-entry", "json");
         let mut registry = SceneRegistry::default();
         registry.scenes.insert(
             "Main".into(),
@@ -1421,7 +1406,6 @@ rules:
 
         let removed = remove_scene_entry_from_path(&path, "Main").unwrap();
         let parsed = read_registry_from_path(&path).unwrap();
-        let _ = std::fs::remove_file(path);
 
         assert!(removed);
         assert!(!parsed.scenes.contains_key("Main"));
@@ -1431,12 +1415,11 @@ rules:
 
     #[test]
     fn remove_scene_entry_does_not_overwrite_invalid_registry() {
-        let path = unique_temp_path("registry-remove-invalid", "json");
+        let (_dir, path) = scratch_file("registry-remove-invalid", "json");
         std::fs::write(&path, "{").unwrap();
 
         let err = remove_scene_entry_from_path(&path, "Main").unwrap_err();
         let raw = std::fs::read_to_string(&path).unwrap();
-        let _ = std::fs::remove_file(path);
 
         assert!(matches!(
             err,
@@ -1497,7 +1480,7 @@ rules:
 
     #[test]
     fn icons_round_trip_through_json_and_stay_out_of_it_when_unset() {
-        let path = unique_temp_path("registry-icons", "json");
+        let (_dir, path) = scratch_file("registry-icons", "json");
         let mut registry = SceneRegistry::default();
         registry.set_scene_icon("Main", Some("camera"));
         registry.set_input_icon("Mic/Aux", Some("microphone"));
@@ -1509,7 +1492,6 @@ rules:
         registry.set_input_icon("Mic/Aux", None);
         write_registry_to_path(&path, &registry).unwrap();
         let empty_raw = std::fs::read_to_string(&path).unwrap();
-        let _ = std::fs::remove_file(path);
 
         assert_eq!(parsed.scene_icon("Main"), Some("camera"));
         assert_eq!(parsed.input_icon("Mic/Aux"), Some("microphone"));

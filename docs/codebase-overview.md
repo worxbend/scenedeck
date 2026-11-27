@@ -136,6 +136,8 @@ Persistence and local machine integration.
 - `registry.rs`: local scene role registry.
 - `secret.rs`: OBS password storage through Secret Service.
 - `xdg.rs`: XDG config path resolution.
+- `test_support.rs` (tests only): `TempDir`, a scratch directory removed
+  with its contents on drop.
 
 `src/ui/`
 

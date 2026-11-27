@@ -81,15 +81,11 @@ pub(crate) fn write(path: &Path, archive: &BookmarkArchive) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::test_support::TempDir;
     #[test]
     fn bookmark_archive_preserves_counters_and_refuses_corruption_and_unknown_versions() {
-        let dir = std::env::temp_dir().join(format!(
-            "scenedeck-bookmarks-{}-{}",
-            std::process::id(),
-            crate::controller::workspace::unix_ms()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("bookmarks.json");
+        let dir = TempDir::new("bookmarks");
+        let path = dir.path().join("bookmarks.json");
         assert!(read(&path).unwrap().entries.is_empty());
         let mut archive = BookmarkArchive {
             next_id: 4,
@@ -113,7 +109,6 @@ mod tests {
         .unwrap();
         assert!(read(&path).is_err());
         assert!(write(&path, &BookmarkArchive::default()).is_err());
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

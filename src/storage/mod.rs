@@ -13,3 +13,5 @@ pub(crate) mod xdg;
 
 #[cfg(test)]
 mod golden;
+#[cfg(test)]
+pub(crate) mod test_support;
