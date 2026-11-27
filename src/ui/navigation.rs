@@ -246,7 +246,9 @@ impl NavigationContext {
             return;
         }
         if let AppCommand::SwitchPrimaryScene(ref scene) = cmd {
-            if !self.registry_is_current() || crate::ui::persist::registry_import_busy() {
+            // Card order and hotkey slots come from curation, so a switch
+            // waits until it is Ready rather than acting on a guessed scene.
+            if !self.registry_is_current() {
                 return;
             }
             let (action, refresh) = {
