@@ -494,224 +494,218 @@ mod tests {
     #[test]
     #[ignore = "requires isolated GTK and temporary XDG files"]
     fn native_bookmarks_capture_rename_retry_reload_and_retire_closed_callbacks() {
-        crate::ui::native_test!(
-            native_bookmarks_capture_rename_retry_reload_and_retire_closed_callbacks,
-            || {
-                let (nav, stack, _runtime, events) = navigation();
-                connect(&nav);
-                let parent = adw::Window::builder()
-                    .default_width(640)
-                    .default_height(620)
-                    .build();
-                parent.set_content(Some(&stack));
-                parent.present();
-                assert!(super::super::action_catalog::execute(
-                    &nav,
-                    &super::super::action_catalog::CatalogAction::Bookmarks
-                ));
-                let dialog = window("bookmarks-window");
-                pump(Duration::from_millis(100));
-                let name = find(&dialog, "bookmark-name").downcast::<Entry>().unwrap();
-                let add = find(&dialog, "bookmark-add").downcast::<Button>().unwrap();
-                name.set_text("Topic one");
-                add.emit_clicked();
-                finish_save(&nav);
-                let path = crate::storage::xdg::bookmarks_path();
-                let stored = crate::storage::bookmarks::read(&path).unwrap();
-                assert_eq!(stored.entries.len(), 1);
-                assert_eq!(stored.entries[0].name, "Topic one");
-                assert!(matches!(
-                    stored.entries[0].recording,
-                    RecordingTime::Observed {
-                        duration_ms: 42_000,
-                        paused: true,
-                        ..
-                    }
-                ));
-                assert_eq!(stored.entries[0].connection_id, "podcast");
-                assert_eq!(stored.entries[0].collection.as_deref(), Some("Interview"));
-                assert!(
-                    events.try_iter().next().is_none(),
-                    "local bookmarks must not mutate OBS"
-                );
-                let edit = find(&dialog, "bookmark-name-1")
+        crate::ui::native_test!(|| {
+            let (nav, stack, _runtime, events) = navigation();
+            connect(&nav);
+            let parent = adw::Window::builder()
+                .default_width(640)
+                .default_height(620)
+                .build();
+            parent.set_content(Some(&stack));
+            parent.present();
+            assert!(super::super::action_catalog::execute(
+                &nav,
+                &super::super::action_catalog::CatalogAction::Bookmarks
+            ));
+            let dialog = window("bookmarks-window");
+            pump(Duration::from_millis(100));
+            let name = find(&dialog, "bookmark-name").downcast::<Entry>().unwrap();
+            let add = find(&dialog, "bookmark-add").downcast::<Button>().unwrap();
+            name.set_text("Topic one");
+            add.emit_clicked();
+            finish_save(&nav);
+            let path = crate::storage::xdg::bookmarks_path();
+            let stored = crate::storage::bookmarks::read(&path).unwrap();
+            assert_eq!(stored.entries.len(), 1);
+            assert_eq!(stored.entries[0].name, "Topic one");
+            assert!(matches!(
+                stored.entries[0].recording,
+                RecordingTime::Observed {
+                    duration_ms: 42_000,
+                    paused: true,
+                    ..
+                }
+            ));
+            assert_eq!(stored.entries[0].connection_id, "podcast");
+            assert_eq!(stored.entries[0].collection.as_deref(), Some("Interview"));
+            assert!(
+                events.try_iter().next().is_none(),
+                "local bookmarks must not mutate OBS"
+            );
+            let edit = find(&dialog, "bookmark-name-1")
+                .downcast::<Entry>()
+                .unwrap();
+            edit.set_text("Rename draft");
+            edit.grab_focus();
+            let focus = gtk4::prelude::RootExt::focus(&dialog);
+            nav.state.borrow_mut().record_status.duration_ms = Some(43_000);
+            pump(Duration::from_millis(250));
+            assert_eq!(
+                find(&dialog, "bookmark-name-1"),
+                edit.clone().upcast::<gtk4::Widget>()
+            );
+            assert_eq!(edit.text(), "Rename draft");
+            assert_eq!(gtk4::prelude::RootExt::focus(&dialog), focus);
+            find(&dialog, "bookmark-rename-1")
+                .downcast::<Button>()
+                .unwrap()
+                .emit_clicked();
+            finish_save(&nav);
+            assert_eq!(
+                crate::storage::bookmarks::read(&path).unwrap().entries[0].name,
+                "Rename draft"
+            );
+
+            let backup = path.with_extension("backup");
+            std::fs::rename(&path, &backup).unwrap();
+            std::fs::create_dir(&path).unwrap();
+            name.set_text("Keep after failed save");
+            add.emit_clicked();
+            finish_save(&nav);
+            assert!(nav.state.borrow().bookmarks.save_error.is_some());
+            assert!(!FAILURES.with(|failures| failures.borrow().is_empty()));
+            assert!(find(&dialog, "bookmark-retry").is_visible());
+            std::fs::remove_dir(&path).unwrap();
+            std::fs::rename(&backup, &path).unwrap();
+            find(&dialog, "bookmark-retry")
+                .downcast::<Button>()
+                .unwrap()
+                .emit_clicked();
+            finish_save(&nav);
+            assert!(nav.state.borrow().bookmarks.save_error.is_none());
+            assert!(FAILURES.with(|failures| failures.borrow().is_empty()));
+            assert_eq!(
+                crate::storage::bookmarks::read(&path)
+                    .unwrap()
+                    .entries
+                    .len(),
+                2
+            );
+
+            nav.state.borrow_mut().invalidate_collection_runtime();
+            nav.state.borrow_mut().scene_collections.current = Some("Other".into());
+            pump(Duration::from_millis(250));
+            assert!(!add.is_sensitive());
+            let count = nav.state.borrow().bookmarks.archive.entries.len();
+            add.emit_clicked();
+            assert_eq!(nav.state.borrow().bookmarks.archive.entries.len(), count);
+            let remove = find(&dialog, "bookmark-remove-1")
+                .downcast::<Button>()
+                .unwrap();
+            dialog.close();
+            add.emit_clicked();
+            remove.emit_clicked();
+            finish_save(&nav);
+            assert_eq!(nav.state.borrow().bookmarks.archive.entries.len(), count);
+
+            nav.state
+                .borrow_mut()
+                .reset_obs_session(ObsStatus::Disconnected);
+            let stored = crate::storage::bookmarks::read(&path).unwrap();
+            let fresh = crate::controller::state::AppState::new(
+                Default::default(),
+                Default::default(),
+                None,
+                None,
+            );
+            *nav.state.borrow_mut() = fresh;
+            nav.state.borrow_mut().load_bookmarks(Ok(stored));
+            show(parent.upcast_ref(), &nav);
+            let reopened = window("bookmarks-window");
+            pump(Duration::from_millis(100));
+            assert!(!find(&reopened, "bookmark-add").is_sensitive());
+            assert_eq!(
+                find(&reopened, "bookmark-name-2")
                     .downcast::<Entry>()
-                    .unwrap();
-                edit.set_text("Rename draft");
-                edit.grab_focus();
-                let focus = gtk4::prelude::RootExt::focus(&dialog);
-                nav.state.borrow_mut().record_status.duration_ms = Some(43_000);
-                pump(Duration::from_millis(250));
-                assert_eq!(
-                    find(&dialog, "bookmark-name-1"),
-                    edit.clone().upcast::<gtk4::Widget>()
-                );
-                assert_eq!(edit.text(), "Rename draft");
-                assert_eq!(gtk4::prelude::RootExt::focus(&dialog), focus);
-                find(&dialog, "bookmark-rename-1")
-                    .downcast::<Button>()
                     .unwrap()
-                    .emit_clicked();
-                finish_save(&nav);
-                assert_eq!(
-                    crate::storage::bookmarks::read(&path).unwrap().entries[0].name,
-                    "Rename draft"
-                );
-
-                let backup = path.with_extension("backup");
-                std::fs::rename(&path, &backup).unwrap();
-                std::fs::create_dir(&path).unwrap();
-                name.set_text("Keep after failed save");
-                add.emit_clicked();
-                finish_save(&nav);
-                assert!(nav.state.borrow().bookmarks.save_error.is_some());
-                assert!(!FAILURES.with(|failures| failures.borrow().is_empty()));
-                assert!(find(&dialog, "bookmark-retry").is_visible());
-                std::fs::remove_dir(&path).unwrap();
-                std::fs::rename(&backup, &path).unwrap();
-                find(&dialog, "bookmark-retry")
-                    .downcast::<Button>()
-                    .unwrap()
-                    .emit_clicked();
-                finish_save(&nav);
-                assert!(nav.state.borrow().bookmarks.save_error.is_none());
-                assert!(FAILURES.with(|failures| failures.borrow().is_empty()));
-                assert_eq!(
-                    crate::storage::bookmarks::read(&path)
-                        .unwrap()
-                        .entries
-                        .len(),
-                    2
-                );
-
-                nav.state.borrow_mut().invalidate_collection_runtime();
-                nav.state.borrow_mut().scene_collections.current = Some("Other".into());
-                pump(Duration::from_millis(250));
-                assert!(!add.is_sensitive());
-                let count = nav.state.borrow().bookmarks.archive.entries.len();
-                add.emit_clicked();
-                assert_eq!(nav.state.borrow().bookmarks.archive.entries.len(), count);
-                let remove = find(&dialog, "bookmark-remove-1")
-                    .downcast::<Button>()
-                    .unwrap();
-                dialog.close();
-                add.emit_clicked();
-                remove.emit_clicked();
-                finish_save(&nav);
-                assert_eq!(nav.state.borrow().bookmarks.archive.entries.len(), count);
-
-                nav.state
-                    .borrow_mut()
-                    .reset_obs_session(ObsStatus::Disconnected);
-                let stored = crate::storage::bookmarks::read(&path).unwrap();
-                let fresh = crate::controller::state::AppState::new(
-                    Default::default(),
-                    Default::default(),
-                    None,
-                    None,
-                );
-                *nav.state.borrow_mut() = fresh;
-                nav.state.borrow_mut().load_bookmarks(Ok(stored));
-                show(parent.upcast_ref(), &nav);
-                let reopened = window("bookmarks-window");
-                pump(Duration::from_millis(100));
-                assert!(!find(&reopened, "bookmark-add").is_sensitive());
-                assert_eq!(
-                    find(&reopened, "bookmark-name-2")
-                        .downcast::<Entry>()
-                        .unwrap()
-                        .text(),
-                    "Keep after failed save"
-                );
-                find(&reopened, "bookmark-remove-1")
-                    .downcast::<Button>()
-                    .unwrap()
-                    .emit_clicked();
-                finish_save(&nav);
-                assert_eq!(
-                    crate::storage::bookmarks::read(&path).unwrap().entries[0].id,
-                    2
-                );
-                reopened.close();
-                parent.close();
-            }
-        );
+                    .text(),
+                "Keep after failed save"
+            );
+            find(&reopened, "bookmark-remove-1")
+                .downcast::<Button>()
+                .unwrap()
+                .emit_clicked();
+            finish_save(&nav);
+            assert_eq!(
+                crate::storage::bookmarks::read(&path).unwrap().entries[0].id,
+                2
+            );
+            reopened.close();
+            parent.close();
+        });
     }
 
     #[test]
     #[ignore = "requires isolated GTK and temporary XDG files"]
     fn native_bookmarks_load_failure_retry_and_large_text_layout() {
-        crate::ui::native_test!(
-            native_bookmarks_load_failure_retry_and_large_text_layout,
-            || {
-                crate::infra::i18n::init(crate::domain::appearance::Language::Uk);
-                gtk4::Settings::default()
+        crate::ui::native_test!(|| {
+            crate::infra::i18n::init(crate::domain::appearance::Language::Uk);
+            gtk4::Settings::default()
+                .unwrap()
+                .set_gtk_font_name(Some("Sans 22"));
+            let (nav, stack, _runtime, _events) = navigation();
+            let path = crate::storage::xdg::bookmarks_path();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "{broken").unwrap();
+            nav.state.borrow_mut().load_bookmarks(
+                crate::storage::bookmarks::read(&path).map_err(|error| error.to_string()),
+            );
+            connect(&nav);
+            let parent = adw::Window::builder()
+                .default_width(360)
+                .default_height(600)
+                .build();
+            parent.set_content(Some(&stack));
+            parent.present();
+            show(parent.upcast_ref(), &nav);
+            let dialog = window("bookmarks-window");
+            dialog.set_default_size(360, 600);
+            pump(Duration::from_millis(150));
+            assert!(!find(&dialog, "bookmark-add").is_sensitive());
+            find(&dialog, "bookmark-add")
+                .downcast::<Button>()
+                .unwrap()
+                .emit_clicked();
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "{broken");
+            std::fs::remove_file(&path).unwrap();
+            find(&dialog, "bookmark-retry")
+                .downcast::<Button>()
+                .unwrap()
+                .emit_clicked();
+            assert!(pump_until(Duration::from_secs(4), || !nav
+                .state
+                .borrow()
+                .bookmarks
+                .loading));
+            pump(Duration::from_millis(250));
+            assert!(find(&dialog, "bookmark-add").is_sensitive());
+            find(&dialog, "bookmark-name")
+                .downcast::<Entry>()
+                .unwrap()
+                .set_text("Довга назва розділу подкасту для перевірки локальних закладок");
+            find(&dialog, "bookmark-add")
+                .downcast::<Button>()
+                .unwrap()
+                .emit_clicked();
+            finish_save(&nav);
+            assert!(nav.state.borrow().bookmarks.load_error.is_none());
+            assert_eq!(
+                crate::storage::bookmarks::read(&path)
                     .unwrap()
-                    .set_gtk_font_name(Some("Sans 22"));
-                let (nav, stack, _runtime, _events) = navigation();
-                let path = crate::storage::xdg::bookmarks_path();
-                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-                std::fs::write(&path, "{broken").unwrap();
-                nav.state.borrow_mut().load_bookmarks(
-                    crate::storage::bookmarks::read(&path).map_err(|error| error.to_string()),
-                );
-                connect(&nav);
-                let parent = adw::Window::builder()
-                    .default_width(360)
-                    .default_height(600)
-                    .build();
-                parent.set_content(Some(&stack));
-                parent.present();
-                show(parent.upcast_ref(), &nav);
-                let dialog = window("bookmarks-window");
-                dialog.set_default_size(360, 600);
-                pump(Duration::from_millis(150));
-                assert!(!find(&dialog, "bookmark-add").is_sensitive());
-                find(&dialog, "bookmark-add")
-                    .downcast::<Button>()
-                    .unwrap()
-                    .emit_clicked();
-                assert_eq!(std::fs::read_to_string(&path).unwrap(), "{broken");
-                std::fs::remove_file(&path).unwrap();
-                find(&dialog, "bookmark-retry")
-                    .downcast::<Button>()
-                    .unwrap()
-                    .emit_clicked();
-                assert!(pump_until(Duration::from_secs(4), || !nav
-                    .state
-                    .borrow()
-                    .bookmarks
-                    .loading));
-                pump(Duration::from_millis(250));
-                assert!(find(&dialog, "bookmark-add").is_sensitive());
-                find(&dialog, "bookmark-name")
-                    .downcast::<Entry>()
-                    .unwrap()
-                    .set_text("Довга назва розділу подкасту для перевірки локальних закладок");
-                find(&dialog, "bookmark-add")
-                    .downcast::<Button>()
-                    .unwrap()
-                    .emit_clicked();
-                finish_save(&nav);
-                assert!(nav.state.borrow().bookmarks.load_error.is_none());
-                assert_eq!(
-                    crate::storage::bookmarks::read(&path)
-                        .unwrap()
-                        .entries
-                        .len(),
-                    1
-                );
-                assert!(
-                    dialog.measure(Orientation::Horizontal, -1).0 <= 360,
-                    "bookmarks must fit a narrow window"
-                );
-                assert!(
-                    dialog.measure(Orientation::Vertical, 360).0 <= 600,
-                    "bookmark controls must remain reachable at large text"
-                );
-                dialog.close();
-                parent.close();
-            },
-        );
+                    .entries
+                    .len(),
+                1
+            );
+            assert!(
+                dialog.measure(Orientation::Horizontal, -1).0 <= 360,
+                "bookmarks must fit a narrow window"
+            );
+            assert!(
+                dialog.measure(Orientation::Vertical, 360).0 <= 600,
+                "bookmark controls must remain reachable at large text"
+            );
+            dialog.close();
+            parent.close();
+        });
     }
 }

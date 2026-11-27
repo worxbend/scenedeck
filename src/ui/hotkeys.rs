@@ -321,30 +321,27 @@ mod tests {
     #[test]
     #[ignore = "requires a native GTK display"]
     fn native_rearm_keeps_the_new_notice_until_its_own_expiry() {
-        crate::ui::native_test!(
-            native_rearm_keeps_the_new_notice_until_its_own_expiry,
-            || {
-                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
-                let live = Rc::new(crate::ui::pages::live::build(nav));
-                let notice = "identical notice";
-                crate::ui::pages::live::set_hotkey_hint(&live, Some(notice));
-                expire_notice(&live, Duration::from_millis(30));
-                crate::ui::test_support::pump(Duration::from_millis(15));
-                crate::ui::pages::live::set_hotkey_hint(&live, Some(notice));
-                expire_notice(&live, Duration::from_millis(100));
-                crate::ui::test_support::pump(Duration::from_millis(40));
-                assert_eq!(live.hotkey_hint.text(), notice);
-                crate::ui::test_support::pump(Duration::from_millis(90));
-                assert!(!live.hotkey_hint.is_visible());
-                crate::ui::pages::live::set_hotkey_hint(&live, Some(notice));
-                expire_notice(&live, Duration::from_secs(5));
-                let weak = Rc::downgrade(&live);
-                drop(live);
-                assert!(
-                    weak.upgrade().is_none(),
-                    "notice timeout retained the page handle"
-                );
-            },
-        );
+        crate::ui::native_test!(|| {
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            let live = Rc::new(crate::ui::pages::live::build(nav));
+            let notice = "identical notice";
+            crate::ui::pages::live::set_hotkey_hint(&live, Some(notice));
+            expire_notice(&live, Duration::from_millis(30));
+            crate::ui::test_support::pump(Duration::from_millis(15));
+            crate::ui::pages::live::set_hotkey_hint(&live, Some(notice));
+            expire_notice(&live, Duration::from_millis(100));
+            crate::ui::test_support::pump(Duration::from_millis(40));
+            assert_eq!(live.hotkey_hint.text(), notice);
+            crate::ui::test_support::pump(Duration::from_millis(90));
+            assert!(!live.hotkey_hint.is_visible());
+            crate::ui::pages::live::set_hotkey_hint(&live, Some(notice));
+            expire_notice(&live, Duration::from_secs(5));
+            let weak = Rc::downgrade(&live);
+            drop(live);
+            assert!(
+                weak.upgrade().is_none(),
+                "notice timeout retained the page handle"
+            );
+        });
     }
 }

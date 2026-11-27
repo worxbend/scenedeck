@@ -573,83 +573,80 @@ mod tests {
     #[test]
     #[ignore = "requires isolated GTK and scratch history; no OBS/keyring"]
     fn native_last_detached_report_close_supports_cancel_retry_and_informed_abandon() {
-        crate::ui::native_test!(
-            native_last_detached_report_close_supports_cancel_retry_and_informed_abandon,
-            || {
-                let (app, main) = fixture();
-                let (nav, _stack, _runtime, _events) = ui::test_support::navigation();
-                ui::report_history::register(&nav.state);
-                nav.state.borrow_mut().configure_report_history(true, 8);
-                connect_report(&mut nav.state.borrow_mut());
-                let detached = adw::Window::builder().application(&app).build();
-                detached.present();
-                main.close();
-                iterate_until(|| !main.is_visible());
-                assert!(nav
-                    .state
+        crate::ui::native_test!(|| {
+            let (app, main) = fixture();
+            let (nav, _stack, _runtime, _events) = ui::test_support::navigation();
+            ui::report_history::register(&nav.state);
+            nav.state.borrow_mut().configure_report_history(true, 8);
+            connect_report(&mut nav.state.borrow_mut());
+            let detached = adw::Window::builder().application(&app).build();
+            detached.present();
+            main.close();
+            iterate_until(|| !main.is_visible());
+            assert!(nav
+                .state
+                .borrow()
+                .reports
+                .entries
+                .back()
+                .unwrap()
+                .ended_unix_ms
+                .is_none());
+            let path = crate::storage::xdg::report_history_path();
+            let backup = path.with_extension("backup");
+            std::fs::rename(&path, &backup).unwrap();
+            std::fs::create_dir(&path).unwrap();
+            detached.close();
+            iterate_until(|| close_failure().is_some());
+            assert!(detached.is_visible() && detached.is_sensitive());
+            assert!(
+                nav.state
                     .borrow()
                     .reports
                     .entries
                     .back()
                     .unwrap()
                     .ended_unix_ms
-                    .is_none());
-                let path = crate::storage::xdg::report_history_path();
-                let backup = path.with_extension("backup");
-                std::fs::rename(&path, &backup).unwrap();
-                std::fs::create_dir(&path).unwrap();
-                detached.close();
-                iterate_until(|| close_failure().is_some());
-                assert!(detached.is_visible() && detached.is_sensitive());
-                assert!(
-                    nav.state
-                        .borrow()
-                        .reports
-                        .entries
-                        .back()
-                        .unwrap()
-                        .ended_unix_ms
-                        .is_none(),
-                    "failed exit resumes reporting"
-                );
-                close_failure().unwrap().response("cancel");
-                assert!(detached.is_visible());
-                nav.state.borrow_mut().workspace.log(
-                    crate::domain::workflow::ActivityOrigin::Observed,
-                    "after cancelled exit".into(),
-                );
-                detached.close();
-                iterate_until(|| close_failure().is_some());
-                std::fs::remove_dir(&path).unwrap();
-                std::fs::rename(&backup, &path).unwrap();
-                close_failure().unwrap().response("retry");
-                iterate_until(|| !detached.is_visible());
-                let saved = crate::storage::report_history::read(&path).unwrap();
-                assert!(saved.entries[0].ended_unix_ms.is_some());
-                assert!(serde_json::to_string(&saved)
-                    .unwrap()
-                    .contains("after cancelled exit"));
+                    .is_none(),
+                "failed exit resumes reporting"
+            );
+            close_failure().unwrap().response("cancel");
+            assert!(detached.is_visible());
+            nav.state.borrow_mut().workspace.log(
+                crate::domain::workflow::ActivityOrigin::Observed,
+                "after cancelled exit".into(),
+            );
+            detached.close();
+            iterate_until(|| close_failure().is_some());
+            std::fs::remove_dir(&path).unwrap();
+            std::fs::rename(&backup, &path).unwrap();
+            close_failure().unwrap().response("retry");
+            iterate_until(|| !detached.is_visible());
+            let saved = crate::storage::report_history::read(&path).unwrap();
+            assert!(saved.entries[0].ended_unix_ms.is_some());
+            assert!(serde_json::to_string(&saved)
+                .unwrap()
+                .contains("after cancelled exit"));
 
-                // A corrupt startup file with new local history needs an informed exit,
-                // even though no write can be admitted until it is reloaded/repaired.
-                let detached = adw::Window::builder().application(&app).build();
-                detached.present();
-                nav.state
-                    .borrow_mut()
-                    .reset_obs_session(crate::controller::state::ObsStatus::Disconnected);
-                connect_report(&mut nav.state.borrow_mut());
-                std::fs::write(&path, b"broken history").unwrap();
-                nav.state
-                    .borrow_mut()
-                    .load_report_history(Err("fixture corrupt startup history".into()));
-                detached.close();
-                iterate_until(|| close_failure().is_some());
-                assert!(detached.is_visible());
-                close_failure().unwrap().response("abandon");
-                iterate_until(|| !detached.is_visible());
-                assert_eq!(std::fs::read(&path).unwrap(), b"broken history");
-            }
-        );
+            // A corrupt startup file with new local history needs an informed exit,
+            // even though no write can be admitted until it is reloaded/repaired.
+            let detached = adw::Window::builder().application(&app).build();
+            detached.present();
+            nav.state
+                .borrow_mut()
+                .reset_obs_session(crate::controller::state::ObsStatus::Disconnected);
+            connect_report(&mut nav.state.borrow_mut());
+            std::fs::write(&path, b"broken history").unwrap();
+            nav.state
+                .borrow_mut()
+                .load_report_history(Err("fixture corrupt startup history".into()));
+            detached.close();
+            iterate_until(|| close_failure().is_some());
+            assert!(detached.is_visible());
+            close_failure().unwrap().response("abandon");
+            iterate_until(|| !detached.is_visible());
+            assert_eq!(std::fs::read(&path).unwrap(), b"broken history");
+        });
     }
 
     fn final_stats_exit(quit: bool) {
@@ -770,128 +767,115 @@ mod tests {
     #[test]
     #[ignore = "requires isolated GTK and scratch history; no OBS/keyring"]
     fn native_last_stats_close_saves_final_report_before_state_release() {
-        crate::ui::native_test!(
-            native_last_stats_close_saves_final_report_before_state_release,
-            || final_stats_exit(false),
-        );
+        crate::ui::native_test!(|| final_stats_exit(false));
     }
 
     #[test]
     #[ignore = "requires isolated GTK and scratch history; no OBS/keyring"]
     fn native_quit_after_shell_close_saves_final_stats_report_before_shutdown() {
-        crate::ui::native_test!(
-            native_quit_after_shell_close_saves_final_stats_report_before_shutdown,
-            || final_stats_exit(true),
-        );
+        crate::ui::native_test!(|| final_stats_exit(true));
     }
 
     #[test]
     #[ignore = "requires a disposable GTK display; injected Config write failure only"]
     fn native_config_write_error_requires_an_explicit_close_decision() {
-        crate::ui::native_test!(
-            native_config_write_error_requires_an_explicit_close_decision,
-            || {
-                let (_app, window) = fixture();
-                ui::background_io::run_config_snapshot(|| {
-                    Err(std::io::Error::new(
-                        std::io::ErrorKind::PermissionDenied,
-                        "fixture Config write refused",
-                    ))
-                });
-                let visible_dialog = || {
-                    gtk4::Window::list_toplevels()
-                        .into_iter()
-                        .find_map(|window| {
-                            window
-                                .downcast::<adw::MessageDialog>()
-                                .ok()
-                                .filter(|dialog| dialog.is_visible())
-                        })
-                };
-                window.close();
-                iterate_until(|| !window.is_visible() || visible_dialog().is_some());
-                assert!(
-                    window.is_visible(),
-                    "returned save errors must not silently close"
-                );
-                let dialog = visible_dialog().expect("failed Config save decision");
-                assert!(dialog.has_response("abandon"));
-                dialog.response("cancel");
-                assert!(window.is_visible() && window.is_sensitive());
-                window.close();
-                iterate_until(|| visible_dialog().is_some());
-                let dialog = visible_dialog().unwrap();
-                assert!(window.is_visible(), "Cancel must retain failure evidence");
-                dialog.response("abandon");
-                iterate_until(|| !window.is_visible());
-            },
-        );
+        crate::ui::native_test!(|| {
+            let (_app, window) = fixture();
+            ui::background_io::run_config_snapshot(|| {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "fixture Config write refused",
+                ))
+            });
+            let visible_dialog = || {
+                gtk4::Window::list_toplevels()
+                    .into_iter()
+                    .find_map(|window| {
+                        window
+                            .downcast::<adw::MessageDialog>()
+                            .ok()
+                            .filter(|dialog| dialog.is_visible())
+                    })
+            };
+            window.close();
+            iterate_until(|| !window.is_visible() || visible_dialog().is_some());
+            assert!(
+                window.is_visible(),
+                "returned save errors must not silently close"
+            );
+            let dialog = visible_dialog().expect("failed Config save decision");
+            assert!(dialog.has_response("abandon"));
+            dialog.response("cancel");
+            assert!(window.is_visible() && window.is_sensitive());
+            window.close();
+            iterate_until(|| visible_dialog().is_some());
+            let dialog = visible_dialog().unwrap();
+            assert!(window.is_visible(), "Cancel must retain failure evidence");
+            dialog.response("abandon");
+            iterate_until(|| !window.is_visible());
+        });
     }
 
     #[test]
     #[ignore = "requires a disposable GTK display; scratch config only, no OBS/keyring"]
     fn native_inventory_role_edit_and_rebuild_are_admitted_before_close() {
-        crate::ui::native_test!(
-            native_inventory_role_edit_and_rebuild_are_admitted_before_close,
-            || {
-                let directory = isolated_config_dir("close");
-                let (_app, window) = fixture();
-                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
-                nav.state
-                    .borrow_mut()
-                    .scene_inventory
-                    .scenes
-                    .push(crate::domain::scene::Scene {
-                        uuid: None,
-                        id: "Fixture".into(),
-                    });
-                let (page, refresh) = ui::pages::inventory::build(nav);
-                window.set_content(Some(&page));
-                set_inventory_role(&page, crate::domain::role::SceneRole::Primary);
-                refresh(); // Rebuilding rows must not lose an accepted registry edit.
-                set_inventory_role(&page, crate::domain::role::SceneRole::Secondary);
-                window.close(); // No 300 ms debounce wait before initiating Close.
-                assert!(window.is_visible());
-                iterate_until(|| !window.is_visible());
-                assert_saved_inventory_role();
-                std::fs::remove_dir_all(directory).unwrap();
-            },
-        );
+        crate::ui::native_test!(|| {
+            let directory = isolated_config_dir("close");
+            let (_app, window) = fixture();
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            nav.state
+                .borrow_mut()
+                .scene_inventory
+                .scenes
+                .push(crate::domain::scene::Scene {
+                    uuid: None,
+                    id: "Fixture".into(),
+                });
+            let (page, refresh) = ui::pages::inventory::build(nav);
+            window.set_content(Some(&page));
+            set_inventory_role(&page, crate::domain::role::SceneRole::Primary);
+            refresh(); // Rebuilding rows must not lose an accepted registry edit.
+            set_inventory_role(&page, crate::domain::role::SceneRole::Secondary);
+            window.close(); // No 300 ms debounce wait before initiating Close.
+            assert!(window.is_visible());
+            iterate_until(|| !window.is_visible());
+            assert_saved_inventory_role();
+            std::fs::remove_dir_all(directory).unwrap();
+        });
     }
 
     #[test]
     #[ignore = "requires a disposable GTK display; scratch config only, no OBS/keyring"]
     fn native_inventory_role_edit_is_admitted_before_quit_action() {
-        crate::ui::native_test!(
-            native_inventory_role_edit_is_admitted_before_quit_action,
-            || {
-                let directory = isolated_config_dir("quit");
-                let app = adw::Application::builder()
-                    .application_id("io.github.worxbend.scenedeck.RoleQuitFixture")
-                    .flags(gio::ApplicationFlags::NON_UNIQUE)
-                    .build();
-                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
-                nav.state
-                    .borrow_mut()
-                    .scene_inventory
-                    .scenes
-                    .push(crate::domain::scene::Scene {
-                        uuid: None,
-                        id: "Fixture".into(),
-                    });
-                let guard_dialog = Rc::new(RefCell::new(None::<String>));
-                app.connect_activate({
+        crate::ui::native_test!(|| {
+            let directory = isolated_config_dir("quit");
+            let app = adw::Application::builder()
+                .application_id("io.github.worxbend.scenedeck.RoleQuitFixture")
+                .flags(gio::ApplicationFlags::NON_UNIQUE)
+                .build();
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            nav.state
+                .borrow_mut()
+                .scene_inventory
+                .scenes
+                .push(crate::domain::scene::Scene {
+                    uuid: None,
+                    id: "Fixture".into(),
+                });
+            let guard_dialog = Rc::new(RefCell::new(None::<String>));
+            app.connect_activate({
+                let guard_dialog = guard_dialog.clone();
+                move |app| {
+                    // Keep an interactive guard outcome distinct from a blocked main loop.
+                    // The assertion after run still fails; this never retries a save silently.
+                    let app_weak = app.downgrade();
                     let guard_dialog = guard_dialog.clone();
-                    move |app| {
-                        // Keep an interactive guard outcome distinct from a blocked main loop.
-                        // The assertion after run still fails; this never retries a save silently.
-                        let app_weak = app.downgrade();
-                        let guard_dialog = guard_dialog.clone();
-                        glib::timeout_add_local(Duration::from_millis(20), move || {
-                            let Some(app) = app_weak.upgrade() else {
-                                return glib::ControlFlow::Break;
-                            };
-                            if let Some(dialog) = gtk4::Window::list_toplevels()
+                    glib::timeout_add_local(Duration::from_millis(20), move || {
+                        let Some(app) = app_weak.upgrade() else {
+                            return glib::ControlFlow::Break;
+                        };
+                        if let Some(dialog) =
+                            gtk4::Window::list_toplevels()
                                 .into_iter()
                                 .find_map(|window| {
                                     window
@@ -899,286 +883,202 @@ mod tests {
                                         .ok()
                                         .filter(|dialog| dialog.is_visible())
                                 })
-                            {
-                                *guard_dialog.borrow_mut() = Some(dialog.body().to_string());
-                                app.quit();
-                                return glib::ControlFlow::Break;
-                            }
-                            glib::ControlFlow::Continue
-                        });
-                        let (page, refresh) = ui::pages::inventory::build(nav.clone());
-                        let window = adw::ApplicationWindow::builder()
-                            .application(app)
-                            .content(&page)
-                            .build();
-                        install_persistence_close_guard(app, &window);
-                        window.present();
-                        set_inventory_role(&page, crate::domain::role::SceneRole::Primary);
-                        refresh();
-                        set_inventory_role(&page, crate::domain::role::SceneRole::Secondary);
-                        app.activate_action("quit", None);
-                        assert!(window.is_visible() && !window.is_sensitive());
-                    }
-                });
-                assert_eq!(app.run_with_args::<&str>(&[]), glib::ExitCode::SUCCESS);
-                assert!(
-                    guard_dialog.borrow().is_none(),
-                    "Quit reached a persistence decision rather than deadlocking: {:?}",
-                    guard_dialog.borrow()
-                );
-                assert_saved_inventory_role();
-                std::fs::remove_dir_all(directory).unwrap();
-            },
-        );
+                        {
+                            *guard_dialog.borrow_mut() = Some(dialog.body().to_string());
+                            app.quit();
+                            return glib::ControlFlow::Break;
+                        }
+                        glib::ControlFlow::Continue
+                    });
+                    let (page, refresh) = ui::pages::inventory::build(nav.clone());
+                    let window = adw::ApplicationWindow::builder()
+                        .application(app)
+                        .content(&page)
+                        .build();
+                    install_persistence_close_guard(app, &window);
+                    window.present();
+                    set_inventory_role(&page, crate::domain::role::SceneRole::Primary);
+                    refresh();
+                    set_inventory_role(&page, crate::domain::role::SceneRole::Secondary);
+                    app.activate_action("quit", None);
+                    assert!(window.is_visible() && !window.is_sensitive());
+                }
+            });
+            assert_eq!(app.run_with_args::<&str>(&[]), glib::ExitCode::SUCCESS);
+            assert!(
+                guard_dialog.borrow().is_none(),
+                "Quit reached a persistence decision rather than deadlocking: {:?}",
+                guard_dialog.borrow()
+            );
+            assert_saved_inventory_role();
+            std::fs::remove_dir_all(directory).unwrap();
+        });
     }
 
     #[test]
     #[ignore = "requires a disposable GTK display; deliberately holds the registry writer past the save deadline"]
     fn native_quit_timeout_preserves_role_edits_until_explicit_retry() {
-        crate::ui::native_test!(
-            native_quit_timeout_preserves_role_edits_until_explicit_retry,
-            || {
-                let directory = isolated_config_dir("quit-timeout");
-                let app = adw::Application::builder()
-                    .application_id("io.github.worxbend.scenedeck.RoleTimeoutFixture")
-                    .flags(gio::ApplicationFlags::NON_UNIQUE)
-                    .build();
-                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
-                nav.state
-                    .borrow_mut()
-                    .scene_inventory
-                    .scenes
-                    .push(crate::domain::scene::Scene {
-                        uuid: None,
-                        id: "Fixture".into(),
-                    });
-                let timed_out = Rc::new(Cell::new(false));
-                let gate_published = Rc::new(Cell::new(false));
-                let saves_published = Rc::new(Cell::new(false));
-                let explicit_retry_sent = Rc::new(Cell::new(false));
-                app.connect_activate({
+        crate::ui::native_test!(|| {
+            let directory = isolated_config_dir("quit-timeout");
+            let app = adw::Application::builder()
+                .application_id("io.github.worxbend.scenedeck.RoleTimeoutFixture")
+                .flags(gio::ApplicationFlags::NON_UNIQUE)
+                .build();
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            nav.state
+                .borrow_mut()
+                .scene_inventory
+                .scenes
+                .push(crate::domain::scene::Scene {
+                    uuid: None,
+                    id: "Fixture".into(),
+                });
+            let timed_out = Rc::new(Cell::new(false));
+            let gate_published = Rc::new(Cell::new(false));
+            let saves_published = Rc::new(Cell::new(false));
+            let explicit_retry_sent = Rc::new(Cell::new(false));
+            app.connect_activate({
+                let timed_out = timed_out.clone();
+                let gate_published = gate_published.clone();
+                let saves_published = saves_published.clone();
+                let explicit_retry_sent = explicit_retry_sent.clone();
+                move |app| {
+                    let (release, held) = std::sync::mpsc::channel();
+                    ui::background_io::run_serialized(
+                        ui::background_io::SerialLane::Registry,
+                        move || held.recv().unwrap(),
+                        {
+                            let gate_published = gate_published.clone();
+                            move |()| gate_published.set(true)
+                        },
+                    );
+                    let (page, refresh) = ui::pages::inventory::build(nav.clone());
+                    let window = adw::ApplicationWindow::builder()
+                        .application(app)
+                        .content(&page)
+                        .build();
+                    install_persistence_close_guard(app, &window);
+                    window.present();
+                    set_inventory_role(&page, crate::domain::role::SceneRole::Primary);
+                    refresh();
+                    set_inventory_role(&page, crate::domain::role::SceneRole::Secondary);
+                    let deadline = Instant::now() + Duration::from_secs(15);
                     let timed_out = timed_out.clone();
                     let gate_published = gate_published.clone();
                     let saves_published = saves_published.clone();
                     let explicit_retry_sent = explicit_retry_sent.clone();
-                    move |app| {
-                        let (release, held) = std::sync::mpsc::channel();
-                        ui::background_io::run_serialized(
-                            ui::background_io::SerialLane::Registry,
-                            move || held.recv().unwrap(),
-                            {
-                                let gate_published = gate_published.clone();
-                                move |()| gate_published.set(true)
-                            },
+                    let observed_window = window.clone();
+                    let mut release = Some(release);
+                    glib::timeout_add_local(Duration::from_millis(20), move || {
+                        assert!(
+                            Instant::now() < deadline,
+                            "save timeout decision was not presented"
                         );
-                        let (page, refresh) = ui::pages::inventory::build(nav.clone());
-                        let window = adw::ApplicationWindow::builder()
-                            .application(app)
-                            .content(&page)
-                            .build();
-                        install_persistence_close_guard(app, &window);
-                        window.present();
-                        set_inventory_role(&page, crate::domain::role::SceneRole::Primary);
-                        refresh();
-                        set_inventory_role(&page, crate::domain::role::SceneRole::Secondary);
-                        let deadline = Instant::now() + Duration::from_secs(15);
-                        let timed_out = timed_out.clone();
-                        let gate_published = gate_published.clone();
-                        let saves_published = saves_published.clone();
-                        let explicit_retry_sent = explicit_retry_sent.clone();
-                        let observed_window = window.clone();
-                        let mut release = Some(release);
-                        glib::timeout_add_local(Duration::from_millis(20), move || {
-                            assert!(
-                                Instant::now() < deadline,
-                                "save timeout decision was not presented"
-                            );
-                            let dialog =
-                                gtk4::Window::list_toplevels()
-                                    .into_iter()
-                                    .find_map(|window| {
-                                        window
-                                            .downcast::<adw::MessageDialog>()
-                                            .ok()
-                                            .filter(|dialog| dialog.is_visible())
-                                    });
-                            let Some(dialog) = dialog else {
-                                return glib::ControlFlow::Continue;
-                            };
-                            assert_eq!(
-                                dialog.body().as_str(),
-                                i18n_embed_fl::fl!(
-                                    crate::infra::i18n::LANGUAGE_LOADER,
-                                    "app-persistence-drain-timeout"
-                                )
-                            );
-                            assert!(observed_window.is_visible() && observed_window.is_sensitive());
-                            assert!(
-                                !gate_published.get(),
-                                "blocked save must not publish success"
-                            );
-                            assert!(
-                                !dialog.has_response("abandon"),
-                                "a pending save cannot be abandoned as a finished failure"
-                            );
-                            timed_out.set(true);
-                            release.take().unwrap().send(()).unwrap();
-                            // Keep this decision open until real writes AND GTK publication
-                            // finish; an immediate Retry would start another storage deadline.
-                            ui::background_io::flush_pending(Duration::from_secs(15), {
-                                let observed_window = observed_window.clone();
-                                let gate_published = gate_published.clone();
-                                let saves_published = saves_published.clone();
-                                let explicit_retry_sent = explicit_retry_sent.clone();
-                                move |outcome| {
-                                    assert_eq!(outcome, Ok(()), "accepted role saves must publish");
-                                    assert!(gate_published.get());
-                                    saves_published.set(true);
-                                    assert!(
-                                        observed_window.is_visible()
-                                            && observed_window.is_sensitive()
-                                    );
-                                    assert!(
-                                        dialog.is_visible(),
-                                        "late publication must not answer the decision"
-                                    );
-                                    explicit_retry_sent.set(true);
-                                    dialog.response("retry");
-                                    assert!(
-                                        !observed_window.is_sensitive(),
-                                        "explicit Retry must re-enter the save barrier"
-                                    );
-                                }
-                            });
-                            glib::ControlFlow::Break
+                        let dialog =
+                            gtk4::Window::list_toplevels()
+                                .into_iter()
+                                .find_map(|window| {
+                                    window
+                                        .downcast::<adw::MessageDialog>()
+                                        .ok()
+                                        .filter(|dialog| dialog.is_visible())
+                                });
+                        let Some(dialog) = dialog else {
+                            return glib::ControlFlow::Continue;
+                        };
+                        assert_eq!(
+                            dialog.body().as_str(),
+                            i18n_embed_fl::fl!(
+                                crate::infra::i18n::LANGUAGE_LOADER,
+                                "app-persistence-drain-timeout"
+                            )
+                        );
+                        assert!(observed_window.is_visible() && observed_window.is_sensitive());
+                        assert!(
+                            !gate_published.get(),
+                            "blocked save must not publish success"
+                        );
+                        assert!(
+                            !dialog.has_response("abandon"),
+                            "a pending save cannot be abandoned as a finished failure"
+                        );
+                        timed_out.set(true);
+                        release.take().unwrap().send(()).unwrap();
+                        // Keep this decision open until real writes AND GTK publication
+                        // finish; an immediate Retry would start another storage deadline.
+                        ui::background_io::flush_pending(Duration::from_secs(15), {
+                            let observed_window = observed_window.clone();
+                            let gate_published = gate_published.clone();
+                            let saves_published = saves_published.clone();
+                            let explicit_retry_sent = explicit_retry_sent.clone();
+                            move |outcome| {
+                                assert_eq!(outcome, Ok(()), "accepted role saves must publish");
+                                assert!(gate_published.get());
+                                saves_published.set(true);
+                                assert!(
+                                    observed_window.is_visible() && observed_window.is_sensitive()
+                                );
+                                assert!(
+                                    dialog.is_visible(),
+                                    "late publication must not answer the decision"
+                                );
+                                explicit_retry_sent.set(true);
+                                dialog.response("retry");
+                                assert!(
+                                    !observed_window.is_sensitive(),
+                                    "explicit Retry must re-enter the save barrier"
+                                );
+                            }
                         });
-                        app.activate_action("quit", None);
-                        assert!(window.is_visible() && !window.is_sensitive());
-                    }
-                });
-                assert_eq!(app.run_with_args::<&str>(&[]), glib::ExitCode::SUCCESS);
-                assert!(
-                    timed_out.get(),
-                    "the actual five-second save deadline must be exercised"
-                );
-                assert!(
-                    gate_published.get() && saves_published.get(),
-                    "Quit must follow all accepted-save publication"
-                );
-                assert!(
-                    explicit_retry_sent.get(),
-                    "late persistence cannot substitute for an explicit Retry"
-                );
-                assert_saved_inventory_role();
-                std::fs::remove_dir_all(directory).unwrap();
-            },
-        );
+                        glib::ControlFlow::Break
+                    });
+                    app.activate_action("quit", None);
+                    assert!(window.is_visible() && !window.is_sensitive());
+                }
+            });
+            assert_eq!(app.run_with_args::<&str>(&[]), glib::ExitCode::SUCCESS);
+            assert!(
+                timed_out.get(),
+                "the actual five-second save deadline must be exercised"
+            );
+            assert!(
+                gate_published.get() && saves_published.get(),
+                "Quit must follow all accepted-save publication"
+            );
+            assert!(
+                explicit_retry_sent.get(),
+                "late persistence cannot substitute for an explicit Retry"
+            );
+            assert_saved_inventory_role();
+            std::fs::remove_dir_all(directory).unwrap();
+        });
     }
 
     #[test]
     #[ignore = "requires a disposable GTK display; scratch registry only, no OBS/keyring"]
     fn native_same_value_registry_edits_retry_failed_disk_writes() {
-        crate::ui::native_test!(
-            native_same_value_registry_edits_retry_failed_disk_writes,
-            || {
-                let directory = isolated_config_dir("same-value-registry-retry");
-                let target = crate::storage::xdg::registry_path();
-                let parent = target.parent().unwrap();
-                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
-                for field_write in [false, true] {
-                    std::fs::write(parent, b"blocked directory").unwrap();
-                    let edit = || {
-                        if field_write {
-                            ui::persist::persist_registry_field(
-                                &nav,
-                                "input icon",
-                                |registry| registry.set_input_icon("Mic", Some("nf-md-microphone")),
-                                |registry| registry.set_input_icon("Mic", Some("nf-md-microphone")),
-                            );
-                        } else {
-                            ui::persist::persist_registry(&nav, "scene icon", |registry| {
-                                registry.set_scene_icon("Camera", Some("nf-md-camera"))
-                            });
-                        }
-                    };
-                    edit();
-                    let failed = Rc::new(Cell::new(false));
-                    ui::background_io::flush_pending(Duration::from_secs(5), {
-                        let failed = failed.clone();
-                        move |result| {
-                            assert_eq!(result, Err(ui::background_io::FlushError::WorkerFailed));
-                            failed.set(true);
-                        }
-                    });
-                    iterate_until(|| failed.get());
-                    let (page, _refresh) = ui::pages::inventory::build(nav.clone());
-                    let status = page.first_child().expect("registry status row");
-                    assert_eq!(status.widget_name(), "inventory-registry-save-status");
-                    assert!(status.is_visible());
-                    let ui::persist::RegistrySaveStatus::Failed(detail) =
-                        ui::persist::registry_save_status()
-                    else {
-                        panic!("failed status must retain error detail");
-                    };
-                    assert_eq!(
-                        status
-                            .first_child()
-                            .unwrap()
-                            .downcast::<gtk4::Label>()
-                            .unwrap()
-                            .text(),
-                        i18n_embed_fl::fl!(
-                            crate::infra::i18n::LANGUAGE_LOADER,
-                            "settings-failed-to-save",
-                            err = detail
-                        )
-                    );
-                    std::fs::remove_file(parent).unwrap();
-                    std::fs::create_dir(parent).unwrap();
-                    edit(); // Cached value is identical: this must still admit a retry.
-                    let saved = Rc::new(Cell::new(false));
-                    ui::background_io::flush_pending(Duration::from_secs(5), {
-                        let saved = saved.clone();
-                        move |result| {
-                            assert_eq!(result, Ok(()));
-                            saved.set(true);
-                        }
-                    });
-                    iterate_until(|| saved.get());
-                    assert_eq!(
-                        ui::persist::registry_save_status(),
-                        ui::persist::RegistrySaveStatus::Saved
-                    );
-                    let disk = crate::storage::registry::read_registry_from_path(&target).unwrap();
-                    if field_write {
-                        assert_eq!(disk.input_icon("Mic"), Some("nf-md-microphone"));
-                    } else {
-                        assert_eq!(disk.scene_icon("Camera"), Some("nf-md-camera"));
-                    }
-                    std::fs::remove_dir_all(parent).unwrap();
-                }
-                std::fs::remove_dir_all(directory).unwrap();
-            },
-        );
-    }
-
-    #[test]
-    #[ignore = "requires a disposable GTK display; scratch registry only, no OBS/keyring"]
-    fn native_registry_write_error_is_visible_and_close_retry_recovers() {
-        crate::ui::native_test!(
-            native_registry_write_error_is_visible_and_close_retry_recovers,
-            || {
-                let directory = isolated_config_dir("registry-retry");
-                let target = crate::storage::xdg::registry_path();
-                let parent = target.parent().unwrap();
+        crate::ui::native_test!(|| {
+            let directory = isolated_config_dir("same-value-registry-retry");
+            let target = crate::storage::xdg::registry_path();
+            let parent = target.parent().unwrap();
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            for field_write in [false, true] {
                 std::fs::write(parent, b"blocked directory").unwrap();
-                let (_app, window) = fixture();
-                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
-                assert!(ui::persist::persist_registry(
-                    &nav,
-                    "fixture icon",
-                    |registry| { registry.set_scene_icon("Camera", Some("nf-md-camera")) }
-                ));
+                let edit = || {
+                    if field_write {
+                        ui::persist::persist_registry_field(
+                            &nav,
+                            "input icon",
+                            |registry| registry.set_input_icon("Mic", Some("nf-md-microphone")),
+                            |registry| registry.set_input_icon("Mic", Some("nf-md-microphone")),
+                        );
+                    } else {
+                        ui::persist::persist_registry(&nav, "scene icon", |registry| {
+                            registry.set_scene_icon("Camera", Some("nf-md-camera"))
+                        });
+                    }
+                };
+                edit();
                 let failed = Rc::new(Cell::new(false));
                 ui::background_io::flush_pending(Duration::from_secs(5), {
                     let failed = failed.clone();
@@ -1188,152 +1088,219 @@ mod tests {
                     }
                 });
                 iterate_until(|| failed.get());
-                assert!(matches!(
-                    ui::persist::registry_save_status(),
-                    ui::persist::RegistrySaveStatus::Failed(_)
-                ));
-                window.close();
-                iterate_until(|| window.is_sensitive());
-                assert!(window.is_visible());
-                let dialog = gtk4::Window::list_toplevels()
-                    .into_iter()
-                    .find_map(|window| {
-                        window
-                            .downcast::<adw::MessageDialog>()
-                            .ok()
-                            .filter(|dialog| dialog.is_visible())
-                    })
-                    .expect("returned write error must require an informed decision");
+                let (page, _refresh) = ui::pages::inventory::build(nav.clone());
+                let status = page.first_child().expect("registry status row");
+                assert_eq!(status.widget_name(), "inventory-registry-save-status");
+                assert!(status.is_visible());
+                let ui::persist::RegistrySaveStatus::Failed(detail) =
+                    ui::persist::registry_save_status()
+                else {
+                    panic!("failed status must retain error detail");
+                };
+                assert_eq!(
+                    status
+                        .first_child()
+                        .unwrap()
+                        .downcast::<gtk4::Label>()
+                        .unwrap()
+                        .text(),
+                    i18n_embed_fl::fl!(
+                        crate::infra::i18n::LANGUAGE_LOADER,
+                        "settings-failed-to-save",
+                        err = detail
+                    )
+                );
                 std::fs::remove_file(parent).unwrap();
                 std::fs::create_dir(parent).unwrap();
-                dialog.response("retry");
-                iterate_until(|| !window.is_visible());
+                edit(); // Cached value is identical: this must still admit a retry.
+                let saved = Rc::new(Cell::new(false));
+                ui::background_io::flush_pending(Duration::from_secs(5), {
+                    let saved = saved.clone();
+                    move |result| {
+                        assert_eq!(result, Ok(()));
+                        saved.set(true);
+                    }
+                });
+                iterate_until(|| saved.get());
                 assert_eq!(
-                    crate::storage::registry::read_registry_from_path(&target)
-                        .unwrap()
-                        .scene_icon("Camera"),
-                    Some("nf-md-camera")
+                    ui::persist::registry_save_status(),
+                    ui::persist::RegistrySaveStatus::Saved
                 );
-                assert_eq!(
-                    nav.state.borrow().registry.scene_icon("Camera"),
-                    Some("nf-md-camera")
-                );
-                std::fs::remove_dir_all(directory).unwrap();
-            },
-        );
+                let disk = crate::storage::registry::read_registry_from_path(&target).unwrap();
+                if field_write {
+                    assert_eq!(disk.input_icon("Mic"), Some("nf-md-microphone"));
+                } else {
+                    assert_eq!(disk.scene_icon("Camera"), Some("nf-md-camera"));
+                }
+                std::fs::remove_dir_all(parent).unwrap();
+            }
+            std::fs::remove_dir_all(directory).unwrap();
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display; scratch registry only, no OBS/keyring"]
+    fn native_registry_write_error_is_visible_and_close_retry_recovers() {
+        crate::ui::native_test!(|| {
+            let directory = isolated_config_dir("registry-retry");
+            let target = crate::storage::xdg::registry_path();
+            let parent = target.parent().unwrap();
+            std::fs::write(parent, b"blocked directory").unwrap();
+            let (_app, window) = fixture();
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            assert!(ui::persist::persist_registry(
+                &nav,
+                "fixture icon",
+                |registry| { registry.set_scene_icon("Camera", Some("nf-md-camera")) }
+            ));
+            let failed = Rc::new(Cell::new(false));
+            ui::background_io::flush_pending(Duration::from_secs(5), {
+                let failed = failed.clone();
+                move |result| {
+                    assert_eq!(result, Err(ui::background_io::FlushError::WorkerFailed));
+                    failed.set(true);
+                }
+            });
+            iterate_until(|| failed.get());
+            assert!(matches!(
+                ui::persist::registry_save_status(),
+                ui::persist::RegistrySaveStatus::Failed(_)
+            ));
+            window.close();
+            iterate_until(|| window.is_sensitive());
+            assert!(window.is_visible());
+            let dialog = gtk4::Window::list_toplevels()
+                .into_iter()
+                .find_map(|window| {
+                    window
+                        .downcast::<adw::MessageDialog>()
+                        .ok()
+                        .filter(|dialog| dialog.is_visible())
+                })
+                .expect("returned write error must require an informed decision");
+            std::fs::remove_file(parent).unwrap();
+            std::fs::create_dir(parent).unwrap();
+            dialog.response("retry");
+            iterate_until(|| !window.is_visible());
+            assert_eq!(
+                crate::storage::registry::read_registry_from_path(&target)
+                    .unwrap()
+                    .scene_icon("Camera"),
+                Some("nf-md-camera")
+            );
+            assert_eq!(
+                nav.state.borrow().registry.scene_icon("Camera"),
+                Some("nf-md-camera")
+            );
+            std::fs::remove_dir_all(directory).unwrap();
+        });
     }
 
     #[test]
     #[ignore = "requires a disposable GTK display"]
     fn native_close_waits_for_accepted_save_and_gtk_publication() {
-        crate::ui::native_test!(
-            native_close_waits_for_accepted_save_and_gtk_publication,
-            || {
-                let (_app, window) = fixture();
-                let (release, held) = std::sync::mpsc::channel();
-                let published = Rc::new(Cell::new(false));
-                ui::background_io::run(move || held.recv().unwrap(), {
-                    let published = published.clone();
-                    move |()| published.set(true)
-                });
-                window.close();
-                assert!(window.is_visible());
-                assert!(!window.is_sensitive());
-                assert!(!published.get());
-                release.send(()).unwrap();
-                iterate_until(|| !window.is_visible());
-                assert!(published.get(), "close must follow GTK save publication");
-            },
-        );
+        crate::ui::native_test!(|| {
+            let (_app, window) = fixture();
+            let (release, held) = std::sync::mpsc::channel();
+            let published = Rc::new(Cell::new(false));
+            ui::background_io::run(move || held.recv().unwrap(), {
+                let published = published.clone();
+                move |()| published.set(true)
+            });
+            window.close();
+            assert!(window.is_visible());
+            assert!(!window.is_sensitive());
+            assert!(!published.get());
+            release.send(()).unwrap();
+            iterate_until(|| !window.is_visible());
+            assert!(published.get(), "close must follow GTK save publication");
+        });
     }
 
     #[test]
     #[ignore = "requires a disposable GTK display"]
     fn native_save_worker_failure_keeps_window_open_and_offers_cancel() {
-        crate::ui::native_test!(
-            native_save_worker_failure_keeps_window_open_and_offers_cancel,
-            || {
-                let (_app, window) = fixture();
-                let failed = Rc::new(Cell::new(false));
-                ui::background_io::run(
-                    || panic!("intentional fixture save failure"),
-                    |(): ()| panic!("failed worker must not publish success"),
-                );
-                ui::background_io::flush_pending(Duration::from_secs(1), {
-                    let failed = failed.clone();
-                    move |outcome| {
-                        assert_eq!(outcome, Err(ui::background_io::FlushError::WorkerFailed));
-                        failed.set(true);
-                    }
-                });
-                iterate_until(|| failed.get());
-                window.close();
-                iterate_until(|| window.is_sensitive());
-                assert!(window.is_visible(), "failed drain must not silently quit");
-                let dialog = gtk4::Window::list_toplevels()
-                    .into_iter()
-                    .find_map(|window| window.downcast::<adw::MessageDialog>().ok())
-                    .expect("visible failure decision");
-                dialog.response("cancel");
-                assert!(window.is_visible());
-                let published = Rc::new(Cell::new(false));
-                ui::background_io::run_serialized(ui::background_io::SerialLane::Config, || (), {
-                    let published = published.clone();
-                    move |()| published.set(true)
-                });
-                window.close();
-                iterate_until(|| published.get() && window.is_sensitive());
-                let dialog = gtk4::Window::list_toplevels()
-                    .into_iter()
-                    .find_map(|window| {
-                        window
-                            .downcast::<adw::MessageDialog>()
-                            .ok()
-                            .filter(|dialog| dialog.is_visible())
-                    })
-                    .expect("successful later save must not erase the prior failure");
-                assert!(dialog.has_response("abandon"));
-                dialog.response("retry");
-                iterate_until(|| window.is_sensitive());
-                assert!(window.is_visible());
-                let dialog = gtk4::Window::list_toplevels()
-                    .into_iter()
-                    .find_map(|window| {
-                        window
-                            .downcast::<adw::MessageDialog>()
-                            .ok()
-                            .filter(|dialog| dialog.is_visible())
-                    })
-                    .expect("retry retains failure evidence and informed exit");
-                let (release, held) = std::sync::mpsc::channel();
-                let final_published = Rc::new(Cell::new(false));
-                ui::background_io::run_serialized(
-                    ui::background_io::SerialLane::Config,
-                    move || held.recv().unwrap(),
-                    {
-                        let final_published = final_published.clone();
-                        move |()| final_published.set(true)
-                    },
-                );
-                dialog.response("abandon");
-                assert!(
-                    window.is_visible() && !window.is_sensitive(),
-                    "abandonment must re-enter the save barrier"
-                );
-                release.send(()).unwrap();
-                iterate_until(|| !window.is_visible());
-                assert!(
-                    published.get() && final_published.get(),
-                    "informed abandonment must still drain successful writes"
-                );
-            },
-        );
+        crate::ui::native_test!(|| {
+            let (_app, window) = fixture();
+            let failed = Rc::new(Cell::new(false));
+            ui::background_io::run(
+                || panic!("intentional fixture save failure"),
+                |(): ()| panic!("failed worker must not publish success"),
+            );
+            ui::background_io::flush_pending(Duration::from_secs(1), {
+                let failed = failed.clone();
+                move |outcome| {
+                    assert_eq!(outcome, Err(ui::background_io::FlushError::WorkerFailed));
+                    failed.set(true);
+                }
+            });
+            iterate_until(|| failed.get());
+            window.close();
+            iterate_until(|| window.is_sensitive());
+            assert!(window.is_visible(), "failed drain must not silently quit");
+            let dialog = gtk4::Window::list_toplevels()
+                .into_iter()
+                .find_map(|window| window.downcast::<adw::MessageDialog>().ok())
+                .expect("visible failure decision");
+            dialog.response("cancel");
+            assert!(window.is_visible());
+            let published = Rc::new(Cell::new(false));
+            ui::background_io::run_serialized(ui::background_io::SerialLane::Config, || (), {
+                let published = published.clone();
+                move |()| published.set(true)
+            });
+            window.close();
+            iterate_until(|| published.get() && window.is_sensitive());
+            let dialog = gtk4::Window::list_toplevels()
+                .into_iter()
+                .find_map(|window| {
+                    window
+                        .downcast::<adw::MessageDialog>()
+                        .ok()
+                        .filter(|dialog| dialog.is_visible())
+                })
+                .expect("successful later save must not erase the prior failure");
+            assert!(dialog.has_response("abandon"));
+            dialog.response("retry");
+            iterate_until(|| window.is_sensitive());
+            assert!(window.is_visible());
+            let dialog = gtk4::Window::list_toplevels()
+                .into_iter()
+                .find_map(|window| {
+                    window
+                        .downcast::<adw::MessageDialog>()
+                        .ok()
+                        .filter(|dialog| dialog.is_visible())
+                })
+                .expect("retry retains failure evidence and informed exit");
+            let (release, held) = std::sync::mpsc::channel();
+            let final_published = Rc::new(Cell::new(false));
+            ui::background_io::run_serialized(
+                ui::background_io::SerialLane::Config,
+                move || held.recv().unwrap(),
+                {
+                    let final_published = final_published.clone();
+                    move |()| final_published.set(true)
+                },
+            );
+            dialog.response("abandon");
+            assert!(
+                window.is_visible() && !window.is_sensitive(),
+                "abandonment must re-enter the save barrier"
+            );
+            release.send(()).unwrap();
+            iterate_until(|| !window.is_visible());
+            assert!(
+                published.get() && final_published.get(),
+                "informed abandonment must still drain successful writes"
+            );
+        });
     }
 
     #[test]
     #[ignore = "requires a disposable GTK display"]
     fn native_quit_action_obeys_the_pre_quit_save_barrier() {
-        crate::ui::native_test!(native_quit_action_obeys_the_pre_quit_save_barrier, || {
+        crate::ui::native_test!(|| {
             let app = adw::Application::builder()
                 .application_id("io.github.worxbend.scenedeck.QuitFixture")
                 .flags(gio::ApplicationFlags::NON_UNIQUE)
@@ -1367,6 +1334,6 @@ mod tests {
             });
             assert_eq!(app.run_with_args::<&str>(&[]), glib::ExitCode::SUCCESS);
             assert!(observed.get());
-        },);
+        });
     }
 }

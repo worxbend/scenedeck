@@ -884,41 +884,38 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; no keyring or OBS access"]
     fn native_settings_constructor_releases_entries_and_hotkey_rows() {
-        crate::ui::native_test!(
-            native_settings_constructor_releases_entries_and_hotkey_rows,
-            || {
-                use adw::prelude::*;
-                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
-                let (page, refresh) = super::build(nav);
-                fn rows(widget: &gtk4::Widget, tracked: &mut Vec<glib::WeakRef<gtk4::Widget>>) {
-                    if widget.is::<adw::EntryRow>()
-                        || widget.is::<adw::ComboRow>()
-                        || widget.is::<adw::SpinRow>()
-                    {
-                        tracked.push(widget.downgrade());
-                    }
-                    let mut child = widget.first_child();
-                    while let Some(widget) = child {
-                        child = widget.next_sibling();
-                        rows(&widget, tracked);
-                    }
+        crate::ui::native_test!(|| {
+            use adw::prelude::*;
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            let (page, refresh) = super::build(nav);
+            fn rows(widget: &gtk4::Widget, tracked: &mut Vec<glib::WeakRef<gtk4::Widget>>) {
+                if widget.is::<adw::EntryRow>()
+                    || widget.is::<adw::ComboRow>()
+                    || widget.is::<adw::SpinRow>()
+                {
+                    tracked.push(widget.downgrade());
                 }
-                let mut tracked = Vec::new();
-                rows(&page, &mut tracked);
-                assert!(
-                    tracked.len() >= 10,
-                    "track real host/port and hotkey descendants"
-                );
-                let weak = page.downgrade();
-                drop(page);
-                refresh(); // A retained public refresher must not own descendants.
-                assert!(weak.upgrade().is_none(), "Settings root retained");
-                assert!(
-                    tracked.iter().all(|row| row.upgrade().is_none()),
-                    "Settings entries/hotkey rows retained"
-                );
-            },
-        );
+                let mut child = widget.first_child();
+                while let Some(widget) = child {
+                    child = widget.next_sibling();
+                    rows(&widget, tracked);
+                }
+            }
+            let mut tracked = Vec::new();
+            rows(&page, &mut tracked);
+            assert!(
+                tracked.len() >= 10,
+                "track real host/port and hotkey descendants"
+            );
+            let weak = page.downgrade();
+            drop(page);
+            refresh(); // A retained public refresher must not own descendants.
+            assert!(weak.upgrade().is_none(), "Settings root retained");
+            assert!(
+                tracked.iter().all(|row| row.upgrade().is_none()),
+                "Settings entries/hotkey rows retained"
+            );
+        });
     }
 
     #[test]

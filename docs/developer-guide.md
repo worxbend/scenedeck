@@ -49,7 +49,14 @@ isolated process with:
 
 ```sh
 python3 tools/test-native.py
+python3 tools/test-native.py --filter mixer   # subset by test-path substring; `a|b` for either
 ```
+
+A native test is an `#[ignore]` test whose fn name starts with `native_`; the
+runner rejects any other ignored test. Its body goes in
+`crate::ui::native_test!(|| { ... })`, called directly in the test fn. The macro
+derives the test's own path, so moving or renaming the test needs no other edit,
+and the parent fails unless its child process reports exactly one pass.
 
 The dependency gate includes a single user-approved, expiring maintenance
 exception; see the [advisory policy](advisory-exceptions.md). Run its checker

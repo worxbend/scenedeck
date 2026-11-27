@@ -795,61 +795,58 @@ mod tests {
     #[test]
     #[ignore = "requires a native GTK display"]
     fn native_graph_distinguishes_missing_empty_failed_and_reset_topology() {
-        crate::ui::native_test!(
-            native_graph_distinguishes_missing_empty_failed_and_reset_topology,
-            || {
-                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
-                let container = GtkBox::new(Orientation::Vertical, 0);
-                nav.state.borrow_mut().scene_inventory = inventory(["Main"]);
-                populate(&container, &nav);
-                assert!(page_text(container.upcast_ref()).contains("Scene topology not observed"));
-                assert!(!page_text(container.upcast_ref()).contains("No nested scene dependencies"));
-                nav.state.borrow_mut().scene_inventory = inventory([]);
-                nav.state
-                    .borrow_mut()
-                    .set_topology_ready(SceneGraph::default());
-                crate::ui::clear_children(&container);
-                populate(&container, &nav);
-                assert!(page_text(container.upcast_ref()).contains("No scenes observed"));
-                {
-                    let mut state = nav.state.borrow_mut();
-                    state.scene_inventory = inventory(["Main"]);
-                    state.set_topology_ready(SceneGraph::default());
-                }
-                crate::ui::clear_children(&container);
-                populate(&container, &nav);
-                assert!(page_text(container.upcast_ref()).contains("Scene Dependencies"));
-                nav.state
-                    .borrow_mut()
-                    .set_topology_failed("Group <b>& read failed".into());
-                crate::ui::clear_children(&container);
-                populate(&container, &nav);
-                let text = page_text(container.upcast_ref());
-                assert!(text.contains("Scene topology could not be read"));
-                assert!(text.contains("Group <b>& read failed"));
-                assert!(!text.contains("No nested scene dependencies"));
-                nav.state.borrow_mut().set_topology_loading();
-                crate::ui::clear_children(&container);
-                populate(&container, &nav);
-                assert!(page_text(container.upcast_ref()).contains("Reading scene topology"));
-                nav.state
-                    .borrow_mut()
-                    .set_topology_ready(SceneGraph::default());
-                crate::ui::clear_children(&container);
-                populate(&container, &nav);
-                assert!(page_text(container.upcast_ref()).contains("Scene Dependencies"));
-                nav.state.borrow_mut().invalidate_collection_runtime();
-                crate::ui::clear_children(&container);
-                populate(&container, &nav);
-                assert!(page_text(container.upcast_ref()).contains("Scene topology not observed"));
-                nav.state
-                    .borrow_mut()
-                    .reset_obs_session(ObsStatus::Disconnected);
-                crate::ui::clear_children(&container);
-                populate(&container, &nav);
-                assert!(page_text(container.upcast_ref()).contains("Scene topology not observed"));
-            },
-        );
+        crate::ui::native_test!(|| {
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            let container = GtkBox::new(Orientation::Vertical, 0);
+            nav.state.borrow_mut().scene_inventory = inventory(["Main"]);
+            populate(&container, &nav);
+            assert!(page_text(container.upcast_ref()).contains("Scene topology not observed"));
+            assert!(!page_text(container.upcast_ref()).contains("No nested scene dependencies"));
+            nav.state.borrow_mut().scene_inventory = inventory([]);
+            nav.state
+                .borrow_mut()
+                .set_topology_ready(SceneGraph::default());
+            crate::ui::clear_children(&container);
+            populate(&container, &nav);
+            assert!(page_text(container.upcast_ref()).contains("No scenes observed"));
+            {
+                let mut state = nav.state.borrow_mut();
+                state.scene_inventory = inventory(["Main"]);
+                state.set_topology_ready(SceneGraph::default());
+            }
+            crate::ui::clear_children(&container);
+            populate(&container, &nav);
+            assert!(page_text(container.upcast_ref()).contains("Scene Dependencies"));
+            nav.state
+                .borrow_mut()
+                .set_topology_failed("Group <b>& read failed".into());
+            crate::ui::clear_children(&container);
+            populate(&container, &nav);
+            let text = page_text(container.upcast_ref());
+            assert!(text.contains("Scene topology could not be read"));
+            assert!(text.contains("Group <b>& read failed"));
+            assert!(!text.contains("No nested scene dependencies"));
+            nav.state.borrow_mut().set_topology_loading();
+            crate::ui::clear_children(&container);
+            populate(&container, &nav);
+            assert!(page_text(container.upcast_ref()).contains("Reading scene topology"));
+            nav.state
+                .borrow_mut()
+                .set_topology_ready(SceneGraph::default());
+            crate::ui::clear_children(&container);
+            populate(&container, &nav);
+            assert!(page_text(container.upcast_ref()).contains("Scene Dependencies"));
+            nav.state.borrow_mut().invalidate_collection_runtime();
+            crate::ui::clear_children(&container);
+            populate(&container, &nav);
+            assert!(page_text(container.upcast_ref()).contains("Scene topology not observed"));
+            nav.state
+                .borrow_mut()
+                .reset_obs_session(ObsStatus::Disconnected);
+            crate::ui::clear_children(&container);
+            populate(&container, &nav);
+            assert!(page_text(container.upcast_ref()).contains("Scene topology not observed"));
+        });
     }
 
     fn page_text(widget: &gtk4::Widget) -> String {
@@ -868,7 +865,7 @@ mod tests {
     #[test]
     #[ignore = "requires a native GTK display"]
     fn native_graph_gesture_releases_its_canvas_and_model() {
-        crate::ui::native_test!(native_graph_gesture_releases_its_canvas_and_model, || {
+        crate::ui::native_test!(|| {
             let model = Rc::new(RefCell::new(GraphModel::build(
                 &SceneGraph::default(),
                 &inventory(["Main"]),
@@ -886,7 +883,7 @@ mod tests {
             drop(canvas);
             assert!(weak_canvas.upgrade().is_none());
             assert!(weak_model.upgrade().is_none());
-        },);
+        });
     }
 
     #[test]

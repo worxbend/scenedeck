@@ -322,7 +322,7 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display"]
     fn native_palette_search_scope_keyboard_and_lifetime() {
-        crate::ui::native_test!(native_palette_search_scope_keyboard_and_lifetime, || {
+        crate::ui::native_test!(|| {
             let (nav, stack, _runtime, _events) = navigation();
             *nav.state.borrow_mut() = crate::ui::action_catalog::tests::connected();
             for page in [Page::Live, Page::Sources, Page::Settings] {
@@ -404,68 +404,65 @@ mod tests {
             assert!(weak_window.upgrade().is_none());
             assert!(weak_search.upgrade().is_none());
             parent.close();
-        },);
+        });
     }
 
     #[test]
     #[ignore = "requires a disposable GTK display"]
     fn native_palette_large_text_navigation_escape_and_single_instance() {
-        crate::ui::native_test!(
-            native_palette_large_text_navigation_escape_and_single_instance,
-            || {
-                let (nav, _stack, _runtime, _events) = navigation();
-                *nav.state.borrow_mut() = crate::ui::action_catalog::tests::connected();
-                gtk4::Settings::default()
-                    .unwrap()
-                    .set_gtk_font_name(Some("Sans 22"));
-                let parent = adw::ApplicationWindow::builder().build();
-                parent.present();
-                show(&parent, &nav);
-                show(&parent, &nav);
-                let windows: Vec<_> = gtk4::Window::list_toplevels()
-                    .into_iter()
-                    .filter_map(|w| w.downcast::<adw::Window>().ok())
-                    .filter(|w| w.widget_name() == "command-palette")
-                    .collect();
-                assert_eq!(windows.len(), 1);
-                let window = &windows[0];
-                window.set_default_size(360, 460);
-                pump(Duration::from_millis(100));
-                let search = find(window.upcast_ref(), "palette-search")
-                    .unwrap()
-                    .downcast::<SearchEntry>()
-                    .unwrap();
-                let list = find(window.upcast_ref(), "palette-results")
-                    .unwrap()
-                    .downcast::<ListBox>()
-                    .unwrap();
-                assert!(
-                    window.width() <= 360,
-                    "palette cannot fit 360px: {}",
-                    window.width()
-                );
-                assert!(list.width() <= window.width());
-                search.grab_focus();
-                for _ in 0..8 {
-                    key(window, gtk4::gdk::Key::Down);
-                }
-                assert_eq!(list.selected_row().unwrap().index(), 8);
-                let scroll = list
-                    .parent()
-                    .unwrap()
-                    .parent()
-                    .unwrap()
-                    .downcast::<gtk4::ScrolledWindow>()
-                    .unwrap();
-                assert!(
-                    scroll.vadjustment().value() > 0.0,
-                    "keyboard selection must scroll into view"
-                );
-                list.selected_row().unwrap().grab_focus();
-                assert!(key(window, gtk4::gdk::Key::Escape));
-                assert!(!window.is_visible());
-                parent.close();
+        crate::ui::native_test!(|| {
+            let (nav, _stack, _runtime, _events) = navigation();
+            *nav.state.borrow_mut() = crate::ui::action_catalog::tests::connected();
+            gtk4::Settings::default()
+                .unwrap()
+                .set_gtk_font_name(Some("Sans 22"));
+            let parent = adw::ApplicationWindow::builder().build();
+            parent.present();
+            show(&parent, &nav);
+            show(&parent, &nav);
+            let windows: Vec<_> = gtk4::Window::list_toplevels()
+                .into_iter()
+                .filter_map(|w| w.downcast::<adw::Window>().ok())
+                .filter(|w| w.widget_name() == "command-palette")
+                .collect();
+            assert_eq!(windows.len(), 1);
+            let window = &windows[0];
+            window.set_default_size(360, 460);
+            pump(Duration::from_millis(100));
+            let search = find(window.upcast_ref(), "palette-search")
+                .unwrap()
+                .downcast::<SearchEntry>()
+                .unwrap();
+            let list = find(window.upcast_ref(), "palette-results")
+                .unwrap()
+                .downcast::<ListBox>()
+                .unwrap();
+            assert!(
+                window.width() <= 360,
+                "palette cannot fit 360px: {}",
+                window.width()
+            );
+            assert!(list.width() <= window.width());
+            search.grab_focus();
+            for _ in 0..8 {
+                key(window, gtk4::gdk::Key::Down);
             }
-        );
+            assert_eq!(list.selected_row().unwrap().index(), 8);
+            let scroll = list
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .downcast::<gtk4::ScrolledWindow>()
+                .unwrap();
+            assert!(
+                scroll.vadjustment().value() > 0.0,
+                "keyboard selection must scroll into view"
+            );
+            list.selected_row().unwrap().grab_focus();
+            assert!(key(window, gtk4::gdk::Key::Escape));
+            assert!(!window.is_visible());
+            parent.close();
+        });
     }
 }

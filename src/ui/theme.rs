@@ -640,41 +640,38 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable native GTK display"]
     fn native_explicit_theme_modes_style_controls_and_release_the_system_override() {
-        crate::ui::native_test!(
-            native_explicit_theme_modes_style_controls_and_release_the_system_override,
-            || {
-                use crate::domain::appearance::{ThemeMode, ThemePreference};
+        crate::ui::native_test!(|| {
+            use crate::domain::appearance::{ThemeMode, ThemePreference};
 
-                let style = adw::StyleManager::default();
-                style.set_color_scheme(adw::ColorScheme::ForceLight);
-                for mode in [ThemeMode::Dark, ThemeMode::Light, ThemeMode::System] {
-                    let generation = super::REQUEST_GENERATION.with(std::cell::Cell::get);
-                    ThemeManager::apply_async(
-                        ThemePreference {
-                            selected_theme: Some(crate::domain::appearance::ThemeId::new("nord")),
-                            mode,
-                            motion: MotionLevel::Off,
-                            ..Default::default()
-                        },
-                        |report| assert!(report.is_ok(), "{:?}", report.warnings),
-                    );
-                    assert_eq!(
-                        super::REQUEST_GENERATION.with(std::cell::Cell::get),
-                        generation.wrapping_add(1),
-                        "applying native mode must not recursively reapply the palette"
-                    );
-                    match mode {
-                        ThemeMode::Dark => assert!(style.is_dark(), "native controls stayed light"),
-                        ThemeMode::Light => {
-                            assert!(!style.is_dark(), "native controls stayed dark")
-                        }
-                        ThemeMode::System => {
-                            assert_eq!(style.color_scheme(), adw::ColorScheme::Default)
-                        }
+            let style = adw::StyleManager::default();
+            style.set_color_scheme(adw::ColorScheme::ForceLight);
+            for mode in [ThemeMode::Dark, ThemeMode::Light, ThemeMode::System] {
+                let generation = super::REQUEST_GENERATION.with(std::cell::Cell::get);
+                ThemeManager::apply_async(
+                    ThemePreference {
+                        selected_theme: Some(crate::domain::appearance::ThemeId::new("nord")),
+                        mode,
+                        motion: MotionLevel::Off,
+                        ..Default::default()
+                    },
+                    |report| assert!(report.is_ok(), "{:?}", report.warnings),
+                );
+                assert_eq!(
+                    super::REQUEST_GENERATION.with(std::cell::Cell::get),
+                    generation.wrapping_add(1),
+                    "applying native mode must not recursively reapply the palette"
+                );
+                match mode {
+                    ThemeMode::Dark => assert!(style.is_dark(), "native controls stayed light"),
+                    ThemeMode::Light => {
+                        assert!(!style.is_dark(), "native controls stayed dark")
+                    }
+                    ThemeMode::System => {
+                        assert_eq!(style.color_scheme(), adw::ColorScheme::Default)
                     }
                 }
-            },
-        );
+            }
+        });
     }
 
     #[test]

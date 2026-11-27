@@ -256,8 +256,8 @@ pub(crate) mod test_support {
 
     /// GTK tests run in separate processes, not separate Rust test threads.
     ///
-    /// `module_and_fn` is `module_path!()` plus the function name, so it starts
-    /// with the crate name. Libtest's `--exact` filter omits that crate name.
+    /// `module_and_fn` is the test fn's full path from `native_test!`, so it
+    /// starts with the crate name. Libtest's `--exact` filter omits that name.
     /// A stale filter used to exit 0 with `0 passed`; that is a failure.
     pub(crate) fn native_test(module_and_fn: &str, test: impl FnOnce()) {
         require_native_runner();
@@ -350,6 +350,15 @@ pub(crate) mod test_support {
         true
     }
 
+    /// `scenedeck::ui::tests::native_example::anchor` names an item declared in
+    /// `native_example`; drop the item to get the test fn's path.
+    pub(crate) fn enclosing_fn_path(item_path: &str) -> &str {
+        let Some((fn_path, _)) = item_path.rsplit_once("::") else {
+            panic!("native test anchor must be declared inside a test fn, got {item_path}");
+        };
+        fn_path
+    }
+
     /// Drop the crate segment from `scenedeck::ui::tests::native_example`.
     pub(crate) fn libtest_filter(module_and_fn: &str) -> &str {
         let Some((_, rest)) = module_and_fn.split_once("::") else {
@@ -377,6 +386,23 @@ pub(crate) mod test_support {
             output.status.success() && passed == Some(1),
             "native child {name} reported {passed:?} passed, expected 1\n{stdout}\n{stderr}"
         );
+    }
+
+    #[test]
+    fn native_test_path_names_the_enclosing_test_fn() {
+        assert_eq!(
+            crate::ui::native_test!(@path),
+            concat!(
+                module_path!(),
+                "::native_test_path_names_the_enclosing_test_fn"
+            )
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "must be declared inside a test fn")]
+    fn enclosing_fn_path_rejects_a_bare_name() {
+        enclosing_fn_path("native_test_anchor");
     }
 
     #[test]
@@ -440,16 +466,19 @@ pub(crate) mod test_support {
     }
 }
 
-/// `module_path!()` expands at the call site, so renaming the function and
-/// this argument together keeps the libtest filter. A mismatched name runs
-/// zero tests and the parent fails.
+/// Call it directly in the test fn body, never inside a closure. Rust has no
+/// fn-name macro, so `@path` names the enclosing test through a local anchor
+/// fn: moving or renaming the test cannot leave a stale libtest filter.
 #[cfg(test)]
 macro_rules! native_test {
-    ($name:ident, $body:expr $(,)?) => {
-        $crate::ui::test_support::native_test(
-            concat!(module_path!(), "::", stringify!($name)),
-            $body,
-        )
+    (@path) => {{
+        fn native_test_anchor() {}
+        $crate::ui::test_support::enclosing_fn_path(::std::any::type_name_of_val(
+            &native_test_anchor,
+        ))
+    }};
+    ($body:expr $(,)?) => {
+        $crate::ui::test_support::native_test($crate::ui::native_test!(@path), $body)
     };
 }
 
@@ -463,23 +492,20 @@ mod tests {
     #[test]
     #[ignore = "requires a native GTK display"]
     fn native_rebuildable_page_releases_root_even_with_refresher_alive() {
-        crate::ui::native_test!(
-            native_rebuildable_page_releases_root_even_with_refresher_alive,
-            || {
-                let (page, refresh) = super::stateful_page(
-                    "fixture",
-                    false,
-                    || (),
-                    |root| {
-                        root.append(&gtk4::Button::with_label("fixture"));
-                    },
-                );
-                let weak = page.downgrade();
-                refresh();
-                drop(page);
-                assert!(weak.upgrade().is_none());
-                refresh();
-            },
-        );
+        crate::ui::native_test!(|| {
+            let (page, refresh) = super::stateful_page(
+                "fixture",
+                false,
+                || (),
+                |root| {
+                    root.append(&gtk4::Button::with_label("fixture"));
+                },
+            );
+            let weak = page.downgrade();
+            refresh();
+            drop(page);
+            assert!(weak.upgrade().is_none());
+            refresh();
+        });
     }
 }

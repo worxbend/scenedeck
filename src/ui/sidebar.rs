@@ -553,7 +553,7 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; no OBS or keyring access"]
     fn native_selector_readbacks_retain_model_rows() {
-        crate::ui::native_test!(native_selector_readbacks_retain_model_rows, || {
+        crate::ui::native_test!(|| {
             let selector = NamedSelector::build("Fixture", "Fixture");
             let list = ObsNamedList {
                 items: vec!["First".into(), "Other".into()],
@@ -596,116 +596,111 @@ mod tests {
             selector.update(&ObsNamedList::default());
             assert_eq!(changes.get(), 2);
             assert!(!selector.root.is_visible());
-        },);
+        });
     }
 
     #[test]
     #[ignore = "requires a disposable native GTK display"]
     fn native_obs_setup_popover_follows_the_selected_palette() {
-        crate::ui::native_test!(
-            native_obs_setup_popover_follows_the_selected_palette,
-            || {
-                use crate::domain::appearance::{MotionLevel, ThemeId, ThemeMode, ThemePreference};
-                use crate::ui::theme::ThemeManager;
+        crate::ui::native_test!(|| {
+            use crate::domain::appearance::{MotionLevel, ThemeId, ThemeMode, ThemePreference};
+            use crate::ui::theme::ThemeManager;
 
-                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
-                let selectors = HeaderSelectors::build(&nav);
-                let names = ObsNamedList {
-                    items: vec!["Untitled".into(), "Other".into()],
-                    current: Some("Untitled".into()),
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            let selectors = HeaderSelectors::build(&nav);
+            let names = ObsNamedList {
+                items: vec!["Untitled".into(), "Other".into()],
+                current: Some("Untitled".into()),
+            };
+            selectors.update_profiles(&names);
+            selectors.update_scene_collections(&names);
+            let header = adw::HeaderBar::new();
+            selectors.pack_into(&header);
+            let root = GtkBox::new(Orientation::Vertical, 0);
+            root.append(&header);
+            root.append(&Label::new(Some("Settings")));
+            let window = gtk4::Window::builder()
+                .default_width(600)
+                .default_height(400)
+                .child(&root)
+                .build();
+            window.add_css_class("scenedeck-root");
+            window.present();
+            let popover = selectors.menu.popover().unwrap();
+            for (mode, expected) in [
+                (ThemeMode::Dark, [46_u8, 52, 64]),
+                (ThemeMode::Light, [246, 248, 251]),
+                (ThemeMode::Dark, [46, 52, 64]),
+            ] {
+                let preference = ThemePreference {
+                    selected_theme: Some(ThemeId::new("nord")),
+                    mode,
+                    motion: MotionLevel::Off,
+                    ..Default::default()
                 };
-                selectors.update_profiles(&names);
-                selectors.update_scene_collections(&names);
-                let header = adw::HeaderBar::new();
-                selectors.pack_into(&header);
-                let root = GtkBox::new(Orientation::Vertical, 0);
-                root.append(&header);
-                root.append(&Label::new(Some("Settings")));
-                let window = gtk4::Window::builder()
-                    .default_width(600)
-                    .default_height(400)
-                    .child(&root)
-                    .build();
-                window.add_css_class("scenedeck-root");
-                window.present();
-                let popover = selectors.menu.popover().unwrap();
-                for (mode, expected) in [
-                    (ThemeMode::Dark, [46_u8, 52, 64]),
-                    (ThemeMode::Light, [246, 248, 251]),
-                    (ThemeMode::Dark, [46, 52, 64]),
-                ] {
-                    let preference = ThemePreference {
-                        selected_theme: Some(ThemeId::new("nord")),
-                        mode,
-                        motion: MotionLevel::Off,
-                        ..Default::default()
-                    };
-                    assert!(ThemeManager::apply(&preference).is_ok());
-                    // Theme swap drops allocation. Popup on a 0x0 window: no monitor, garbage size, BadAlloc.
-                    assert!(
-                        crate::ui::test_support::pump_until(
-                            std::time::Duration::from_secs(5),
-                            || { window.width() > 0 && selectors.menu.width() > 0 }
+                assert!(ThemeManager::apply(&preference).is_ok());
+                // Theme swap drops allocation. Popup on a 0x0 window: no monitor, garbage size, BadAlloc.
+                assert!(
+                    crate::ui::test_support::pump_until(std::time::Duration::from_secs(5), || {
+                        window.width() > 0 && selectors.menu.width() > 0
+                    }),
+                    "setup button never got allocated"
+                );
+                selectors.menu.popup();
+                crate::ui::test_support::pump(std::time::Duration::from_millis(100));
+                assert!(popover.is_mapped());
+                let contents = popover.first_child().expect("native popover contents");
+                assert_eq!(contents.css_name(), "contents");
+                let point = contents
+                    .compute_point(
+                        &popover,
+                        &gtk4::graphene::Point::new(
+                            contents.width() as f32 / 2.0,
+                            (contents.height() - 8) as f32,
                         ),
-                        "setup button never got allocated"
+                    )
+                    .unwrap();
+                let snapshot = gtk4::Snapshot::new();
+                gtk4::WidgetPaintable::new(Some(&popover)).snapshot(
+                    &snapshot,
+                    f64::from(popover.width()),
+                    f64::from(popover.height()),
+                );
+                let node = snapshot.to_node().expect("popover render node");
+                let texture = popover
+                    .native()
+                    .unwrap()
+                    .renderer()
+                    .unwrap()
+                    .render_texture(
+                        &node,
+                        Some(&gtk4::graphene::Rect::new(
+                            0.0,
+                            0.0,
+                            popover.width() as f32,
+                            popover.height() as f32,
+                        )),
                     );
-                    selectors.menu.popup();
-                    crate::ui::test_support::pump(std::time::Duration::from_millis(100));
-                    assert!(popover.is_mapped());
-                    let contents = popover.first_child().expect("native popover contents");
-                    assert_eq!(contents.css_name(), "contents");
-                    let point = contents
-                        .compute_point(
-                            &popover,
-                            &gtk4::graphene::Point::new(
-                                contents.width() as f32 / 2.0,
-                                (contents.height() - 8) as f32,
-                            ),
-                        )
-                        .unwrap();
-                    let snapshot = gtk4::Snapshot::new();
-                    gtk4::WidgetPaintable::new(Some(&popover)).snapshot(
-                        &snapshot,
-                        f64::from(popover.width()),
-                        f64::from(popover.height()),
-                    );
-                    let node = snapshot.to_node().expect("popover render node");
-                    let texture = popover
-                        .native()
-                        .unwrap()
-                        .renderer()
-                        .unwrap()
-                        .render_texture(
-                            &node,
-                            Some(&gtk4::graphene::Rect::new(
-                                0.0,
-                                0.0,
-                                popover.width() as f32,
-                                popover.height() as f32,
-                            )),
-                        );
-                    let mut downloader = gtk4::gdk::TextureDownloader::new(&texture);
-                    downloader.set_format(gtk4::gdk::MemoryFormat::R8g8b8a8);
-                    let (pixels, stride) = downloader.download_bytes();
-                    let x = (point.x() * texture.width() as f32 / popover.width() as f32) as usize;
-                    let y =
-                        (point.y() * texture.height() as f32 / popover.height() as f32) as usize;
-                    let offset = y * stride + x * 4;
-                    if let Some(directory) = std::env::var_os("SCENEDECK_THEME_CAPTURE_DIR") {
-                        let path = std::path::PathBuf::from(directory)
-                            .join(format!("obs-setup-{}.png", mode.as_str()));
-                        texture.save_to_png(path).unwrap();
-                    }
-                    let actual = &pixels[offset..offset + 3];
-                    assert!(
-                        actual.iter().zip(expected).all(|(a, e)| a.abs_diff(e) <= 1),
-                        "{mode:?} setup popover painted {actual:?}, expected theme card {expected:?}"
-                    );
+                let mut downloader = gtk4::gdk::TextureDownloader::new(&texture);
+                downloader.set_format(gtk4::gdk::MemoryFormat::R8g8b8a8);
+                let (pixels, stride) = downloader.download_bytes();
+                let x = (point.x() * texture.width() as f32 / popover.width() as f32) as usize;
+                let y = (point.y() * texture.height() as f32 / popover.height() as f32) as usize;
+                let offset = y * stride + x * 4;
+                if let Some(directory) = std::env::var_os("SCENEDECK_THEME_CAPTURE_DIR") {
+                    let path = std::path::PathBuf::from(directory)
+                        .join(format!("obs-setup-{}.png", mode.as_str()));
+                    texture.save_to_png(path).unwrap();
                 }
-                popover.popdown();
-                window.close();
-            },
-        );
+                let actual = &pixels[offset..offset + 3];
+                assert!(
+                    actual.iter().zip(expected).all(|(a, e)| a.abs_diff(e) <= 1),
+                    "{mode:?} setup popover painted {actual:?}, expected theme card {expected:?}"
+                );
+            }
+            popover.popdown();
+            window.close();
+        });
     }
 
     #[test]

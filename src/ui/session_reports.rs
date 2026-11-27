@@ -501,113 +501,109 @@ mod tests {
     #[test]
     #[ignore = "requires isolated GTK and temporary XDG files"]
     fn native_reports_snapshot_navigation_export_retry_and_narrow_layout() {
-        crate::ui::native_test!(
-            native_reports_snapshot_navigation_export_retry_and_narrow_layout,
-            || {
-                crate::infra::i18n::init(crate::domain::appearance::Language::Uk);
-                gtk4::Settings::default()
-                    .unwrap()
-                    .set_gtk_font_name(Some("Sans 22"));
-                let (nav, stack, _runtime, events) = navigation();
-                let parent = adw::Window::builder()
-                    .default_width(360)
-                    .default_height(600)
-                    .build();
-                parent.set_content(Some(&stack));
-                parent.present();
-                assert!(super::super::action_catalog::execute(
-                    &nav,
-                    &super::super::action_catalog::CatalogAction::Reports
-                ));
-                let dialog = window("reports-window");
-                dialog.set_default_size(360, 600);
-                pump(Duration::from_millis(100));
-                assert!(!find(&dialog, "reports-json").is_sensitive());
-                connect(&nav, "First");
-                let refresh = find(&dialog, "reports-refresh")
-                    .downcast::<Button>()
-                    .unwrap();
-                refresh.emit_clicked();
-                let title = find(&dialog, "reports-summary")
-                    .downcast::<Label>()
-                    .unwrap();
-                let text = find(&dialog, "reports-body").downcast::<Label>().unwrap();
-                assert!(title.text().contains("First"));
-                assert!(text.text().contains("<b>literal</b>"));
-                assert!(!text.uses_markup());
-                nav.state
-                    .borrow_mut()
-                    .reset_obs_session(ObsStatus::Disconnected);
-                connect(&nav, "Second");
-                assert!(
-                    title.text().contains("First"),
-                    "snapshot remains stable until refresh"
-                );
-                refresh.emit_clicked();
-                assert!(
-                    title.text().contains("First"),
-                    "refresh preserves the selected session"
-                );
-                find(&dialog, "reports-next")
-                    .downcast::<Button>()
-                    .unwrap()
-                    .emit_clicked();
-                assert!(title.text().contains("Second"));
-                find(&dialog, "reports-previous")
-                    .downcast::<Button>()
-                    .unwrap()
-                    .emit_clicked();
-                assert!(title.text().contains("First"));
-                assert!(dialog.measure(Orientation::Horizontal, -1).0 <= 360);
-                assert!(dialog.measure(Orientation::Vertical, 360).0 <= 600);
-                let document = {
-                    let state = nav.state.borrow();
-                    let report = state.reports.entries[0].clone();
-                    ReportDocument {
-                        bookmarks: report.bookmarks(&state.bookmarks.archive.entries),
-                        report,
-                    }
-                };
-                let path =
-                    crate::storage::xdg::bookmarks_path().with_file_name("report-custom.txt");
-                std::fs::create_dir_all(&path).unwrap();
-                let busy = Rc::new(Cell::new(false));
-                let status = label("");
-                export_to_path(
-                    path.clone(),
-                    document.clone(),
-                    Format::Json,
-                    status.clone(),
-                    busy.clone(),
-                );
-                assert!(pump_until(Duration::from_secs(4), || !busy.get()));
-                assert_eq!(EXPORT_FAILURES.with(|failures| failures.borrow().len()), 1);
-                assert_ne!(status.text(), fl!(LANGUAGE_LOADER, "reports-exporting"));
-                std::fs::remove_dir(&path).unwrap();
-                export_to_path(
-                    path.clone(),
-                    document,
-                    Format::Json,
-                    status.clone(),
-                    busy.clone(),
-                );
-                assert!(pump_until(Duration::from_secs(4), || !busy.get()));
-                assert!(EXPORT_FAILURES.with(|failures| failures.borrow().is_empty()));
-                let saved: ReportDocument =
-                    serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-                assert_eq!(saved.report.connection_id, "First");
-                assert_eq!(saved.bookmarks[0].name, "Topic one");
-                assert!(saved.report.ended_unix_ms.is_some());
-                assert!(
-                    events.try_iter().next().is_none(),
-                    "reports must not issue OBS commands"
-                );
-                dialog.close();
-                let before = title.text();
-                refresh.emit_clicked();
-                assert_eq!(title.text(), before);
-                parent.close();
-            }
-        );
+        crate::ui::native_test!(|| {
+            crate::infra::i18n::init(crate::domain::appearance::Language::Uk);
+            gtk4::Settings::default()
+                .unwrap()
+                .set_gtk_font_name(Some("Sans 22"));
+            let (nav, stack, _runtime, events) = navigation();
+            let parent = adw::Window::builder()
+                .default_width(360)
+                .default_height(600)
+                .build();
+            parent.set_content(Some(&stack));
+            parent.present();
+            assert!(super::super::action_catalog::execute(
+                &nav,
+                &super::super::action_catalog::CatalogAction::Reports
+            ));
+            let dialog = window("reports-window");
+            dialog.set_default_size(360, 600);
+            pump(Duration::from_millis(100));
+            assert!(!find(&dialog, "reports-json").is_sensitive());
+            connect(&nav, "First");
+            let refresh = find(&dialog, "reports-refresh")
+                .downcast::<Button>()
+                .unwrap();
+            refresh.emit_clicked();
+            let title = find(&dialog, "reports-summary")
+                .downcast::<Label>()
+                .unwrap();
+            let text = find(&dialog, "reports-body").downcast::<Label>().unwrap();
+            assert!(title.text().contains("First"));
+            assert!(text.text().contains("<b>literal</b>"));
+            assert!(!text.uses_markup());
+            nav.state
+                .borrow_mut()
+                .reset_obs_session(ObsStatus::Disconnected);
+            connect(&nav, "Second");
+            assert!(
+                title.text().contains("First"),
+                "snapshot remains stable until refresh"
+            );
+            refresh.emit_clicked();
+            assert!(
+                title.text().contains("First"),
+                "refresh preserves the selected session"
+            );
+            find(&dialog, "reports-next")
+                .downcast::<Button>()
+                .unwrap()
+                .emit_clicked();
+            assert!(title.text().contains("Second"));
+            find(&dialog, "reports-previous")
+                .downcast::<Button>()
+                .unwrap()
+                .emit_clicked();
+            assert!(title.text().contains("First"));
+            assert!(dialog.measure(Orientation::Horizontal, -1).0 <= 360);
+            assert!(dialog.measure(Orientation::Vertical, 360).0 <= 600);
+            let document = {
+                let state = nav.state.borrow();
+                let report = state.reports.entries[0].clone();
+                ReportDocument {
+                    bookmarks: report.bookmarks(&state.bookmarks.archive.entries),
+                    report,
+                }
+            };
+            let path = crate::storage::xdg::bookmarks_path().with_file_name("report-custom.txt");
+            std::fs::create_dir_all(&path).unwrap();
+            let busy = Rc::new(Cell::new(false));
+            let status = label("");
+            export_to_path(
+                path.clone(),
+                document.clone(),
+                Format::Json,
+                status.clone(),
+                busy.clone(),
+            );
+            assert!(pump_until(Duration::from_secs(4), || !busy.get()));
+            assert_eq!(EXPORT_FAILURES.with(|failures| failures.borrow().len()), 1);
+            assert_ne!(status.text(), fl!(LANGUAGE_LOADER, "reports-exporting"));
+            std::fs::remove_dir(&path).unwrap();
+            export_to_path(
+                path.clone(),
+                document,
+                Format::Json,
+                status.clone(),
+                busy.clone(),
+            );
+            assert!(pump_until(Duration::from_secs(4), || !busy.get()));
+            assert!(EXPORT_FAILURES.with(|failures| failures.borrow().is_empty()));
+            let saved: ReportDocument =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(saved.report.connection_id, "First");
+            assert_eq!(saved.bookmarks[0].name, "Topic one");
+            assert!(saved.report.ended_unix_ms.is_some());
+            assert!(
+                events.try_iter().next().is_none(),
+                "reports must not issue OBS commands"
+            );
+            dialog.close();
+            let before = title.text();
+            refresh.emit_clicked();
+            assert_eq!(title.text(), before);
+            parent.close();
+        });
     }
 }

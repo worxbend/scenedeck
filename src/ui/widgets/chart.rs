@@ -574,7 +574,7 @@ mod tests {
     #[test]
     #[ignore = "requires a native GTK display"]
     fn native_gauge_semantics_refresh_without_a_cairo_draw() {
-        crate::ui::native_test!(native_gauge_semantics_refresh_without_a_cairo_draw, || {
+        crate::ui::native_test!(|| {
             let congestion = Rc::new(Cell::new(0.1));
             let gauge = gauge({
                 let congestion = congestion.clone();
@@ -612,7 +612,7 @@ mod tests {
             let weak = gauge.widget().downgrade();
             drop(gauge);
             assert!(weak.upgrade().is_none());
-        },);
+        });
     }
 
     #[test]

@@ -1593,220 +1593,212 @@ mod tests {
     #[test]
     #[ignore = "requires isolated GTK navigation and synthetic output observations"]
     fn native_output_read_failure_cannot_replace_newer_evidence_or_invent_a_stop() {
-        crate::ui::native_test!(
-            native_output_read_failure_cannot_replace_newer_evidence_or_invent_a_stop,
-            || {
-                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
-                nav.state.borrow_mut().health.connected();
-                let start = Instant::now() - Duration::from_secs(60);
+        crate::ui::native_test!(|| {
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            nav.state.borrow_mut().health.connected();
+            let start = Instant::now() - Duration::from_secs(60);
+            apply_event(
+                &nav,
+                AppEvent::OutputStatusUpdated(
+                    OutputKind::Record,
+                    OutputStatus::active(),
+                    start + Duration::from_secs(20),
+                ),
+                None,
+            );
+            apply_event(
+                &nav,
+                AppEvent::RecordingStopObserved {
+                    path: "closed.mkv".into(),
+                    command_at: start,
+                },
+                None,
+            );
+            assert!(
+                nav.state.borrow().record_status.active,
+                "completed stop evidence does not replace current state"
+            );
+            assert_eq!(
+                nav.state.borrow().last_recording_path.as_deref(),
+                Some("closed.mkv")
+            );
+            for second in [10, 30] {
                 apply_event(
                     &nav,
-                    AppEvent::OutputStatusUpdated(
-                        OutputKind::Record,
-                        OutputStatus::active(),
-                        start + Duration::from_secs(20),
-                    ),
-                    None,
-                );
-                apply_event(
-                    &nav,
-                    AppEvent::RecordingStopObserved {
-                        path: "closed.mkv".into(),
-                        command_at: start,
+                    AppEvent::OutputReadbackFailed {
+                        kind: OutputKind::Record,
+                        error: crate::infra::error::AppError::Request("fixture unavailable".into()),
+                        observed_at: start + Duration::from_secs(second),
                     },
                     None,
                 );
-                assert!(
-                    nav.state.borrow().record_status.active,
-                    "completed stop evidence does not replace current state"
-                );
                 assert_eq!(
-                    nav.state.borrow().last_recording_path.as_deref(),
-                    Some("closed.mkv")
-                );
-                for second in [10, 30] {
-                    apply_event(
-                        &nav,
-                        AppEvent::OutputReadbackFailed {
-                            kind: OutputKind::Record,
-                            error: crate::infra::error::AppError::Request(
-                                "fixture unavailable".into(),
-                            ),
-                            observed_at: start + Duration::from_secs(second),
-                        },
-                        None,
-                    );
-                    assert_eq!(
-                        nav.state
-                            .borrow()
-                            .health
-                            .output_activity(OutputKind::Record),
-                        if second == 10 { Some(true) } else { None }
-                    );
-                    assert!(nav.state.borrow().health.alerts(Instant::now()).is_empty());
-                }
-                apply_event(
-                    &nav,
-                    AppEvent::OutputStatusUpdated(
-                        OutputKind::Record,
-                        OutputStatus::inactive(),
-                        start + Duration::from_secs(25),
-                    ),
-                    None,
-                );
-                assert_eq!(
-                    nav.state.borrow().record_status.state,
-                    crate::domain::output::OutputRunState::Unknown
+                    nav.state
+                        .borrow()
+                        .health
+                        .output_activity(OutputKind::Record),
+                    if second == 10 { Some(true) } else { None }
                 );
                 assert!(nav.state.borrow().health.alerts(Instant::now()).is_empty());
-                apply_event(
-                    &nav,
-                    AppEvent::OutputStatusUpdated(
-                        OutputKind::Record,
-                        OutputStatus::inactive(),
-                        start + Duration::from_secs(40),
-                    ),
-                    None,
-                );
-                assert_eq!(
-                    nav.state.borrow().health.alerts(Instant::now())[0].kind,
-                    crate::domain::health::AlertKind::RecordStopped
-                );
             }
-        );
+            apply_event(
+                &nav,
+                AppEvent::OutputStatusUpdated(
+                    OutputKind::Record,
+                    OutputStatus::inactive(),
+                    start + Duration::from_secs(25),
+                ),
+                None,
+            );
+            assert_eq!(
+                nav.state.borrow().record_status.state,
+                crate::domain::output::OutputRunState::Unknown
+            );
+            assert!(nav.state.borrow().health.alerts(Instant::now()).is_empty());
+            apply_event(
+                &nav,
+                AppEvent::OutputStatusUpdated(
+                    OutputKind::Record,
+                    OutputStatus::inactive(),
+                    start + Duration::from_secs(40),
+                ),
+                None,
+            );
+            assert_eq!(
+                nav.state.borrow().health.alerts(Instant::now())[0].kind,
+                crate::domain::health::AlertKind::RecordStopped
+            );
+        });
     }
 
     #[test]
     #[ignore = "requires a disposable GTK display; scratch files and synthetic identities"]
     fn native_scene_identity_reconciles_load_import_and_retired_editors() {
-        crate::ui::native_test!(
-            native_scene_identity_reconciles_load_import_and_retired_editors,
-            || {
-                use crate::domain::scene::{Scene, SceneInventory};
-                use crate::storage::registry::{write_registry_yaml_to_path, SceneRegistry};
-                use crate::storage::show_workspaces::RegistryTarget;
-                use crate::ui::persist::{import_registry, persist_registry};
-                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
-                let inventory = |name: &str, uuid: &str| SceneInventory {
-                    scenes: vec![Scene {
-                        id: name.into(),
-                        uuid: Some(uuid.into()),
-                    }],
-                    ..Default::default()
+        crate::ui::native_test!(|| {
+            use crate::domain::scene::{Scene, SceneInventory};
+            use crate::storage::registry::{write_registry_yaml_to_path, SceneRegistry};
+            use crate::storage::show_workspaces::RegistryTarget;
+            use crate::ui::persist::{import_registry, persist_registry};
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            let inventory = |name: &str, uuid: &str| SceneInventory {
+                scenes: vec![Scene {
+                    id: name.into(),
+                    uuid: Some(uuid.into()),
+                }],
+                ..Default::default()
+            };
+            let flush = || {
+                let done = Rc::new(RefCell::new(None));
+                crate::ui::background_io::flush_pending(Duration::from_secs(10), {
+                    let done = done.clone();
+                    move |result| *done.borrow_mut() = Some(result)
+                });
+                assert!(crate::ui::test_support::pump_until(
+                    Duration::from_secs(11),
+                    || done.borrow().is_some()
+                ));
+                assert_eq!(*done.borrow(), Some(Ok(())));
+            };
+            let mut stored = SceneRegistry::default();
+            stored.set_scene_icon("Camera", Some("original"));
+            stored.reconcile_scenes(&inventory("Camera", "original uuid"));
+            RegistryTarget::legacy().write(&stored).unwrap();
+            {
+                let mut state = nav.state.borrow_mut();
+                state.obs_status = ObsStatus::Connected {
+                    obs_version: "fixture".into(),
                 };
-                let flush = || {
-                    let done = Rc::new(RefCell::new(None));
-                    crate::ui::background_io::flush_pending(Duration::from_secs(10), {
-                        let done = done.clone();
-                        move |result| *done.borrow_mut() = Some(result)
-                    });
-                    assert!(crate::ui::test_support::pump_until(
-                        Duration::from_secs(11),
-                        || done.borrow().is_some()
-                    ));
-                    assert_eq!(*done.borrow(), Some(Ok(())));
-                };
-                let mut stored = SceneRegistry::default();
-                stored.set_scene_icon("Camera", Some("original"));
-                stored.reconcile_scenes(&inventory("Camera", "original uuid"));
-                RegistryTarget::legacy().write(&stored).unwrap();
-                {
-                    let mut state = nav.state.borrow_mut();
-                    state.obs_status = ObsStatus::Connected {
-                        obs_version: "fixture".into(),
-                    };
-                    state.connected_endpoint = Some("127.0.0.1:4455".into());
-                    state.connected_connection_id = Some("default".into());
-                }
-                apply_event(
-                    &nav,
-                    AppEvent::SceneCollectionsUpdated(crate::domain::obs::ObsNamedList {
-                        current: Some("Show".into()),
-                        items: vec!["Show".into()],
-                    }),
-                    None,
-                );
-                // Inventory arrived while the workspace file was still loading.
-                apply_event(
-                    &nav,
-                    AppEvent::SceneInventoryUpdated(inventory("Guest", "original uuid")),
-                    None,
-                );
-                flush();
-                let target = nav.state.borrow().show_registry.target.clone();
-                assert_eq!(target.read().unwrap().scene_icon("Guest"), Some("original"));
-                let old_editor = nav.registry_scoped();
-                apply_event(
-                    &nav,
-                    AppEvent::SceneInventoryUpdated(inventory("Guest", "replacement")),
-                    None,
-                );
-                assert!(!persist_registry(&old_editor, "retired editor", |r| r
-                    .set_scene_icon("Guest", Some("wrong"))));
-                flush();
-                assert_eq!(target.read().unwrap().scene_icon("Guest"), None);
-                assert_eq!(nav.state.borrow().registry.retained_scenes.len(), 1);
+                state.connected_endpoint = Some("127.0.0.1:4455".into());
+                state.connected_connection_id = Some("default".into());
+            }
+            apply_event(
+                &nav,
+                AppEvent::SceneCollectionsUpdated(crate::domain::obs::ObsNamedList {
+                    current: Some("Show".into()),
+                    items: vec!["Show".into()],
+                }),
+                None,
+            );
+            // Inventory arrived while the workspace file was still loading.
+            apply_event(
+                &nav,
+                AppEvent::SceneInventoryUpdated(inventory("Guest", "original uuid")),
+                None,
+            );
+            flush();
+            let target = nav.state.borrow().show_registry.target.clone();
+            assert_eq!(target.read().unwrap().scene_icon("Guest"), Some("original"));
+            let old_editor = nav.registry_scoped();
+            apply_event(
+                &nav,
+                AppEvent::SceneInventoryUpdated(inventory("Guest", "replacement")),
+                None,
+            );
+            assert!(!persist_registry(&old_editor, "retired editor", |r| r
+                .set_scene_icon("Guest", Some("wrong"))));
+            flush();
+            assert_eq!(target.read().unwrap().scene_icon("Guest"), None);
+            assert_eq!(nav.state.borrow().registry.retained_scenes.len(), 1);
 
-                let source = crate::storage::xdg::registry_path().with_extension("yaml");
-                let mut imported = SceneRegistry::default();
-                imported.set_scene_icon("Host", Some("portable"));
-                imported.reconcile_scenes(&inventory("Host", "foreign uuid"));
-                write_registry_yaml_to_path(&source, &imported).unwrap();
-                assert!(import_registry(&nav, source.clone(), |result| assert!(
-                    result.is_ok()
-                )));
-                apply_event(
-                    &nav,
-                    AppEvent::SceneInventoryUpdated(inventory("Host", "replacement")),
-                    None,
-                );
-                flush();
-                let disk = target.read().unwrap();
-                assert_eq!(disk.scene_icon("Host"), Some("portable"));
-                assert_eq!(disk.scene_uuids["Host"], "replacement");
-                assert_eq!(disk, nav.state.borrow().registry);
+            let source = crate::storage::xdg::registry_path().with_extension("yaml");
+            let mut imported = SceneRegistry::default();
+            imported.set_scene_icon("Host", Some("portable"));
+            imported.reconcile_scenes(&inventory("Host", "foreign uuid"));
+            write_registry_yaml_to_path(&source, &imported).unwrap();
+            assert!(import_registry(&nav, source.clone(), |result| assert!(
+                result.is_ok()
+            )));
+            apply_event(
+                &nav,
+                AppEvent::SceneInventoryUpdated(inventory("Host", "replacement")),
+                None,
+            );
+            flush();
+            let disk = target.read().unwrap();
+            assert_eq!(disk.scene_icon("Host"), Some("portable"));
+            assert_eq!(disk.scene_uuids["Host"], "replacement");
+            assert_eq!(disk, nav.state.borrow().registry);
 
-                // A failed import still releases deferred identity reconciliation.
-                std::fs::write(&source, "scenes: [invalid").unwrap();
-                assert!(import_registry(&nav, source, |result| assert!(
-                    result.is_err()
-                )));
-                apply_event(
-                    &nav,
-                    AppEvent::SceneInventoryUpdated(inventory("Presenter", "replacement")),
-                    None,
-                );
-                flush();
-                assert_eq!(
-                    target.read().unwrap().scene_icon("Presenter"),
-                    Some("portable")
-                );
-                // A retired OBS session cannot rewrite the selected workspace.
-                apply_event(
-                    &nav,
-                    AppEvent::SessionEvent {
-                        generation: u64::MAX,
-                        collection: Some(0),
-                        event: Box::new(AppEvent::SceneInventoryUpdated(inventory(
-                            "Wrong",
-                            "replacement",
-                        ))),
-                    },
-                    None,
-                );
-                flush();
-                assert_eq!(
-                    target.read().unwrap().scene_icon("Presenter"),
-                    Some("portable")
-                );
-            },
-        );
+            // A failed import still releases deferred identity reconciliation.
+            std::fs::write(&source, "scenes: [invalid").unwrap();
+            assert!(import_registry(&nav, source, |result| assert!(
+                result.is_err()
+            )));
+            apply_event(
+                &nav,
+                AppEvent::SceneInventoryUpdated(inventory("Presenter", "replacement")),
+                None,
+            );
+            flush();
+            assert_eq!(
+                target.read().unwrap().scene_icon("Presenter"),
+                Some("portable")
+            );
+            // A retired OBS session cannot rewrite the selected workspace.
+            apply_event(
+                &nav,
+                AppEvent::SessionEvent {
+                    generation: u64::MAX,
+                    collection: Some(0),
+                    event: Box::new(AppEvent::SceneInventoryUpdated(inventory(
+                        "Wrong",
+                        "replacement",
+                    ))),
+                },
+                None,
+            );
+            flush();
+            assert_eq!(
+                target.read().unwrap().scene_icon("Presenter"),
+                Some("portable")
+            );
+        });
     }
 
     #[test]
     #[ignore = "requires a disposable GTK display; scratch workspace files and synthetic OBS events"]
     fn native_workspace_switch_isolates_edits_and_imports() {
-        crate::ui::native_test!(native_workspace_switch_isolates_edits_and_imports, || {
+        crate::ui::native_test!(|| {
             use crate::controller::state::RegistryStatus;
             use crate::storage::registry::{write_registry_yaml_to_path, SceneRegistry};
             use crate::storage::show_workspaces::RegistryTarget;
@@ -1962,119 +1954,116 @@ mod tests {
                 nav.state.borrow().show_registry.status,
                 RegistryStatus::Ready
             );
-        },);
+        });
     }
 
     #[test]
     #[ignore = "requires a disposable GTK display; scratch registry and synthetic OBS events"]
     fn native_scene_rename_preserves_imported_curation_and_rejects_retired_scope() {
-        crate::ui::native_test!(
-            native_scene_rename_preserves_imported_curation_and_rejects_retired_scope,
-            || {
-                use crate::storage::registry::{
-                    read_registry, write_registry_yaml_to_path, SceneRegistry,
+        crate::ui::native_test!(|| {
+            use crate::storage::registry::{
+                read_registry, write_registry_yaml_to_path, SceneRegistry,
+            };
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            {
+                let mut state = nav.state.borrow_mut();
+                state.obs_status = ObsStatus::Connected {
+                    obs_version: "fixture".into(),
                 };
-                let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
-                {
-                    let mut state = nav.state.borrow_mut();
-                    state.obs_status = ObsStatus::Connected {
-                        obs_version: "fixture".into(),
-                    };
-                    state.scene_collections.current = Some("Show".into());
-                    state.registry.set_scene_icon("Camera", Some("camera"));
-                    state.registry.scene_order = vec!["Camera".into()];
-                }
-                let flush = || {
-                    let done = Rc::new(RefCell::new(None));
-                    super::super::background_io::flush_pending(Duration::from_secs(5), {
-                        let done = done.clone();
-                        move |result| *done.borrow_mut() = Some(result)
-                    });
-                    assert!(crate::ui::test_support::pump_until(
-                        Duration::from_secs(6),
-                        || done.borrow().is_some()
-                    ));
-                    assert_eq!(*done.borrow(), Some(Ok(())));
-                };
-                apply_event(
-                    &nav,
-                    AppEvent::SceneRenamed {
-                        uuid: None,
-                        old: "Camera".into(),
-                        new: "Guest".into(),
-                    },
-                    None,
-                );
-                flush();
-                assert_eq!(read_registry().scene_icon("Guest"), Some("camera"));
-                assert_eq!(read_registry().scene_order, ["Guest"]);
-
-                let source = crate::storage::xdg::registry_path().with_extension("yaml");
-                let mut imported = SceneRegistry::default();
-                imported.set_scene_icon("Guest", Some("imported"));
-                write_registry_yaml_to_path(&source, &imported).unwrap();
-                assert!(super::super::persist::import_registry(
-                    &nav,
-                    source.clone(),
-                    |result| assert!(result.is_ok())
+                state.scene_collections.current = Some("Show".into());
+                state.registry.set_scene_icon("Camera", Some("camera"));
+                state.registry.scene_order = vec!["Camera".into()];
+            }
+            let flush = || {
+                let done = Rc::new(RefCell::new(None));
+                super::super::background_io::flush_pending(Duration::from_secs(5), {
+                    let done = done.clone();
+                    move |result| *done.borrow_mut() = Some(result)
+                });
+                assert!(crate::ui::test_support::pump_until(
+                    Duration::from_secs(6),
+                    || done.borrow().is_some()
                 ));
-                apply_event(
-                    &nav,
-                    AppEvent::SceneRenamed {
-                        uuid: None,
-                        old: "Guest".into(),
-                        new: "Host".into(),
-                    },
-                    None,
-                );
-                assert_eq!(
-                    nav.state.borrow().registry.scene_icon("Guest"),
-                    Some("camera")
-                );
-                flush();
-                assert_eq!(
-                    nav.state.borrow().registry.scene_icon("Host"),
-                    Some("imported")
-                );
-                assert_eq!(read_registry().scene_icon("Host"), Some("imported"));
-                assert!(read_registry().scene_icon("Guest").is_none());
+                assert_eq!(*done.borrow(), Some(Ok(())));
+            };
+            apply_event(
+                &nav,
+                AppEvent::SceneRenamed {
+                    uuid: None,
+                    old: "Camera".into(),
+                    new: "Guest".into(),
+                },
+                None,
+            );
+            flush();
+            assert_eq!(read_registry().scene_icon("Guest"), Some("camera"));
+            assert_eq!(read_registry().scene_order, ["Guest"]);
 
-                apply_event(
-                    &nav,
-                    AppEvent::SessionEvent {
-                        generation: u64::MAX,
-                        collection: Some(0),
-                        event: Box::new(AppEvent::SceneRenamed {
-                            uuid: None,
-                            old: "Host".into(),
-                            new: "Wrong".into(),
-                        }),
-                    },
-                    None,
-                );
-                assert!(nav.state.borrow().registry.scene_icon("Wrong").is_none());
+            let source = crate::storage::xdg::registry_path().with_extension("yaml");
+            let mut imported = SceneRegistry::default();
+            imported.set_scene_icon("Guest", Some("imported"));
+            write_registry_yaml_to_path(&source, &imported).unwrap();
+            assert!(super::super::persist::import_registry(
+                &nav,
+                source.clone(),
+                |result| assert!(result.is_ok())
+            ));
+            apply_event(
+                &nav,
+                AppEvent::SceneRenamed {
+                    uuid: None,
+                    old: "Guest".into(),
+                    new: "Host".into(),
+                },
+                None,
+            );
+            assert_eq!(
+                nav.state.borrow().registry.scene_icon("Guest"),
+                Some("camera")
+            );
+            flush();
+            assert_eq!(
+                nav.state.borrow().registry.scene_icon("Host"),
+                Some("imported")
+            );
+            assert_eq!(read_registry().scene_icon("Host"), Some("imported"));
+            assert!(read_registry().scene_icon("Guest").is_none());
 
-                write_registry_yaml_to_path(&source, &read_registry()).unwrap();
-                assert!(super::super::persist::import_registry(
-                    &nav,
-                    source,
-                    |result| assert!(result.is_ok())
-                ));
-                apply_event(
-                    &nav,
-                    AppEvent::SceneRenamed {
+            apply_event(
+                &nav,
+                AppEvent::SessionEvent {
+                    generation: u64::MAX,
+                    collection: Some(0),
+                    event: Box::new(AppEvent::SceneRenamed {
                         uuid: None,
                         old: "Host".into(),
-                        new: "Retired".into(),
-                    },
-                    None,
-                );
-                nav.state.borrow_mut().invalidate_collection_runtime();
-                flush();
-                assert_eq!(read_registry().scene_icon("Host"), Some("imported"));
-                assert!(read_registry().scene_icon("Retired").is_none());
-            }
-        );
+                        new: "Wrong".into(),
+                    }),
+                },
+                None,
+            );
+            assert!(nav.state.borrow().registry.scene_icon("Wrong").is_none());
+
+            write_registry_yaml_to_path(&source, &read_registry()).unwrap();
+            assert!(super::super::persist::import_registry(
+                &nav,
+                source,
+                |result| assert!(result.is_ok())
+            ));
+            apply_event(
+                &nav,
+                AppEvent::SceneRenamed {
+                    uuid: None,
+                    old: "Host".into(),
+                    new: "Retired".into(),
+                },
+                None,
+            );
+            nav.state.borrow_mut().invalidate_collection_runtime();
+            flush();
+            assert_eq!(read_registry().scene_icon("Host"), Some("imported"));
+            assert!(read_registry().scene_icon("Retired").is_none());
+        });
     }
 
     #[test]
@@ -2106,709 +2095,691 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display; synthetic OBS events"]
     fn native_audio_events_and_background_reads_do_not_blink_pages() {
-        crate::ui::native_test!(
-            native_audio_events_and_background_reads_do_not_blink_pages,
-            || {
-                let (nav, stack, _runtime, _events) = crate::ui::test_support::navigation();
-                {
-                    let mut state = nav.state.borrow_mut();
-                    state.obs_status = ObsStatus::Connected {
-                        obs_version: "fixture".into(),
-                    };
-                    state.scene_collections.current = Some("Fixture".into());
-                    state.scene_inventory.scenes = vec![crate::domain::scene::Scene {
-                        uuid: None,
-                        id: "Main".into(),
-                    }];
-                    state.scene_inventory.current_id = Some("Main".into());
-                    state
-                        .registry
-                        .set_scene_role("Main", Some(crate::domain::role::SceneRole::Primary));
-                    state.workspace.observed_at = Some(Instant::now());
-                    state.workspace.snapshot = Some(Default::default());
-                    state.workspace.snapshot.as_mut().unwrap().studio.enabled = Some(false);
-                    state.set_topology_ready(Default::default());
-                    state.apply_active_audio(
-                        Some("Main".into()),
-                        Ok(vec![AudioInput::new("Mic".into(), false, 1.0, 0.0)]),
-                    );
-                    let target = crate::domain::operator_action::ActionTarget {
-                        name: "Mic".into(),
-                        uuid: None,
-                    };
-                    state.workspace.input_catalog =
-                        Some(Ok(vec![crate::domain::operator_input::InputIdentity {
-                            target: target.clone(),
-                            kind: "audio".into(),
-                        }]));
-                    state.workspace.audio = vec![AudioInput::new("Mic".into(), false, 1.0, 0.0)];
-                    state.registry.quick_actions =
-                        vec![crate::domain::operator_action::OperatorPin {
-                            action: crate::domain::operator_action::OperatorAction::ToggleMuted {
-                                target,
-                            },
-                            enabled: true,
-                        }];
-                    state.available_requests.push("SetInputMute".into());
-                }
-                let mut sources = WindowSources::default();
-                let (live, refreshers) = add_pages(&stack, &nav, &mut sources);
-                let (_, _, sidebar_controls) = sidebar::build(&nav);
-                let ui = EventUiContext {
-                    live: live.clone(),
-                    toast: adw::ToastOverlay::new(),
-                    refreshers,
-                    header_selectors: HeaderSelectors::build(&nav),
-                    sidebar_controls,
-                    streaming_chrome: Rc::new(RefCell::new(None)),
-                    status_bar: status_bar::build(),
+        crate::ui::native_test!(|| {
+            let (nav, stack, _runtime, _events) = crate::ui::test_support::navigation();
+            {
+                let mut state = nav.state.borrow_mut();
+                state.obs_status = ObsStatus::Connected {
+                    obs_version: "fixture".into(),
                 };
-                let inventory = nav.state.borrow().scene_inventory.clone();
-                crate::ui::pages::live::rebuild_scene_cards(&live, &inventory, &nav);
-                let card = live.scene_cards.borrow()[0].root.clone();
-                let pages: Vec<_> = [
-                    Page::Graph,
-                    Page::Doctor,
-                    Page::Inventory,
-                    Page::Settings,
-                    Page::Help,
-                ]
-                .into_iter()
-                .map(|page| {
-                    let widget = stack.child_by_name(page.id()).unwrap();
-                    let child = widget.first_child();
-                    (page, widget, child)
-                })
-                .collect();
-                let revision = nav.state.borrow().workspace.revision();
-                fn pin_state(root: &gtk4::Widget) -> Option<gtk4::Label> {
-                    if root.widget_name() == "quick-state-0" {
-                        return root.clone().downcast().ok();
-                    }
-                    let mut child = root.first_child();
-                    while let Some(widget) = child {
-                        child = widget.next_sibling();
-                        if let Some(found) = pin_state(&widget) {
-                            return Some(found);
-                        }
-                    }
-                    None
+                state.scene_collections.current = Some("Fixture".into());
+                state.scene_inventory.scenes = vec![crate::domain::scene::Scene {
+                    uuid: None,
+                    id: "Main".into(),
+                }];
+                state.scene_inventory.current_id = Some("Main".into());
+                state
+                    .registry
+                    .set_scene_role("Main", Some(crate::domain::role::SceneRole::Primary));
+                state.workspace.observed_at = Some(Instant::now());
+                state.workspace.snapshot = Some(Default::default());
+                state.workspace.snapshot.as_mut().unwrap().studio.enabled = Some(false);
+                state.set_topology_ready(Default::default());
+                state.apply_active_audio(
+                    Some("Main".into()),
+                    Ok(vec![AudioInput::new("Mic".into(), false, 1.0, 0.0)]),
+                );
+                let target = crate::domain::operator_action::ActionTarget {
+                    name: "Mic".into(),
+                    uuid: None,
+                };
+                state.workspace.input_catalog =
+                    Some(Ok(vec![crate::domain::operator_input::InputIdentity {
+                        target: target.clone(),
+                        kind: "audio".into(),
+                    }]));
+                state.workspace.audio = vec![AudioInput::new("Mic".into(), false, 1.0, 0.0)];
+                state.registry.quick_actions = vec![crate::domain::operator_action::OperatorPin {
+                    action: crate::domain::operator_action::OperatorAction::ToggleMuted { target },
+                    enabled: true,
+                }];
+                state.available_requests.push("SetInputMute".into());
+            }
+            let mut sources = WindowSources::default();
+            let (live, refreshers) = add_pages(&stack, &nav, &mut sources);
+            let (_, _, sidebar_controls) = sidebar::build(&nav);
+            let ui = EventUiContext {
+                live: live.clone(),
+                toast: adw::ToastOverlay::new(),
+                refreshers,
+                header_selectors: HeaderSelectors::build(&nav),
+                sidebar_controls,
+                streaming_chrome: Rc::new(RefCell::new(None)),
+                status_bar: status_bar::build(),
+            };
+            let inventory = nav.state.borrow().scene_inventory.clone();
+            crate::ui::pages::live::rebuild_scene_cards(&live, &inventory, &nav);
+            let card = live.scene_cards.borrow()[0].root.clone();
+            let pages: Vec<_> = [
+                Page::Graph,
+                Page::Doctor,
+                Page::Inventory,
+                Page::Settings,
+                Page::Help,
+            ]
+            .into_iter()
+            .map(|page| {
+                let widget = stack.child_by_name(page.id()).unwrap();
+                let child = widget.first_child();
+                (page, widget, child)
+            })
+            .collect();
+            let revision = nav.state.borrow().workspace.revision();
+            fn pin_state(root: &gtk4::Widget) -> Option<gtk4::Label> {
+                if root.widget_name() == "quick-state-0" {
+                    return root.clone().downcast().ok();
                 }
-                let pin_status = pin_state(live.root.upcast_ref()).unwrap();
-                for _ in 0..16 {
-                    apply_event(
-                        &nav,
-                        AppEvent::InputVolumeChanged {
-                            input: "Mic".into(),
-                            volume_mul: 0.5,
-                            volume_db: -6.0,
-                        },
-                        Some(&ui),
-                    );
-                    apply_event(
-                        &nav,
-                        AppEvent::InputMuteChanged {
-                            input: "Mic".into(),
-                            muted: true,
-                        },
-                        Some(&ui),
-                    );
-                    assert!(
-                        pin_status
-                            .label()
-                            .contains(&fl!(LANGUAGE_LOADER, "quick-muted")),
-                        "OBS mute echoes update the pin without waiting for a workspace poll"
-                    );
-                    assert!(
-                        !nav.state.borrow().workspace.dirty,
-                        "complete audio echoes must not invalidate unrelated controls"
-                    );
-                    assert_eq!(nav.state.borrow().workspace.revision(), revision);
-                    crate::ui::pages::live::rebuild_scene_cards(&live, &inventory, &nav);
-                    assert_eq!(live.scene_cards.borrow()[0].root, card);
-                    assert!(card.is_sensitive());
-                    for (page, widget, child) in &pages {
-                        nav.state.borrow_mut().current_page = *page;
-                        ui.refreshers.call_if_visible(&nav, *page);
-                        assert_eq!(
-                            widget.first_child(),
-                            *child,
-                            "unrelated update rebuilt {page:?}"
-                        );
+                let mut child = root.first_child();
+                while let Some(widget) = child {
+                    child = widget.next_sibling();
+                    if let Some(found) = pin_state(&widget) {
+                        return Some(found);
                     }
                 }
-                super::super::workspace::refresh(&nav);
-                assert!(nav.state.borrow().workspace.loading);
-                assert!(nav.state.borrow().workspace.can_control());
-                crate::ui::pages::live::rebuild_scene_cards(&live, &inventory, &nav);
-                assert!(
-                    card.is_sensitive(),
-                    "background refresh dimmed the entire scene wall"
-                );
-                nav.state.borrow_mut().workspace.observe_scene_controls();
-                nav.dispatch(AppCommand::SwitchPrimaryScene("Main".into()));
-                let first_sequence = nav.state.borrow().workspace.sequence;
-                assert_eq!(
-                    nav.state.borrow().workspace.pending_scene.as_deref(),
-                    Some("Main")
-                );
-                crate::ui::pages::live::rebuild_scene_cards(&live, &inventory, &nav);
-                assert!(
-                    card.is_sensitive(),
-                    "scene activation must not disable the scene wall"
-                );
-                nav.dispatch(AppCommand::SwitchPrimaryScene("Main".into()));
-                let next_sequence = nav.state.borrow().workspace.sequence;
-                assert!(
-                    next_sequence > first_sequence,
-                    "rapid clicks must reach the latest-wins queue"
-                );
-                let epoch = nav.state.borrow().workspace.epoch;
+                None
+            }
+            let pin_status = pin_state(live.root.upcast_ref()).unwrap();
+            for _ in 0..16 {
                 apply_event(
                     &nav,
-                    AppEvent::WorkspaceAcknowledged {
-                        epoch,
-                        sequence: first_sequence,
-                        result_id: None,
+                    AppEvent::InputVolumeChanged {
+                        input: "Mic".into(),
+                        volume_mul: 0.5,
+                        volume_db: -6.0,
+                    },
+                    Some(&ui),
+                );
+                apply_event(
+                    &nav,
+                    AppEvent::InputMuteChanged {
+                        input: "Mic".into(),
+                        muted: true,
                     },
                     Some(&ui),
                 );
                 assert!(
-                    nav.state.borrow().workspace.pending,
-                    "old acknowledgement cleared the newer action"
-                );
-                let epoch = nav.state.borrow().workspace.epoch;
-                apply_event(
-                    &nav,
-                    AppEvent::WorkspaceAcknowledged {
-                        epoch,
-                        sequence: next_sequence,
-                        result_id: None,
-                    },
-                    Some(&ui),
-                );
-                {
-                    // Complete the synthetic scene readback. Acknowledgement
-                    // alone must keep later global toggles queued.
-                    let mut state = nav.state.borrow_mut();
-                    state.workspace.observed_at = Some(Instant::now());
-                    state.workspace.loading = false;
-                    state.workspace.active_action = None;
-                    state.workspace.observe_global_controls();
-                }
-                super::super::workspace::act(
-                    &nav,
-                    crate::domain::control::ControlAction::SetStudioMode(true),
-                );
-                assert!(nav
-                    .state
-                    .borrow()
-                    .workspace
-                    .scene_control_observation
-                    .is_none());
-                let sequence = nav.state.borrow().workspace.sequence;
-                apply_event(
-                    &nav,
-                    AppEvent::WorkspaceAcknowledged {
-                        epoch,
-                        sequence,
-                        result_id: None,
-                    },
-                    Some(&ui),
+                    pin_status
+                        .label()
+                        .contains(&fl!(LANGUAGE_LOADER, "quick-muted")),
+                    "OBS mute echoes update the pin without waiting for a workspace poll"
                 );
                 assert!(
-                    nav.state.borrow().workspace.scene_action("Main").is_none(),
-                    "Studio mode acknowledgement is not a mode observation"
+                    !nav.state.borrow().workspace.dirty,
+                    "complete audio echoes must not invalidate unrelated controls"
                 );
-                apply_event(&nav, AppEvent::WorkspaceInvalidated, Some(&ui));
-                super::super::workspace::refresh(&nav);
-                assert!(nav.state.borrow().workspace.observed_at.is_none());
-                assert!(
-                    !nav.state.borrow().workspace.can_control(),
-                    "invalidated data became writable while reloading"
-                );
-                nav.state.borrow_mut().workspace.invalidate();
+                assert_eq!(nav.state.borrow().workspace.revision(), revision);
                 crate::ui::pages::live::rebuild_scene_cards(&live, &inventory, &nav);
-                assert!(!live.scene_cards.borrow()[0].root.is_sensitive());
-            },
-        );
+                assert_eq!(live.scene_cards.borrow()[0].root, card);
+                assert!(card.is_sensitive());
+                for (page, widget, child) in &pages {
+                    nav.state.borrow_mut().current_page = *page;
+                    ui.refreshers.call_if_visible(&nav, *page);
+                    assert_eq!(
+                        widget.first_child(),
+                        *child,
+                        "unrelated update rebuilt {page:?}"
+                    );
+                }
+            }
+            super::super::workspace::refresh(&nav);
+            assert!(nav.state.borrow().workspace.loading);
+            assert!(nav.state.borrow().workspace.can_control());
+            crate::ui::pages::live::rebuild_scene_cards(&live, &inventory, &nav);
+            assert!(
+                card.is_sensitive(),
+                "background refresh dimmed the entire scene wall"
+            );
+            nav.state.borrow_mut().workspace.observe_scene_controls();
+            nav.dispatch(AppCommand::SwitchPrimaryScene("Main".into()));
+            let first_sequence = nav.state.borrow().workspace.sequence;
+            assert_eq!(
+                nav.state.borrow().workspace.pending_scene.as_deref(),
+                Some("Main")
+            );
+            crate::ui::pages::live::rebuild_scene_cards(&live, &inventory, &nav);
+            assert!(
+                card.is_sensitive(),
+                "scene activation must not disable the scene wall"
+            );
+            nav.dispatch(AppCommand::SwitchPrimaryScene("Main".into()));
+            let next_sequence = nav.state.borrow().workspace.sequence;
+            assert!(
+                next_sequence > first_sequence,
+                "rapid clicks must reach the latest-wins queue"
+            );
+            let epoch = nav.state.borrow().workspace.epoch;
+            apply_event(
+                &nav,
+                AppEvent::WorkspaceAcknowledged {
+                    epoch,
+                    sequence: first_sequence,
+                    result_id: None,
+                },
+                Some(&ui),
+            );
+            assert!(
+                nav.state.borrow().workspace.pending,
+                "old acknowledgement cleared the newer action"
+            );
+            let epoch = nav.state.borrow().workspace.epoch;
+            apply_event(
+                &nav,
+                AppEvent::WorkspaceAcknowledged {
+                    epoch,
+                    sequence: next_sequence,
+                    result_id: None,
+                },
+                Some(&ui),
+            );
+            {
+                // Complete the synthetic scene readback. Acknowledgement
+                // alone must keep later global toggles queued.
+                let mut state = nav.state.borrow_mut();
+                state.workspace.observed_at = Some(Instant::now());
+                state.workspace.loading = false;
+                state.workspace.active_action = None;
+                state.workspace.observe_global_controls();
+            }
+            super::super::workspace::act(
+                &nav,
+                crate::domain::control::ControlAction::SetStudioMode(true),
+            );
+            assert!(nav
+                .state
+                .borrow()
+                .workspace
+                .scene_control_observation
+                .is_none());
+            let sequence = nav.state.borrow().workspace.sequence;
+            apply_event(
+                &nav,
+                AppEvent::WorkspaceAcknowledged {
+                    epoch,
+                    sequence,
+                    result_id: None,
+                },
+                Some(&ui),
+            );
+            assert!(
+                nav.state.borrow().workspace.scene_action("Main").is_none(),
+                "Studio mode acknowledgement is not a mode observation"
+            );
+            apply_event(&nav, AppEvent::WorkspaceInvalidated, Some(&ui));
+            super::super::workspace::refresh(&nav);
+            assert!(nav.state.borrow().workspace.observed_at.is_none());
+            assert!(
+                !nav.state.borrow().workspace.can_control(),
+                "invalidated data became writable while reloading"
+            );
+            nav.state.borrow_mut().workspace.invalidate();
+            crate::ui::pages::live::rebuild_scene_cards(&live, &inventory, &nav);
+            assert!(!live.scene_cards.borrow()[0].root.is_sensitive());
+        });
     }
 
     #[test]
     #[ignore = "requires a disposable GTK display; no OBS connection"]
     fn native_refresh_button_waits_for_new_data_before_redrawing() {
-        crate::ui::native_test!(
-            native_refresh_button_waits_for_new_data_before_redrawing,
-            || {
-                fn find(widget: &gtk4::Widget) -> Option<gtk4::Button> {
-                    if let Some(button) = widget.downcast_ref::<gtk4::Button>() {
-                        if button.icon_name().as_deref() == Some("view-refresh-symbolic") {
-                            return Some(button.clone());
-                        }
+        crate::ui::native_test!(|| {
+            fn find(widget: &gtk4::Widget) -> Option<gtk4::Button> {
+                if let Some(button) = widget.downcast_ref::<gtk4::Button>() {
+                    if button.icon_name().as_deref() == Some("view-refresh-symbolic") {
+                        return Some(button.clone());
                     }
-                    let mut child = widget.first_child();
-                    while let Some(widget) = child {
-                        if let Some(button) = find(&widget) {
-                            return Some(button);
-                        }
-                        child = widget.next_sibling();
-                    }
-                    None
                 }
-                let (nav, stack, _runtime, _events) = crate::ui::test_support::navigation();
-                nav.state.borrow_mut().current_page = Page::Graph;
-                let mut sources = WindowSources::default();
-                let (_live, _refreshers) = add_pages(&stack, &nav, &mut sources);
-                let app = adw::Application::builder()
-                    .application_id("io.github.worxbend.scenedeck.RefreshFixture")
-                    .flags(gio::ApplicationFlags::NON_UNIQUE)
-                    .build();
-                app.register(None::<&gio::Cancellable>).unwrap();
-                let window = adw::ApplicationWindow::builder()
-                    .application(&app)
-                    .content(&stack)
-                    .build();
-                let header = build_content_header(
-                    &window,
-                    &nav,
-                    &HeaderSelectors::build(&nav),
-                    &Rc::new(RefCell::new(None)),
-                );
-                stack.set_visible_child_name(Page::Graph.id());
-                window.present();
-                crate::ui::test_support::pump(Duration::from_millis(100));
-                let graph = stack.child_by_name(Page::Graph.id()).unwrap();
-                let content = graph.first_child().unwrap();
-                find(header.upcast_ref()).unwrap().emit_clicked();
-                assert_eq!(
-                    graph.first_child(),
-                    Some(content),
-                    "Refresh rebuilt old data before any readback"
-                );
-                window.destroy();
-            },
-        );
+                let mut child = widget.first_child();
+                while let Some(widget) = child {
+                    if let Some(button) = find(&widget) {
+                        return Some(button);
+                    }
+                    child = widget.next_sibling();
+                }
+                None
+            }
+            let (nav, stack, _runtime, _events) = crate::ui::test_support::navigation();
+            nav.state.borrow_mut().current_page = Page::Graph;
+            let mut sources = WindowSources::default();
+            let (_live, _refreshers) = add_pages(&stack, &nav, &mut sources);
+            let app = adw::Application::builder()
+                .application_id("io.github.worxbend.scenedeck.RefreshFixture")
+                .flags(gio::ApplicationFlags::NON_UNIQUE)
+                .build();
+            app.register(None::<&gio::Cancellable>).unwrap();
+            let window = adw::ApplicationWindow::builder()
+                .application(&app)
+                .content(&stack)
+                .build();
+            let header = build_content_header(
+                &window,
+                &nav,
+                &HeaderSelectors::build(&nav),
+                &Rc::new(RefCell::new(None)),
+            );
+            stack.set_visible_child_name(Page::Graph.id());
+            window.present();
+            crate::ui::test_support::pump(Duration::from_millis(100));
+            let graph = stack.child_by_name(Page::Graph.id()).unwrap();
+            let content = graph.first_child().unwrap();
+            find(header.upcast_ref()).unwrap().emit_clicked();
+            assert_eq!(
+                graph.first_child(),
+                Some(content),
+                "Refresh rebuilt old data before any readback"
+            );
+            window.destroy();
+        });
     }
 
     #[test]
     #[ignore = "requires a disposable GTK display; synthetic state, no OBS connection"]
     fn native_identical_inventory_readback_keeps_live_preview_paintables() {
-        crate::ui::native_test!(
-            native_identical_inventory_readback_keeps_live_preview_paintables,
-            || {
-                let (nav, stack, _runtime, _events) = crate::ui::test_support::navigation();
-                {
-                    let mut state = nav.state.borrow_mut();
-                    state.config.live.scene_previews = true;
-                    state.obs_status = ObsStatus::Connected {
-                        obs_version: "fixture".into(),
-                    };
-                    state.connected_endpoint = Some("fixture".into());
-                    state.scene_collections.current = Some("Fixture".into());
-                    state.available_requests = vec!["GetSourceScreenshot".into()];
-                    state.scene_inventory.scenes = vec![crate::domain::scene::Scene {
-                        uuid: None,
-                        id: "Main".into(),
-                    }];
-                    state.scene_inventory.current_id = Some("Main".into());
-                    state
-                        .registry
-                        .set_scene_role("Main", Some(crate::domain::role::SceneRole::Primary));
-                    state.workspace.observed_at = Some(std::time::Instant::now());
-                    state.workspace.snapshot = Some(Default::default());
-                }
-                let mut sources = WindowSources::default();
-                let (live, refreshers) = add_pages(&stack, &nav, &mut sources);
-                let (_, _, sidebar_controls) = sidebar::build(&nav);
-                let ui = EventUiContext {
-                    live: live.clone(),
-                    toast: adw::ToastOverlay::new(),
-                    refreshers,
-                    header_selectors: HeaderSelectors::build(&nav),
-                    sidebar_controls,
-                    streaming_chrome: Rc::new(RefCell::new(None)),
-                    status_bar: status_bar::build(),
+        crate::ui::native_test!(|| {
+            let (nav, stack, _runtime, _events) = crate::ui::test_support::navigation();
+            {
+                let mut state = nav.state.borrow_mut();
+                state.config.live.scene_previews = true;
+                state.obs_status = ObsStatus::Connected {
+                    obs_version: "fixture".into(),
                 };
-                let inventory = nav.state.borrow().scene_inventory.clone();
-                apply_event(
-                    &nav,
-                    AppEvent::SceneInventoryUpdated(inventory.clone()),
-                    Some(&ui),
-                );
-                stack.set_visible_child_name(Page::Live.id());
-                let window = gtk4::Window::builder()
-                    .default_width(900)
-                    .default_height(700)
-                    .child(&stack)
-                    .build();
-                super::super::previews::install(live.clone(), nav.clone());
-                window.present();
-                crate::ui::test_support::pump(Duration::from_millis(150));
-                let picture = live.scene_cards.borrow()[0].picture.clone();
-                let texture = gtk4::gdk::MemoryTexture::new(
-                    1,
-                    1,
-                    gtk4::gdk::MemoryFormat::R8g8b8a8,
-                    &glib::Bytes::from_owned(vec![255_u8, 255, 255, 255]),
-                    4,
-                );
-                picture.set_paintable(Some(&texture));
-                let paintable = picture.paintable().unwrap();
-                apply_event(&nav, AppEvent::SceneInventoryUpdated(inventory), Some(&ui));
-                assert_eq!(
-                    picture.paintable(),
-                    Some(paintable),
-                    "unchanged inventory blanked the existing preview"
-                );
-                apply_event(&nav, AppEvent::WorkspaceScopeChanging, Some(&ui));
-                assert!(
-                    picture.paintable().is_none(),
-                    "retired collection must still clear old previews"
-                );
-                window.destroy();
-            },
-        );
+                state.connected_endpoint = Some("fixture".into());
+                state.scene_collections.current = Some("Fixture".into());
+                state.available_requests = vec!["GetSourceScreenshot".into()];
+                state.scene_inventory.scenes = vec![crate::domain::scene::Scene {
+                    uuid: None,
+                    id: "Main".into(),
+                }];
+                state.scene_inventory.current_id = Some("Main".into());
+                state
+                    .registry
+                    .set_scene_role("Main", Some(crate::domain::role::SceneRole::Primary));
+                state.workspace.observed_at = Some(std::time::Instant::now());
+                state.workspace.snapshot = Some(Default::default());
+            }
+            let mut sources = WindowSources::default();
+            let (live, refreshers) = add_pages(&stack, &nav, &mut sources);
+            let (_, _, sidebar_controls) = sidebar::build(&nav);
+            let ui = EventUiContext {
+                live: live.clone(),
+                toast: adw::ToastOverlay::new(),
+                refreshers,
+                header_selectors: HeaderSelectors::build(&nav),
+                sidebar_controls,
+                streaming_chrome: Rc::new(RefCell::new(None)),
+                status_bar: status_bar::build(),
+            };
+            let inventory = nav.state.borrow().scene_inventory.clone();
+            apply_event(
+                &nav,
+                AppEvent::SceneInventoryUpdated(inventory.clone()),
+                Some(&ui),
+            );
+            stack.set_visible_child_name(Page::Live.id());
+            let window = gtk4::Window::builder()
+                .default_width(900)
+                .default_height(700)
+                .child(&stack)
+                .build();
+            super::super::previews::install(live.clone(), nav.clone());
+            window.present();
+            crate::ui::test_support::pump(Duration::from_millis(150));
+            let picture = live.scene_cards.borrow()[0].picture.clone();
+            let texture = gtk4::gdk::MemoryTexture::new(
+                1,
+                1,
+                gtk4::gdk::MemoryFormat::R8g8b8a8,
+                &glib::Bytes::from_owned(vec![255_u8, 255, 255, 255]),
+                4,
+            );
+            picture.set_paintable(Some(&texture));
+            let paintable = picture.paintable().unwrap();
+            apply_event(&nav, AppEvent::SceneInventoryUpdated(inventory), Some(&ui));
+            assert_eq!(
+                picture.paintable(),
+                Some(paintable),
+                "unchanged inventory blanked the existing preview"
+            );
+            apply_event(&nav, AppEvent::WorkspaceScopeChanging, Some(&ui));
+            assert!(
+                picture.paintable().is_none(),
+                "retired collection must still clear old previews"
+            );
+            window.destroy();
+        });
     }
 
     #[test]
     #[ignore = "requires a disposable GTK display; fake config/password, no OBS"]
     fn native_assembled_window_releases_shell_sources_while_stats_popout_survives() {
-        crate::ui::native_test!(
-            native_assembled_window_releases_shell_sources_while_stats_popout_survives,
-            || {
-                use crate::controller::dependencies::{
-                    AppConfigProvider, ControllerDependencies, ObsPasswordProvider,
-                };
-                use crate::storage::config::AppConfig;
-                struct NoServices;
-                impl AppConfigProvider for NoServices {
-                    fn load_config(&self) -> AppConfig {
-                        panic!("fixture must not read configuration")
+        crate::ui::native_test!(|| {
+            use crate::controller::dependencies::{
+                AppConfigProvider, ControllerDependencies, ObsPasswordProvider,
+            };
+            use crate::storage::config::AppConfig;
+            struct NoServices;
+            impl AppConfigProvider for NoServices {
+                fn load_config(&self) -> AppConfig {
+                    panic!("fixture must not read configuration")
+                }
+            }
+            impl ObsPasswordProvider for NoServices {
+                fn obs_password(
+                    &self,
+                    _connection_id: &str,
+                ) -> Result<Option<String>, crate::infra::error::AppError> {
+                    panic!("fixture must not access keyring")
+                }
+            }
+            fn find(
+                widget: &gtk4::Widget,
+                predicate: &impl Fn(&gtk4::Widget) -> bool,
+            ) -> Option<gtk4::Widget> {
+                if predicate(widget) {
+                    return Some(widget.clone());
+                }
+                let mut child = widget.first_child();
+                while let Some(widget) = child {
+                    child = widget.next_sibling();
+                    if let Some(found) = find(&widget, predicate) {
+                        return Some(found);
                     }
                 }
-                impl ObsPasswordProvider for NoServices {
-                    fn obs_password(
-                        &self,
-                        _connection_id: &str,
-                    ) -> Result<Option<String>, crate::infra::error::AppError> {
-                        panic!("fixture must not access keyring")
-                    }
-                }
-                fn find(
-                    widget: &gtk4::Widget,
-                    predicate: &impl Fn(&gtk4::Widget) -> bool,
-                ) -> Option<gtk4::Widget> {
-                    if predicate(widget) {
-                        return Some(widget.clone());
-                    }
-                    let mut child = widget.first_child();
-                    while let Some(widget) = child {
-                        child = widget.next_sibling();
-                        if let Some(found) = find(&widget, predicate) {
-                            return Some(found);
-                        }
-                    }
-                    None
-                }
-                let app = adw::Application::builder()
-                    .application_id("io.github.worxbend.scenedeck.ShellFixture")
-                    .flags(gio::ApplicationFlags::NON_UNIQUE)
-                    .build();
-                app.register(None::<&gio::Cancellable>).unwrap();
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap();
-                let (tx, rx) = mpsc::sync_channel(128);
-                let controller = Rc::new(RefCell::new(AppController::with_dependencies(
-                    runtime.handle().clone(),
-                    tx.clone(),
-                    ControllerDependencies::new(
-                        std::sync::Arc::new(NoServices),
-                        std::sync::Arc::new(NoServices),
-                    ),
-                )));
-                let weak_controller = Rc::downgrade(&controller);
-                let mut initial = app_state();
-                initial.config.onboarding.welcome_shown = true;
-                initial
-                    .scene_inventory
-                    .scenes
-                    .push(crate::domain::scene::Scene {
-                        uuid: None,
-                        id: "Fixture".into(),
-                    });
-                let state = Rc::new(RefCell::new(initial));
-                let window = build_main_window(&app, state.clone(), controller.clone(), rx);
-                crate::ui::test_support::pump(Duration::from_millis(120));
-                let stack = find(window.upcast_ref(), &|w| {
-                    w.has_css_class("scenedeck-content-stack")
-                })
-                .unwrap()
-                .downcast::<gtk4::Stack>()
+                None
+            }
+            let app = adw::Application::builder()
+                .application_id("io.github.worxbend.scenedeck.ShellFixture")
+                .flags(gio::ApplicationFlags::NON_UNIQUE)
+                .build();
+            app.register(None::<&gio::Cancellable>).unwrap();
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
                 .unwrap();
-                let split =
-                    find(window.upcast_ref(), &|w| w.is::<adw::NavigationSplitView>()).unwrap();
-                let stats = stack.child_by_name(Page::Stats.id()).unwrap();
-                stack.set_visible_child_name(Page::Stats.id());
-                let popout_button = find(&stats, &|w| {
-                    w.downcast_ref::<gtk4::Button>()
-                        .is_some_and(|b| b.icon_name().as_deref() == Some("window-new-symbolic"))
-                })
-                .unwrap()
-                .downcast::<gtk4::Button>()
-                .unwrap();
-                popout_button.emit_clicked();
-                crate::ui::test_support::pump(Duration::from_millis(80));
-                let popout = app
-                    .windows()
-                    .into_iter()
-                    .find(|w| w != window.upcast_ref::<gtk4::Window>())
-                    .expect("real Stats pop-out");
-                let weak_window = window.downgrade();
-                let weak_stack = stack.downgrade();
-                let weak_split = split.downgrade();
-                let live = stack.child_by_name(Page::Live.id()).unwrap().downgrade();
-                let status = find(window.upcast_ref(), &|w| {
-                    w.has_css_class("scenedeck-status-bar")
-                })
-                .expect("production status bar")
-                .downgrade();
-                let sources_page = stack.child_by_name(Page::Sources.id()).unwrap().downgrade();
-                drop((stack, split, stats, popout_button));
-                window.close();
-                let weak_state = Rc::downgrade(&state);
-                drop((window, state, controller));
-                crate::ui::test_support::pump(Duration::from_millis(250));
-                assert!(
-                    popout.is_visible(),
-                    "closing the shell must not close Stats"
-                );
-                assert!(
-                    weak_window.upgrade().is_none(),
-                    "application action retained shell"
-                );
-                assert!(weak_stack.upgrade().is_none(), "assembled stack retained");
-                assert!(
-                    weak_split.upgrade().is_none(),
-                    "split signal cycle retained shell"
-                );
-                assert!(live.upgrade().is_none(), "workspace source retained Live");
-                assert!(
-                    status.upgrade().is_none(),
-                    "output clock retained status bar"
-                );
-                weak_state.upgrade().unwrap().borrow_mut().apply_connected(
-                    crate::controller::event::ConnectionInfo {
-                        connection_id: "report-fixture".into(),
-                        endpoint: "fixture:4455".into(),
-                        obs_version: "fixture".into(),
-                        websocket_version: "5".into(),
-                        available_requests: Vec::new(),
-                        supported_image_formats: Vec::new(),
-                    },
-                );
-                let sample = crate::domain::stats::ObsStats {
-                    disk_space_mb: Some(1024.0),
-                    cpu_usage_percent: 41.0,
-                    memory_usage_mb: 512.0,
-                    configured_fps: Some(60.0),
-                    active_fps: 60.0,
-                    average_frame_render_time_ms: 2.0,
-                    render_skipped_frames: 0,
-                    render_total_frames: 60,
-                    output_skipped_frames: 0,
-                    output_total_frames: 60,
-                };
-                for cpu in [41.0, 42.0] {
-                    tx.try_send(AppEvent::SessionEvent {
-                        generation: 0,
-                        collection: Some(0),
-                        event: Box::new(AppEvent::Observation {
-                            revision: 1,
-                            event: Box::new(AppEvent::StatsUpdated {
-                                observed_at: std::time::Instant::now(),
-                                stats: crate::domain::stats::ObsStats {
-                                    cpu_usage_percent: cpu,
-                                    ..sample
-                                },
-                                bitrate_kbps: None,
-                                stream: None,
-                            }),
-                        }),
-                    })
-                    .expect("surviving Stats must keep the application receiver alive");
-                    crate::ui::test_support::pump(Duration::from_millis(80));
-                    let expected = fl!(
-                        LANGUAGE_LOADER,
-                        "stats-value-percent",
-                        value = format!("{cpu:.1}")
-                    );
-                    assert!(
-                        find(popout.upcast_ref(), &|w| w
-                            .downcast_ref::<gtk4::Label>()
-                            .is_some_and(|label| label.text() == expected))
-                        .is_some(),
-                        "post-shell sample was not rendered in Stats"
-                    );
-                }
+            let (tx, rx) = mpsc::sync_channel(128);
+            let controller = Rc::new(RefCell::new(AppController::with_dependencies(
+                runtime.handle().clone(),
+                tx.clone(),
+                ControllerDependencies::new(
+                    std::sync::Arc::new(NoServices),
+                    std::sync::Arc::new(NoServices),
+                ),
+            )));
+            let weak_controller = Rc::downgrade(&controller);
+            let mut initial = app_state();
+            initial.config.onboarding.welcome_shown = true;
+            initial
+                .scene_inventory
+                .scenes
+                .push(crate::domain::scene::Scene {
+                    uuid: None,
+                    id: "Fixture".into(),
+                });
+            let state = Rc::new(RefCell::new(initial));
+            let window = build_main_window(&app, state.clone(), controller.clone(), rx);
+            crate::ui::test_support::pump(Duration::from_millis(120));
+            let stack = find(window.upcast_ref(), &|w| {
+                w.has_css_class("scenedeck-content-stack")
+            })
+            .unwrap()
+            .downcast::<gtk4::Stack>()
+            .unwrap();
+            let split = find(window.upcast_ref(), &|w| w.is::<adw::NavigationSplitView>()).unwrap();
+            let stats = stack.child_by_name(Page::Stats.id()).unwrap();
+            stack.set_visible_child_name(Page::Stats.id());
+            let popout_button = find(&stats, &|w| {
+                w.downcast_ref::<gtk4::Button>()
+                    .is_some_and(|b| b.icon_name().as_deref() == Some("window-new-symbolic"))
+            })
+            .unwrap()
+            .downcast::<gtk4::Button>()
+            .unwrap();
+            popout_button.emit_clicked();
+            crate::ui::test_support::pump(Duration::from_millis(80));
+            let popout = app
+                .windows()
+                .into_iter()
+                .find(|w| w != window.upcast_ref::<gtk4::Window>())
+                .expect("real Stats pop-out");
+            let weak_window = window.downgrade();
+            let weak_stack = stack.downgrade();
+            let weak_split = split.downgrade();
+            let live = stack.child_by_name(Page::Live.id()).unwrap().downgrade();
+            let status = find(window.upcast_ref(), &|w| {
+                w.has_css_class("scenedeck-status-bar")
+            })
+            .expect("production status bar")
+            .downgrade();
+            let sources_page = stack.child_by_name(Page::Sources.id()).unwrap().downgrade();
+            drop((stack, split, stats, popout_button));
+            window.close();
+            let weak_state = Rc::downgrade(&state);
+            drop((window, state, controller));
+            crate::ui::test_support::pump(Duration::from_millis(250));
+            assert!(
+                popout.is_visible(),
+                "closing the shell must not close Stats"
+            );
+            assert!(
+                weak_window.upgrade().is_none(),
+                "application action retained shell"
+            );
+            assert!(weak_stack.upgrade().is_none(), "assembled stack retained");
+            assert!(
+                weak_split.upgrade().is_none(),
+                "split signal cycle retained shell"
+            );
+            assert!(live.upgrade().is_none(), "workspace source retained Live");
+            assert!(
+                status.upgrade().is_none(),
+                "output clock retained status bar"
+            );
+            weak_state.upgrade().unwrap().borrow_mut().apply_connected(
+                crate::controller::event::ConnectionInfo {
+                    connection_id: "report-fixture".into(),
+                    endpoint: "fixture:4455".into(),
+                    obs_version: "fixture".into(),
+                    websocket_version: "5".into(),
+                    available_requests: Vec::new(),
+                    supported_image_formats: Vec::new(),
+                },
+            );
+            let sample = crate::domain::stats::ObsStats {
+                disk_space_mb: Some(1024.0),
+                cpu_usage_percent: 41.0,
+                memory_usage_mb: 512.0,
+                configured_fps: Some(60.0),
+                active_fps: 60.0,
+                average_frame_render_time_ms: 2.0,
+                render_skipped_frames: 0,
+                render_total_frames: 60,
+                output_skipped_frames: 0,
+                output_total_frames: 60,
+            };
+            for cpu in [41.0, 42.0] {
                 tx.try_send(AppEvent::SessionEvent {
-                    generation: 1,
-                    collection: None,
-                    event: Box::new(AppEvent::StatsUpdated {
-                        observed_at: std::time::Instant::now(),
-                        stats: sample,
-                        bitrate_kbps: None,
-                        stream: None,
+                    generation: 0,
+                    collection: Some(0),
+                    event: Box::new(AppEvent::Observation {
+                        revision: 1,
+                        event: Box::new(AppEvent::StatsUpdated {
+                            observed_at: std::time::Instant::now(),
+                            stats: crate::domain::stats::ObsStats {
+                                cpu_usage_percent: cpu,
+                                ..sample
+                            },
+                            bitrate_kbps: None,
+                            stream: None,
+                        }),
                     }),
                 })
-                .unwrap();
+                .expect("surviving Stats must keep the application receiver alive");
                 crate::ui::test_support::pump(Duration::from_millis(80));
-                assert_eq!(
-                    weak_state.upgrade().unwrap().borrow().stats_history.len(),
-                    2,
-                    "closed-shell reconciliation must still reject replaced-session publications"
-                );
-                assert_eq!(weak_state.upgrade().unwrap().borrow().reports.entries.back().unwrap().samples_seen, 2, "reports collect accepted samples after shell closure and reject replaced-session measurements");
-                // Monitoring and its warning surface survive without a shell or an active Sources page.
-                {
-                    let state = weak_state.upgrade().unwrap();
-                    let mut state = state.borrow_mut();
-                    let fixture = crate::ui::action_catalog::tests::connected();
-                    state.obs_status = fixture.obs_status;
-                    state.scene_collections = fixture.scene_collections;
-                    state.connected_connection_id = Some("audio-fixture".into());
-                    state.connected_endpoint = Some("ws://fixture:4455".into());
-                    state.show_registry.target = state.desired_registry_target().unwrap();
-                    state.show_registry.status = crate::controller::state::RegistryStatus::Ready;
-                    state.workspace.audio = fixture.workspace.audio;
-                    state.workspace.input_catalog = fixture.workspace.input_catalog;
-                    state.workspace.observed_at = Some(Instant::now());
-                    state.workspace.dirty = false;
-                    state.registry.audio_alerts = vec![crate::domain::health::AudioRule {
-                        target: crate::domain::operator_action::ActionTarget {
-                            name: "Microphone".into(),
-                            uuid: Some("input-1".into()),
-                        },
-                        enabled: true,
-                        silence: true,
-                        clipping: true,
-                    }];
-                    assert!(state.observe_audio_health(Instant::now() - Duration::from_secs(2)));
-                }
-                for observed_at in [Instant::now() - Duration::from_secs(1), Instant::now()] {
-                    tx.try_send(AppEvent::InputLevelsUpdated {
-                        levels: vec![crate::domain::meter::InputLevels::from_mul(
-                            "Microphone".into(),
-                            &[[1.0; 3]],
-                        )],
-                        observed_at,
-                    })
-                    .unwrap();
-                    crate::ui::test_support::pump(Duration::from_millis(100));
-                }
-                crate::ui::test_support::pump(Duration::from_millis(300));
-                let health =
-                    find(popout.upcast_ref(), &|w| w.widget_name() == "health-alerts").unwrap();
-                assert!(
-                    health.is_visible(),
-                    "detached Stats must display new health incidents"
-                );
                 let expected = fl!(
                     LANGUAGE_LOADER,
-                    "health-audio-clipping",
-                    input = "Microphone"
+                    "stats-value-percent",
+                    value = format!("{cpu:.1}")
                 );
-                assert!(find(&health, &|w| w
-                    .downcast_ref::<gtk4::Label>()
-                    .is_some_and(|label| label.text().contains(&expected)))
-                .is_some());
-                drop(health);
-                tx.try_send(AppEvent::Disconnected).unwrap();
-                crate::ui::test_support::pump(Duration::from_millis(80));
-                assert!(matches!(
-                    weak_state.upgrade().unwrap().borrow().obs_status,
-                    ObsStatus::Disconnected
-                ));
-                assert!(weak_state.upgrade().unwrap().borrow().obs_stats.is_none());
                 assert!(
-                    weak_state
-                        .upgrade()
-                        .unwrap()
-                        .borrow()
-                        .reports
-                        .entries
-                        .back()
-                        .unwrap()
-                        .ended_unix_ms
-                        .is_some(),
-                    "disconnect finalizes the report with only detached Stats open"
+                    find(popout.upcast_ref(), &|w| w
+                        .downcast_ref::<gtk4::Label>()
+                        .is_some_and(|label| label.text() == expected))
+                    .is_some(),
+                    "post-shell sample was not rendered in Stats"
                 );
-                let weak_popout = popout.downgrade();
-                let weak_popout_content = popout
-                    .clone()
-                    .downcast::<adw::Window>()
+            }
+            tx.try_send(AppEvent::SessionEvent {
+                generation: 1,
+                collection: None,
+                event: Box::new(AppEvent::StatsUpdated {
+                    observed_at: std::time::Instant::now(),
+                    stats: sample,
+                    bitrate_kbps: None,
+                    stream: None,
+                }),
+            })
+            .unwrap();
+            crate::ui::test_support::pump(Duration::from_millis(80));
+            assert_eq!(
+                weak_state.upgrade().unwrap().borrow().stats_history.len(),
+                2,
+                "closed-shell reconciliation must still reject replaced-session publications"
+            );
+            assert_eq!(weak_state.upgrade().unwrap().borrow().reports.entries.back().unwrap().samples_seen, 2, "reports collect accepted samples after shell closure and reject replaced-session measurements");
+            // Monitoring and its warning surface survive without a shell or an active Sources page.
+            {
+                let state = weak_state.upgrade().unwrap();
+                let mut state = state.borrow_mut();
+                let fixture = crate::ui::action_catalog::tests::connected();
+                state.obs_status = fixture.obs_status;
+                state.scene_collections = fixture.scene_collections;
+                state.connected_connection_id = Some("audio-fixture".into());
+                state.connected_endpoint = Some("ws://fixture:4455".into());
+                state.show_registry.target = state.desired_registry_target().unwrap();
+                state.show_registry.status = crate::controller::state::RegistryStatus::Ready;
+                state.workspace.audio = fixture.workspace.audio;
+                state.workspace.input_catalog = fixture.workspace.input_catalog;
+                state.workspace.observed_at = Some(Instant::now());
+                state.workspace.dirty = false;
+                state.registry.audio_alerts = vec![crate::domain::health::AudioRule {
+                    target: crate::domain::operator_action::ActionTarget {
+                        name: "Microphone".into(),
+                        uuid: Some("input-1".into()),
+                    },
+                    enabled: true,
+                    silence: true,
+                    clipping: true,
+                }];
+                assert!(state.observe_audio_health(Instant::now() - Duration::from_secs(2)));
+            }
+            for observed_at in [Instant::now() - Duration::from_secs(1), Instant::now()] {
+                tx.try_send(AppEvent::InputLevelsUpdated {
+                    levels: vec![crate::domain::meter::InputLevels::from_mul(
+                        "Microphone".into(),
+                        &[[1.0; 3]],
+                    )],
+                    observed_at,
+                })
+                .unwrap();
+                crate::ui::test_support::pump(Duration::from_millis(100));
+            }
+            crate::ui::test_support::pump(Duration::from_millis(300));
+            let health =
+                find(popout.upcast_ref(), &|w| w.widget_name() == "health-alerts").unwrap();
+            assert!(
+                health.is_visible(),
+                "detached Stats must display new health incidents"
+            );
+            let expected = fl!(
+                LANGUAGE_LOADER,
+                "health-audio-clipping",
+                input = "Microphone"
+            );
+            assert!(find(&health, &|w| w
+                .downcast_ref::<gtk4::Label>()
+                .is_some_and(|label| label.text().contains(&expected)))
+            .is_some());
+            drop(health);
+            tx.try_send(AppEvent::Disconnected).unwrap();
+            crate::ui::test_support::pump(Duration::from_millis(80));
+            assert!(matches!(
+                weak_state.upgrade().unwrap().borrow().obs_status,
+                ObsStatus::Disconnected
+            ));
+            assert!(weak_state.upgrade().unwrap().borrow().obs_stats.is_none());
+            assert!(
+                weak_state
+                    .upgrade()
                     .unwrap()
-                    .content()
+                    .borrow()
+                    .reports
+                    .entries
+                    .back()
                     .unwrap()
-                    .downgrade();
-                popout.close();
-                drop(popout);
-                // Accepted saves may retain navigation until GTK publishes their completion.
-                let drained = Rc::new(std::cell::Cell::new(false));
-                crate::ui::background_io::flush_pending(Duration::from_secs(10), {
-                    let drained = drained.clone();
-                    move |outcome| {
-                        outcome.expect(
-                            "accepted saves must drain before checking controller lifetime",
-                        );
-                        drained.set(true);
-                    }
-                });
-                let deadline = Instant::now() + Duration::from_secs(15);
-                while !drained.get() {
-                    assert!(
-                        Instant::now() < deadline,
-                        "accepted-save publication deadline"
-                    );
-                    glib::MainContext::default().iteration(false);
-                    std::thread::yield_now();
+                    .ended_unix_ms
+                    .is_some(),
+                "disconnect finalizes the report with only detached Stats open"
+            );
+            let weak_popout = popout.downgrade();
+            let weak_popout_content = popout
+                .clone()
+                .downcast::<adw::Window>()
+                .unwrap()
+                .content()
+                .unwrap()
+                .downgrade();
+            popout.close();
+            drop(popout);
+            // Accepted saves may retain navigation until GTK publishes their completion.
+            let drained = Rc::new(std::cell::Cell::new(false));
+            crate::ui::background_io::flush_pending(Duration::from_secs(10), {
+                let drained = drained.clone();
+                move |outcome| {
+                    outcome.expect("accepted saves must drain before checking controller lifetime");
+                    drained.set(true);
                 }
+            });
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while !drained.get() {
                 assert!(
-                    sources_page.upgrade().is_none(),
-                    "Sources page retained shell"
+                    Instant::now() < deadline,
+                    "accepted-save publication deadline"
                 );
-                assert!(
-                    weak_popout.upgrade().is_none(),
-                    "closed Stats window retained"
-                );
-                assert!(
-                    weak_popout_content.upgrade().is_none(),
-                    "closed Stats content retained"
-                );
-                // Sources' media poll owns navigation, but only weakly reaches its root.
-                // Its one-second terminal tick is independent of the save barrier above.
-                // Require the root to be gone first, then give that source a bounded
-                // chance to return Break. A real navigation/widget cycle still fails.
-                let source_deadline = Instant::now() + Duration::from_secs(2);
-                while weak_controller.strong_count() != 0 && Instant::now() < source_deadline {
-                    glib::MainContext::default().iteration(false);
-                    std::thread::sleep(Duration::from_millis(2));
-                }
-                assert!(weak_controller.upgrade().is_none(), "closed shell/pop-out retained controller after saves and terminal source ticks drained");
-                assert!(
-                    weak_state.upgrade().is_none(),
-                    "application pump retained state after last window closed"
-                );
-                assert!(
-                    matches!(
-                        tx.try_send(AppEvent::GraphInvalidated),
-                        Err(mpsc::TrySendError::Disconnected(_))
-                    ),
-                    "last window removal must retire the application event receiver"
-                );
-            },
-        );
+                glib::MainContext::default().iteration(false);
+                std::thread::yield_now();
+            }
+            assert!(
+                sources_page.upgrade().is_none(),
+                "Sources page retained shell"
+            );
+            assert!(
+                weak_popout.upgrade().is_none(),
+                "closed Stats window retained"
+            );
+            assert!(
+                weak_popout_content.upgrade().is_none(),
+                "closed Stats content retained"
+            );
+            // Sources' media poll owns navigation, but only weakly reaches its root.
+            // Its one-second terminal tick is independent of the save barrier above.
+            // Require the root to be gone first, then give that source a bounded
+            // chance to return Break. A real navigation/widget cycle still fails.
+            let source_deadline = Instant::now() + Duration::from_secs(2);
+            while weak_controller.strong_count() != 0 && Instant::now() < source_deadline {
+                glib::MainContext::default().iteration(false);
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            assert!(weak_controller.upgrade().is_none(), "closed shell/pop-out retained controller after saves and terminal source ticks drained");
+            assert!(
+                weak_state.upgrade().is_none(),
+                "application pump retained state after last window closed"
+            );
+            assert!(
+                matches!(
+                    tx.try_send(AppEvent::GraphInvalidated),
+                    Err(mpsc::TrySendError::Disconnected(_))
+                ),
+                "last window removal must retire the application event receiver"
+            );
+        });
     }
 
     fn input(id: &str) -> AudioInput {

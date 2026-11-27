@@ -376,35 +376,32 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display"]
     fn native_navigation_does_not_retain_its_stack_or_sidebar() {
-        crate::ui::native_test!(
-            native_navigation_does_not_retain_its_stack_or_sidebar,
-            || {
-                use super::*;
-                let runtime = tokio::runtime::Runtime::new().unwrap();
-                let (tx, _rx) = std::sync::mpsc::sync_channel(1);
-                let controller = Rc::new(RefCell::new(AppController::new(
-                    runtime.handle().clone(),
-                    tx,
-                )));
-                let state = Rc::new(RefCell::new(AppState::new(
-                    Default::default(),
-                    Default::default(),
-                    None,
-                    None,
-                )));
-                let stack = Stack::new();
-                let list = ListBox::new();
-                let weak_stack = stack.downgrade();
-                let weak_list = list.downgrade();
-                let nav = NavigationContext::new(state, stack.clone(), controller);
-                nav.attach_sidebar(&list, &[Page::Live]);
-                drop(stack);
-                drop(list);
-                assert!(weak_stack.upgrade().is_none());
-                assert!(weak_list.upgrade().is_none());
-                nav.switch_to_page(Page::Live);
-            },
-        );
+        crate::ui::native_test!(|| {
+            use super::*;
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            let (tx, _rx) = std::sync::mpsc::sync_channel(1);
+            let controller = Rc::new(RefCell::new(AppController::new(
+                runtime.handle().clone(),
+                tx,
+            )));
+            let state = Rc::new(RefCell::new(AppState::new(
+                Default::default(),
+                Default::default(),
+                None,
+                None,
+            )));
+            let stack = Stack::new();
+            let list = ListBox::new();
+            let weak_stack = stack.downgrade();
+            let weak_list = list.downgrade();
+            let nav = NavigationContext::new(state, stack.clone(), controller);
+            nav.attach_sidebar(&list, &[Page::Live]);
+            drop(stack);
+            drop(list);
+            assert!(weak_stack.upgrade().is_none());
+            assert!(weak_list.upgrade().is_none());
+            nav.switch_to_page(Page::Live);
+        });
     }
 
     #[test]

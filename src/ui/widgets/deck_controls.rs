@@ -372,127 +372,124 @@ mod tests {
     #[test]
     #[ignore = "requires a disposable GTK display and isolated registry storage"]
     fn native_saved_decks_capture_drafts_and_reject_stale_selection_and_dialogs() {
-        crate::ui::native_test!(
-            native_saved_decks_capture_drafts_and_reject_stale_selection_and_dialogs,
-            || {
-                use crate::ui::test_support::{navigation, pump, pump_until};
-                use std::time::Duration;
-                let (nav, _stack, _runtime, _events) = navigation();
-                let root = build(&nav, || {});
-                let window = gtk4::Window::builder()
-                    .default_width(360)
-                    .child(&root)
-                    .build();
-                window.present();
-                pump(Duration::from_millis(80));
-                let search = find(root.upcast_ref(), "deck-search")
-                    .downcast::<gtk4::SearchEntry>()
-                    .unwrap();
-                let save = find(root.upcast_ref(), "deck-save")
-                    .downcast::<gtk4::Button>()
-                    .unwrap();
-                let reset = find(root.upcast_ref(), "deck-reset")
-                    .downcast::<gtk4::Button>()
-                    .unwrap();
-                // Reset must also clear a draft before the debounce fires.
-                search.set_text("uncommitted draft");
-                reset.emit_clicked();
-                assert_eq!(search.text(), "");
-                search.set_text("podcast guest");
-                save.emit_clicked();
-                let save_dialog = dialog();
-                assert!(!save_dialog.is_response_enabled("save"));
-                let name = save_dialog
-                    .extra_child()
-                    .unwrap()
-                    .downcast::<gtk4::Entry>()
-                    .unwrap();
-                let deck = "<b>Podcast & guest</b>";
-                name.set_text(deck);
-                assert!(save_dialog.is_response_enabled("save"));
-                save_dialog.response("save");
-                pump(Duration::from_millis(80));
-                assert_eq!(
-                    nav.state.borrow().registry.decks[deck].query,
-                    "podcast guest"
-                );
-                save.emit_clicked();
-                let duplicate = dialog();
-                duplicate
-                    .extra_child()
-                    .unwrap()
-                    .downcast::<gtk4::Entry>()
-                    .unwrap()
-                    .set_text(" <B>PODCAST & GUEST</B> ");
-                assert!(!duplicate.is_response_enabled("save"));
-                duplicate.response("cancel");
-                reset.emit_clicked();
-                let menu = find(root.upcast_ref(), "deck-menu")
-                    .downcast::<gtk4::MenuButton>()
-                    .unwrap();
-                menu.popup();
-                pump(Duration::from_millis(80));
-                let popup = menu.popover().unwrap();
-                let select = find(popup.upcast_ref(), &format!("deck-select-{deck}"))
-                    .downcast::<gtk4::Button>()
-                    .unwrap();
-                let label = select.child().unwrap().downcast::<gtk4::Label>().unwrap();
-                assert_eq!(label.text(), deck);
-                assert!(!label.uses_markup());
-                select.emit_clicked();
-                assert_eq!(search.text(), "podcast guest");
-                let remove = find(popup.upcast_ref(), &format!("deck-remove-{deck}"))
-                    .downcast::<gtk4::Button>()
-                    .unwrap();
-                remove.emit_clicked();
-                pump(Duration::from_millis(40));
-                assert!(!nav.state.borrow().registry.decks.contains_key(deck));
-                // An old menu item cannot select or delete a newly created view.
-                persist_registry(&nav, "replacement view", |registry| {
-                    registry.save_deck(
-                        deck,
-                        SceneFilter {
-                            query: "replacement".into(),
-                            favorites_only: true,
-                        },
-                    )
-                });
-                sync(root.upcast_ref());
-                reset.emit_clicked();
-                select.emit_clicked();
-                remove.emit_clicked();
-                assert_eq!(
-                    nav.state.borrow().registry.scene_filter,
-                    SceneFilter::default()
-                );
-                assert_eq!(nav.state.borrow().registry.decks[deck].query, "replacement");
-                save.emit_clicked();
-                let stale = dialog();
-                stale
-                    .extra_child()
-                    .unwrap()
-                    .downcast::<gtk4::Entry>()
-                    .unwrap()
-                    .set_text("Wrong workspace");
-                nav.state.borrow_mut().show_registry.generation += 1;
-                stale.response("save");
-                assert!(!nav
-                    .state
-                    .borrow()
-                    .registry
-                    .decks
-                    .contains_key("Wrong workspace"));
-                assert!(pump_until(Duration::from_secs(5), || {
-                    crate::ui::persist::registry_save_status()
-                        == crate::ui::persist::RegistrySaveStatus::Saved
-                }));
-                assert_eq!(
-                    crate::storage::registry::read_registry().decks[deck].query,
-                    "replacement"
-                );
-                window.set_child(gtk4::Widget::NONE);
-                window.destroy();
-            },
-        );
+        crate::ui::native_test!(|| {
+            use crate::ui::test_support::{navigation, pump, pump_until};
+            use std::time::Duration;
+            let (nav, _stack, _runtime, _events) = navigation();
+            let root = build(&nav, || {});
+            let window = gtk4::Window::builder()
+                .default_width(360)
+                .child(&root)
+                .build();
+            window.present();
+            pump(Duration::from_millis(80));
+            let search = find(root.upcast_ref(), "deck-search")
+                .downcast::<gtk4::SearchEntry>()
+                .unwrap();
+            let save = find(root.upcast_ref(), "deck-save")
+                .downcast::<gtk4::Button>()
+                .unwrap();
+            let reset = find(root.upcast_ref(), "deck-reset")
+                .downcast::<gtk4::Button>()
+                .unwrap();
+            // Reset must also clear a draft before the debounce fires.
+            search.set_text("uncommitted draft");
+            reset.emit_clicked();
+            assert_eq!(search.text(), "");
+            search.set_text("podcast guest");
+            save.emit_clicked();
+            let save_dialog = dialog();
+            assert!(!save_dialog.is_response_enabled("save"));
+            let name = save_dialog
+                .extra_child()
+                .unwrap()
+                .downcast::<gtk4::Entry>()
+                .unwrap();
+            let deck = "<b>Podcast & guest</b>";
+            name.set_text(deck);
+            assert!(save_dialog.is_response_enabled("save"));
+            save_dialog.response("save");
+            pump(Duration::from_millis(80));
+            assert_eq!(
+                nav.state.borrow().registry.decks[deck].query,
+                "podcast guest"
+            );
+            save.emit_clicked();
+            let duplicate = dialog();
+            duplicate
+                .extra_child()
+                .unwrap()
+                .downcast::<gtk4::Entry>()
+                .unwrap()
+                .set_text(" <B>PODCAST & GUEST</B> ");
+            assert!(!duplicate.is_response_enabled("save"));
+            duplicate.response("cancel");
+            reset.emit_clicked();
+            let menu = find(root.upcast_ref(), "deck-menu")
+                .downcast::<gtk4::MenuButton>()
+                .unwrap();
+            menu.popup();
+            pump(Duration::from_millis(80));
+            let popup = menu.popover().unwrap();
+            let select = find(popup.upcast_ref(), &format!("deck-select-{deck}"))
+                .downcast::<gtk4::Button>()
+                .unwrap();
+            let label = select.child().unwrap().downcast::<gtk4::Label>().unwrap();
+            assert_eq!(label.text(), deck);
+            assert!(!label.uses_markup());
+            select.emit_clicked();
+            assert_eq!(search.text(), "podcast guest");
+            let remove = find(popup.upcast_ref(), &format!("deck-remove-{deck}"))
+                .downcast::<gtk4::Button>()
+                .unwrap();
+            remove.emit_clicked();
+            pump(Duration::from_millis(40));
+            assert!(!nav.state.borrow().registry.decks.contains_key(deck));
+            // An old menu item cannot select or delete a newly created view.
+            persist_registry(&nav, "replacement view", |registry| {
+                registry.save_deck(
+                    deck,
+                    SceneFilter {
+                        query: "replacement".into(),
+                        favorites_only: true,
+                    },
+                )
+            });
+            sync(root.upcast_ref());
+            reset.emit_clicked();
+            select.emit_clicked();
+            remove.emit_clicked();
+            assert_eq!(
+                nav.state.borrow().registry.scene_filter,
+                SceneFilter::default()
+            );
+            assert_eq!(nav.state.borrow().registry.decks[deck].query, "replacement");
+            save.emit_clicked();
+            let stale = dialog();
+            stale
+                .extra_child()
+                .unwrap()
+                .downcast::<gtk4::Entry>()
+                .unwrap()
+                .set_text("Wrong workspace");
+            nav.state.borrow_mut().show_registry.generation += 1;
+            stale.response("save");
+            assert!(!nav
+                .state
+                .borrow()
+                .registry
+                .decks
+                .contains_key("Wrong workspace"));
+            assert!(pump_until(Duration::from_secs(5), || {
+                crate::ui::persist::registry_save_status()
+                    == crate::ui::persist::RegistrySaveStatus::Saved
+            }));
+            assert_eq!(
+                crate::storage::registry::read_registry().decks[deck].query,
+                "replacement"
+            );
+            window.set_child(gtk4::Widget::NONE);
+            window.destroy();
+        });
     }
 }

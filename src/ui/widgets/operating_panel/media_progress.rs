@@ -143,218 +143,215 @@ mod tests {
     #[test]
     #[ignore = "requires isolated GTK; synthetic media observations only"]
     fn native_media_progress_preserves_seek_drafts_and_marks_unavailable_timing() {
-        crate::ui::native_test!(
-            native_media_progress_preserves_seek_drafts_and_marks_unavailable_timing,
-            || {
-                use crate::controller::state::{ObsStatus, Page};
-                use crate::domain::control::{ControlSnapshot, SourceDetail};
-                use crate::ui::test_support::{navigation, pump};
-                use std::time::{Duration, Instant};
-                fn named(root: &gtk4::Widget, name: &str) -> gtk4::Widget {
-                    let mut found = None;
-                    super::super::visit(root, &mut |widget| {
-                        if widget.widget_name() == name {
-                            found = Some(widget.clone());
-                        }
-                    });
-                    found.expect(name)
-                }
-                let (nav, _stack, _runtime, _events) = navigation();
-                {
-                    let mut state = nav.state.borrow_mut();
-                    state.obs_status = ObsStatus::Connected {
-                        obs_version: "fixture".into(),
-                    };
-                    state.current_page = Page::Sources;
-                    state.scene_collections.current = Some("Fixture".into());
-                    state.available_requests = vec!["SetMediaInputCursor".into()];
-                    state.workspace.snapshot = Some(ControlSnapshot::default());
-                    state.workspace.selected_input = Some("Media".into());
-                    state.workspace.detail = Some(SourceDetail {
-                        input: "Media".into(),
-                        media: Some(MediaStatus {
-                            state: MediaState::Playing,
-                            duration_ms: Some(10_000),
-                            cursor_ms: Some(2_000),
-                        }),
-                        ..Default::default()
-                    });
-                }
-                let (page, refresh) = super::super::build(nav.clone());
-                let window = gtk4::Window::builder()
-                    .default_width(1100)
-                    .default_height(900)
-                    .child(&page)
-                    .build();
-                window.present();
-                pump(Duration::from_millis(100));
-                {
-                    let mut state = nav.state.borrow_mut();
-                    state.workspace.dirty = false;
-                    state.workspace.loading = false;
-                    state.workspace.observed_at = Some(Instant::now());
-                }
-                refresh();
-                pump(Duration::from_millis(100));
-                let progress = named(&page, "sources-media-progress")
-                    .downcast::<ProgressBar>()
-                    .unwrap();
-                let position = named(&page, "sources-media-position")
-                    .downcast::<Label>()
-                    .unwrap();
-                let remaining = named(&page, "sources-media-remaining")
-                    .downcast::<Label>()
-                    .unwrap();
-                let seek = named(&page, "control-focus-seek-position-Media")
-                    .downcast::<gtk4::SpinButton>()
-                    .unwrap();
-                assert!(progress.is_visible());
-                assert!((progress.fraction() - 0.2).abs() < 0.001);
-                assert!(position.label().contains("00:02"));
-                assert!(remaining.label().contains("00:08"));
-                assert!(seek.grab_focus());
-                seek.set_value(7.0);
-                seek.set_text("7");
-                assert_eq!(seek.text(), "7", "fixture uses the whole-second seek field");
-                let focus = gtk4::prelude::RootExt::focus(&window).unwrap();
-                let sequence = nav.state.borrow().workspace.sequence;
-                for state in [
-                    MediaState::Playing,
-                    MediaState::Paused,
-                    MediaState::Buffering,
-                ] {
-                    {
-                        let mut app = nav.state.borrow_mut();
-                        let media = app
-                            .workspace
-                            .detail
-                            .as_mut()
-                            .unwrap()
-                            .media
-                            .as_mut()
-                            .unwrap();
-                        media.state = state;
-                        media.cursor_ms = Some(3_000);
-                    }
-                    refresh();
-                    assert_eq!(
-                        named(&page, "sources-media-progress"),
-                        progress.clone().upcast::<gtk4::Widget>()
-                    );
-                    assert_eq!(gtk4::prelude::RootExt::focus(&window).unwrap(), focus);
-                    assert_eq!(seek.text(), "7");
-                    assert!((progress.fraction() - 0.3).abs() < 0.001);
-                    assert!(position.label().contains("00:03"));
-                    assert!(remaining.label().contains("00:07"));
-                }
-                for cursor in [None, Some(-1), Some(10_001)] {
-                    nav.state
-                        .borrow_mut()
-                        .workspace
-                        .detail
-                        .as_mut()
-                        .unwrap()
-                        .media
-                        .as_mut()
-                        .unwrap()
-                        .cursor_ms = cursor;
-                    refresh();
-                    assert!(!progress.is_visible());
-                    assert!(position
-                        .label()
-                        .contains(&fl!(LANGUAGE_LOADER, "media-time-unavailable")));
-                    assert!(remaining
-                        .label()
-                        .contains(&fl!(LANGUAGE_LOADER, "media-time-unavailable")));
-                    assert_eq!(seek.text(), "7");
-                }
-                {
-                    let mut state = nav.state.borrow_mut();
-                    state
-                        .workspace
-                        .detail
-                        .as_mut()
-                        .unwrap()
-                        .media
-                        .as_mut()
-                        .unwrap()
-                        .cursor_ms = Some(3_000);
-                    state.workspace.observed_at = Some(Instant::now() - Duration::from_secs(40));
-                }
-                refresh();
-                assert!(!progress.is_visible());
-                assert!(!named(&page, "control-focus-seek-Media").is_sensitive());
-                assert_eq!(seek.text(), "7");
-                assert_eq!(
-                    nav.state.borrow().workspace.sequence,
-                    sequence,
-                    "readouts must never dispatch a seek"
-                );
-                {
-                    let mut state = nav.state.borrow_mut();
-                    state.workspace.observed_at = Some(Instant::now());
-                    state
-                        .workspace
-                        .detail
-                        .as_mut()
-                        .unwrap()
-                        .media
-                        .as_mut()
-                        .unwrap()
-                        .duration_ms = None;
-                }
-                refresh();
-                let duration = named(&page, "sources-media-duration")
-                    .downcast::<Label>()
-                    .unwrap();
-                assert!(duration
-                    .label()
-                    .contains(&fl!(LANGUAGE_LOADER, "media-duration-unavailable")));
-                assert!(named(&page, "sources-media-position")
-                    .downcast::<Label>()
-                    .unwrap()
-                    .label()
-                    .contains("00:03"));
-                assert!(!named(&page, "sources-media-progress").is_visible());
-                window.close();
-
-                // The same readout fits narrow layouts with large text and long times.
-                gtk4::Settings::default()
-                    .unwrap()
-                    .set_gtk_font_name(Some("Sans 22"));
-                let readout = build();
-                update(
-                    &readout,
-                    Some(&MediaStatus {
-                        state: MediaState::Paused,
-                        duration_ms: Some(360_000_000),
-                        cursor_ms: Some(36_000_000),
-                    }),
-                    true,
-                );
-                let window = gtk4::Window::builder()
-                    .default_width(320)
-                    .default_height(600)
-                    .child(&readout)
-                    .build();
-                window.present();
-                pump(Duration::from_millis(100));
-                assert!(
-                    window.width() <= 320,
-                    "readout must not force a wider window"
-                );
-                super::super::visit(readout.upcast_ref(), &mut |widget| {
-                    if widget.is_visible() {
-                        if let Some(bounds) = widget.compute_bounds(&readout) {
-                            assert!(
-                                bounds.x() >= -1.0
-                                    && bounds.x() + bounds.width() <= readout.width() as f32 + 1.0
-                            );
-                        }
+        crate::ui::native_test!(|| {
+            use crate::controller::state::{ObsStatus, Page};
+            use crate::domain::control::{ControlSnapshot, SourceDetail};
+            use crate::ui::test_support::{navigation, pump};
+            use std::time::{Duration, Instant};
+            fn named(root: &gtk4::Widget, name: &str) -> gtk4::Widget {
+                let mut found = None;
+                super::super::visit(root, &mut |widget| {
+                    if widget.widget_name() == name {
+                        found = Some(widget.clone());
                     }
                 });
-                window.close();
-            },
-        );
+                found.expect(name)
+            }
+            let (nav, _stack, _runtime, _events) = navigation();
+            {
+                let mut state = nav.state.borrow_mut();
+                state.obs_status = ObsStatus::Connected {
+                    obs_version: "fixture".into(),
+                };
+                state.current_page = Page::Sources;
+                state.scene_collections.current = Some("Fixture".into());
+                state.available_requests = vec!["SetMediaInputCursor".into()];
+                state.workspace.snapshot = Some(ControlSnapshot::default());
+                state.workspace.selected_input = Some("Media".into());
+                state.workspace.detail = Some(SourceDetail {
+                    input: "Media".into(),
+                    media: Some(MediaStatus {
+                        state: MediaState::Playing,
+                        duration_ms: Some(10_000),
+                        cursor_ms: Some(2_000),
+                    }),
+                    ..Default::default()
+                });
+            }
+            let (page, refresh) = super::super::build(nav.clone());
+            let window = gtk4::Window::builder()
+                .default_width(1100)
+                .default_height(900)
+                .child(&page)
+                .build();
+            window.present();
+            pump(Duration::from_millis(100));
+            {
+                let mut state = nav.state.borrow_mut();
+                state.workspace.dirty = false;
+                state.workspace.loading = false;
+                state.workspace.observed_at = Some(Instant::now());
+            }
+            refresh();
+            pump(Duration::from_millis(100));
+            let progress = named(&page, "sources-media-progress")
+                .downcast::<ProgressBar>()
+                .unwrap();
+            let position = named(&page, "sources-media-position")
+                .downcast::<Label>()
+                .unwrap();
+            let remaining = named(&page, "sources-media-remaining")
+                .downcast::<Label>()
+                .unwrap();
+            let seek = named(&page, "control-focus-seek-position-Media")
+                .downcast::<gtk4::SpinButton>()
+                .unwrap();
+            assert!(progress.is_visible());
+            assert!((progress.fraction() - 0.2).abs() < 0.001);
+            assert!(position.label().contains("00:02"));
+            assert!(remaining.label().contains("00:08"));
+            assert!(seek.grab_focus());
+            seek.set_value(7.0);
+            seek.set_text("7");
+            assert_eq!(seek.text(), "7", "fixture uses the whole-second seek field");
+            let focus = gtk4::prelude::RootExt::focus(&window).unwrap();
+            let sequence = nav.state.borrow().workspace.sequence;
+            for state in [
+                MediaState::Playing,
+                MediaState::Paused,
+                MediaState::Buffering,
+            ] {
+                {
+                    let mut app = nav.state.borrow_mut();
+                    let media = app
+                        .workspace
+                        .detail
+                        .as_mut()
+                        .unwrap()
+                        .media
+                        .as_mut()
+                        .unwrap();
+                    media.state = state;
+                    media.cursor_ms = Some(3_000);
+                }
+                refresh();
+                assert_eq!(
+                    named(&page, "sources-media-progress"),
+                    progress.clone().upcast::<gtk4::Widget>()
+                );
+                assert_eq!(gtk4::prelude::RootExt::focus(&window).unwrap(), focus);
+                assert_eq!(seek.text(), "7");
+                assert!((progress.fraction() - 0.3).abs() < 0.001);
+                assert!(position.label().contains("00:03"));
+                assert!(remaining.label().contains("00:07"));
+            }
+            for cursor in [None, Some(-1), Some(10_001)] {
+                nav.state
+                    .borrow_mut()
+                    .workspace
+                    .detail
+                    .as_mut()
+                    .unwrap()
+                    .media
+                    .as_mut()
+                    .unwrap()
+                    .cursor_ms = cursor;
+                refresh();
+                assert!(!progress.is_visible());
+                assert!(position
+                    .label()
+                    .contains(&fl!(LANGUAGE_LOADER, "media-time-unavailable")));
+                assert!(remaining
+                    .label()
+                    .contains(&fl!(LANGUAGE_LOADER, "media-time-unavailable")));
+                assert_eq!(seek.text(), "7");
+            }
+            {
+                let mut state = nav.state.borrow_mut();
+                state
+                    .workspace
+                    .detail
+                    .as_mut()
+                    .unwrap()
+                    .media
+                    .as_mut()
+                    .unwrap()
+                    .cursor_ms = Some(3_000);
+                state.workspace.observed_at = Some(Instant::now() - Duration::from_secs(40));
+            }
+            refresh();
+            assert!(!progress.is_visible());
+            assert!(!named(&page, "control-focus-seek-Media").is_sensitive());
+            assert_eq!(seek.text(), "7");
+            assert_eq!(
+                nav.state.borrow().workspace.sequence,
+                sequence,
+                "readouts must never dispatch a seek"
+            );
+            {
+                let mut state = nav.state.borrow_mut();
+                state.workspace.observed_at = Some(Instant::now());
+                state
+                    .workspace
+                    .detail
+                    .as_mut()
+                    .unwrap()
+                    .media
+                    .as_mut()
+                    .unwrap()
+                    .duration_ms = None;
+            }
+            refresh();
+            let duration = named(&page, "sources-media-duration")
+                .downcast::<Label>()
+                .unwrap();
+            assert!(duration
+                .label()
+                .contains(&fl!(LANGUAGE_LOADER, "media-duration-unavailable")));
+            assert!(named(&page, "sources-media-position")
+                .downcast::<Label>()
+                .unwrap()
+                .label()
+                .contains("00:03"));
+            assert!(!named(&page, "sources-media-progress").is_visible());
+            window.close();
+
+            // The same readout fits narrow layouts with large text and long times.
+            gtk4::Settings::default()
+                .unwrap()
+                .set_gtk_font_name(Some("Sans 22"));
+            let readout = build();
+            update(
+                &readout,
+                Some(&MediaStatus {
+                    state: MediaState::Paused,
+                    duration_ms: Some(360_000_000),
+                    cursor_ms: Some(36_000_000),
+                }),
+                true,
+            );
+            let window = gtk4::Window::builder()
+                .default_width(320)
+                .default_height(600)
+                .child(&readout)
+                .build();
+            window.present();
+            pump(Duration::from_millis(100));
+            assert!(
+                window.width() <= 320,
+                "readout must not force a wider window"
+            );
+            super::super::visit(readout.upcast_ref(), &mut |widget| {
+                if widget.is_visible() {
+                    if let Some(bounds) = widget.compute_bounds(&readout) {
+                        assert!(
+                            bounds.x() >= -1.0
+                                && bounds.x() + bounds.width() <= readout.width() as f32 + 1.0
+                        );
+                    }
+                }
+            });
+            window.close();
+        });
     }
 }

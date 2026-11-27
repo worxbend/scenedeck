@@ -44,7 +44,12 @@ cargo test --workspace --all-features infra::i18n::tests::every_shipped_locale_p
 # Native GTK tests; needs xvfb-run and dbus-run-session. Each test gets its
 # own process, display and session bus. Never run them with plain cargo.
 python3 tools/test-native.py
+python3 tools/test-native.py --filter mixer   # subset by test-path substring
 ```
+
+A native test's fn name starts with `native_` and its body goes in
+`crate::ui::native_test!(|| { ... })`; the macro derives the test path, so
+moves and renames need no other edit.
 
 Tests are inline `#[cfg(test)] mod tests` blocks; there is no `tests/`
 directory. CI also runs `cargo audit` and `cargo deny check advisories bans
