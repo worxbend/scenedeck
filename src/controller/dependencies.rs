@@ -72,16 +72,9 @@ impl ObsPasswordProvider for KeyringObsPasswordProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::controller::test_support::deps::StaticConfigProvider;
     use crate::domain::appearance::{ThemeMode, ThemePreference};
     use crate::storage::config::{LiveConfig, ObsConfig};
-
-    struct StaticConfigProvider(AppConfig);
-
-    impl AppConfigProvider for StaticConfigProvider {
-        fn load_config(&self) -> AppConfig {
-            self.0.clone()
-        }
-    }
 
     struct StaticPasswordProvider(Option<String>);
 

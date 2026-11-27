@@ -200,13 +200,10 @@ impl AppState {
 mod tests {
     use super::*;
     use crate::{
-        controller::{event::ConnectionInfo, state::ObsStatus},
+        controller::{event::ConnectionInfo, state::ObsStatus, test_support::state::app_state},
         domain::{session_report::HistoryPolicy, workflow::ActivityOrigin},
     };
 
-    fn state() -> AppState {
-        AppState::new(Default::default(), Default::default(), None, None)
-    }
     fn connect(state: &mut AppState, name: &str) {
         state.apply_connected(ConnectionInfo {
             connection_id: name.into(),
@@ -243,7 +240,7 @@ mod tests {
 
     #[test]
     fn enabling_saves_current_and_future_sessions_and_disabling_keeps_saved_snapshots() {
-        let mut state = state();
+        let mut state = app_state();
         connect(&mut state, "earlier");
         state.reset_obs_session(ObsStatus::Disconnected);
         connect(&mut state, "current");
@@ -283,12 +280,12 @@ mod tests {
 
     #[test]
     fn reload_marks_incomplete_sessions_without_inventing_end_time_and_preserves_local_intent() {
-        let mut old = state();
+        let mut old = app_state();
         old.configure_report_history(true, 3);
         connect(&mut old, "old");
         old.stage_report_history();
         let disk = old.report_history.archive.clone();
-        let mut new = state();
+        let mut new = app_state();
         new.load_report_history(Ok(disk.clone()));
         assert!(new.report_history.archive.entries[0].interrupted);
         assert_eq!(new.report_history.archive.entries[0].ended_unix_ms, None);
@@ -310,7 +307,7 @@ mod tests {
 
     #[test]
     fn clear_survives_reload_and_does_not_resave_the_current_connection() {
-        let mut state = state();
+        let mut state = app_state();
         state.configure_report_history(true, 3);
         connect(&mut state, "current");
         state.stage_report_history();

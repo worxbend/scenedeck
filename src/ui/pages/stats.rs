@@ -1023,7 +1023,7 @@ mod tests {
 
     #[test]
     fn configured_target_comes_from_latest_sample_not_the_history_ceiling() {
-        let mut state = AppState::new(Default::default(), Default::default(), None, None);
+        let mut state = crate::controller::test_support::state::app_state();
         assert_eq!(fps_target(&state), None);
         for target in [
             Some(30.0),

@@ -465,6 +465,7 @@ mod final_regression_tests;
 mod tests {
     use super::*;
     use crate::controller::test_support::events::{wait_until, TEST_DEADLINE};
+    use crate::controller::test_support::state::app_state;
     use crate::domain::output::OutputKind;
     use std::sync::mpsc;
     use std::thread::ThreadId;
@@ -709,15 +710,6 @@ mod tests {
             state: OutputRunState::Active,
             detail: Some("/tmp/current-recording.mkv".to_string()),
         }
-    }
-
-    fn app_state() -> crate::controller::state::AppState {
-        crate::controller::state::AppState::new(
-            crate::storage::config::AppConfig::default(),
-            crate::storage::registry::SceneRegistry::default(),
-            None,
-            None,
-        )
     }
 
     fn mark_obs_connected(state: &mut crate::controller::state::AppState) {

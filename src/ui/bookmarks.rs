@@ -602,12 +602,7 @@ mod tests {
                 .borrow_mut()
                 .reset_obs_session(ObsStatus::Disconnected);
             let stored = crate::storage::bookmarks::read(&path).unwrap();
-            let fresh = crate::controller::state::AppState::new(
-                Default::default(),
-                Default::default(),
-                None,
-                None,
-            );
+            let fresh = crate::controller::test_support::state::app_state();
             *nav.state.borrow_mut() = fresh;
             nav.state.borrow_mut().load_bookmarks(Ok(stored));
             show(parent.upcast_ref(), &nav);

@@ -1232,6 +1232,7 @@ mod tests {
         AppState, MixerAudioError, MixerInspectionStatus, MixerSceneRefreshTargetReason,
         MixerVisibleAudioStatus,
     };
+    use crate::controller::test_support::state::app_state;
     use crate::domain::audio::AudioInput;
     use crate::domain::mixer::MixerMode;
     use crate::services::audio_service::AudioService;
@@ -1256,15 +1257,6 @@ mod tests {
         state.audio_inputs.pop();
         state.workspace.epoch += 1;
         assert_ne!(initial, super::mixer_structure(&state));
-    }
-
-    fn app_state() -> AppState {
-        AppState::new(
-            crate::storage::config::AppConfig::default(),
-            crate::storage::registry::SceneRegistry::default(),
-            None,
-            None,
-        )
     }
 
     fn summary_target_details(state: &AppState) -> Option<(String, MixerSceneRefreshTargetReason)> {
@@ -1789,13 +1781,8 @@ mod tests {
 mod layout_tests {
     use super::*;
     use crate::controller::app_controller::AppController;
-    use crate::controller::state::AppState;
-    use crate::domain::audio::AudioInput;
+    use crate::controller::test_support::state::{app_state, input};
     use crate::domain::scene::{Scene, SceneInventory};
-
-    fn audio_input(name: &str) -> AudioInput {
-        AudioInput::new(name.to_string(), false, 1.0, 0.0)
-    }
 
     #[test]
     #[ignore = "requires a native GTK display"]
@@ -1816,7 +1803,7 @@ mod layout_tests {
                 state.scene_inventory.current_id = Some("Main".into());
                 state.apply_active_audio(
                     Some("Main".into()),
-                    Ok(vec![audio_input("Mic"), audio_input("Music")]),
+                    Ok(vec![input("Mic"), input("Music")]),
                 );
             }
             let (page, refresh, handle) = build(nav.clone());
@@ -1921,17 +1908,13 @@ mod layout_tests {
                 first.is_sensitive(),
                 "membership reads must not dim collection-scoped input controls"
             );
-            nav.state.borrow_mut().apply_active_audio(
-                Some("Main".into()),
-                Ok(vec![audio_input("Mic"), audio_input("Music")]),
-            );
+            nav.state
+                .borrow_mut()
+                .apply_active_audio(Some("Main".into()), Ok(vec![input("Mic"), input("Music")]));
             refresh();
             assert_eq!(handle.cards.borrow()["Mic"].root, first);
             assert!(first.is_sensitive());
-            nav.state
-                .borrow_mut()
-                .audio_inputs
-                .push(audio_input("Third"));
+            nav.state.borrow_mut().audio_inputs.push(input("Third"));
             refresh();
             let mut restored_draft = None;
             visit_mixer(&page, &mut |widget| {
@@ -2037,7 +2020,7 @@ mod layout_tests {
             event_tx,
         )));
 
-        let mut state = AppState::new(Default::default(), Default::default(), None, None);
+        let mut state = app_state();
         state.scene_inventory = SceneInventory {
             scenes: vec![Scene {
                 uuid: None,
@@ -2047,7 +2030,7 @@ mod layout_tests {
             previous_id: None,
         };
         let inputs = (0..count)
-            .map(|index| audio_input(&format!("Source {index}")))
+            .map(|index| input(&format!("Source {index}")))
             .collect();
         state.apply_active_audio(Some("Main".into()), Ok(inputs));
 

@@ -122,7 +122,7 @@ fn native_history_opt_in_retention_reload_clear_failures_and_large_text() {
         tick(&nav.state);
         done(&nav);
         assert_eq!(std::fs::read(&path).unwrap(), before);
-        let mut restarted = AppState::new(Default::default(), Default::default(), None, None);
+        let mut restarted = crate::controller::test_support::state::app_state();
         restarted.load_report_history(Ok(read(&path).unwrap()));
         assert!(restarted.report_list()[0].interrupted);
         assert!(restarted.report_list()[0].ended_unix_ms.is_none());

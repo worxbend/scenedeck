@@ -216,7 +216,7 @@ mod tests {
 
     #[test]
     fn doctor_rerun_requests_fresh_obs_data_and_immediately_retires_ready_verdict() {
-        let mut state = AppState::new(Default::default(), Default::default(), None, None);
+        let mut state = crate::controller::test_support::state::app_state();
         state.obs_status = ObsStatus::Connected {
             obs_version: "fixture".into(),
         };

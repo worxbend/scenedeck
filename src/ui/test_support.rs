@@ -1,5 +1,7 @@
 use super::navigation::NavigationContext;
-use crate::controller::{app_controller::AppController, event::AppEvent, state::AppState};
+use crate::controller::{
+    app_controller::AppController, event::AppEvent, test_support::state::app_state,
+};
 use gtk4::prelude::*;
 use std::{cell::RefCell, rc::Rc, sync::mpsc, time::Duration};
 
@@ -70,12 +72,7 @@ pub(crate) fn navigation() -> (
         runtime.handle().clone(),
         tx,
     )));
-    let state = Rc::new(RefCell::new(AppState::new(
-        Default::default(),
-        Default::default(),
-        None,
-        None,
-    )));
+    let state = Rc::new(RefCell::new(app_state()));
     let stack = gtk4::Stack::new();
     (
         NavigationContext::new(state, stack.clone(), controller),

@@ -1587,6 +1587,7 @@ mod render_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::controller::test_support::state::{app_state, input};
     use crate::domain::audio::AudioInput;
     use crate::domain::mixer::MixerMode;
 
@@ -2451,24 +2452,9 @@ mod tests {
     #[ignore = "requires a disposable GTK display; fake config/password, no OBS"]
     fn native_assembled_window_releases_shell_sources_while_stats_popout_survives() {
         crate::ui::native_test!(|| {
-            use crate::controller::dependencies::{
-                AppConfigProvider, ControllerDependencies, ObsPasswordProvider,
+            use crate::controller::{
+                dependencies::ControllerDependencies, test_support::deps::NoServices,
             };
-            use crate::storage::config::AppConfig;
-            struct NoServices;
-            impl AppConfigProvider for NoServices {
-                fn load_config(&self) -> AppConfig {
-                    panic!("fixture must not read configuration")
-                }
-            }
-            impl ObsPasswordProvider for NoServices {
-                fn obs_password(
-                    &self,
-                    _connection_id: &str,
-                ) -> Result<Option<String>, crate::infra::error::AppError> {
-                    panic!("fixture must not access keyring")
-                }
-            }
             fn find(
                 widget: &gtk4::Widget,
                 predicate: &impl Fn(&gtk4::Widget) -> bool,
@@ -2780,19 +2766,6 @@ mod tests {
                 "last window removal must retire the application event receiver"
             );
         });
-    }
-
-    fn input(id: &str) -> AudioInput {
-        AudioInput::new(id.to_string(), false, 1.0, 0.0)
-    }
-
-    fn app_state() -> AppState {
-        AppState::new(
-            crate::storage::config::AppConfig::default(),
-            crate::storage::registry::SceneRegistry::default(),
-            None,
-            None,
-        )
     }
 
     fn selected_mixer_state() -> AppState {

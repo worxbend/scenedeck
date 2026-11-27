@@ -207,13 +207,10 @@ pub(super) fn replay_saved(state: &mut AppState, path: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::controller::test_support::state::app_state;
     use crate::domain::output::OutputStatus;
     use crate::domain::output_result::{OutputResultKind, OutputResultStatus};
     use std::time::Instant;
-
-    fn state() -> AppState {
-        AppState::new(Default::default(), Default::default(), None, None)
-    }
 
     fn observation() -> Box<crate::controller::workspace::WorkspaceObservation> {
         Box::new(crate::controller::workspace::WorkspaceObservation {
@@ -260,7 +257,7 @@ mod tests {
             domain::output::{OutputKind, OutputRunState},
         };
         let start = Instant::now() - std::time::Duration::from_secs(60);
-        let mut state = state();
+        let mut state = app_state();
         state.health.connected();
         state.apply_output_event(
             &AppEvent::OutputStatusUpdated(
@@ -317,7 +314,7 @@ mod tests {
         use crate::domain::control::GlobalToggle;
         for dirty in [false, true] {
             for camera in [None, Some(true)] {
-                let mut state = state();
+                let mut state = app_state();
                 let mut event = completion(&state);
                 let observed = event.result.as_mut().unwrap();
                 observed.observed_at = Instant::now() - std::time::Duration::from_secs(1);
@@ -349,7 +346,7 @@ mod tests {
 
     #[test]
     fn stale_workspace_completion_cannot_publish_state_or_request_shell_effects() {
-        let mut state = state();
+        let mut state = app_state();
         state.workspace.loading = true;
         state.workspace.pending = true;
         let mut event = completion(&state);
@@ -362,7 +359,7 @@ mod tests {
 
     #[test]
     fn dirty_completion_keeps_newer_output_observations_but_publishes_readback() {
-        let mut state = state();
+        let mut state = app_state();
         state.workspace.dirty = true;
         state.workspace.loading = true;
         state.workspace.pending = true;
@@ -387,7 +384,7 @@ mod tests {
             (true, false, OutputResultStatus::Acknowledged),
             (false, true, OutputResultStatus::Unconfirmed),
         ] {
-            let mut state = state();
+            let mut state = app_state();
             let scope = state.workflow_scope();
             let id = state
                 .workspace
@@ -409,7 +406,7 @@ mod tests {
 
     #[test]
     fn acknowledgement_is_scope_fenced_and_replay_file_remains_independent() {
-        let mut state = state();
+        let mut state = app_state();
         state.workspace.pending = true;
         let scope = state.workflow_scope();
         let id = state
@@ -436,7 +433,7 @@ mod tests {
 
     #[test]
     fn clean_completion_publishes_output_clocks_and_preserves_prior_screenshot() {
-        let mut state = state();
+        let mut state = app_state();
         let mut event = completion(&state);
         let observed = event.result.as_mut().unwrap();
         observed.screenshot = Some("image".into());
@@ -465,7 +462,7 @@ mod tests {
             ("Mic", true, false, false),
             ("Mic", false, true, false),
         ] {
-            let mut state = state();
+            let mut state = app_state();
             state.workspace.selected_input = Some("Mic".into());
             state.workspace.pending = pending;
             state.workspace.dirty = dirty;
@@ -489,7 +486,7 @@ mod tests {
             operator_action::ActionTarget,
             operator_input::{InputIdentity, InputObservation},
         };
-        let mut state = state();
+        let mut state = app_state();
         state.workspace.selected_input = Some("Editor".into());
         let target = ActionTarget {
             name: "Clip".into(),
@@ -542,7 +539,7 @@ mod tests {
             controller::event::AppEvent,
             domain::{audio::AudioInput, control::SourceDetail},
         };
-        let mut state = state();
+        let mut state = app_state();
         state.reconcile_observation(
             3,
             AppEvent::InputMuteChanged {
@@ -589,7 +586,7 @@ mod tests {
             controller::event::AppEvent,
             domain::{audio::AudioInput, control::SourceDetail},
         };
-        let mut state = state();
+        let mut state = app_state();
         for index in 0..=4096 {
             state.reconcile_observation(
                 index + 2,

@@ -225,9 +225,10 @@ pub(crate) fn transition_row(nav: NavigationContext) -> GtkBox {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::controller::{app_controller::AppController, event::AppEvent, state::AppState};
+    use crate::controller::{
+        app_controller::AppController, event::AppEvent, test_support::state::app_state,
+    };
     use crate::domain::control::{ControlSnapshot, StudioState};
-    use crate::storage::{config::AppConfig, registry::SceneRegistry};
     use std::{cell::RefCell, sync::mpsc, time::Instant};
 
     fn pump(duration: Duration) {
@@ -271,12 +272,7 @@ mod tests {
             .build()
             .unwrap();
         let (tx, events) = mpsc::sync_channel(8);
-        let state = Rc::new(RefCell::new(AppState::new(
-            AppConfig::default(),
-            SceneRegistry::default(),
-            None,
-            None,
-        )));
+        let state = Rc::new(RefCell::new(app_state()));
         {
             let mut state = state.borrow_mut();
             state.obs_status = ObsStatus::Connected {

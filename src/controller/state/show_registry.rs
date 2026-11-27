@@ -142,8 +142,7 @@ mod tests {
 
     #[test]
     fn late_load_is_rejected_and_unsaved_workspace_intent_survives_switching() {
-        let mut state =
-            super::super::AppState::new(Default::default(), Default::default(), None, None);
+        let mut state = crate::controller::test_support::state::app_state();
         let a = RegistryTarget::File("a.json".into());
         let b = RegistryTarget::File("b.json".into());
         let first = state.select_registry(a.clone()).unwrap();

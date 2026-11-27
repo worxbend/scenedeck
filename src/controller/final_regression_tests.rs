@@ -5,7 +5,9 @@ use crate::controller::session_controller::SessionRunner;
 use crate::controller::state::{
     ActiveAudioStatus, AppState, MixerVisibleAudioStatus, MixerVisibleRenderSource, ObsStatus,
 };
+use crate::controller::test_support::deps::{NoServices, StaticConfigProvider};
 use crate::controller::test_support::events::{recv_event, recv_matching, TEST_DEADLINE};
+use crate::controller::test_support::state::app_state;
 use crate::controller::workspace::{WorkspaceController, WorkspaceRequest};
 use crate::domain::control::ControlAction;
 use crate::domain::output::OutputKind;
@@ -229,9 +231,6 @@ fn peel(event: AppEvent) -> AppEvent {
         AppEvent::SessionEvent { event, .. } => peel(*event),
         event => event,
     }
-}
-fn state() -> AppState {
-    AppState::new(Default::default(), Default::default(), None, None)
 }
 fn binding(client: &ObsClient) -> ScopeBinding {
     ScopeBinding {
@@ -959,7 +958,7 @@ async fn scene_activation_preserves_current_mode_and_rejects_an_unavailable_mode
 #[test]
 fn graph_reducer_rejects_superseded_success_failure_and_invalidation() {
     use crate::controller::state::TopologyStatus;
-    let mut state = state();
+    let mut state = app_state();
     state
         .reconcile_observation(10, AppEvent::GraphInvalidated)
         .unwrap();
@@ -1129,7 +1128,7 @@ async fn graph_invalidated_midscan_never_publishes_ready_before_followup_complet
     .await;
     let (tx, rx) = mpsc::sync_channel(128);
     let task = pump(&mut mock, tx);
-    let mut state = state();
+    let mut state = app_state();
     mock.wait("GetSceneItemList", 2).await;
     while let Ok(event) = rx.try_recv() {
         if matches!(peel(event), AppEvent::GraphInvalidated) {
@@ -1226,7 +1225,7 @@ async fn bootstrap_active_audio_snapshot_merges_newer_mute_and_volume_echoes() {
     .await;
     let (tx, rx) = mpsc::sync_channel(128);
     let task = pump(&mut mock, tx);
-    let mut state = state();
+    let mut state = app_state();
     state.set_current_program("A".into());
     mock.wait("GetInputVolume", 1).await;
     // Consume loading, then use the exact production reconciliation API used by GTK.
@@ -1264,20 +1263,11 @@ async fn bootstrap_active_audio_snapshot_merges_newer_mute_and_volume_echoes() {
     mock.stop().await;
 }
 
-struct ConfigProvider;
-impl crate::controller::dependencies::AppConfigProvider for ConfigProvider {
-    fn load_config(&self) -> crate::storage::config::AppConfig {
-        Default::default()
-    }
-}
-struct NoPassword;
-impl crate::controller::dependencies::ObsPasswordProvider for NoPassword {
-    fn obs_password(&self, _connection_id: &str) -> Result<Option<String>, AppError> {
-        panic!("wire fixtures must never access keyring")
-    }
-}
 fn dependencies() -> ControllerDependencies {
-    ControllerDependencies::new(Arc::new(ConfigProvider), Arc::new(NoPassword))
+    ControllerDependencies::new(
+        Arc::new(StaticConfigProvider(Default::default())),
+        Arc::new(NoServices),
+    )
 }
 
 #[tokio::test]
@@ -1292,7 +1282,7 @@ async fn selected_audio_real_command_snapshot_merges_newer_echoes() {
     graph_ready(&rx).await;
     let mut controller = AppController::with_dependencies(Handle::current(), tx, dependencies());
     *controller.client_slot.lock().unwrap() = Some(mock.client.clone());
-    let mut state = state();
+    let mut state = app_state();
     let request = state.set_mixer_audio_loading("A".into());
     controller.handle(AppCommand::RefreshMixerSceneAudio(request.clone()));
     mock.wait("GetInputVolume", 2).await;
@@ -1346,7 +1336,7 @@ async fn failed_program_audio_clears_previous_controls_and_is_not_successful_emp
         .await;
         let (tx, rx) = mpsc::sync_channel(128);
         let task = pump(&mut mock, tx);
-        let mut state = state();
+        let mut state = app_state();
         state.set_current_program("A".into());
         // Complete the first real observation using the same state APIs as GTK.
         loop {
@@ -1567,7 +1557,7 @@ async fn terminal_case(acknowledged: bool, full: bool, reconnect: bool) {
         !controller.accepts_scope(terminal.generation, Some(0)),
         "retired snapshots remain rejected"
     );
-    let mut state = state();
+    let mut state = app_state();
     state.obs_status = ObsStatus::Connected {
         obs_version: "replacement sentinel".into(),
     };
@@ -1634,7 +1624,7 @@ async fn bootstrap_scene_snapshot_cannot_relabel_stale_program_audio_as_current(
     let (tx, rx) = mpsc::sync_channel(128);
     let task = pump(&mut mock, tx);
     mock.wait("GetSceneList", 1).await;
-    let mut state = state();
+    let mut state = app_state();
     state.set_current_program("A".into());
     switch_b(&mock).await;
     loop {
@@ -1686,7 +1676,7 @@ async fn program_aba_during_audio_scan_rejects_the_old_same_name_completion() {
     .await;
     let (tx, rx) = mpsc::sync_channel(128);
     let task = pump(&mut mock, tx);
-    let mut state = state();
+    let mut state = app_state();
     state.set_current_program("A".into());
     mock.wait("GetInputVolume", 1).await;
     // Establish the actual request identity before invalidating its Program scope.
@@ -1850,7 +1840,7 @@ async fn output_status_snapshot_cannot_undo_a_newer_transport_echo() {
         json!({"outputActive":true,"outputState":"OBS_WEBSOCKET_OUTPUT_STARTED"}),
     ))
     .await;
-    let mut state = state();
+    let mut state = app_state();
     state.health.connected();
     loop {
         if let AppEvent::Observation { revision, event } = recv_event(&rx).await {

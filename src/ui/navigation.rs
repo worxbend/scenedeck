@@ -280,7 +280,7 @@ impl NavigationContext {
 mod tests {
     use super::{NavigationBinding, NavigationContext, ReentrantUpdate};
     use crate::controller::app_controller::AppController;
-    use crate::controller::state::{AppState, Page};
+    use crate::controller::{state::Page, test_support::state::app_state};
     use crate::domain::workflow::ScopeBinding;
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -339,12 +339,7 @@ mod tests {
             runtime.handle().clone(),
             tx,
         )));
-        let state = Rc::new(RefCell::new(AppState::new(
-            Default::default(),
-            Default::default(),
-            None,
-            None,
-        )));
+        let state = Rc::new(RefCell::new(app_state()));
         let nav = NavigationContext::for_borrow_tests(state, controller);
         (runtime, nav)
     }
@@ -384,12 +379,7 @@ mod tests {
                 runtime.handle().clone(),
                 tx,
             )));
-            let state = Rc::new(RefCell::new(AppState::new(
-                Default::default(),
-                Default::default(),
-                None,
-                None,
-            )));
+            let state = Rc::new(RefCell::new(app_state()));
             let stack = Stack::new();
             let list = ListBox::new();
             let weak_stack = stack.downgrade();

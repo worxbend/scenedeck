@@ -650,23 +650,9 @@ mod tests {
     }
 
     fn final_stats_exit(quit: bool) {
-        use crate::controller::dependencies::{
-            AppConfigProvider, ControllerDependencies, ObsPasswordProvider,
+        use crate::controller::{
+            dependencies::ControllerDependencies, test_support::deps::NoServices,
         };
-        struct NoServices;
-        impl AppConfigProvider for NoServices {
-            fn load_config(&self) -> crate::storage::config::AppConfig {
-                panic!("no config service in fixture")
-            }
-        }
-        impl ObsPasswordProvider for NoServices {
-            fn obs_password(
-                &self,
-                _: &str,
-            ) -> Result<Option<String>, crate::infra::error::AppError> {
-                panic!("no keyring in fixture")
-            }
-        }
         fn find(
             widget: &gtk4::Widget,
             predicate: &impl Fn(&gtk4::Widget) -> bool,
@@ -700,7 +686,7 @@ mod tests {
             move |app| {
                 let (tx, rx) = mpsc::sync_channel(128);
                 let controller = Rc::new(RefCell::new(AppController::with_dependencies(runtime.clone(), tx.clone(), ControllerDependencies::new(std::sync::Arc::new(NoServices), std::sync::Arc::new(NoServices)))));
-                let mut initial = AppState::new(Default::default(), Default::default(), None, None);
+                let mut initial = crate::controller::test_support::state::app_state();
                 initial.config.onboarding.welcome_shown = true;
                 initial.configure_report_history(true, 8);
                 let state = Rc::new(RefCell::new(initial));

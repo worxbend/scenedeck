@@ -175,7 +175,7 @@ mod tests {
     };
 
     fn connected(start: Instant) -> AppState {
-        let mut state = AppState::new(Default::default(), Default::default(), None, None);
+        let mut state = crate::controller::test_support::state::app_state();
         state.obs_status = ObsStatus::Connected {
             obs_version: "fixture".into(),
         };

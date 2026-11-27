@@ -1252,13 +1252,7 @@ mod tests {
 
     mod event_sequence;
 
-    pub(super) fn input(id: &str) -> AudioInput {
-        AudioInput::new(id.to_string(), false, 1.0, 0.0)
-    }
-
-    pub(super) fn app_state() -> AppState {
-        AppState::new(AppConfig::default(), SceneRegistry::default(), None, None)
-    }
+    pub(super) use crate::controller::test_support::state::{app_state, input};
 
     #[test]
     fn telemetry_keeps_observation_time_through_publication_and_clears_it_on_reset() {

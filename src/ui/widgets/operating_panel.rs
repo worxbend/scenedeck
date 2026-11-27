@@ -1741,8 +1741,8 @@ mod tests {
     #[test]
     fn sources_content_ignores_publication_metadata_but_tracks_control_content() {
         use super::*;
-        use crate::controller::state::AppState;
-        let mut state = AppState::new(Default::default(), Default::default(), None, None);
+        use crate::controller::test_support::state::app_state;
+        let mut state = app_state();
         state.workspace.snapshot = Some(Default::default());
         state.workspace.detail = Some(SourceDetail {
             input: "Caption".into(),
@@ -1799,9 +1799,8 @@ mod tests {
         crate::ui::native_test!(|| {
             use super::*;
             use crate::{
-                controller::{app_controller::AppController, state::AppState},
+                controller::{app_controller::AppController, test_support::state::app_state},
                 domain::control::{ControlSnapshot, SourceItem},
-                storage::{config::AppConfig, registry::SceneRegistry},
                 ui::test_support::pump,
             };
             use std::time::Duration;
@@ -1813,12 +1812,7 @@ mod tests {
                 .build()
                 .unwrap();
             let (tx, _events) = std::sync::mpsc::sync_channel(16);
-            let state = Rc::new(RefCell::new(AppState::new(
-                AppConfig::default(),
-                SceneRegistry::default(),
-                None,
-                None,
-            )));
+            let state = Rc::new(RefCell::new(app_state()));
             let owner = "Long owner with localized words — Довга назва сцени для перевірки";
             let item = SourceItem {
                 owner: owner.into(), item_id: 1, input: "Shared caption".into(), input_uuid: String::new(),

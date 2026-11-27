@@ -619,12 +619,7 @@ mod tests {
             release: Notify::new(),
         });
         outputs.set_client_override(OutputCommandClient::Fake(fake.clone()));
-        let mut state = crate::controller::state::AppState::new(
-            Default::default(),
-            Default::default(),
-            None,
-            None,
-        );
+        let mut state = crate::controller::test_support::state::app_state();
         state.health.connected();
         state.apply_output_event(
             &AppEvent::OutputStatusUpdated(
