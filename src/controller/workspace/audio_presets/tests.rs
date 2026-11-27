@@ -1,5 +1,7 @@
 use super::*;
-use crate::{domain::operator_action::ActionTarget, obs::client::control_tests::mock_client};
+use crate::domain::operator_action::ActionTarget;
+use crate::obs::testing::scripted::ScriptedObs;
+use crate::obs::testing::wire::{self, Reply};
 use serde_json::{json, Value};
 
 const UUID: &str = "00000000-0000-0000-0000-000000000001";
@@ -13,28 +15,32 @@ fn setting(muted: bool, gain: f64) -> PresetInput {
         gain: PresetGain::try_from(gain).unwrap(),
     }
 }
-fn collection() -> (&'static str, Value) {
+fn collection() -> (&'static str, Reply) {
     (
         "GetSceneCollectionList",
-        json!({"currentSceneCollectionName":"Show","sceneCollections":["Show"]}),
+        Reply::Ok(json!({"currentSceneCollectionName":"Show","sceneCollections":["Show"]})),
     )
 }
-fn catalog(uuid: &str) -> (&'static str, Value) {
+fn catalog(uuid: &str) -> (&'static str, Reply) {
     (
         "GetInputList",
-        json!({"inputs":[{"inputName":"Renamed microphone","inputUuid":uuid,"inputKind":"audio","unversionedInputKind":"audio"}]}),
+        Reply::Ok(
+            json!({"inputs":[{"inputName":"Renamed microphone","inputUuid":uuid,"inputKind":"audio","unversionedInputKind":"audio"}]}),
+        ),
     )
 }
-fn audio(muted: bool, gain: f64) -> Vec<(&'static str, Value)> {
+fn audio(muted: bool, gain: f64) -> Vec<(&'static str, Reply)> {
     vec![
-        ("GetInputMute", json!({"inputMuted":muted})),
+        ("GetInputMute", Reply::Ok(json!({"inputMuted":muted}))),
         (
             "GetInputVolume",
-            json!({"inputVolumeMul":gain,"inputVolumeDb":if gain == 0.0 { -100.0 } else {20.0 * gain.log10()}}),
+            Reply::Ok(
+                json!({"inputVolumeMul":gain,"inputVolumeDb":if gain == 0.0 { -100.0 } else {20.0 * gain.log10()}}),
+            ),
         ),
     ]
 }
-fn initial() -> Vec<(&'static str, Value)> {
+fn initial() -> Vec<(&'static str, Reply)> {
     let mut script = vec![collection(), catalog(UUID)];
     script.extend(audio(true, 1.0));
     script.push(collection());
@@ -57,10 +63,10 @@ fn plan(client: &ObsClient) -> PresetPlan {
     }
 }
 async fn run(
-    script: Vec<(&'static str, Value)>,
+    script: Vec<(&'static str, Reply)>,
     edit: impl FnOnce(&mut PresetPlan),
 ) -> (Vec<PresetOutcome>, Vec<Value>) {
-    let (client, server) = mock_client(script).await;
+    let (client, server) = ScriptedObs::ordered(script).connect().await;
     let (tx, rx) = std::sync::mpsc::sync_channel(128);
     let mut controller = WorkspaceController::new(
         Handle::current(),
@@ -90,9 +96,13 @@ async fn run(
 #[tokio::test]
 async fn preset_gain_is_read_back_before_unmute_and_missing_inputs_are_reported() {
     let mut script = initial();
-    script.extend([collection(), ("SetInputVolume", json!({}))]);
+    script.extend([collection(), ("SetInputVolume", Reply::Ok(json!({})))]);
     script.extend(audio(true, 2.0));
-    script.extend([collection(), collection(), ("SetInputMute", json!({}))]);
+    script.extend([
+        collection(),
+        collection(),
+        ("SetInputMute", Reply::Ok(json!({}))),
+    ]);
     script.extend(audio(false, 2.0));
     script.push(collection());
     let (outcomes, requests) = run(script, |plan| {
@@ -139,10 +149,7 @@ async fn preset_gain_is_read_back_before_unmute_and_missing_inputs_are_reported(
 #[tokio::test]
 async fn preset_failure_changed_values_and_reused_names_never_unmute() {
     let mut failed = initial();
-    failed.extend([
-        collection(),
-        ("SetInputVolume", json!({"__error":true,"__code":702})),
-    ]);
+    failed.extend([collection(), ("SetInputVolume", Reply::err(702))]);
     let (outcomes, requests) = run(failed, |_| {}).await;
     assert_eq!(outcomes.last().unwrap().phase, PresetPhase::Failed);
     assert!(!outcomes.last().unwrap().gain_ack);
@@ -152,8 +159,8 @@ async fn preset_failure_changed_values_and_reused_names_never_unmute() {
     let mut no_readback = initial();
     no_readback.extend([
         collection(),
-        ("SetInputVolume", json!({})),
-        ("GetInputMute", json!({"__error":true})),
+        ("SetInputVolume", Reply::Ok(json!({}))),
+        ("GetInputMute", Reply::err(600)),
     ]);
     let (outcomes, requests) = run(no_readback, |_| {}).await;
     assert_eq!(outcomes.last().unwrap().phase, PresetPhase::Unconfirmed);
@@ -187,12 +194,16 @@ async fn a_failed_input_does_not_hide_another_inputs_confirmed_result() {
     let mut script = initial();
     script.extend([
         collection(),
-        ("SetInputVolume", json!({"__error":true,"__code":702})),
+        ("SetInputVolume", Reply::err(702)),
         collection(),
         catalog("00000000-0000-0000-0000-000000000002"),
     ]);
     script.extend(audio(false, 1.0));
-    script.extend([collection(), collection(), ("SetInputMute", json!({}))]);
+    script.extend([
+        collection(),
+        collection(),
+        ("SetInputMute", Reply::Ok(json!({}))),
+    ]);
     script.extend(audio(true, 1.0));
     script.push(collection());
     let (outcomes, requests) = run(script, |plan| {
@@ -229,38 +240,27 @@ struct Gated {
     started: tokio::sync::oneshot::Receiver<()>,
     release: tokio::sync::oneshot::Sender<()>,
 }
-async fn gated(script: Vec<(&'static str, Value)>, gate: usize) -> Gated {
-    use futures_util::{SinkExt, StreamExt};
-    use tokio_websockets::Message;
-    let (listener, port) = crate::obs::testing::wire::listen().await;
+async fn gated(script: Vec<(&'static str, Reply)>, gate: usize) -> Gated {
+    let (listener, port) = wire::listen().await;
     let (started, observed) = tokio::sync::oneshot::channel();
     let (release, released) = tokio::sync::oneshot::channel();
     let server = tokio::spawn(async move {
-        let mut socket = crate::obs::testing::wire::accept(listener).await;
+        let mut socket = wire::accept(listener).await;
         let mut started = Some(started);
         let mut released = Some(released);
         let mut requests = Vec::new();
-        for (index, (expected, data)) in
-            std::iter::once(("GetVersion", crate::obs::testing::wire::version(&[])))
+        for (index, (expected, reply)) in
+            std::iter::once(("GetVersion", Reply::Ok(wire::version(&[]))))
                 .chain(script)
                 .enumerate()
         {
-            let request: Value =
-                serde_json::from_str(socket.next().await.unwrap().unwrap().as_text().unwrap())
-                    .unwrap();
+            let request = wire::read_json(&mut socket).await;
             assert_eq!(request["d"]["requestType"], expected);
             if index == gate + 1 {
                 started.take().unwrap().send(()).unwrap();
                 released.take().unwrap().await.unwrap();
             }
-            let mut response = json!({"op":7,"d":{"requestId":request["d"]["requestId"],"requestType":expected,"requestStatus":{"result":true,"code":100}}});
-            if data != json!({}) {
-                response["d"]["responseData"] = data;
-            }
-            socket
-                .send(Message::text(response.to_string()))
-                .await
-                .unwrap();
+            wire::send_json(&mut socket, &wire::response(&request, &reply)).await;
             requests.push(request);
         }
         requests
@@ -280,7 +280,7 @@ async fn cancellation_and_collection_changes_fence_mutations_before_and_after_ga
         for collection_change in [false, true] {
             let (script, gate) = if after_gain {
                 let mut script = initial();
-                script.extend([collection(), ("SetInputVolume", json!({}))]);
+                script.extend([collection(), ("SetInputVolume", Reply::Ok(json!({})))]);
                 let gate = script.len();
                 script.extend(audio(true, 2.0));
                 script.push(collection());
@@ -363,9 +363,9 @@ async fn cancellation_and_collection_changes_fence_mutations_before_and_after_ga
 #[tokio::test]
 async fn readback_timeout_keeps_gain_ack_and_cancels_unsent_inputs_without_replay() {
     let mut script = initial();
-    script.extend([collection(), ("SetInputVolume", json!({}))]);
+    script.extend([collection(), ("SetInputVolume", Reply::Ok(json!({})))]);
     let gate = script.len();
-    script.push(("GetInputMute", json!({"inputMuted":true})));
+    script.push(("GetInputMute", Reply::Ok(json!({"inputMuted":true}))));
     let mock = gated(script, gate).await;
     let (tx, rx) = std::sync::mpsc::sync_channel(128);
     let mut controller = WorkspaceController::new(

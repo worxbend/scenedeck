@@ -81,8 +81,11 @@ OBS WebSocket integration.
 
 - `client.rs`: thin async wrapper around `obws::Client`.
 - `mapper.rs`: conversion from OBS response types into domain types.
-- `testing/wire.rs` (tests only): loopback OBS WebSocket handshake and
-  `GetVersion` payload shared by protocol tests.
+- `testing/wire.rs` (tests only): loopback OBS WebSocket handshake, request,
+  response and event frames, and the `GetVersion` payload.
+- `testing/scripted.rs` (tests only): `ScriptedObs`, a loopback OBS that
+  answers from a script (strict order or by `requestType`) and counts requests
+  per type.
 
 No other module should import `obws` directly.
 

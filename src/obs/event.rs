@@ -46,36 +46,35 @@ impl ObsEventStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures_util::{SinkExt, StreamExt};
-    use serde_json::{json, Value};
+    use crate::obs::testing::wire::{self, Reply};
+    use serde_json::json;
     use std::time::Duration;
     use tokio::sync::oneshot;
-    use tokio_websockets::Message;
 
     #[tokio::test]
     async fn broadcast_lag_recovers_after_liveness_without_disconnect() {
-        let (listener, port) = crate::obs::testing::wire::listen().await;
+        let (listener, port) = wire::listen().await;
         let (burst, begin_burst) = oneshot::channel();
         let (fresh, begin_fresh) = oneshot::channel();
         let (finish, finished) = oneshot::channel();
         let server = tokio::spawn(async move {
-            let mut socket = crate::obs::testing::wire::accept(listener).await;
+            let mut socket = wire::accept(listener).await;
             let mut begin_burst = Some(begin_burst);
+            let version = Reply::Ok(wire::version(&[]));
+            let meters = wire::event("InputVolumeMeters", 65536, json!({"inputs":[]}));
             for index in 0..3 {
-                let request: Value =
-                    serde_json::from_str(socket.next().await.unwrap().unwrap().as_text().unwrap())
-                        .unwrap();
+                let request = wire::read_json(&mut socket).await;
                 assert_eq!(request["d"]["requestType"], "GetVersion");
-                socket.send(Message::text(json!({"op":7,"d":{"requestId":request["d"]["requestId"],"requestType":"GetVersion","requestStatus":{"result":true,"code":100},"responseData":crate::obs::testing::wire::version(&[])}}).to_string())).await.unwrap();
+                wire::send_json(&mut socket, &wire::response(&request, &version)).await;
                 if index == 0 {
                     begin_burst.take().unwrap().await.unwrap();
                     for _ in 0..256 {
-                        socket.send(Message::text(json!({"op":5,"d":{"eventType":"InputVolumeMeters","eventIntent":65536,"eventData":{"inputs":[]}}}).to_string())).await.unwrap();
+                        wire::send_json(&mut socket, &meters).await;
                     }
                 }
             }
             begin_fresh.await.unwrap();
-            socket.send(Message::text(json!({"op":5,"d":{"eventType":"InputVolumeMeters","eventIntent":65536,"eventData":{"inputs":[]}}}).to_string())).await.unwrap();
+            wire::send_json(&mut socket, &meters).await;
             finished.await.unwrap();
         });
         let (client, mut events) = crate::obs::client::ObsClient::connect("127.0.0.1", port, None)

@@ -4,6 +4,8 @@
 use super::control_tests::mock_client;
 use super::*;
 use crate::domain::control::{ControlAction, WorkspaceWarning};
+use crate::obs::testing::scripted::{unresponsive_client, ScriptedObs};
+use crate::obs::testing::wire::{request_data, Reply};
 use serde_json::{json, Value};
 
 fn input(name: &str) -> Value {
@@ -25,14 +27,15 @@ async fn operator_reads_share_catalog_and_retain_independent_property_errors() {
         name: "Old name".into(),
         uuid: Some(uuid.into()),
     };
-    let (client, server) = mock_client(vec![
-        ("GetInputList", json!({"inputs":[input("Renamed")]})),
+    let (client, server) = ScriptedObs::ordered(vec![
+        ("GetInputList", Reply::Ok(json!({"inputs":[input("Renamed")]}))),
         (
             "GetMediaInputStatus",
-            json!({"mediaState":"OBS_MEDIA_STATE_PLAYING","mediaDuration":5000,"mediaCursor":1000}),
+            Reply::Ok(json!({"mediaState":"OBS_MEDIA_STATE_PLAYING","mediaDuration":5000,"mediaCursor":1000})),
         ),
-        ("GetSourceFilterList", json!({"__error":true,"__code":702})),
+        ("GetSourceFilterList", Reply::err(702)),
     ])
+    .connect()
     .await;
     let inventory = client.get_input_catalog().await.unwrap();
     let reads = vec![
@@ -79,8 +82,8 @@ async fn operator_reads_share_catalog_and_retain_independent_property_errors() {
         (2, "inputUuid", "inputName"),
         (3, "sourceUuid", "sourceName"),
     ] {
-        assert_eq!(requests[index]["d"]["requestData"][field], uuid);
-        assert!(requests[index]["d"]["requestData"].get(absent).is_none());
+        assert_eq!(request_data(&requests[index])[field], uuid);
+        assert!(request_data(&requests[index]).get(absent).is_none());
     }
 }
 
@@ -88,11 +91,15 @@ async fn operator_reads_share_catalog_and_retain_independent_property_errors() {
 async fn operator_read_failure_cannot_hide_filters_or_dispatch_invalid_identity() {
     use crate::domain::operator_action::ActionTarget;
     use crate::domain::operator_input::InputRead;
-    let (client, server) = mock_client(vec![
-        ("GetInputList", json!({"inputs":[input("Image")]})),
-        ("GetMediaInputStatus", json!({"__error":true,"__code":604})),
-        ("GetSourceFilterList", json!({"filters":[]})),
+    let (client, server) = ScriptedObs::ordered(vec![
+        (
+            "GetInputList",
+            Reply::Ok(json!({"inputs":[input("Image")]})),
+        ),
+        ("GetMediaInputStatus", Reply::err(604)),
+        ("GetSourceFilterList", Reply::Ok(json!({"filters":[]}))),
     ])
+    .connect()
     .await;
     let mut inventory = client.get_input_catalog().await.unwrap();
     let read = InputRead {
@@ -124,12 +131,26 @@ async fn operator_read_failure_cannot_hide_filters_or_dispatch_invalid_identity(
 
 #[tokio::test]
 async fn definite_non_audio_is_omitted_but_complete_audio_is_retained() {
-    let (client, server) = mock_client(vec![
-        ("GetInputList", json!({"inputs":[input("Image"),input("Mic")]})),
-        ("GetInputMute", json!({"__error":true,"__code":604,"__comment":"The specified input does not support audio."})),
-        ("GetInputMute", json!({"inputMuted":false})),
-        ("GetInputVolume", json!({"inputVolumeMul":0.5,"inputVolumeDb":-6.0206})),
-    ]).await;
+    let (client, server) = ScriptedObs::ordered(vec![
+        (
+            "GetInputList",
+            Reply::Ok(json!({"inputs":[input("Image"),input("Mic")]})),
+        ),
+        (
+            "GetInputMute",
+            Reply::Err {
+                code: 604,
+                comment: "The specified input does not support audio.".into(),
+            },
+        ),
+        ("GetInputMute", Reply::Ok(json!({"inputMuted":false}))),
+        (
+            "GetInputVolume",
+            Reply::Ok(json!({"inputVolumeMul":0.5,"inputVolumeDb":-6.0206})),
+        ),
+    ])
+    .connect()
+    .await;
     let inputs = client.get_all_audio_inputs().await.unwrap();
     assert_eq!(inputs.len(), 1);
     assert_eq!(inputs[0].id, "Mic");
@@ -145,10 +166,14 @@ async fn definite_non_audio_is_omitted_but_complete_audio_is_retained() {
 #[tokio::test]
 async fn transient_and_ambiguous_audio_rejections_never_become_empty_success() {
     for code in [600, 604, 702] {
-        let (client, server) = mock_client(vec![
-            ("GetInputList", json!({"inputs":[input("Failed mic")]})),
-            ("GetInputMute", json!({"__error":true,"__code":code})),
+        let (client, server) = ScriptedObs::ordered(vec![
+            (
+                "GetInputList",
+                Reply::Ok(json!({"inputs":[input("Failed mic")]})),
+            ),
+            ("GetInputMute", Reply::err(code)),
         ])
+        .connect()
         .await;
         let error = client.get_all_audio_inputs().await.unwrap_err().to_string();
         assert!(error.contains("Failed mic mute unavailable"));
@@ -161,11 +186,12 @@ async fn transient_and_ambiguous_audio_rejections_never_become_empty_success() {
 
 #[tokio::test]
 async fn volume_failure_invalidates_audio_snapshot_instead_of_losing_the_row() {
-    let (client, server) = mock_client(vec![
-        ("GetInputList", json!({"inputs":[input("Mic")]})),
-        ("GetInputMute", json!({"inputMuted":true})),
-        ("GetInputVolume", json!({"__error":true,"__code":702})),
+    let (client, server) = ScriptedObs::ordered(vec![
+        ("GetInputList", Reply::Ok(json!({"inputs":[input("Mic")]}))),
+        ("GetInputMute", Reply::Ok(json!({"inputMuted":true}))),
+        ("GetInputVolume", Reply::err(702)),
     ])
+    .connect()
     .await;
     assert!(client
         .get_all_audio_inputs()
@@ -178,14 +204,15 @@ async fn volume_failure_invalidates_audio_snapshot_instead_of_losing_the_row() {
 
 #[tokio::test]
 async fn unknown_active_scene_visibility_fails_closed() {
-    let (client, server) = mock_client(vec![
-        ("GetSpecialInputs", json!({"desktop1":null,"desktop2":null,"mic1":null,"mic2":null,"mic3":null,"mic4":null})),
+    let (client, server) = ScriptedObs::ordered(vec![
+        ("GetSpecialInputs", Reply::Ok(json!({"desktop1":null,"desktop2":null,"mic1":null,"mic2":null,"mic3":null,"mic4":null}))),
         (
             "GetSceneItemList",
-            json!({"sceneItems":[scene_item(1,"Mic")]}),
+            Reply::Ok(json!({"sceneItems":[scene_item(1,"Mic")]})),
         ),
-        ("GetSceneItemEnabled", json!({"__error":true,"__code":702})),
+        ("GetSceneItemEnabled", Reply::err(702)),
     ])
+    .connect()
     .await;
     assert!(client
         .get_scene_audio_inputs("Program", &[])
@@ -198,14 +225,16 @@ async fn unknown_active_scene_visibility_fails_closed() {
 
 #[tokio::test]
 async fn source_usage_shares_attempts_across_failure_heavy_roots() {
-    let (client, server) = mock_client(vec![
-        ("GetSceneList", json!({"scenes":[scene("A"),scene("B"),scene("C")],"currentProgramSceneName":"A","currentProgramSceneUuid":"00000000-0000-0000-0000-000000000001"})),
-        ("GetInputList", json!({"inputs":[]})),
-        ("GetSceneItemList", json!({"sceneItems":[scene_item(1,"Mic")]})),
-        ("GetSceneItemEnabled", json!({"__error":true,"__code":702})),
-        ("GetSceneItemList", json!({"sceneItems":[scene_item(2,"Mic")]})),
-        ("GetSceneItemEnabled", json!({"__error":true,"__code":702})),
-    ]).await;
+    let (client, server) = ScriptedObs::ordered(vec![
+        ("GetSceneList", Reply::Ok(json!({"scenes":[scene("A"),scene("B"),scene("C")],"currentProgramSceneName":"A","currentProgramSceneUuid":"00000000-0000-0000-0000-000000000001"}))),
+        ("GetInputList", Reply::Ok(json!({"inputs":[]}))),
+        ("GetSceneItemList", Reply::Ok(json!({"sceneItems":[scene_item(1,"Mic")]}))),
+        ("GetSceneItemEnabled", Reply::err(702)),
+        ("GetSceneItemList", Reply::Ok(json!({"sceneItems":[scene_item(2,"Mic")]}))),
+        ("GetSceneItemEnabled", Reply::err(702)),
+    ])
+    .connect()
+    .await;
     let (items, warnings) = client.source_usage_with_limit("Mic", 2).await.unwrap();
     assert!(items.is_empty());
     assert_eq!(
@@ -232,15 +261,19 @@ async fn source_usage_shares_attempts_across_failure_heavy_roots() {
 #[tokio::test]
 async fn source_budget_counts_failed_visibility_before_nested_cycle_scan() {
     let nested = json!({"sceneItemId":1,"sceneItemIndex":0,"sourceName":"Nested","sourceType":"OBS_SOURCE_TYPE_SCENE","isGroup":false});
-    let (client, server) = mock_client(vec![
-        ("GetInputList", json!({"inputs":[]})),
+    let (client, server) = ScriptedObs::ordered(vec![
+        ("GetInputList", Reply::Ok(json!({"inputs":[]}))),
         (
             "GetSceneItemList",
-            json!({"sceneItems":[nested,scene_item(2,"Fail")]}),
+            Reply::Ok(json!({"sceneItems":[nested,scene_item(2,"Fail")]})),
         ),
-        ("GetSceneItemEnabled", json!({"sceneItemEnabled":true})),
-        ("GetSceneItemEnabled", json!({"__error":true,"__code":702})),
+        (
+            "GetSceneItemEnabled",
+            Reply::Ok(json!({"sceneItemEnabled":true})),
+        ),
+        ("GetSceneItemEnabled", Reply::err(702)),
     ])
+    .connect()
     .await;
     let (items, warnings) = client.scan_source_items("Program", 2).await;
     assert_eq!(items.len(), 1);
@@ -318,13 +351,11 @@ async fn graph_flattens_groups_including_disabled_and_repeated_membership() {
 #[tokio::test]
 async fn failed_group_lookup_never_publishes_complete_looking_graph() {
     let group = json!({"sceneItemId":1,"sceneItemIndex":0,"sourceName":"Group","sourceType":"OBS_SOURCE_TYPE_SCENE","isGroup":true});
-    let (client, server) = mock_client(vec![
-        ("GetSceneItemList", json!({"sceneItems":[group]})),
-        (
-            "GetGroupSceneItemList",
-            json!({"__error":true,"__code":702}),
-        ),
+    let (client, server) = ScriptedObs::ordered(vec![
+        ("GetSceneItemList", Reply::Ok(json!({"sceneItems":[group]}))),
+        ("GetGroupSceneItemList", Reply::err(702)),
     ])
+    .connect()
     .await;
     assert!(client
         .get_scene_graph(&["Program".into()])
@@ -353,9 +384,9 @@ async fn fader_silence_unity_and_finite_levels_reach_wire_canonically() {
             .unwrap();
     }
     let requests = server.await.unwrap();
-    assert_eq!(requests[1]["d"]["requestData"]["inputVolumeMul"], 0.0);
-    assert_eq!(requests[2]["d"]["requestData"]["inputVolumeMul"], 1.0);
-    let finite = requests[3]["d"]["requestData"]["inputVolumeMul"]
+    assert_eq!(request_data(&requests[1])["inputVolumeMul"], 0.0);
+    assert_eq!(request_data(&requests[2])["inputVolumeMul"], 1.0);
+    let finite = request_data(&requests[3])["inputVolumeMul"]
         .as_f64()
         .unwrap();
     assert!((finite - volume_db_to_mul(-6.0)).abs() < 0.000001);
@@ -375,35 +406,6 @@ async fn invalid_gain_commands_are_rejected_before_network_work() {
             .is_err());
     }
     assert_eq!(server.await.unwrap().len(), 1);
-}
-
-/// Withhold every ordinary response while observing all requests until EOF.
-async fn unresponsive_client() -> (
-    ObsClient,
-    tokio::sync::mpsc::UnboundedReceiver<Value>,
-    tokio::task::JoinHandle<Vec<Value>>,
-) {
-    use futures_util::SinkExt;
-    use tokio_websockets::Message;
-    let (listener, port) = crate::obs::testing::wire::listen().await;
-    let (seen_tx, seen_rx) = tokio::sync::mpsc::unbounded_channel();
-    let server = tokio::spawn(async move {
-        let mut socket = crate::obs::testing::wire::accept(listener).await;
-        let version: Value =
-            serde_json::from_str(socket.next().await.unwrap().unwrap().as_text().unwrap()).unwrap();
-        socket.send(Message::text(json!({"op":7,"d":{"requestId":version["d"]["requestId"],"requestType":"GetVersion","requestStatus":{"result":true,"code":100},"responseData":crate::obs::testing::wire::version(&[])}}).to_string())).await.unwrap();
-        let mut requests = Vec::new();
-        while let Some(Ok(message)) = socket.next().await {
-            if let Some(text) = message.as_text() {
-                let request: Value = serde_json::from_str(text).unwrap();
-                let _ = seen_tx.send(request.clone());
-                requests.push(request);
-            }
-        }
-        requests
-    });
-    let (client, _events) = ObsClient::connect("127.0.0.1", port, None).await.unwrap();
-    (client, seen_rx, server)
 }
 
 #[tokio::test]
@@ -558,13 +560,11 @@ async fn graceful_shutdown_handle_is_issued_once_and_never_reopens_controls() {
 
 #[tokio::test]
 async fn ordinary_server_rejection_keeps_connection_admission_usable() {
-    let (client, server) = mock_client(vec![
-        (
-            "SetCurrentProgramScene",
-            json!({"__error":true,"__code":600}),
-        ),
-        ("SetCurrentProgramScene", json!({})),
+    let (client, server) = ScriptedObs::ordered(vec![
+        ("SetCurrentProgramScene", Reply::err(600)),
+        ("SetCurrentProgramScene", Reply::Ok(json!({}))),
     ])
+    .connect()
     .await;
     assert!(client.set_current_program_scene("Missing").await.is_err());
     client.set_current_program_scene("Program").await.unwrap();
@@ -595,19 +595,20 @@ async fn configured_fps_is_observed_separately_from_measured_jitter() {
 
 #[tokio::test]
 async fn partial_audio_failure_is_explicit_and_drains_other_admitted_reads() {
-    let (client, server) = mock_client(vec![
+    let (client, server) = ScriptedObs::ordered(vec![
         (
             "GetInputList",
-            json!({"inputs":[input("Good"),input("Failed")]}),
+            Reply::Ok(json!({"inputs":[input("Good"),input("Failed")]})),
         ),
-        ("GetInputMute", json!({"inputMuted":false})),
-        ("GetInputMute", json!({"__error":true,"__code":702})),
+        ("GetInputMute", Reply::Ok(json!({"inputMuted":false}))),
+        ("GetInputMute", Reply::err(702)),
         (
             "GetInputVolume",
-            json!({"inputVolumeMul":1.0,"inputVolumeDb":0.0}),
+            Reply::Ok(json!({"inputVolumeMul":1.0,"inputVolumeDb":0.0})),
         ),
-        ("SetCurrentProgramScene", json!({})),
+        ("SetCurrentProgramScene", Reply::Ok(json!({}))),
     ])
+    .connect()
     .await;
     assert!(client
         .get_all_audio_inputs()
@@ -623,11 +624,11 @@ async fn partial_audio_failure_is_explicit_and_drains_other_admitted_reads() {
 async fn failure_warning_samples_are_bounded_without_losing_omitted_count() {
     let items: Vec<_> = (0..40).map(|id| scene_item(id, "Failed")).collect();
     let mut script = vec![
-        ("GetInputList", json!({"inputs":[]})),
-        ("GetSceneItemList", json!({"sceneItems":items})),
+        ("GetInputList", Reply::Ok(json!({"inputs":[]}))),
+        ("GetSceneItemList", Reply::Ok(json!({"sceneItems":items}))),
     ];
-    script.extend((0..40).map(|_| ("GetSceneItemEnabled", json!({"__error":true,"__code":702}))));
-    let (client, server) = mock_client(script).await;
+    script.extend((0..40).map(|_| ("GetSceneItemEnabled", Reply::err(702))));
+    let (client, server) = ScriptedObs::ordered(script).connect().await;
     let (items, warnings) = client.scan_source_items("Program", 40).await;
     assert!(items.is_empty());
     assert_eq!(warnings.len(), 33);
@@ -697,7 +698,7 @@ async fn explicit_actions_send_identity_without_cached_names() {
         (3, "sourceUuid"),
         (5, "sceneUuid"),
     ] {
-        let data = &requests[index]["d"]["requestData"];
+        let data = request_data(&requests[index]);
         assert_eq!(data[key], uuid);
         for name in ["inputName", "sourceName", "sceneName"] {
             assert!(data.get(name).is_none());

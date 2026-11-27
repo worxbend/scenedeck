@@ -320,121 +320,37 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use futures_util::{SinkExt, StreamExt};
     use serde_json::json;
-    use tokio::net::TcpListener;
-    use tokio_websockets::{Message, ServerBuilder};
 
     use super::{collect_bounded_ordered, ObsClient};
     use crate::obs::event::ObsEvent;
+    use crate::obs::testing::wire::{self, Reply};
 
     #[tokio::test]
     async fn connect_negotiates_obs_websocket_and_requests_meter_events() {
-        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
-            .await
-            .expect("bind mock OBS server");
-        let port = listener.local_addr().expect("mock server address").port();
+        let (listener, port) = wire::listen().await;
         let (send_event, event_requested) = tokio::sync::oneshot::channel();
         let (release_server, hold_server) = tokio::sync::oneshot::channel();
 
         let server = tokio::spawn(async move {
-            let (tcp, _) = listener.accept().await.expect("accept OBS client");
-            let (_, mut websocket) = ServerBuilder::new()
-                .accept(tcp)
-                .await
-                .expect("upgrade mock OBS connection");
+            let (mut websocket, identify) = wire::accept_with_identify(listener).await;
 
-            websocket
-                .send(Message::text(
-                    json!({
-                        "op": 0,
-                        "d": {
-                            "obsWebSocketVersion": "5.5.0",
-                            "rpcVersion": 1
-                        }
-                    })
-                    .to_string(),
-                ))
-                .await
-                .expect("send OBS Hello");
-
-            let identify = websocket
-                .next()
-                .await
-                .expect("client sent Identify")
-                .expect("read Identify frame");
-            let identify: serde_json::Value =
-                serde_json::from_str(identify.as_text().expect("Identify is a text frame"))
-                    .expect("Identify is valid JSON");
-
-            websocket
-                .send(Message::text(
-                    json!({
-                        "op": 2,
-                        "d": { "negotiatedRpcVersion": 1 }
-                    })
-                    .to_string(),
-                ))
-                .await
-                .expect("send OBS Identified");
-
-            let version_request = websocket
-                .next()
-                .await
-                .expect("client sent GetVersion")
-                .expect("read GetVersion frame");
-            let version_request: serde_json::Value = serde_json::from_str(
-                version_request
-                    .as_text()
-                    .expect("GetVersion is a text frame"),
-            )
-            .expect("GetVersion is valid JSON");
+            let version_request = wire::read_json(&mut websocket).await;
             assert_eq!(version_request["op"], 6);
             assert_eq!(version_request["d"]["requestType"], "GetVersion");
-            let request_id = version_request["d"]["requestId"].clone();
-
-            websocket
-                .send(Message::text(
-                    json!({
-                        "op": 7,
-                        "d": {
-                            "requestType": "GetVersion",
-                            "requestId": request_id,
-                            "requestStatus": { "result": true, "code": 100 },
-                            "responseData": {
-                                "obsStudioVersion": "31.0.0",
-                                "obsWebSocketVersion": "5.5.0",
-                                "rpcVersion": 1,
-                                "availableRequests": [],
-                                "supportedImageFormats": [],
-                                "platform": "mock",
-                                "platformDescription": "SceneDeck test server"
-                            }
-                        }
-                    })
-                    .to_string(),
-                ))
-                .await
-                .expect("send GetVersion response");
+            let version = Reply::Ok(wire::version(&[]));
+            wire::send_json(&mut websocket, &wire::response(&version_request, &version)).await;
 
             event_requested.await.expect("request mock OBS event");
-            websocket
-                .send(Message::text(
-                    json!({
-                        "op": 5,
-                        "d": {
-                            "eventType": "CurrentProgramSceneChanged",
-                            "eventIntent": obws::requests::EventSubscription::SCENES.bits(),
-                            "eventData": {
-                                "sceneName": "Program",
-                                "sceneUuid": "00000000-0000-0000-0000-000000000001"
-                            }
-                        }
-                    })
-                    .to_string(),
-                ))
-                .await
-                .expect("send scene-change event");
+            let scene_changed = wire::event(
+                "CurrentProgramSceneChanged",
+                obws::requests::EventSubscription::SCENES.bits(),
+                json!({
+                    "sceneName": "Program",
+                    "sceneUuid": "00000000-0000-0000-0000-000000000001"
+                }),
+            );
+            wire::send_json(&mut websocket, &scene_changed).await;
 
             let _ = hold_server.await;
             identify
@@ -1100,49 +1016,11 @@ fn text_is_file_backed(settings: &serde_json::Value, defaults: &serde_json::Valu
 pub(crate) mod control_tests {
     use super::*;
     use crate::domain::control::{ControlAction, MediaAction, WorkspaceWarning};
-    use futures_util::{SinkExt, StreamExt};
-    use serde_json::{json, Value};
-    use tokio_websockets::Message;
-
-    pub(crate) async fn mock_client(
-        script: Vec<(&'static str, Value)>,
-    ) -> (ObsClient, tokio::task::JoinHandle<Vec<Value>>) {
-        let (listener, port) = crate::obs::testing::wire::listen().await;
-        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
-        let server = tokio::spawn(async move {
-            let mut socket = crate::obs::testing::wire::accept(listener).await;
-            let mut requests = Vec::new();
-            let version = crate::obs::testing::wire::version(&["png"]);
-            for (expected, data) in std::iter::once(("GetVersion", version)).chain(script) {
-                let message = socket.next().await.unwrap().unwrap();
-                let request: Value = serde_json::from_str(message.as_text().unwrap()).unwrap();
-                assert_eq!(request["d"]["requestType"], expected);
-                let failed = data
-                    .get("__error")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
-                let status = if failed {
-                    json!({"result":false,"code":data.get("__code").and_then(Value::as_u64).unwrap_or(600),"comment":data.get("__comment").and_then(Value::as_str).unwrap_or("mock missing source")})
-                } else {
-                    json!({"result":true,"code":100})
-                };
-                let mut response = json!({"op":7,"d":{"requestId":request["d"]["requestId"],"requestType":expected,"requestStatus":status}});
-                if data != json!({}) {
-                    response["d"]["responseData"] = data;
-                }
-                socket
-                    .send(Message::text(response.to_string()))
-                    .await
-                    .unwrap();
-                requests.push(request);
-            }
-            let _ = ready_rx.await;
-            requests
-        });
-        let (client, _events) = ObsClient::connect("127.0.0.1", port, None).await.unwrap();
-        ready_tx.send(()).unwrap();
-        (client, server)
-    }
+    // Transitional path for external importers; P2-T04 removes it.
+    pub(crate) use crate::obs::testing::scripted::mock_client;
+    use crate::obs::testing::scripted::ScriptedObs;
+    use crate::obs::testing::wire::{request_data, Reply};
+    use serde_json::json;
 
     #[tokio::test]
     async fn directional_actions_preserve_scene_item_owner_and_explicit_state() {
@@ -1183,11 +1061,11 @@ pub(crate) mod control_tests {
             .unwrap();
         let requests = server.await.unwrap();
         assert_eq!(
-            requests[1]["d"]["requestData"],
+            *request_data(&requests[1]),
             json!({"sceneName":"Nested group","sceneItemId":42,"sceneItemEnabled":false})
         );
         assert_eq!(
-            requests[5]["d"]["requestData"]["mediaAction"],
+            request_data(&requests[5])["mediaAction"],
             "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PAUSE"
         );
     }
@@ -1251,16 +1129,18 @@ pub(crate) mod control_tests {
 
     #[tokio::test]
     async fn missing_nested_scene_reports_partial_coverage_without_losing_other_items() {
-        let (client, server) = mock_client(vec![
-            ("GetInputList", json!({"inputs":[]})),
-            ("GetSceneItemList", json!({"sceneItems":[
+        let (client, server) = ScriptedObs::ordered(vec![
+            ("GetInputList", Reply::Ok(json!({"inputs":[]}))),
+            ("GetSceneItemList", Reply::Ok(json!({"sceneItems":[
                 {"sceneItemId":1,"sceneItemIndex":0,"sourceName":"Missing nested scene","sourceType":"OBS_SOURCE_TYPE_SCENE","isGroup":false},
                 {"sceneItemId":2,"sceneItemIndex":1,"sourceName":"Sibling","sourceType":"OBS_SOURCE_TYPE_INPUT","inputKind":"image_source"}
-            ]})),
-            ("GetSceneItemEnabled",json!({"sceneItemEnabled":true})),
-            ("GetSceneItemEnabled",json!({"sceneItemEnabled":true})),
-            ("GetSceneItemList",json!({"__error":true})),
-        ]).await;
+            ]}))),
+            ("GetSceneItemEnabled",Reply::Ok(json!({"sceneItemEnabled":true}))),
+            ("GetSceneItemEnabled",Reply::Ok(json!({"sceneItemEnabled":true}))),
+            ("GetSceneItemList",Reply::err(600)),
+        ])
+        .connect()
+        .await;
         let (items, warnings) = client.scan_source_items("Program", 4096).await;
         assert_eq!(items.len(), 2);
         assert!(items.iter().any(|item| item.input == "Sibling"));
@@ -1288,7 +1168,7 @@ pub(crate) mod control_tests {
             .unwrap();
         let requests = server.await.unwrap();
         assert_eq!(
-            requests[3]["d"]["requestData"],
+            *request_data(&requests[3]),
             json!({"inputName":"Caption","inputSettings":{"text":"New"},"overlay":true})
         );
     }
@@ -1329,7 +1209,7 @@ pub(crate) mod control_tests {
             .unwrap();
         let requests = server.await.unwrap();
         assert_eq!(
-            requests[1]["d"]["requestData"],
+            *request_data(&requests[1]),
             json!({"sourceName":"Mic","filterName":"Noise suppression","filterEnabled":false})
         );
     }
@@ -1364,7 +1244,7 @@ pub(crate) mod control_tests {
             .unwrap();
         let requests = server.await.unwrap();
         assert_eq!(
-            requests[2]["d"]["requestData"],
+            *request_data(&requests[2]),
             json!({"sourceName":"Portrait","imageFormat":"png","imageWidth":122,"imageHeight":216,"imageCompressionQuality":-1})
         );
     }
