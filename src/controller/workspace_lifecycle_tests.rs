@@ -18,7 +18,7 @@ struct MockConnection {
 }
 
 async fn mock_connection(held_request: &'static str) -> MockConnection {
-    let (listener, port) = crate::obs::obs_fixture::listen().await;
+    let (listener, port) = crate::obs::testing::wire::listen().await;
     let entered = Arc::new(Notify::new());
     let release = Arc::new(Notify::new());
     let (finish, mut finished) = oneshot::channel();
@@ -26,7 +26,7 @@ async fn mock_connection(held_request: &'static str) -> MockConnection {
     let started = entered.clone();
     let resume = release.clone();
     let server = tokio::spawn(async move {
-        let mut socket = crate::obs::obs_fixture::accept(listener).await;
+        let mut socket = crate::obs::testing::wire::accept(listener).await;
         let mut held = None;
         let mut held_once = false;
         let mut emitted = false;
@@ -49,7 +49,7 @@ async fn mock_connection(held_request: &'static str) -> MockConnection {
             let name = request["d"]["requestType"].as_str().unwrap();
             requests.push(name.to_owned());
             let response = match name {
-                "GetVersion" => Some(crate::obs::obs_fixture::version(&[])),
+                "GetVersion" => Some(crate::obs::testing::wire::version(&[])),
                 "GetSceneCollectionList" => {
                     Some(json!({"currentSceneCollectionName":"Show","sceneCollections":["Show"]}))
                 }

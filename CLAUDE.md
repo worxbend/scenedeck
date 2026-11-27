@@ -137,7 +137,7 @@ Controller components accept injectable boundaries so lifecycle behavior is
 testable without a running OBS: `SessionRunner` (`session_controller.rs`),
 `FakeOutputCommandClient` (`output_controller.rs`), and
 `ControllerDependencies` for config/password. Protocol tests use the loopback
-mock in `src/obs/obs_fixture.rs` (handshake + `GetVersion`). Prefer extracting a
+mock in `src/obs/testing/wire.rs` (handshake + `GetVersion`). Prefer extracting a
 pure decision helper — usually an `AppState` method — over testing through GTK
 callbacks.
 

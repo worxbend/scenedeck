@@ -51,7 +51,7 @@ operational state visible across pages.
 The completed milestones above should be treated as existing behavior, not as
 future phases. Remaining improvement work is narrower:
 
-- Grow the shared loopback fixture (`src/obs/obs_fixture.rs`) from handshake
+- Grow the shared loopback fixture (`src/obs/testing/`) from handshake
   and version coverage into full refresh and mutation scenarios,
   and add rendered GTK interaction coverage. The existing manual Mixer records
   document environment gaps rather than a current successful full interaction

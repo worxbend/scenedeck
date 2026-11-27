@@ -54,19 +54,19 @@ mod tests {
 
     #[tokio::test]
     async fn broadcast_lag_recovers_after_liveness_without_disconnect() {
-        let (listener, port) = crate::obs::obs_fixture::listen().await;
+        let (listener, port) = crate::obs::testing::wire::listen().await;
         let (burst, begin_burst) = oneshot::channel();
         let (fresh, begin_fresh) = oneshot::channel();
         let (finish, finished) = oneshot::channel();
         let server = tokio::spawn(async move {
-            let mut socket = crate::obs::obs_fixture::accept(listener).await;
+            let mut socket = crate::obs::testing::wire::accept(listener).await;
             let mut begin_burst = Some(begin_burst);
             for index in 0..3 {
                 let request: Value =
                     serde_json::from_str(socket.next().await.unwrap().unwrap().as_text().unwrap())
                         .unwrap();
                 assert_eq!(request["d"]["requestType"], "GetVersion");
-                socket.send(Message::text(json!({"op":7,"d":{"requestId":request["d"]["requestId"],"requestType":"GetVersion","requestStatus":{"result":true,"code":100},"responseData":crate::obs::obs_fixture::version(&[])}}).to_string())).await.unwrap();
+                socket.send(Message::text(json!({"op":7,"d":{"requestId":request["d"]["requestId"],"requestType":"GetVersion","requestStatus":{"result":true,"code":100},"responseData":crate::obs::testing::wire::version(&[])}}).to_string())).await.unwrap();
                 if index == 0 {
                     begin_burst.take().unwrap().await.unwrap();
                     for _ in 0..256 {

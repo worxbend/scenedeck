@@ -1107,12 +1107,12 @@ pub(crate) mod control_tests {
     pub(crate) async fn mock_client(
         script: Vec<(&'static str, Value)>,
     ) -> (ObsClient, tokio::task::JoinHandle<Vec<Value>>) {
-        let (listener, port) = crate::obs::obs_fixture::listen().await;
+        let (listener, port) = crate::obs::testing::wire::listen().await;
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         let server = tokio::spawn(async move {
-            let mut socket = crate::obs::obs_fixture::accept(listener).await;
+            let mut socket = crate::obs::testing::wire::accept(listener).await;
             let mut requests = Vec::new();
-            let version = crate::obs::obs_fixture::version(&["png"]);
+            let version = crate::obs::testing::wire::version(&["png"]);
             for (expected, data) in std::iter::once(("GetVersion", version)).chain(script) {
                 let message = socket.next().await.unwrap().unwrap();
                 let request: Value = serde_json::from_str(message.as_text().unwrap()).unwrap();

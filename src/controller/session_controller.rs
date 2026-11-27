@@ -603,12 +603,12 @@ mod tests {
         use tokio::sync::oneshot;
         use tokio_websockets::Message;
 
-        let (listener, port) = crate::obs::obs_fixture::listen().await;
+        let (listener, port) = crate::obs::testing::wire::listen().await;
         let (started, entered) = oneshot::channel();
         let (release, mut released) = oneshot::channel();
         let (finish, mut finished) = oneshot::channel();
         let server = tokio::spawn(async move {
-            let mut socket = crate::obs::obs_fixture::accept(listener).await;
+            let mut socket = crate::obs::testing::wire::accept(listener).await;
             let mut names = Vec::new();
             let mut started = Some(started);
             let mut held = None;
@@ -630,7 +630,7 @@ mod tests {
                 let name = frame["d"]["requestType"].as_str().unwrap();
                 names.push(name.to_owned());
                 let data = match name {
-                    "GetVersion" => Some(crate::obs::obs_fixture::version(&[])),
+                    "GetVersion" => Some(crate::obs::testing::wire::version(&[])),
                     "GetStreamStatus" => Some(
                         json!({"outputActive":stream_active,"outputReconnecting":false,"outputTimecode":"00:00:00.000","outputDuration":0,"outputCongestion":0.0,"outputBytes":0,"outputSkippedFrames":0,"outputTotalFrames":0}),
                     ),

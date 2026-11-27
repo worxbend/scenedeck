@@ -46,15 +46,15 @@ struct Mock {
 }
 
 fn version() -> Value {
-    crate::obs::obs_fixture::version(&[])
+    crate::obs::testing::wire::version(&[])
 }
 async fn mock(plan: Plan) -> Mock {
-    let (listener, port) = crate::obs::obs_fixture::listen().await;
+    let (listener, port) = crate::obs::testing::wire::listen().await;
     let (signals, mut commands) = async_mpsc::unbounded_channel::<(Signal, oneshot::Sender<()>)>();
     let (entered_tx, entered) = async_mpsc::unbounded_channel();
     let (finish, mut finished) = oneshot::channel();
     let server = tokio::spawn(async move {
-        let mut socket = crate::obs::obs_fixture::accept(listener).await;
+        let mut socket = crate::obs::testing::wire::accept(listener).await;
         let mut counts = HashMap::<String, usize>::new();
         let mut held = Vec::new();
         let mut names = Vec::new();

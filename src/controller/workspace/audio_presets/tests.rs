@@ -232,16 +232,16 @@ struct Gated {
 async fn gated(script: Vec<(&'static str, Value)>, gate: usize) -> Gated {
     use futures_util::{SinkExt, StreamExt};
     use tokio_websockets::Message;
-    let (listener, port) = crate::obs::obs_fixture::listen().await;
+    let (listener, port) = crate::obs::testing::wire::listen().await;
     let (started, observed) = tokio::sync::oneshot::channel();
     let (release, released) = tokio::sync::oneshot::channel();
     let server = tokio::spawn(async move {
-        let mut socket = crate::obs::obs_fixture::accept(listener).await;
+        let mut socket = crate::obs::testing::wire::accept(listener).await;
         let mut started = Some(started);
         let mut released = Some(released);
         let mut requests = Vec::new();
         for (index, (expected, data)) in
-            std::iter::once(("GetVersion", crate::obs::obs_fixture::version(&[])))
+            std::iter::once(("GetVersion", crate::obs::testing::wire::version(&[])))
                 .chain(script)
                 .enumerate()
         {

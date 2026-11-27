@@ -593,14 +593,14 @@ mod tests {
     }
 
     async fn mock_obs(collection: &str, expect_audio_write: bool) -> MockObs {
-        let (listener, port) = crate::obs::obs_fixture::listen().await;
+        let (listener, port) = crate::obs::testing::wire::listen().await;
         let collection = collection.to_string();
         let (started_tx, collection_started) = oneshot::channel();
         let (release_collection, release_rx) = oneshot::channel();
         let (finish, finish_rx) = oneshot::channel();
         let server = tokio::spawn(async move {
-            let mut socket = crate::obs::obs_fixture::accept(listener).await;
-            let version = crate::obs::obs_fixture::version(&["png"]);
+            let mut socket = crate::obs::testing::wire::accept(listener).await;
+            let version = crate::obs::testing::wire::version(&["png"]);
             let mut script = vec![
                 ("GetVersion", version.clone()),
                 (
@@ -681,16 +681,16 @@ mod tests {
 
     #[tokio::test]
     async fn live_read_skips_retired_workflows_and_selected_source_inspection() {
-        let (listener, port) = crate::obs::obs_fixture::listen().await;
+        let (listener, port) = crate::obs::testing::wire::listen().await;
         let server = tokio::spawn(async move {
-            let mut socket = crate::obs::obs_fixture::accept(listener).await;
+            let mut socket = crate::obs::testing::wire::accept(listener).await;
             let mut requests = Vec::new();
             while let Some(message) = socket.next().await {
                 let request: Value =
                     serde_json::from_str(message.unwrap().as_text().unwrap()).unwrap();
                 let name = request["d"]["requestType"].as_str().unwrap();
                 let data = match name {
-                    "GetVersion" => Some(crate::obs::obs_fixture::version(&["png"])),
+                    "GetVersion" => Some(crate::obs::testing::wire::version(&["png"])),
                     "GetSceneList" => Some(
                         json!({"currentProgramSceneName":"Program", "scenes":[{"sceneIndex":0,"sceneName":"Program","sceneUuid":"00000000-0000-0000-0000-000000000123"}]}),
                     ),

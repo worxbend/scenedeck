@@ -142,14 +142,14 @@ mod tests {
     }
 
     async fn mock_obs(before: &str, after: &str, hold_video: bool) -> MockObs {
-        let (listener, port) = crate::obs::obs_fixture::listen().await;
+        let (listener, port) = crate::obs::testing::wire::listen().await;
         let before = before.to_owned();
         let after = after.to_owned();
         let (started, capture_started) = oneshot::channel();
         let (release_capture, release) = oneshot::channel();
         let (finish, mut finished) = oneshot::channel();
         let server = tokio::spawn(async move {
-            let mut socket = crate::obs::obs_fixture::accept(listener).await;
+            let mut socket = crate::obs::testing::wire::accept(listener).await;
             let mut requests = Vec::new();
             let mut capture_started = Some(started);
             let mut release = release;
@@ -172,7 +172,7 @@ mod tests {
                 requests.push(name.to_owned());
                 let mut hold = false;
                 let data = match name {
-                    "GetVersion" => crate::obs::obs_fixture::version(&["png"]),
+                    "GetVersion" => crate::obs::testing::wire::version(&["png"]),
                     "GetVideoSettings" => {
                         if hold_video {
                             if let Some(started) = capture_started.take() {
