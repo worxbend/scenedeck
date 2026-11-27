@@ -8,6 +8,7 @@
 
 #![cfg(test)]
 
+mod ratchets;
 mod rules;
 mod scanner;
 mod scanner_tests;

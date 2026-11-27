@@ -181,3 +181,116 @@ fn column_view_matches_any_segment_and_a_called_name() {
         );
     }
 }
+
+fn crate_modules(names: &[&'static str]) -> Vec<Forbidden<'static>> {
+    names.iter().copied().map(Forbidden::PathPrefix).collect()
+}
+
+/// KNOWN_DEBT: the adapter names `controller::event::ConnectionInfo`.
+/// P3-T01 moves that type into the domain and deletes this list.
+const OBS_FILES_NAMING_CONNECTION_INFO: &[&str] = &["obs/client.rs", "obs/mapper.rs"];
+
+/// The OBS adapter sits under the application, not beside it.
+///
+/// `src/obs/` translates the protocol into domain types. If it reaches up
+/// into the controller, the UI, storage or a service, the protocol layer
+/// starts deciding application policy, and no fake OBS can stand in for it
+/// without dragging that policy along. The two known-debt files are exempt
+/// from the controller edge only; they still may not name the others.
+#[test]
+fn obs_adapter_depends_only_on_domain_and_infra() {
+    let mut offenders = violations(
+        "obs",
+        &crate_modules(&["crate::ui", "crate::storage", "crate::services"]),
+        &[],
+    );
+    offenders.extend(violations(
+        "obs",
+        &crate_modules(&["crate::controller"]),
+        OBS_FILES_NAMING_CONNECTION_INFO,
+    ));
+
+    assert!(
+        offenders.is_empty(),
+        "src/obs/ may depend on src/domain/ and src/infra/ only. Map to a \
+         domain type and let the controller decide what to do with it:\n{}",
+        offenders.join("\n")
+    );
+}
+
+/// Storage persists domain snapshots and knows nothing above them.
+///
+/// `src/storage/` is called by the controller and by GTK-side persistence.
+/// An import back into either, or into the OBS adapter or a service, makes
+/// the file format depend on runtime orchestration.
+#[test]
+fn storage_depends_only_on_domain_and_infra() {
+    let offenders = violations(
+        "storage",
+        &crate_modules(&[
+            "crate::controller",
+            "crate::obs",
+            "crate::services",
+            "crate::ui",
+        ]),
+        &[],
+    );
+
+    assert!(
+        offenders.is_empty(),
+        "src/storage/ may depend on src/domain/ and src/infra/ only. Take \
+         the value as a parameter instead of reaching for its owner:\n{}",
+        offenders.join("\n")
+    );
+}
+
+/// The domain is the innermost layer.
+///
+/// Every other module may use domain types; the domain uses none of them.
+/// That is what lets a rule about scenes or audio be tested by calling it.
+#[test]
+fn domain_is_innermost() {
+    let offenders = violations(
+        "domain",
+        &crate_modules(&[
+            "crate::controller",
+            "crate::ui",
+            "crate::obs",
+            "crate::storage",
+            "crate::services",
+        ]),
+        &[],
+    );
+
+    assert!(
+        offenders.is_empty(),
+        "src/domain/ must not depend on any outer module. Move the shared \
+         concept into the domain, or pass the value in:\n{}",
+        offenders.join("\n")
+    );
+}
+
+/// Services compute over domain snapshots and nothing else.
+///
+/// A service that reads storage, calls OBS or touches the controller or
+/// UI is no longer a pure decision; it becomes a second orchestrator.
+#[test]
+fn services_depend_only_on_domain() {
+    let offenders = violations(
+        "services",
+        &crate_modules(&[
+            "crate::controller",
+            "crate::ui",
+            "crate::obs",
+            "crate::storage",
+        ]),
+        &[],
+    );
+
+    assert!(
+        offenders.is_empty(),
+        "src/services/ may depend on src/domain/ (and src/infra/) only. Have \
+         the caller fetch the data and pass the snapshot in:\n{}",
+        offenders.join("\n")
+    );
+}

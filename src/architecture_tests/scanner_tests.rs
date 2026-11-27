@@ -1,4 +1,7 @@
-use super::scanner::{module_files, ratchet, source_violations, src_root, Forbidden};
+use super::scanner::{
+    line_budget, module_files, production_line_count, ratchet, source_violations, src_root,
+    Forbidden,
+};
 
 fn prefixes<'a>(names: &[&'a str]) -> Vec<Forbidden<'a>> {
     names.iter().copied().map(Forbidden::PathPrefix).collect()
@@ -203,5 +206,49 @@ fn ratchet_rejects_a_raised_count_and_an_unlisted_file() {
     assert!(
         unlisted.iter().any(|hit| hit.contains("infra/sync.rs")),
         "{unlisted:?}"
+    );
+}
+
+#[test]
+fn production_lines_skip_interleaved_test_only_items() {
+    let source = [
+        "use std::fmt;",
+        "/// Documented fixture.",
+        "#[cfg(test)]",
+        "use crate::fixture;",
+        "struct State {",
+        "    count: usize,",
+        "}",
+        "impl State {",
+        "    #[cfg(test)]",
+        "    fn fixture() {}",
+        "    fn production() {}",
+        "}",
+        "#[cfg(test)]",
+        "mod tests {",
+        "    fn helper() {}",
+        "}",
+        "fn after_tests() {}",
+    ]
+    .join("\n");
+    assert_eq!(production_line_count(&source), 8);
+}
+
+#[test]
+fn line_budget_rejects_a_listed_file_over_its_ceiling_and_any_file_over_the_cap() {
+    let sync =
+        production_line_count(&std::fs::read_to_string(src_root().join("infra/sync.rs")).unwrap());
+    assert!(line_budget("infra/sync.rs", &[], sync).is_empty());
+    let over_cap = line_budget("infra/sync.rs", &[], sync - 1);
+    assert!(
+        over_cap.iter().any(|hit| hit.contains("infra/sync.rs")),
+        "{over_cap:?}"
+    );
+    let listed = line_budget("infra/sync.rs", &[("infra/sync.rs", sync)], 0);
+    assert!(listed.is_empty(), "{listed:?}");
+    let raised = line_budget("infra/sync.rs", &[("infra/sync.rs", sync - 1)], usize::MAX);
+    assert!(
+        raised.iter().any(|hit| hit.contains("infra/sync.rs")),
+        "{raised:?}"
     );
 }

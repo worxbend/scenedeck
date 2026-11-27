@@ -191,6 +191,55 @@ impl<'ast> Visit<'ast> for ModuleFiles {
     }
 }
 
+/// Counts the lines that test-only items span, attributes and doc comments
+/// included. It does not descend into a test-only item, so nothing is
+/// counted twice.
+#[derive(Default)]
+struct TestOnlyLines {
+    lines: usize,
+}
+
+macro_rules! count_test_only {
+    ($($method:ident($node:ident)),* $(,)?) => {
+        $(fn $method(&mut self, node: &'ast syn::$node) {
+            if test_only(&node.attrs) {
+                let span = node.span();
+                self.lines += span.end().line + 1 - span.start().line;
+            } else {
+                visit::$method(self, node);
+            }
+        })*
+    };
+}
+
+impl<'ast> Visit<'ast> for TestOnlyLines {
+    count_test_only! {
+        visit_item_const(ItemConst), visit_item_enum(ItemEnum),
+        visit_item_extern_crate(ItemExternCrate), visit_item_fn(ItemFn),
+        visit_item_foreign_mod(ItemForeignMod), visit_item_impl(ItemImpl),
+        visit_item_macro(ItemMacro), visit_item_mod(ItemMod),
+        visit_item_static(ItemStatic), visit_item_struct(ItemStruct),
+        visit_item_trait(ItemTrait), visit_item_trait_alias(ItemTraitAlias),
+        visit_item_type(ItemType), visit_item_union(ItemUnion), visit_item_use(ItemUse),
+        visit_impl_item_const(ImplItemConst), visit_impl_item_fn(ImplItemFn),
+        visit_impl_item_macro(ImplItemMacro), visit_impl_item_type(ImplItemType),
+        visit_trait_item_const(TraitItemConst), visit_trait_item_fn(TraitItemFn),
+        visit_trait_item_macro(TraitItemMacro), visit_trait_item_type(TraitItemType),
+    }
+}
+
+/// Lines of `source` that ship.
+///
+/// Every line counts except those spanned by test-only items, wherever they
+/// sit. A first-`#[cfg(test)]` cut-off would drop the production code that
+/// follows an interleaved test helper.
+pub(super) fn production_line_count(source: &str) -> usize {
+    let syntax = syn::parse_file(source).expect("architecture scanner requires valid Rust");
+    let mut test_only_lines = TestOnlyLines::default();
+    test_only_lines.visit_file(&syntax);
+    source.lines().count() - test_only_lines.lines
+}
+
 impl BoundaryVisitor<'_> {
     fn check_macro_tokens(&mut self, tokens: proc_macro2::TokenStream) {
         if let Ok(syntax) = syn::parse2::<syn::File>(tokens.clone()) {
@@ -415,6 +464,31 @@ pub(super) fn ratchet(scope: &str, pattern: &str, ceilings: &[(&str, usize)]) ->
                     "  {key}: {count} occurrences of {pattern:?}, no ceiling"
                 )),
             }
+        })
+        .collect()
+}
+
+/// Check the production line count of every file under `scope`.
+///
+/// A listed file fails above its own ceiling. Any other file fails above
+/// `default_ceiling`, so a file cannot grow past the cap unnoticed.
+pub(super) fn line_budget(
+    scope: &str,
+    ceilings: &[(&str, usize)],
+    default_ceiling: usize,
+) -> Vec<String> {
+    source_files()
+        .into_iter()
+        .filter(|path| path.starts_with(scope))
+        .filter_map(|path| {
+            let count = production_line_count(&read_source(&path));
+            let key = path.to_str().expect("source path is utf-8");
+            let ceiling = ceilings
+                .iter()
+                .find(|(name, _)| *name == key)
+                .map_or(default_ceiling, |(_, ceiling)| *ceiling);
+            (count > ceiling)
+                .then(|| format!("  {key}: {count} production lines, ceiling {ceiling}"))
         })
         .collect()
 }
