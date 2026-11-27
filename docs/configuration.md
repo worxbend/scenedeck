@@ -165,6 +165,12 @@ Custom CSS follows the same rule by loading `light_path` or `dark_path`.
 Unknown or missing fields fall back through Serde defaults. If the app cannot
 read or parse the config, it starts with defaults and reports a startup notice.
 
+A config whose `version` is above the one this build supports was written by a
+newer SceneDeck. This build loads what it understands and shows a startup
+notice in Settings, but never migrates, moves aside, or saves over that file:
+changes made here are not saved, so going back to the newer build loses
+nothing.
+
 ## Config Migration
 
 Schema version `1` stored the color preference as a top-level `theme_mode`

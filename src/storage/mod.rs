@@ -6,6 +6,7 @@ pub(crate) mod config;
 pub(crate) mod registry;
 pub(crate) mod report_export;
 pub(crate) mod report_history;
+pub(crate) mod schema_version;
 pub(crate) mod secret;
 pub(crate) mod show_workspaces;
 pub(crate) mod small_file;

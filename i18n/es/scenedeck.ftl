@@ -575,6 +575,7 @@ stats-value-kbps = { $value } kb/s
 ## Ayuda, incorporación y mensajes añadidos en la versión 0.4.
 page-help = Ayuda
 config-parse-failed-backed-up = No se pudieron analizar los ajustes: { $detail } — el archivo se conservó en { $path } y se cargaron los valores predeterminados.
+config-newer-version = Los ajustes se guardaron con una versión más reciente de SceneDeck (versión de ajustes { $version }). Se cargaron, pero los cambios no se guardarán, para que los ajustes más recientes queden intactos.
 stats-popout-button = Abrir las estadísticas en una ventana aparte
 
 ## ui/pages/help.rs — guía de incorporación. Los cuerpos tienen varias líneas

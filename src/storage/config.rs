@@ -14,7 +14,7 @@ use crate::domain::appearance::{Language, ThemeMode, ThemePreference};
 use crate::domain::hotkey::SceneHotkeyConfig;
 use crate::domain::mixer::MixerSelection;
 use crate::infra::i18n::LANGUAGE_LOADER;
-use crate::storage::xdg;
+use crate::storage::{schema_version, xdg};
 
 mod connections;
 mod preflight;
@@ -201,6 +201,11 @@ pub enum ConfigStartupNotice {
         detail: String,
         backup: Option<PathBuf>,
     },
+    /// The file was written by a newer build. It is loaded as far as this
+    /// build understands it, and never written back.
+    NewerVersion {
+        version: u32,
+    },
 }
 
 impl ConfigStartupNotice {
@@ -223,6 +228,11 @@ impl ConfigStartupNotice {
                     detail = detail.as_str()
                 ),
             },
+            Self::NewerVersion { version } => fl!(
+                LANGUAGE_LOADER,
+                "config-newer-version",
+                version = version.to_string()
+            ),
         }
     }
 }
@@ -234,24 +244,9 @@ pub fn read_config() -> LoadedConfig {
 pub fn read_config_from_path(path: &Path) -> LoadedConfig {
     match crate::storage::small_file::read_to_string(path, crate::storage::small_file::CONFIG_LIMIT)
     {
-        Ok(raw) => match serde_json::from_str::<AppConfig>(&raw) {
-            Ok(mut config) => {
-                // Apply any schema migrations and persist if anything changed.
-                if apply_migrations(&mut config) {
-                    let _ = write_config_to_path(path, &config);
-                }
-                LoadedConfig {
-                    config,
-                    startup_notice: None,
-                }
-            }
-            Err(err) => LoadedConfig {
-                config: AppConfig::default(),
-                startup_notice: Some(ConfigStartupNotice::ParseFailed {
-                    detail: err.to_string(),
-                    backup: preserve_unparsable_config(path),
-                }),
-            },
+        Ok(raw) => match schema_version::newer_version(&raw, CURRENT_VERSION) {
+            Some(version) => load_newer_config(&raw, version),
+            None => load_supported_config(path, &raw),
         },
         Err(err) if err.kind() == io::ErrorKind::NotFound => LoadedConfig {
             config: AppConfig::default(),
@@ -260,6 +255,59 @@ pub fn read_config_from_path(path: &Path) -> LoadedConfig {
         Err(err) => LoadedConfig {
             config: AppConfig::default(),
             startup_notice: Some(ConfigStartupNotice::ReadFailed(err.to_string())),
+        },
+    }
+}
+
+fn load_supported_config(path: &Path, raw: &str) -> LoadedConfig {
+    match serde_json::from_str::<AppConfig>(raw) {
+        Ok(mut config) => {
+            // Apply any schema migrations and persist if anything changed.
+            // A failed write-back is harmless: the file is untouched, the
+            // migrated config is used from memory, and the next settings
+            // save (or the next start) writes the migration again.
+            if apply_migrations(&mut config) {
+                let _ = write_config_to_path(path, &config);
+            }
+            LoadedConfig {
+                config,
+                startup_notice: None,
+            }
+        }
+        Err(err) => LoadedConfig {
+            config: AppConfig::default(),
+            startup_notice: Some(ConfigStartupNotice::ParseFailed {
+                detail: err.to_string(),
+                backup: preserve_unparsable_config(path),
+            }),
+        },
+    }
+}
+
+/// Use a config from a newer build as far as it parses, and leave the file
+/// alone.
+///
+/// Migrating it, or moving it aside when it does not parse, would cost the
+/// fields this build cannot see; `write_config_to_path` refuses it for the
+/// same reason. An unparsable newer file still loads defaults, so the
+/// controller refuses it like any other unparsable config.
+fn load_newer_config(raw: &str, version: u32) -> LoadedConfig {
+    tracing::warn!(
+        version,
+        supported = CURRENT_VERSION,
+        "config is newer than this build supports; reading it without saving"
+    );
+    match serde_json::from_str::<AppConfig>(raw) {
+        Ok(config) => LoadedConfig {
+            config,
+            startup_notice: Some(ConfigStartupNotice::NewerVersion { version }),
+        },
+        Err(err) => LoadedConfig {
+            config: AppConfig::default(),
+            startup_notice: Some(ConfigStartupNotice::ParseFailed {
+                detail: err.to_string(),
+                backup: None,
+            }),
         },
     }
 }
@@ -314,10 +362,13 @@ fn preserve_unparsable_config(path: &Path) -> Option<PathBuf> {
 /// carrying the legacy `custom_css.path` key is older than that, so the custom
 /// stylesheet migration never ran. The rewrite that followed then dropped the
 /// key for good, because `legacy_path` is `skip_serializing`.
+///
+/// Only configs at or below `CURRENT_VERSION` reach this: a newer one is
+/// read by `load_newer_config`, which never migrates.
 fn apply_migrations(config: &mut AppConfig) -> bool {
     let version_changed = migrate(config);
     let custom_css_changed = config.appearance.migrate_legacy_custom_css_path();
-    let connections_changed = config.version <= CURRENT_VERSION && config.normalize_connections();
+    let connections_changed = config.normalize_connections();
     version_changed || custom_css_changed || connections_changed
 }
 
@@ -325,48 +376,39 @@ fn apply_migrations(config: &mut AppConfig) -> bool {
 /// (so the caller can re-persist).  Each arm handles one version step.
 fn migrate(config: &mut AppConfig) -> bool {
     let mut changed = false;
-    if config.version > CURRENT_VERSION {
-        // Config written by a newer build; clamp so we don't loop, but keep
-        // the user's data as-is.
-        tracing::warn!(
-            version = config.version,
-            "config is newer than this build supports"
-        );
-    } else {
-        while config.version < CURRENT_VERSION {
-            match config.version {
-                0 | 1 => {
-                    if let Some(mode) = config.legacy_theme_mode.take() {
-                        config.appearance.mode = mode;
-                    }
-                    config.version = 2;
-                    changed = true;
+    while config.version < CURRENT_VERSION {
+        match config.version {
+            0 | 1 => {
+                if let Some(mode) = config.legacy_theme_mode.take() {
+                    config.appearance.mode = mode;
                 }
-                2 => {
-                    // The first-run welcome dialog is for people meeting
-                    // SceneDeck for the first time, not for people who have
-                    // been using it and just upgraded.  A config file that
-                    // already exists means the user is neither new nor in
-                    // need of being interrupted, so the greeting is marked
-                    // as already given.
-                    config.onboarding.welcome_shown = true;
-                    config.version = 3;
-                    changed = true;
-                }
-                3 => {
-                    config.legacy_registry_endpoint =
-                        Some(format!("{}:{}", config.obs.host, config.obs.port));
-                    config.version = 4;
-                    changed = true;
-                }
-                4 => {
-                    config.version = 5;
-                    changed = true;
-                }
-                _ => {
-                    config.version = CURRENT_VERSION;
-                    changed = true;
-                }
+                config.version = 2;
+                changed = true;
+            }
+            2 => {
+                // The first-run welcome dialog is for people meeting
+                // SceneDeck for the first time, not for people who have
+                // been using it and just upgraded.  A config file that
+                // already exists means the user is neither new nor in
+                // need of being interrupted, so the greeting is marked
+                // as already given.
+                config.onboarding.welcome_shown = true;
+                config.version = 3;
+                changed = true;
+            }
+            3 => {
+                config.legacy_registry_endpoint =
+                    Some(format!("{}:{}", config.obs.host, config.obs.port));
+                config.version = 4;
+                changed = true;
+            }
+            4 => {
+                config.version = 5;
+                changed = true;
+            }
+            _ => {
+                config.version = CURRENT_VERSION;
+                changed = true;
             }
         }
     }
@@ -377,23 +419,23 @@ pub fn write_config(config: &AppConfig) -> io::Result<()> {
     write_config_to_path(&xdg::config_path(), config)
 }
 
+/// Replace the config at `path` with `config`.
+///
+/// Refused with `io::ErrorKind::Unsupported` when either side comes from a
+/// newer build: this build would write back only the fields it knows.
 pub fn write_config_to_path(path: &Path, config: &AppConfig) -> io::Result<()> {
-    // If preserving an invalid startup file failed (or reading was refused),
-    // a defaults-based save must not silently destroy the original either.
-    match crate::storage::small_file::read_to_string(path, crate::storage::small_file::CONFIG_LIMIT)
-    {
-        Ok(raw) => {
-            serde_json::from_str::<AppConfig>(&raw).map_err(io::Error::other)?;
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
+    if config.version > CURRENT_VERSION {
+        return Err(schema_version::refuse_newer(
+            path,
+            config.version,
+            CURRENT_VERSION,
+        ));
     }
+    ensure_replaceable(path)?;
     // Materialize profiles at the ordered write boundary. Reconnecting must not
     // discover an empty list and trigger a migration write outside the UI lane.
     let mut persisted = config.clone();
-    if persisted.version <= CURRENT_VERSION {
-        persisted.normalize_connections();
-    }
+    persisted.normalize_connections();
     let raw = serde_json::to_string_pretty(&persisted).map_err(io::Error::other)?;
     crate::storage::small_file::check_size(
         raw.len() as u64,
@@ -402,6 +444,26 @@ pub fn write_config_to_path(path: &Path, config: &AppConfig) -> io::Result<()> {
     // Whole-file replacement: a half-written file would be unparsable, and the
     // loaders treat unparsable as absent.
     crate::storage::atomic::write(path, raw.as_bytes())
+}
+
+/// Fail unless the file at `path` is absent or a config this build can
+/// rewrite without loss.
+///
+/// If preserving an invalid startup file failed (or reading was refused), a
+/// defaults-based save must not silently destroy the original either.
+fn ensure_replaceable(path: &Path) -> io::Result<()> {
+    match crate::storage::small_file::read_to_string(path, crate::storage::small_file::CONFIG_LIMIT)
+    {
+        Ok(raw) => {
+            if let Some(version) = schema_version::newer_version(&raw, CURRENT_VERSION) {
+                return Err(schema_version::refuse_newer(path, version, CURRENT_VERSION));
+            }
+            serde_json::from_str::<AppConfig>(&raw).map_err(io::Error::other)?;
+            Ok(())
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -455,6 +517,79 @@ mod tests {
         let (config, persisted) = load_from_temp_file(original);
         assert_eq!(config.version, 999);
         assert_eq!(persisted, original);
+    }
+
+    /// A downgrade meets a file from a newer build: an unknown field, and a
+    /// legacy stylesheet key that used to trigger a read-time rewrite.
+    const NEWER_CONFIG: &str = r#"{"version":999,"obs":{"host":"future.local","port":4455},"future_setting":{"preserve":true},"appearance":{"custom_css":{"enabled":true,"path":"/tmp/future.css"}}}"#;
+
+    #[test]
+    fn a_newer_config_stays_byte_identical_after_startup_and_a_settings_change() {
+        let dir = crate::storage::test_support::TempDir::new("config-newer-save");
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, NEWER_CONFIG).unwrap();
+
+        let mut config = read_config_from_path(&path).config;
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), NEWER_CONFIG);
+
+        config.outputs.confirm_start_stream = true;
+        let refused = write_config_to_path(&path, &config).unwrap_err();
+
+        assert_eq!(refused.kind(), io::ErrorKind::Unsupported);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), NEWER_CONFIG);
+    }
+
+    #[test]
+    fn a_newer_config_is_not_moved_aside_and_raises_the_newer_version_notice() {
+        let dir = crate::storage::test_support::TempDir::new("config-newer-notice");
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, NEWER_CONFIG).unwrap();
+
+        let loaded = read_config_from_path(&path);
+
+        assert_eq!(
+            loaded.startup_notice,
+            Some(ConfigStartupNotice::NewerVersion { version: 999 })
+        );
+        assert_eq!(loaded.config.obs.host, "future.local");
+        assert!(path.exists());
+        assert!(!dir.path().join("config.json.invalid").exists());
+    }
+
+    #[test]
+    fn an_unparsable_newer_config_is_left_in_place_rather_than_moved_aside() {
+        let dir = crate::storage::test_support::TempDir::new("config-newer-unparsable");
+        let path = dir.path().join("config.json");
+        let original = r#"{"version":999,"obs":{"port":"renamed in a newer build"}}"#;
+        std::fs::write(&path, original).unwrap();
+
+        let loaded = read_config_from_path(&path);
+
+        assert!(
+            matches!(
+                loaded.startup_notice,
+                Some(ConfigStartupNotice::ParseFailed { backup: None, .. })
+            ),
+            "{:?}",
+            loaded.startup_notice
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        assert!(!dir.path().join("config.json.invalid").exists());
+    }
+
+    #[test]
+    fn a_config_read_from_a_newer_file_is_never_written_anywhere() {
+        let dir = crate::storage::test_support::TempDir::new("config-newer-memory");
+        let path = dir.path().join("config.json");
+        let config = AppConfig {
+            version: CURRENT_VERSION + 1,
+            ..AppConfig::default()
+        };
+
+        let refused = write_config_to_path(&path, &config).unwrap_err();
+
+        assert_eq!(refused.kind(), io::ErrorKind::Unsupported);
+        assert!(!path.exists());
     }
 
     #[test]

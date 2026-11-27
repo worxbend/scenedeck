@@ -140,6 +140,8 @@ Persistence and local machine integration.
 
 - `config.rs`: JSON config load, save, defaults, and migrations.
 - `registry.rs`: local scene role registry.
+- `schema_version.rs`: reads a JSON file's `version` and refuses to write
+  over a file from a newer build.
 - `secret.rs`: OBS password storage through Secret Service.
 - `xdg.rs`: XDG config path resolution.
 - `test_support.rs` (tests only): `TempDir`, a scratch directory removed

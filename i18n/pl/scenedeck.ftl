@@ -578,6 +578,7 @@ stats-value-kbps = { $value } kb/s
 ## Help and onboarding
 page-help = Pomoc
 config-parse-failed-backed-up = Nie udało się przeanalizować ustawień: { $detail } — plik zachowano pod adresem { $path }, a wczytano ustawienia domyślne.
+config-newer-version = Ustawienia zostały zapisane przez nowszą wersję SceneDeck (wersja ustawień { $version }). Zostały wczytane, ale zmiany nie będą zapisywane, aby nowsze ustawienia pozostały nienaruszone.
 stats-popout-button = Otwórz statystyki w osobnym oknie
 
 help-page-title = Pomoc i wprowadzenie

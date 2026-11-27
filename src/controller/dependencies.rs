@@ -63,10 +63,13 @@ impl AppConfigProvider for FileAppConfigProvider {
 
 /// Defaults stand in for a config file that does not exist yet, never for one
 /// that exists but could not be read or parsed: the operator's real settings
-/// (OBS endpoint, audio filter) are still in that file.
+/// (OBS endpoint, audio filter) are still in that file. A newer file that
+/// parsed is the operator's settings, so it is served.
 fn stored_config(loaded: LoadedConfig) -> Result<AppConfig, AppError> {
     match loaded.startup_notice {
-        None | Some(ConfigStartupNotice::FirstLaunch) => Ok(loaded.config),
+        None
+        | Some(ConfigStartupNotice::FirstLaunch)
+        | Some(ConfigStartupNotice::NewerVersion { .. }) => Ok(loaded.config),
         Some(ConfigStartupNotice::ReadFailed(detail))
         | Some(ConfigStartupNotice::ParseFailed { detail, .. }) => Err(AppError::storage(detail)),
     }
@@ -141,7 +144,11 @@ mod tests {
 
     #[test]
     fn stored_config_serves_a_read_file_and_first_launch_defaults() {
-        for notice in [None, Some(ConfigStartupNotice::FirstLaunch)] {
+        for notice in [
+            None,
+            Some(ConfigStartupNotice::FirstLaunch),
+            Some(ConfigStartupNotice::NewerVersion { version: 999 }),
+        ] {
             let config = stored_config(loaded(notice.clone()));
 
             assert!(

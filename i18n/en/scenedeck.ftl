@@ -130,6 +130,7 @@ config-first-launch = No saved settings yet. Defaults are loaded.
 config-read-failed = Settings could not be read: { $detail }
 config-parse-failed = Settings could not be parsed: { $detail }
 config-parse-failed-backed-up = Settings could not be parsed: { $detail } — the file was kept at { $path } and defaults were loaded.
+config-newer-version = Settings were saved by a newer SceneDeck (settings version { $version }). They are loaded, but changes will not be saved, so the newer settings stay intact.
 
 ## graph.rs
 
