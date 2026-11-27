@@ -4,7 +4,7 @@
 //! consume this snapshot so diagnostics and validation do not depend on JSON or
 //! YAML adapter structs.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::domain::role::SceneRole;
 use crate::domain::scene::SceneId;
@@ -110,16 +110,19 @@ impl GraphDependencyPolicy {
 }
 
 /// Immutable registry snapshot used by application services.
+///
+/// Scenes iterate in scene-id order, so every consumer sees the same order on
+/// every launch.
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
 pub struct SceneRegistrySnapshot {
-    scenes: HashMap<SceneId, SceneMetadata>,
+    scenes: BTreeMap<SceneId, SceneMetadata>,
     graph_policy: GraphDependencyPolicy,
 }
 
 impl SceneRegistrySnapshot {
     /// Create an immutable registry snapshot from typed metadata and policy.
     pub fn new(
-        scenes: HashMap<SceneId, SceneMetadata>,
+        scenes: BTreeMap<SceneId, SceneMetadata>,
         graph_policy: GraphDependencyPolicy,
     ) -> Self {
         Self {
@@ -143,7 +146,7 @@ impl SceneRegistrySnapshot {
         self.scenes.contains_key(scene)
     }
 
-    /// Iterate all registered scenes and their metadata.
+    /// Iterate all registered scenes and their metadata in scene-id order.
     pub fn scenes(&self) -> impl Iterator<Item = (&SceneId, &SceneMetadata)> {
         self.scenes.iter()
     }

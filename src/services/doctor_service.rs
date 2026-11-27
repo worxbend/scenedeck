@@ -29,8 +29,9 @@ impl DoctorService {
 
     /// Evaluate all rules without consulting localization or display labels.
     ///
-    /// Most severe first; ties retain rule traversal order (including the
-    /// existing registry/graph iteration order, not a new alphabetical order).
+    /// Most severe first. Ties keep rule order, then traversal order: OBS
+    /// inventory order for scene coverage, scene-id order for registry entries
+    /// and graph parents, and OBS nesting order for children within a parent.
     pub fn evaluate(
         inventory: &SceneInventory,
         registry: &SceneRegistrySnapshot,
@@ -177,10 +178,11 @@ fn edge_finding(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::hash_map::RandomState;
+    use std::collections::{BTreeMap, HashMap};
 
     use crate::domain::registry::{GraphDependencyPolicy, RoleDependency, SceneMetadata};
-    use crate::domain::scene::Scene;
+    use crate::domain::scene::{Scene, SceneId};
 
     fn scene(id: &str) -> Scene {
         Scene {
@@ -300,7 +302,7 @@ mod tests {
             ..Default::default()
         };
         let registry = SceneRegistrySnapshot::new(
-            HashMap::from([(
+            BTreeMap::from([(
                 "Protected".into(),
                 SceneMetadata {
                     protected: true,
@@ -328,7 +330,7 @@ mod tests {
             ..Default::default()
         };
         let registry = SceneRegistrySnapshot::new(
-            HashMap::from([
+            BTreeMap::from([
                 (
                     "Protected".into(),
                     SceneMetadata {
@@ -559,7 +561,7 @@ mod tests {
                     ..Default::default()
                 };
                 let registry = SceneRegistrySnapshot::new(
-                    HashMap::from([(
+                    BTreeMap::from([(
                         "Scene".into(),
                         SceneMetadata {
                             protected,
@@ -585,26 +587,26 @@ mod tests {
         }
     }
 
-    #[test]
-    fn registry_and_graph_ties_retain_existing_iteration_order() {
-        let registry = SceneRegistrySnapshot::new(
-            ["Z", "A", "M"]
+    /// Collect `entries` through a map with its own hash seed, so iteration
+    /// order differs between calls the way it differs between launches.
+    fn freshly_seeded<V>(
+        entries: impl IntoIterator<Item = (&'static str, V)>,
+    ) -> HashMap<SceneId, V> {
+        let mut map = HashMap::with_hasher(RandomState::new());
+        map.extend(
+            entries
                 .into_iter()
-                .map(|name| {
-                    (
-                        name.into(),
-                        SceneMetadata {
-                            protected: true,
-                            ..metadata(SceneRole::Primary)
-                        },
-                    )
-                })
-                .collect(),
-            Default::default(),
+                .map(|(id, value)| (id.to_owned(), value)),
         );
-        let expected: Vec<_> = registry
-            .scenes()
-            .map(|(name, _)| {
+        map
+    }
+
+    #[test]
+    fn registry_ties_follow_scene_id_order_for_any_hash_seed() {
+        let names = ["Zulu", "Alpha", "Mike", "Bravo", "Yankee", "Charlie"];
+        let by_id = ["Alpha", "Bravo", "Charlie", "Mike", "Yankee", "Zulu"];
+        let expected: Vec<_> = by_id
+            .map(|name| {
                 finding(
                     DiagnosticSeverity::Warning,
                     name,
@@ -613,7 +615,8 @@ mod tests {
                     },
                 )
             })
-            .chain(registry.scenes().map(|(name, _)| {
+            .into_iter()
+            .chain(by_id.map(|name| {
                 finding(
                     DiagnosticSeverity::Info,
                     name,
@@ -621,54 +624,69 @@ mod tests {
                 )
             }))
             .collect();
-        assert_eq!(
-            DoctorService::evaluate(
-                &SceneInventory::default(),
-                &registry,
-                &SceneGraph::default()
-            ),
-            expected
-        );
+        for _launch in 0..2 {
+            let protected_primaries = freshly_seeded(names.map(|name| {
+                (
+                    name,
+                    SceneMetadata {
+                        protected: true,
+                        ..metadata(SceneRole::Primary)
+                    },
+                )
+            }));
+            let registry = SceneRegistrySnapshot::new(
+                protected_primaries.into_iter().collect(),
+                Default::default(),
+            );
+            assert_eq!(
+                DoctorService::evaluate(
+                    &SceneInventory::default(),
+                    &registry,
+                    &SceneGraph::default()
+                ),
+                expected
+            );
+        }
+    }
 
-        let registry = registry_for_edges();
+    #[test]
+    fn edge_ties_follow_parent_id_then_obs_child_order_for_any_hash_seed() {
+        let parents = ["P6", "P1", "P4", "P2", "P5", "P3"];
+        let registry = registry(
+            parents
+                .map(|parent| (parent, SceneRole::Primary))
+                .into_iter()
+                .chain([("D1", SceneRole::Debug), ("D2", SceneRole::Debug)]),
+        );
         let inventory = SceneInventory {
-            scenes: ["P1", "P2", "D1", "D2"].map(scene).into(),
+            scenes: parents.into_iter().chain(["D1", "D2"]).map(scene).collect(),
             ..Default::default()
         };
-        let graph = SceneGraph {
-            edges: HashMap::from([
-                ("P1".into(), vec!["D2".into(), "D1".into(), "D2".into()]),
-                ("P2".into(), vec!["D1".into(), "D2".into()]),
-            ]),
-        };
-        let expected: Vec<_> = graph
-            .edges
-            .iter()
-            .flat_map(|(parent, children)| {
-                children.iter().map(|child| {
+        let expected: Vec<_> = ["P1", "P2", "P3", "P4", "P5", "P6"]
+            .into_iter()
+            .flat_map(|parent| {
+                ["D2", "D1"].map(|child| {
                     finding(
                         DiagnosticSeverity::Error,
                         parent,
                         DoctorFindingKind::PrimaryDebug {
-                            child: child.clone(),
+                            child: child.into(),
                         },
                     )
                 })
             })
             .collect();
-        assert_eq!(
-            DoctorService::evaluate(&inventory, &registry, &graph),
-            expected
-        );
-    }
-
-    fn registry_for_edges() -> SceneRegistrySnapshot {
-        registry([
-            ("P1", SceneRole::Primary),
-            ("P2", SceneRole::Primary),
-            ("D1", SceneRole::Debug),
-            ("D2", SceneRole::Debug),
-        ])
+        for _launch in 0..2 {
+            let edges =
+                freshly_seeded(parents.map(|parent| (parent, vec!["D2".into(), "D1".into()])));
+            let graph = SceneGraph {
+                edges: edges.into_iter().collect(),
+            };
+            assert_eq!(
+                DoctorService::evaluate(&inventory, &registry, &graph),
+                expected
+            );
+        }
     }
 
     #[test]
@@ -705,7 +723,7 @@ mod tests {
                 ..Default::default()
             };
             let graph = SceneGraph {
-                edges: HashMap::from([("P".into(), vec!["C".into()])]),
+                edges: BTreeMap::from([("P".into(), vec!["C".into()])]),
             };
             assert_eq!(
                 DoctorService::evaluate(&inventory, &registry, &graph),

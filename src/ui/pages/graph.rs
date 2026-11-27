@@ -783,6 +783,8 @@ impl Palette {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+
     use crate::controller::state::ObsStatus;
     use crate::domain::registry::SceneMetadata;
     use crate::domain::scene::Scene;
@@ -884,7 +886,7 @@ mod tests {
     #[test]
     fn graph_model_counts_edge_statuses_from_registry_policy() {
         let graph = SceneGraph {
-            edges: HashMap::from([(
+            edges: BTreeMap::from([(
                 "Main".to_string(),
                 vec!["Module".to_string(), "Raw".to_string()],
             )]),

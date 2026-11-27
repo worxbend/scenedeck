@@ -1841,7 +1841,7 @@ mod tests {
     fn topology_failure_after_ready_retires_old_graph_evidence() {
         let mut state = app_state();
         state.set_topology_ready(SceneGraph {
-            edges: std::collections::HashMap::from([("Main".into(), vec!["Child".into()])]),
+            edges: std::collections::BTreeMap::from([("Main".into(), vec!["Child".into()])]),
         });
         state.set_topology_failed("Group could not be read".into());
 
@@ -2578,7 +2578,7 @@ mod tests {
         state.scene_inventory.current_id = Some("A".into());
         state.scene_inventory.previous_id = Some("Previous".into());
         state.set_topology_ready(SceneGraph {
-            edges: std::collections::HashMap::from([("A".into(), vec!["Nested".into()])]),
+            edges: std::collections::BTreeMap::from([("A".into(), vec!["Nested".into()])]),
         });
         state.audio_inputs = vec![input("Mic")];
         state.set_audio_levels(vec![InputLevels::from_mul("Mic".into(), &[[0.5; 3]])]);

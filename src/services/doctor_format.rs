@@ -96,7 +96,7 @@ pub(super) fn format_finding(finding: DoctorFinding) -> Diagnostic {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
 
     use crate::domain::diagnostic::DiagnosticSeverity;
     use crate::domain::role::SceneRole;
@@ -246,7 +246,7 @@ mod tests {
             Default::default(),
         );
         let graph = SceneGraph {
-            edges: HashMap::from([
+            edges: BTreeMap::from([
                 ("P".into(), vec!["R".into(), "D".into()]),
                 ("M".into(), vec!["M".into()]),
             ]),

@@ -1,6 +1,6 @@
 //! Directed scene dependency graph types.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use i18n_embed_fl::fl;
 
@@ -167,8 +167,9 @@ mod tests {
 /// sources.  Used by the Graph page and the Doctor rule engine.
 #[derive(Debug, Default, Clone)]
 pub struct SceneGraph {
-    /// Adjacency list keyed by parent scene id.
-    pub edges: HashMap<SceneId, Vec<SceneId>>,
+    /// Adjacency list keyed by parent scene id. Parents iterate in scene-id
+    /// order; each child list keeps the nesting order OBS reported.
+    pub edges: BTreeMap<SceneId, Vec<SceneId>>,
 }
 
 impl SceneGraph {
