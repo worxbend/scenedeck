@@ -2,6 +2,8 @@
 
 use std::rc::Rc;
 
+use crate::domain::connection::credential::ObsPassword;
+
 /// The worker snapshot is the last successful operation, not the latest draft.
 /// Only the latest submitted request may publish cache/status on GTK. Keeping
 /// confirmation on the FIFO worker also handles a successful old set followed
@@ -9,11 +11,11 @@ use std::rc::Rc;
 #[derive(Clone)]
 pub(super) struct PasswordWrites {
     latest: Rc<std::cell::Cell<u64>>,
-    confirmed: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    confirmed: std::sync::Arc<std::sync::Mutex<Option<ObsPassword>>>,
 }
 
 impl PasswordWrites {
-    pub(super) fn new(confirmed: Option<String>) -> Self {
+    pub(super) fn new(confirmed: Option<ObsPassword>) -> Self {
         Self {
             latest: Rc::new(std::cell::Cell::new(0)),
             confirmed: std::sync::Arc::new(std::sync::Mutex::new(confirmed)),
@@ -22,13 +24,13 @@ impl PasswordWrites {
 
     pub(super) fn submit<E, Work, Complete>(
         &self,
-        password: Option<String>,
+        password: Option<ObsPassword>,
         work: Work,
         complete: Complete,
     ) where
         E: Send + 'static,
-        Work: FnOnce(&Option<String>) -> Result<(), E> + Send + 'static,
-        Complete: FnOnce(Result<(), E>, Option<String>) + 'static,
+        Work: FnOnce(&Option<ObsPassword>) -> Result<(), E> + Send + 'static,
+        Complete: FnOnce(Result<(), E>, Option<ObsPassword>) + 'static,
     {
         let generation = self.latest.get().wrapping_add(1);
         self.latest.set(generation);
@@ -55,13 +57,19 @@ impl PasswordWrites {
 
 #[cfg(test)]
 mod tests {
-    use super::PasswordWrites;
+    use super::{ObsPassword, PasswordWrites};
     use std::{
         cell::RefCell,
         rc::Rc,
         sync::{Arc, Mutex},
         time::Duration,
     };
+
+    fn exposed(password: &Option<ObsPassword>) -> Option<String> {
+        password
+            .as_ref()
+            .map(|password| password.expose().to_owned())
+    }
 
     #[test]
     fn password_lane_is_fifo_and_only_latest_confirmed_cache_status_publishes() {
@@ -89,34 +97,38 @@ mod tests {
                         if first_fails {
                             return Err("first failed");
                         }
-                        *store.lock().unwrap() = password.clone();
+                        *store.lock().unwrap() = exposed(password);
                         Ok(())
                     }
                 },
                 {
                     let published = published.clone();
                     move |result, confirmed| {
-                        published.borrow_mut().push((result.is_ok(), confirmed))
+                        published
+                            .borrow_mut()
+                            .push((result.is_ok(), exposed(&confirmed)))
                     }
                 },
             );
             started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
             writes.submit(
-                second.map(str::to_string),
+                second.map(ObsPassword::from),
                 {
                     let store = store.clone();
                     move |password| {
                         if second_fails {
                             return Err("second failed");
                         }
-                        *store.lock().unwrap() = password.clone();
+                        *store.lock().unwrap() = exposed(password);
                         Ok(())
                     }
                 },
                 {
                     let published = published.clone();
                     move |result, confirmed| {
-                        published.borrow_mut().push((result.is_ok(), confirmed))
+                        published
+                            .borrow_mut()
+                            .push((result.is_ok(), exposed(&confirmed)))
                     }
                 },
             );

@@ -11,6 +11,7 @@ use i18n_embed_fl::fl;
 
 use crate::{
     controller::command::AppCommand,
+    domain::connection::credential::ObsPassword,
     infra::{error::AppError, i18n::LANGUAGE_LOADER},
     storage::{
         config::{AppConfig, ObsConfig, SavedConnection},
@@ -24,16 +25,16 @@ mod password_writes;
 use password_writes::PasswordWrites;
 
 trait ConnectionSecrets: Send + Sync {
-    fn read(&self, id: &str) -> Result<Option<String>, AppError>;
-    fn write(&self, id: &str, password: Option<&str>) -> Result<(), AppError>;
+    fn read(&self, id: &str) -> Result<Option<ObsPassword>, AppError>;
+    fn write(&self, id: &str, password: Option<&ObsPassword>) -> Result<(), AppError>;
 }
 
 struct KeyringSecrets;
 impl ConnectionSecrets for KeyringSecrets {
-    fn read(&self, id: &str) -> Result<Option<String>, AppError> {
+    fn read(&self, id: &str) -> Result<Option<ObsPassword>, AppError> {
         secret::get_obs_password(id)
     }
-    fn write(&self, id: &str, password: Option<&str>) -> Result<(), AppError> {
+    fn write(&self, id: &str, password: Option<&ObsPassword>) -> Result<(), AppError> {
         match password {
             Some(password) => secret::set_obs_password(id, password),
             None => secret::delete_obs_password(id),
@@ -114,7 +115,7 @@ impl Editor {
             port.set_text(&state.config.obs.port.to_string());
         }
         if let Some(password) = self.password.upgrade() {
-            password.set_text(state.obs_password.as_deref().unwrap_or(""));
+            password.set_text(state.obs_password.as_ref().map_or("", ObsPassword::expose));
         }
     }
 
@@ -150,7 +151,7 @@ impl Editor {
                         editor.nav.state.borrow_mut().obs_password = password.clone();
                         *editor.writes.borrow_mut() = PasswordWrites::new(password.clone());
                         if let Some(row) = editor.password.upgrade() {
-                            row.set_text(password.as_deref().unwrap_or(""));
+                            row.set_text(password.as_ref().map_or("", ObsPassword::expose));
                         }
                         if let Some(status) = editor.password_status.upgrade() {
                             status.set_subtitle("");
@@ -237,7 +238,7 @@ impl Editor {
         );
     }
 
-    fn save_password(self: &Rc<Self>, password: Option<String>) {
+    fn save_password(self: &Rc<Self>, password: Option<ObsPassword>) {
         let id = self.nav.state.borrow().config.connection_id.clone();
         let generation = self.generation.get();
         let destination = id.clone();
@@ -245,7 +246,7 @@ impl Editor {
         let editor = self.clone();
         self.writes.borrow().submit(
             password,
-            move |password| secrets.write(&destination, password.as_deref()),
+            move |password| secrets.write(&destination, password.as_ref()),
             move |result, confirmed| {
                 if !editor.current(generation, &id) {
                     return;
@@ -413,7 +414,11 @@ fn build_with_secrets(
     }
     password.connect_apply({
         let editor = editor.clone();
-        move |row| editor.save_password((!row.text().is_empty()).then(|| row.text().to_string()))
+        move |row| {
+            editor.save_password(
+                (!row.text().is_empty()).then(|| ObsPassword::from(row.text().as_str())),
+            )
+        }
     });
     add.connect_clicked({
         let editor = editor.clone();
@@ -461,15 +466,20 @@ mod tests {
     }
 
     impl ConnectionSecrets for FakeSecrets {
-        fn read(&self, id: &str) -> Result<Option<String>, AppError> {
+        fn read(&self, id: &str) -> Result<Option<ObsPassword>, AppError> {
             if self.fail_read.load(Ordering::SeqCst) {
                 return Err(AppError::storage(std::io::Error::other(
                     "fixture read failed",
                 )));
             }
-            Ok(self.passwords.lock().unwrap().get(id).cloned())
+            Ok(self
+                .passwords
+                .lock()
+                .unwrap()
+                .get(id)
+                .map(|password| ObsPassword::from(password.as_str())))
         }
-        fn write(&self, id: &str, password: Option<&str>) -> Result<(), AppError> {
+        fn write(&self, id: &str, password: Option<&ObsPassword>) -> Result<(), AppError> {
             if let Some(hold) = self.hold_write.lock().unwrap().take() {
                 hold.recv_timeout(Duration::from_secs(10)).unwrap();
             }
@@ -479,7 +489,7 @@ mod tests {
                     self.passwords
                         .lock()
                         .unwrap()
-                        .insert(id.into(), password.into());
+                        .insert(id.into(), password.expose().into());
                 }
                 None => {
                     self.passwords.lock().unwrap().remove(id);
@@ -536,7 +546,7 @@ mod tests {
                 }
             }
             impl ObsPasswordProvider for Observed {
-                fn obs_password(&self, id: &str) -> Result<Option<String>, AppError> {
+                fn obs_password(&self, id: &str) -> Result<Option<ObsPassword>, AppError> {
                     assert_eq!(id, "event");
                     Err(AppError::storage(std::io::Error::other(
                         "fixture stops before OBS connection",
@@ -664,10 +674,14 @@ mod tests {
             flush();
             assert_eq!(host.text(), "event.local");
             assert_eq!(password.text(), "event-secret");
-            assert_eq!(
-                nav.state.borrow().obs_password.as_deref(),
-                Some("event-secret")
-            );
+            {
+                let state = nav.state.borrow();
+                assert_eq!(
+                    state.obs_password.as_ref().map(ObsPassword::expose),
+                    Some("event-secret")
+                );
+                assert!(!format!("{state:?}").contains("event-secret"));
+            }
             assert_eq!(*secrets.writes.lock().unwrap(), ["default"]);
 
             picker.set_selected(0);

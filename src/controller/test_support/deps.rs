@@ -1,6 +1,7 @@
 //! Fake `ControllerDependencies` providers.
 
 use crate::controller::dependencies::{AppConfigProvider, ObsPasswordProvider};
+use crate::domain::connection::credential::ObsPassword;
 use crate::infra::error::AppError;
 use crate::storage::config::AppConfig;
 
@@ -34,7 +35,7 @@ impl AppConfigProvider for NoServices {
 }
 
 impl ObsPasswordProvider for NoServices {
-    fn obs_password(&self, _connection_id: &str) -> Result<Option<String>, AppError> {
+    fn obs_password(&self, _connection_id: &str) -> Result<Option<ObsPassword>, AppError> {
         panic!("fixture must not access the keyring")
     }
 }

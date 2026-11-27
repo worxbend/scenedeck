@@ -23,7 +23,7 @@ use crate::ui;
 struct StartupData {
     config: LoadedConfig,
     registry: crate::storage::registry::SceneRegistry,
-    password: Option<String>,
+    password: Option<crate::domain::connection::credential::ObsPassword>,
     bookmarks: Result<crate::storage::bookmarks::BookmarkArchive, String>,
     history: Result<crate::storage::report_history::HistoryArchive, String>,
 }

@@ -497,7 +497,10 @@ mod tests {
     struct EmptyPasswordProvider;
 
     impl crate::controller::dependencies::ObsPasswordProvider for EmptyPasswordProvider {
-        fn obs_password(&self, _connection_id: &str) -> Result<Option<String>, AppError> {
+        fn obs_password(
+            &self,
+            _connection_id: &str,
+        ) -> Result<Option<crate::domain::connection::credential::ObsPassword>, AppError> {
             Ok(None)
         }
     }

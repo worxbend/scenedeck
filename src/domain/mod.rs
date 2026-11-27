@@ -5,6 +5,7 @@ pub mod appearance;
 pub mod audio;
 pub(crate) mod audio_preset;
 pub(crate) mod bookmark;
+pub(crate) mod connection;
 pub mod control;
 pub mod diagnostic;
 pub mod graph;

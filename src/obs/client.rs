@@ -13,6 +13,7 @@ use obws::Client;
 
 use crate::controller::event::ConnectionInfo;
 use crate::domain::audio::{volume_db_to_mul, MAX_VOLUME_DB, MIN_VOLUME_DB};
+use crate::domain::connection::credential::ObsPassword;
 use crate::domain::obs::ObsNamedList;
 use crate::domain::output::OutputStatus;
 use crate::domain::scene::SceneInventory;
@@ -69,14 +70,14 @@ impl ObsClient {
     pub async fn connect(
         host: &str,
         port: u16,
-        password: Option<&str>,
+        password: Option<&ObsPassword>,
     ) -> Result<(Self, ObsEventStream), AppError> {
         let client = tokio::time::timeout(
             std::time::Duration::from_secs(15),
             Client::connect_with_config(ConnectConfig {
                 host,
                 port,
-                password,
+                password: password.map(ObsPassword::expose),
                 event_subscriptions: Some(
                     EventSubscription::ALL | EventSubscription::INPUT_VOLUME_METERS,
                 ),

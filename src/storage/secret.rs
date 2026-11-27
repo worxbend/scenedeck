@@ -7,6 +7,7 @@
 use keyring::{Entry, Error as KeyringError};
 
 use crate::app_info::APP_ID;
+use crate::domain::connection::credential::ObsPassword;
 use crate::infra::error::AppError;
 
 const SECRET_USER: &str = "obs-websocket";
@@ -30,18 +31,18 @@ fn entry(connection_id: &str) -> Result<Entry, AppError> {
 }
 
 /// Retrieve the stored OBS password, or `None` if none is set.
-pub fn get_obs_password(connection_id: &str) -> Result<Option<String>, AppError> {
+pub fn get_obs_password(connection_id: &str) -> Result<Option<ObsPassword>, AppError> {
     match entry(connection_id)?.get_password() {
-        Ok(password) => Ok(Some(password)),
+        Ok(password) => Ok(Some(ObsPassword::from(password))),
         Err(KeyringError::NoEntry) => Ok(None),
         Err(e) => Err(AppError::storage(e)),
     }
 }
 
 /// Store the OBS password in the keyring (overwriting any existing value).
-pub fn set_obs_password(connection_id: &str, password: &str) -> Result<(), AppError> {
+pub fn set_obs_password(connection_id: &str, password: &ObsPassword) -> Result<(), AppError> {
     entry(connection_id)?
-        .set_password(password)
+        .set_password(password.expose())
         .map_err(AppError::storage)
 }
 

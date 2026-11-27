@@ -81,6 +81,9 @@ Application data types that do not depend on GTK or OBS crate types.
 
 - `audio.rs`: OBS audio input identity and volume state.
 - `appearance.rs`: language, color mode, density, and theme preferences.
+- `connection/credential.rs`: `ObsPassword`, the OBS password. Its `Debug`
+  prints a placeholder and it has no `Display`; `expose()` is called only at
+  the keyring, the OBS handshake and the Settings password field.
 - `diagnostic.rs`: Doctor diagnostic model.
 - `graph.rs`: scene dependency graph.
 - `hotkey.rs`: Live scene-shortcut preferences, slot numbering, and the key

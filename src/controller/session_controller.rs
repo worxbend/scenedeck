@@ -291,7 +291,7 @@ impl SessionRunner for ObsSessionRunner {
             };
             let connected = tokio::time::timeout(
                 REQUEST_BUDGET,
-                ObsClient::connect(&config.obs.host, config.obs.port, password.as_deref()),
+                ObsClient::connect(&config.obs.host, config.obs.port, password.as_ref()),
             )
             .await;
             let (client, events) = match connected {

@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+use crate::domain::connection::credential::ObsPassword;
 use crate::infra::error::AppError;
 use crate::storage::config::{read_config, AppConfig, ConfigStartupNotice, LoadedConfig};
 use crate::storage::secret;
@@ -15,7 +16,7 @@ pub trait AppConfigProvider: Send + Sync {
 }
 
 pub trait ObsPasswordProvider: Send + Sync {
-    fn obs_password(&self, _connection_id: &str) -> Result<Option<String>, AppError>;
+    fn obs_password(&self, _connection_id: &str) -> Result<Option<ObsPassword>, AppError>;
 }
 
 #[derive(Clone)]
@@ -39,7 +40,7 @@ impl ControllerDependencies {
         self.config_provider.load_config()
     }
 
-    pub fn obs_password(&self, connection_id: &str) -> Result<Option<String>, AppError> {
+    pub fn obs_password(&self, connection_id: &str) -> Result<Option<ObsPassword>, AppError> {
         self.password_provider.obs_password(connection_id)
     }
 }
@@ -78,7 +79,7 @@ fn stored_config(loaded: LoadedConfig) -> Result<AppConfig, AppError> {
 pub struct KeyringObsPasswordProvider;
 
 impl ObsPasswordProvider for KeyringObsPasswordProvider {
-    fn obs_password(&self, connection_id: &str) -> Result<Option<String>, AppError> {
+    fn obs_password(&self, connection_id: &str) -> Result<Option<ObsPassword>, AppError> {
         secret::get_obs_password(connection_id)
     }
 }
@@ -90,12 +91,12 @@ mod tests {
     use crate::domain::appearance::{ThemeMode, ThemePreference};
     use crate::storage::config::{LiveConfig, ObsConfig};
 
-    struct StaticPasswordProvider(Option<String>);
+    struct StaticPasswordProvider(&'static str);
 
     impl ObsPasswordProvider for StaticPasswordProvider {
-        fn obs_password(&self, connection_id: &str) -> Result<Option<String>, AppError> {
+        fn obs_password(&self, connection_id: &str) -> Result<Option<ObsPassword>, AppError> {
             assert_eq!(connection_id, "studio");
-            Ok(self.0.clone())
+            Ok(Some(ObsPassword::from(self.0)))
         }
     }
 
@@ -121,15 +122,13 @@ mod tests {
 
         let dependencies = ControllerDependencies::new(
             Arc::new(StaticConfigProvider(config)),
-            Arc::new(StaticPasswordProvider(Some("secret".to_string()))),
+            Arc::new(StaticPasswordProvider("secret")),
         );
 
         let loaded = dependencies.load_config().unwrap();
         assert_eq!(loaded.obs.host, "192.0.2.10");
-        assert_eq!(
-            dependencies.obs_password(&loaded.connection_id).unwrap(),
-            Some("secret".to_string())
-        );
+        let password = dependencies.obs_password(&loaded.connection_id).unwrap();
+        assert_eq!(password.as_ref().map(ObsPassword::expose), Some("secret"));
     }
 
     fn loaded(startup_notice: Option<ConfigStartupNotice>) -> LoadedConfig {

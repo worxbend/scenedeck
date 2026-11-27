@@ -181,6 +181,9 @@ mapped to domain types before crossing into the controller or UI.
 events into GTK-side updates. Runtime dependencies such as config loading and
 OBS password retrieval are injected through `controller::dependencies`; the
 default production adapters still use local storage and the system keyring.
+The password travels as `domain::connection::credential::ObsPassword`, whose
+`Debug` is redacted, from the keyring to the OBS handshake. Its text is read
+only by `storage::secret`, `obs::client` and the Settings password field.
 Password retrieval takes the selected immutable connection ID from the same
 configuration snapshot used for its endpoint. The live client carries that ID
 into connection observations, so later Settings selections cannot change the
