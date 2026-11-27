@@ -223,7 +223,8 @@ pub(crate) fn run_config_snapshot(work: impl FnOnce() -> std::io::Result<()> + S
             return glib::ControlFlow::Continue;
         }
         if batch.failed {
-            record_failure();
+            let evidence = record_failure();
+            CONFIG_SNAPSHOT_FAILURES.with(|failures| failures.borrow_mut().push(evidence));
         }
         drop(batch);
         // The worker can still own its Arc after marking this batch idle.
@@ -242,11 +243,38 @@ pub(crate) fn run_config_snapshot(work: impl FnOnce() -> std::io::Result<()> + S
     run_config_batch(slot);
 }
 
+/// Re-admit the current Config as a FIFO barrier after a failed snapshot.
+/// Snapshots are whole files, so a successful retry resolves the snapshot
+/// failures recorded before it; other failures stay. Returns false, and
+/// admits nothing, when no snapshot failure is waiting for a retry.
+pub(crate) fn retry_config_snapshot(
+    work: impl FnOnce() -> std::io::Result<()> + Send + 'static,
+) -> bool {
+    let retried = CONFIG_SNAPSHOT_FAILURES.with(|failures| failures.borrow().clone());
+    if retried.is_empty() {
+        return false;
+    }
+    run_serialized(SerialLane::Config, work, move |result| match result {
+        Ok(()) => {
+            CONFIG_SNAPSHOT_FAILURES.with(|failures| {
+                failures
+                    .borrow_mut()
+                    .retain(|kept| !retried.iter().any(|done| done.0 == kept.0))
+            });
+            retried.into_iter().for_each(resolve_failure);
+        }
+        // The unresolved tickets keep the close barrier failing.
+        Err(error) => tracing::warn!(%error, "retrying the configuration save failed"),
+    });
+    true
+}
+
 thread_local! {
     static PENDING: Rc<Cell<usize>> = Rc::new(Cell::new(0));
     // A successful later save cannot establish that a failed operation persisted.
     static WORKER_FAILURES: Cell<u64> = const { Cell::new(0) };
     static UNRESOLVED_FAILURES: RefCell<std::collections::BTreeSet<u64>> = const { RefCell::new(std::collections::BTreeSet::new()) };
+    static CONFIG_SNAPSHOT_FAILURES: RefCell<Vec<FailureEvidence>> = const { RefCell::new(Vec::new()) };
 }
 
 #[derive(Clone, Copy)]
@@ -569,6 +597,36 @@ mod tests {
         super::acknowledge_failures(super::failure_evidence());
         drain(Ok(()));
         super::WORKER_FAILURES.with(|failures| assert_eq!(failures.get(), 2));
+    }
+
+    #[test]
+    fn config_snapshot_retry_resolves_only_snapshot_failures() {
+        if !super::isolated_test_child(
+            "ui::background_io::tests::config_snapshot_retry_resolves_only_snapshot_failures",
+        ) {
+            return;
+        }
+        assert!(
+            !super::retry_config_snapshot(|| panic!("nothing to retry")),
+            "a retry without a failed snapshot admits no write"
+        );
+        super::run_config_snapshot(|| Err(std::io::Error::other("snapshot failed")));
+        drain(Err(super::FlushError::WorkerFailed));
+
+        assert!(super::retry_config_snapshot(|| {
+            Err(std::io::Error::other("retry failed"))
+        }));
+        drain(Err(super::FlushError::WorkerFailed));
+
+        let unrelated = super::record_failure();
+        assert!(super::retry_config_snapshot(|| Ok(())));
+        drain(Err(super::FlushError::WorkerFailed));
+        assert!(
+            !super::retry_config_snapshot(|| panic!("already resolved")),
+            "a successful retry resolves every snapshot failure it covered"
+        );
+        super::resolve_failure(unrelated);
+        drain(Ok(()));
     }
 
     #[test]

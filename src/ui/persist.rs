@@ -12,8 +12,9 @@
 //! agnostic and also carries keyring access, CSS loads, and YAML exports.
 
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
+use crate::controller::state::AppState;
 use crate::storage::config::{write_config, AppConfig};
 use crate::storage::registry::SceneRegistry;
 use crate::storage::show_workspaces::RegistryTarget;
@@ -494,6 +495,22 @@ pub(crate) fn persist_config_with<Update, Complete>(
         move || write_config(&persisted),
         move |result| complete(result, config),
     );
+}
+
+/// Re-admit every write whose failure blocks Close, from the close dialog's
+/// Retry. Config and bookmark snapshots are rebuilt from `owner`, the state
+/// that holds the current values; registry, history and export retries keep
+/// their own retained intent. Worker panics name no store, so no retry can
+/// prove their data reached disk: they still need an informed abandon.
+pub(crate) fn retry_all_durable_writes(owner: &Weak<RefCell<AppState>>) {
+    retry_registry_writes();
+    super::report_history::retry_active();
+    super::session_reports::retry_failed_exports();
+    if let Some(state) = owner.upgrade() {
+        let config = state.borrow().config.clone();
+        crate::ui::background_io::retry_config_snapshot(move || write_config(&config));
+        super::bookmarks::retry_failed_save(&state);
+    }
 }
 
 /// Edit the cached scene registry and save it if anything changed.

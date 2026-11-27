@@ -15,12 +15,65 @@ use gtk4::{Box as GtkBox, Button, Label, Orientation};
 use i18n_embed_fl::fl;
 use std::{
     cell::{Cell, RefCell},
+    path::{Path, PathBuf},
     rc::Rc,
     time::Instant,
 };
 
+/// A failed export, kept with its snapshot so the close dialog can retry it.
+struct ExportFailure {
+    path: PathBuf,
+    document: ReportDocument,
+    format: Format,
+    evidence: background_io::FailureEvidence,
+}
+
 thread_local! {
-    static EXPORT_FAILURES: RefCell<Vec<(std::path::PathBuf, String, background_io::FailureEvidence)>> = const { RefCell::new(Vec::new()) };
+    static EXPORT_FAILURES: RefCell<Vec<ExportFailure>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A successful export of `report_id` to `path` resolves its earlier failures.
+fn resolve_exports(path: &Path, report_id: &str) {
+    EXPORT_FAILURES.with(|failures| {
+        failures.borrow_mut().retain(|failure| {
+            let exported = failure.path == path && failure.document.report.id == report_id;
+            if exported {
+                background_io::resolve_failure(failure.evidence);
+            }
+            !exported
+        })
+    });
+}
+
+/// Rewrite every failed export from its kept snapshot, oldest first.
+pub(super) fn retry_failed_exports() {
+    let retries: Vec<_> = EXPORT_FAILURES.with(|failures| {
+        failures
+            .borrow()
+            .iter()
+            .map(|failure| {
+                (
+                    failure.path.clone(),
+                    failure.document.clone(),
+                    failure.format,
+                )
+            })
+            .collect()
+    });
+    for (path, document, format) in retries {
+        background_io::run_serialized(
+            background_io::SerialLane::ReportExports,
+            move || {
+                let result = crate::storage::report_export::write(&path, &document, format);
+                (result, path, document.report.id)
+            },
+            |(result, path, report_id)| match result {
+                Ok(()) => resolve_exports(&path, &report_id),
+                // The unresolved ticket keeps the close barrier failing.
+                Err(error) => tracing::warn!(%error, "retrying a session report export failed"),
+            },
+        );
+    }
 }
 
 fn label(value: &str) -> Label {
@@ -429,35 +482,28 @@ fn export_to_path(
 ) {
     busy.set(true);
     let display = path.display().to_string();
-    let failure_path = path.clone();
-    let report_id = document.report.id.clone();
     status.set_text(&fl!(LANGUAGE_LOADER, "reports-exporting"));
     background_io::run_serialized(
         background_io::SerialLane::ReportExports,
-        move || crate::storage::report_export::write(&path, &document, format),
-        move |result| {
+        move || {
+            let result = crate::storage::report_export::write(&path, &document, format);
+            (result, path, document)
+        },
+        move |(result, path, document)| {
             busy.set(false);
             match result {
                 Ok(()) => {
-                    EXPORT_FAILURES.with(|failures| {
-                        failures.borrow_mut().retain(|(path, id, evidence)| {
-                            if path == &failure_path && id == &report_id {
-                                background_io::resolve_failure(*evidence);
-                                false
-                            } else {
-                                true
-                            }
-                        })
-                    });
+                    resolve_exports(&path, &document.report.id);
                     status.set_text(&fl!(LANGUAGE_LOADER, "reports-exported", path = display));
                 }
                 Err(error) => {
                     EXPORT_FAILURES.with(|failures| {
-                        failures.borrow_mut().push((
-                            failure_path,
-                            report_id,
-                            background_io::record_failure(),
-                        ))
+                        failures.borrow_mut().push(ExportFailure {
+                            path,
+                            document,
+                            format,
+                            evidence: background_io::record_failure(),
+                        })
                     });
                     status.set_text(&fl!(
                         LANGUAGE_LOADER,
@@ -604,6 +650,43 @@ mod tests {
             refresh.emit_clicked();
             assert_eq!(title.text(), before);
             parent.close();
+        });
+    }
+
+    #[test]
+    #[ignore = "requires isolated GTK and temporary XDG files"]
+    fn native_close_retry_rewrites_a_failed_export_from_its_snapshot() {
+        crate::ui::native_test!(|| {
+            let (nav, _stack, _runtime, _events) = navigation();
+            connect(&nav, "Retried");
+            let document = nav.read(|state| {
+                let report = state.reports.entries[0].clone();
+                ReportDocument {
+                    bookmarks: report.bookmarks(&state.bookmarks.archive.entries),
+                    report,
+                }
+            });
+            let path = crate::storage::xdg::bookmarks_path().with_file_name("report-retry.json");
+            std::fs::create_dir_all(&path).unwrap();
+            let busy = Rc::new(Cell::new(false));
+            export_to_path(
+                path.clone(),
+                document,
+                Format::Json,
+                label(""),
+                busy.clone(),
+            );
+            assert!(pump_until(Duration::from_secs(4), || !busy.get()));
+            assert_eq!(EXPORT_FAILURES.with(|failures| failures.borrow().len()), 1);
+
+            std::fs::remove_dir(&path).unwrap();
+            crate::ui::persist::retry_all_durable_writes(&std::rc::Weak::new());
+            assert!(pump_until(Duration::from_secs(4), || {
+                EXPORT_FAILURES.with(|failures| failures.borrow().is_empty())
+            }));
+            let saved: ReportDocument =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(saved.report.connection_id, "Retried");
         });
     }
 }

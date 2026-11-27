@@ -5,7 +5,7 @@ use super::{
     navigation::NavigationContext,
 };
 use crate::{
-    controller::state::{BookmarkError, ObsStatus},
+    controller::state::{AppState, BookmarkError, ObsStatus},
     domain::bookmark::{Bookmark, RecordingTime, NAME_LIMIT},
     infra::i18n::LANGUAGE_LOADER,
 };
@@ -22,9 +22,21 @@ thread_local! {
     static FAILURES: RefCell<Vec<(u64, background_io::FailureEvidence)>> = const { RefCell::new(Vec::new()) };
 }
 
+/// Rewrite the whole bookmark file after a failed save. Each write is a full
+/// snapshot, so success resolves every failure at or below its revision.
+pub(super) fn retry_failed_save(state: &Rc<RefCell<AppState>>) {
+    if FAILURES.with(|failures| !failures.borrow().is_empty()) {
+        write_snapshot(state);
+    }
+}
+
 fn save(nav: &NavigationContext) {
+    write_snapshot(&nav.state);
+}
+
+fn write_snapshot(state: &Rc<RefCell<AppState>>) {
     let (archive, revision) = {
-        let mut state = nav.state.borrow_mut();
+        let mut state = state.borrow_mut();
         let notes = &mut state.bookmarks;
         if notes.load_error.is_some() {
             return;
@@ -34,12 +46,12 @@ fn save(nav: &NavigationContext) {
         (notes.archive.clone(), notes.revision)
     };
     let path = crate::storage::xdg::bookmarks_path();
-    let nav = nav.clone();
+    let state = state.clone();
     background_io::run_serialized(
         SerialLane::Bookmarks,
         move || crate::storage::bookmarks::write(&path, &archive),
         move |result| {
-            let mut state = nav.state.borrow_mut();
+            let mut state = state.borrow_mut();
             let notes = &mut state.bookmarks;
             notes.pending = notes.pending.saturating_sub(1);
             match result {

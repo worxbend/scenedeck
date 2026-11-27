@@ -176,6 +176,8 @@ struct CloseGuard {
     pending: std::cell::Cell<bool>,
     abandon: std::cell::Cell<bool>,
     exit: RefCell<Option<ui::report_history::ExitCheckpoint>>,
+    // Weak: the last document window must still release application state.
+    state: std::rc::Weak<RefCell<AppState>>,
 }
 
 impl CloseGuard {
@@ -278,7 +280,11 @@ impl CloseGuard {
 }
 
 /// Guard the shell and every last detached document; retain no shell widgets.
-fn install_persistence_close_guard(app: &adw::Application, window: &adw::ApplicationWindow) {
+fn install_persistence_close_guard(
+    app: &adw::Application,
+    window: &adw::ApplicationWindow,
+    state: std::rc::Weak<RefCell<AppState>>,
+) {
     let quitting = Rc::new(std::cell::Cell::new(false));
     let main = window.clone().upcast::<gtk4::Window>().downgrade();
     let guarded = Rc::new(RefCell::new(Vec::<glib::WeakRef<gtk4::Window>>::new()));
@@ -308,6 +314,7 @@ fn install_persistence_close_guard(app: &adw::Application, window: &adw::Applica
                 pending: std::cell::Cell::new(false),
                 abandon: std::cell::Cell::new(false),
                 exit: RefCell::new(None),
+                state: state.clone(),
             });
             window.connect_close_request(move |_| guard.request());
         }
@@ -411,8 +418,7 @@ fn show_persistence_close_failure(
                 if response == "abandon" {
                     ui::background_io::acknowledge_failures(evidence);
                 } else {
-                    ui::persist::retry_registry_writes();
-                    ui::report_history::retry_active();
+                    ui::persist::retry_all_durable_writes(&guard.state);
                 }
                 if let Some(window) = guard.window.upgrade() {
                     window.close();
@@ -449,8 +455,9 @@ fn build_ui(
     state
         .borrow_mut()
         .load_report_history(startup.history.clone());
+    let owner = Rc::downgrade(&state);
     let window = ui::build_main_window(app, state, controller, event_rx);
-    install_persistence_close_guard(app, &window);
+    install_persistence_close_guard(app, &window, owner);
     window
 }
 
@@ -473,14 +480,16 @@ mod tests {
         }
     }
 
-    fn fixture() -> (adw::Application, adw::ApplicationWindow) {
+    fn fixture(
+        state: std::rc::Weak<RefCell<AppState>>,
+    ) -> (adw::Application, adw::ApplicationWindow) {
         let app = adw::Application::builder()
             .application_id("io.github.worxbend.scenedeck.CloseFixture")
             .flags(gio::ApplicationFlags::NON_UNIQUE)
             .build();
         app.register(None::<&gio::Cancellable>).unwrap();
         let window = adw::ApplicationWindow::builder().application(&app).build();
-        install_persistence_close_guard(&app, &window);
+        install_persistence_close_guard(&app, &window, state);
         window.present();
         // First-frame shader/font setup on a disposable software-rendered
         // display can outlast the close assertion's two-second deadline.
@@ -574,7 +583,7 @@ mod tests {
     #[ignore = "requires isolated GTK and scratch history; no OBS/keyring"]
     fn native_last_detached_report_close_supports_cancel_retry_and_informed_abandon() {
         crate::ui::native_test!(|| {
-            let (app, main) = fixture();
+            let (app, main) = fixture(std::rc::Weak::new());
             let (nav, _stack, _runtime, _events) = ui::test_support::navigation();
             ui::report_history::register(&nav.state);
             nav.state.borrow_mut().configure_report_history(true, 8);
@@ -692,7 +701,7 @@ mod tests {
                 let state = Rc::new(RefCell::new(initial));
                 *weak_state.borrow_mut() = Rc::downgrade(&state);
                 let window = ui::window::build_main_window(app, state.clone(), controller, rx);
-                install_persistence_close_guard(app, &window);
+                install_persistence_close_guard(app, &window, Rc::downgrade(&state));
                 connect_report(&mut state.borrow_mut());
                 let stack = find(window.upcast_ref(), &|w| w.has_css_class("scenedeck-content-stack")).unwrap().downcast::<gtk4::Stack>().unwrap();
                 stack.set_visible_child_name(crate::controller::state::Page::Stats.id());
@@ -766,7 +775,7 @@ mod tests {
     #[ignore = "requires a disposable GTK display; injected Config write failure only"]
     fn native_config_write_error_requires_an_explicit_close_decision() {
         crate::ui::native_test!(|| {
-            let (_app, window) = fixture();
+            let (_app, window) = fixture(std::rc::Weak::new());
             ui::background_io::run_config_snapshot(|| {
                 Err(std::io::Error::new(
                     std::io::ErrorKind::PermissionDenied,
@@ -807,7 +816,7 @@ mod tests {
     fn native_inventory_role_edit_and_rebuild_are_admitted_before_close() {
         crate::ui::native_test!(|| {
             let directory = isolated_config_dir("close");
-            let (_app, window) = fixture();
+            let (_app, window) = fixture(std::rc::Weak::new());
             let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
             nav.state
                 .borrow_mut()
@@ -881,7 +890,7 @@ mod tests {
                         .application(app)
                         .content(&page)
                         .build();
-                    install_persistence_close_guard(app, &window);
+                    install_persistence_close_guard(app, &window, Rc::downgrade(&nav.state));
                     window.present();
                     set_inventory_role(&page, crate::domain::role::SceneRole::Primary);
                     refresh();
@@ -943,7 +952,7 @@ mod tests {
                         .application(app)
                         .content(&page)
                         .build();
-                    install_persistence_close_guard(app, &window);
+                    install_persistence_close_guard(app, &window, Rc::downgrade(&nav.state));
                     window.present();
                     set_inventory_role(&page, crate::domain::role::SceneRole::Primary);
                     refresh();
@@ -1125,6 +1134,73 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a disposable GTK display; scratch bookmarks only, no OBS/keyring"]
+    fn native_bookmark_write_error_close_retry_recovers() {
+        crate::ui::native_test!(|| {
+            let (nav, _stack, _runtime, _events) = ui::test_support::navigation();
+            {
+                let mut state = nav.state.borrow_mut();
+                connect_report(&mut state);
+                state.scene_collections.current = Some("Interview".into());
+                state.scene_inventory.current_id = Some("Camera".into());
+            }
+            let (_app, window) = fixture(Rc::downgrade(&nav.state));
+            let live = ui::pages::live::build(nav.clone());
+            window.set_content(Some(&live.root));
+            let path = crate::storage::xdg::bookmarks_path();
+            std::fs::create_dir_all(&path).unwrap();
+            ui::test_support::expect_named::<gtk4::Button>(window.upcast_ref(), "bookmarks-open")
+                .emit_clicked();
+            let bookmarks = gtk4::Window::list_toplevels()
+                .into_iter()
+                .find_map(|window| {
+                    window
+                        .downcast::<gtk4::Window>()
+                        .ok()
+                        .filter(|window| window.widget_name() == "bookmarks-window")
+                })
+                .expect("production Bookmarks window");
+            ui::test_support::expect_named::<gtk4::Entry>(bookmarks.upcast_ref(), "bookmark-name")
+                .set_text("Keep after close");
+            ui::test_support::expect_named::<gtk4::Button>(bookmarks.upcast_ref(), "bookmark-add")
+                .emit_clicked();
+            iterate_until(|| nav.state.borrow().bookmarks.save_error.is_some());
+            bookmarks.close();
+
+            window.close();
+            iterate_until(|| close_failure().is_some());
+            assert!(window.is_visible(), "a failed bookmark save must not close");
+            std::fs::remove_dir(&path).unwrap();
+            close_failure().unwrap().response("retry");
+            iterate_until(|| !window.is_visible());
+            let saved = crate::storage::bookmarks::read(&path).unwrap();
+            assert_eq!(saved.entries[0].name, "Keep after close");
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display; scratch config only, no OBS/keyring"]
+    fn native_config_write_error_close_retry_recovers() {
+        crate::ui::native_test!(|| {
+            let (nav, _stack, _runtime, _events) = ui::test_support::navigation();
+            let (_app, window) = fixture(Rc::downgrade(&nav.state));
+            let path = crate::storage::xdg::config_path();
+            std::fs::create_dir_all(&path).unwrap();
+            ui::persist::persist_config(&nav, |config| config.onboarding.welcome_shown = true);
+
+            window.close();
+            iterate_until(|| close_failure().is_some());
+            assert!(window.is_visible(), "a failed config save must not close");
+            std::fs::remove_dir(&path).unwrap();
+            close_failure().unwrap().response("retry");
+            iterate_until(|| !window.is_visible());
+            let saved = crate::storage::config::read_config_from_path(&path);
+            assert!(saved.startup_notice.is_none());
+            assert!(saved.config.onboarding.welcome_shown);
+        });
+    }
+
+    #[test]
     #[ignore = "requires a disposable GTK display; scratch registry only, no OBS/keyring"]
     fn native_registry_write_error_is_visible_and_close_retry_recovers() {
         crate::ui::native_test!(|| {
@@ -1132,7 +1208,7 @@ mod tests {
             let target = crate::storage::xdg::registry_path();
             let parent = target.parent().unwrap();
             std::fs::write(parent, b"blocked directory").unwrap();
-            let (_app, window) = fixture();
+            let (_app, window) = fixture(std::rc::Weak::new());
             let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
             assert!(ui::persist::persist_registry(
                 &nav,
@@ -1186,7 +1262,7 @@ mod tests {
     #[ignore = "requires a disposable GTK display"]
     fn native_close_waits_for_accepted_save_and_gtk_publication() {
         crate::ui::native_test!(|| {
-            let (_app, window) = fixture();
+            let (_app, window) = fixture(std::rc::Weak::new());
             let (release, held) = std::sync::mpsc::channel();
             let published = Rc::new(Cell::new(false));
             ui::background_io::run(move || held.recv().unwrap(), {
@@ -1207,7 +1283,7 @@ mod tests {
     #[ignore = "requires a disposable GTK display"]
     fn native_save_worker_failure_keeps_window_open_and_offers_cancel() {
         crate::ui::native_test!(|| {
-            let (_app, window) = fixture();
+            let (_app, window) = fixture(std::rc::Weak::new());
             let failed = Rc::new(Cell::new(false));
             ui::background_io::run(
                 || panic!("intentional fixture save failure"),
@@ -1305,7 +1381,7 @@ mod tests {
                 let published = published.clone();
                 move |app| {
                     let window = adw::ApplicationWindow::builder().application(app).build();
-                    install_persistence_close_guard(app, &window);
+                    install_persistence_close_guard(app, &window, std::rc::Weak::new());
                     window.present();
                     let (release, held) = std::sync::mpsc::channel();
                     ui::background_io::run(move || held.recv().unwrap(), {

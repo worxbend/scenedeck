@@ -776,7 +776,11 @@ reported. History-settings save errors are also shown and can be retried.
 Closing the main window keeps reporting active while a detached window remains.
 Closing the last window or choosing **Quit** saves the final report before exit.
 If saving fails, choose **Cancel** to continue, **Retry** after fixing the problem,
-or **Close anyway** to explicitly leave unsaved changes behind. A cancelled or
+or **Close anyway** to explicitly leave unsaved changes behind. **Retry** writes
+every failed save again: settings, scene curation, bookmarks, session history and
+failed report exports. A background task that stopped unexpectedly cannot be
+retried, because SceneDeck cannot tell what it was saving; only **Close anyway**
+moves past it. A cancelled or
 delayed exit resumes reporting and records the interruption; it does not stop OBS
 outputs or claim that pending output requests completed.
 
