@@ -1,0 +1,15 @@
+{
+  "ActivityOrigin": ["requested", "observed", "failed", "connection"],
+  "Language": ["system", "en", "en-gb", "de", "de-ch", "es", "it", "pl", "pt-pt", "uk"],
+  "LeaderKey": ["space", "comma", "semicolon", "backslash", "grave"],
+  "MixerGrouping": ["scope", "scene_path", "none"],
+  "MixerMode": ["active", "selected", "pinned"],
+  "MotionLevel": ["full", "reduced", "off"],
+  "OutputKind": ["stream", "record"],
+  "OutputResultKind": ["replay_save", "recording_stop", "recording_split", "recording_chapter"],
+  "OutputResultStatus": ["requested", "acknowledged", "observed", "failed", "unconfirmed"],
+  "SceneHotkeyStyle": ["plain", "ctrl", "alt", "shift", "super", "ctrl-alt", "ctrl-shift", "leader"],
+  "SceneRole": ["primary", "secondary", "module", "raw", "debug", "archive"],
+  "ThemeMode": ["system", "light", "dark"],
+  "UiDensity": ["compact", "comfortable"]
+}
