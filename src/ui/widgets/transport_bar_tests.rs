@@ -102,7 +102,12 @@ fn native_compact_large_text_outputs_and_hidden_pages_fit() {
     registry.set_scene_role("Intro", Some(SceneRole::Primary));
     const LONG_SCENE: &str = "Long translated primary scene — presentation and interview source review Довга назва для перевірки";
     registry.set_scene_role(LONG_SCENE, Some(SceneRole::Primary));
-    let state = Rc::new(RefCell::new(AppState::new(config, registry, None, None)));
+    let state = Rc::new(RefCell::new(AppState::new(
+        config,
+        registry,
+        None,
+        Vec::new(),
+    )));
     {
         let mut state = state.borrow_mut();
         state.obs_status = ObsStatus::Connected {

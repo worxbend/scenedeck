@@ -485,7 +485,7 @@ mod tests {
                     == crate::ui::persist::RegistrySaveStatus::Saved
             }));
             assert_eq!(
-                crate::storage::registry::read_registry().decks[deck].query,
+                crate::storage::registry::read_registry().unwrap().decks[deck].query,
                 "replacement"
             );
             window.set_child(gtk4::Widget::NONE);

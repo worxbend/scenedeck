@@ -1962,8 +1962,8 @@ mod tests {
                 None,
             );
             flush();
-            assert_eq!(read_registry().scene_icon("Guest"), Some("camera"));
-            assert_eq!(read_registry().scene_order, ["Guest"]);
+            assert_eq!(read_registry().unwrap().scene_icon("Guest"), Some("camera"));
+            assert_eq!(read_registry().unwrap().scene_order, ["Guest"]);
 
             let source = crate::storage::xdg::registry_path().with_extension("yaml");
             let mut imported = SceneRegistry::default();
@@ -1992,8 +1992,11 @@ mod tests {
                 nav.state.borrow().registry.scene_icon("Host"),
                 Some("imported")
             );
-            assert_eq!(read_registry().scene_icon("Host"), Some("imported"));
-            assert!(read_registry().scene_icon("Guest").is_none());
+            assert_eq!(
+                read_registry().unwrap().scene_icon("Host"),
+                Some("imported")
+            );
+            assert!(read_registry().unwrap().scene_icon("Guest").is_none());
 
             apply_event(
                 &nav,
@@ -2010,7 +2013,7 @@ mod tests {
             );
             assert!(nav.state.borrow().registry.scene_icon("Wrong").is_none());
 
-            write_registry_yaml_to_path(&source, &read_registry()).unwrap();
+            write_registry_yaml_to_path(&source, &read_registry().unwrap()).unwrap();
             assert!(super::super::persist::import_registry(
                 &nav,
                 source,
@@ -2027,8 +2030,11 @@ mod tests {
             );
             nav.state.borrow_mut().invalidate_collection_runtime();
             flush();
-            assert_eq!(read_registry().scene_icon("Host"), Some("imported"));
-            assert!(read_registry().scene_icon("Retired").is_none());
+            assert_eq!(
+                read_registry().unwrap().scene_icon("Host"),
+                Some("imported")
+            );
+            assert!(read_registry().unwrap().scene_icon("Retired").is_none());
         });
     }
 

@@ -16,13 +16,13 @@ use crate::controller::event::AppEvent;
 use crate::controller::state::AppState;
 use crate::infra::i18n;
 use crate::storage::config::{read_startup_config, LoadedConfig, PendingRepair};
-use crate::storage::registry::read_registry;
+use crate::storage::registry::{read_registry, SceneRegistry};
 use crate::storage::secret;
 use crate::ui;
 
 struct StartupData {
     config: LoadedConfig,
-    registry: crate::storage::registry::SceneRegistry,
+    registry: Result<SceneRegistry, String>,
     password: Option<crate::domain::connection::credential::ObsPassword>,
     bookmarks: Result<crate::storage::bookmarks::BookmarkArchive, String>,
     history: Result<crate::storage::report_history::HistoryArchive, String>,
@@ -48,7 +48,7 @@ pub fn run() {
             });
         StartupData {
             config,
-            registry: read_registry(),
+            registry: read_registry().map_err(|error| error.to_string()),
             password,
             bookmarks: crate::storage::bookmarks::read(&crate::storage::xdg::bookmarks_path())
                 .map_err(|error| error.to_string()),
@@ -67,7 +67,7 @@ pub fn run() {
                 startup_notice: None,
                 pending_repair: None,
             },
-            registry: Default::default(),
+            registry: Err("Startup registry reader failed".into()),
             password: None,
             bookmarks: Err("Startup bookmark reader failed".into()),
             history: Err("Startup session history reader failed".into()),
@@ -443,13 +443,19 @@ fn build_ui(
 ) -> adw::ApplicationWindow {
     let loaded = &startup.config;
     i18n::init(loaded.config.language);
-    let notice = loaded.startup_notice.as_ref().map(|n| n.user_message());
+    let (registry, registry_notice) = startup_registry(&startup.registry);
+    let notices = loaded
+        .startup_notice
+        .iter()
+        .map(|notice| notice.user_message())
+        .chain(registry_notice)
+        .collect();
 
     let state = Rc::new(RefCell::new(AppState::new(
         loaded.config.clone(),
-        startup.registry.clone(),
+        registry,
         startup.password.clone(),
-        notice,
+        notices,
     )));
     persist_startup_migration(loaded);
 
@@ -461,6 +467,24 @@ fn build_ui(
     let window = ui::build_main_window(app, state, controller, event_rx);
     install_persistence_close_guard(app, &window, owner);
     window
+}
+
+/// Defaults stand in for an unreadable registry.json, but never silently:
+/// empty curation would look like lost work. Registry saves refuse to replace
+/// the unreadable file, so the notice is the operator's cue to repair it.
+fn startup_registry(read: &Result<SceneRegistry, String>) -> (SceneRegistry, Option<String>) {
+    match read {
+        Ok(registry) => (registry.clone(), None),
+        Err(detail) => {
+            tracing::warn!(%detail, "failed to load registry, using defaults");
+            let notice = i18n_embed_fl::fl!(
+                crate::infra::i18n::LANGUAGE_LOADER,
+                "registry-startup-failed",
+                detail = detail.as_str()
+            );
+            (SceneRegistry::default(), Some(notice))
+        }
+    }
 }
 
 /// Save the config the startup read migrated in memory.
@@ -1432,5 +1456,33 @@ mod tests {
             assert_eq!(app.run_with_args::<&str>(&[]), glib::ExitCode::SUCCESS);
             assert!(observed.get());
         });
+    }
+
+    #[test]
+    fn unreadable_registry_loads_defaults_and_names_the_file_in_a_startup_notice() {
+        let dir = crate::storage::test_support::TempDir::new("startup-registry");
+        let path = dir.path().join("registry.json");
+        std::fs::write(&path, "{ not json").unwrap();
+        let read = crate::storage::registry::read_registry_from_path(&path)
+            .map_err(|error| error.to_string());
+
+        let (registry, notice) = startup_registry(&read);
+
+        assert_eq!(registry, SceneRegistry::default());
+        let notice = notice.expect("an unreadable registry must be reported");
+        assert!(notice.contains(&path.display().to_string()), "{notice}");
+    }
+
+    #[test]
+    fn readable_registry_loads_without_a_startup_notice() {
+        let saved = SceneRegistry {
+            scene_order: vec!["Host".into()],
+            ..SceneRegistry::default()
+        };
+
+        let (registry, notice) = startup_registry(&Ok(saved.clone()));
+
+        assert_eq!(registry, saved);
+        assert_eq!(notice, None);
     }
 }

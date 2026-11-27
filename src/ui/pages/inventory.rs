@@ -1682,7 +1682,7 @@ mod tests {
                 crate::ui::persist::registry_save_status()
                     == crate::ui::persist::RegistrySaveStatus::Saved
             }));
-            let saved = crate::storage::registry::read_registry();
+            let saved = crate::storage::registry::read_registry().unwrap();
             assert_eq!(saved.scene_icon("Main"), Some("camera"));
             assert_eq!(saved.scenes["Main"].tags, ["Podcast", "Київ"]);
             assert!(saved.scenes["Main"].favorite);
@@ -1761,7 +1761,9 @@ mod tests {
                 }
             ));
             assert_eq!(
-                crate::storage::registry::read_registry().scene_icon(name),
+                crate::storage::registry::read_registry()
+                    .unwrap()
+                    .scene_icon(name),
                 Some("replacement")
             );
         });

@@ -79,7 +79,12 @@ fn native_preview_scheduler_bounds_scope_and_visibility() {
     for scene in &inventory.scenes {
         registry.set_scene_role(&scene.id, Some(SceneRole::Primary));
     }
-    let state = Rc::new(RefCell::new(AppState::new(config, registry, None, None)));
+    let state = Rc::new(RefCell::new(AppState::new(
+        config,
+        registry,
+        None,
+        Vec::new(),
+    )));
     {
         let mut state = state.borrow_mut();
         state.obs_status = ObsStatus::Connected {

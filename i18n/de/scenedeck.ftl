@@ -578,6 +578,7 @@ page-help = Hilfe
 config-parse-failed-backed-up = Einstellungen konnten nicht gelesen werden: { $detail } — die Datei wurde unter { $path } gesichert und die Standardwerte wurden geladen.
 config-newer-version = Die Einstellungen wurden von einer neueren SceneDeck-Version gespeichert (Einstellungsversion { $version }). Sie wurden geladen, Änderungen werden aber nicht gespeichert, damit die neueren Einstellungen erhalten bleiben.
 config-symlinked = config.json ist ein symbolischer Link. SceneDeck folgt keinen symbolischen Links, daher wurden die Standardwerte geladen und Änderungen werden nicht gespeichert. Damit Einstellungen gespeichert werden, muss der Link durch eine normale Datei ersetzt werden.
+registry-startup-failed = Die gespeicherte Szenen-Organisation konnte nicht gelesen werden: { $detail } — es werden Standardwerte angezeigt und die Datei bleibt unverändert.
 stats-popout-button = Statistik in einem separaten Fenster öffnen
 
 help-page-title = Hilfe & Einführung

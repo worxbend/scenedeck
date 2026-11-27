@@ -581,6 +581,7 @@ page-help = Ajuda
 config-parse-failed-backed-up = Não foi possível processar as definições: { $detail } — o ficheiro foi mantido em { $path } e foram carregadas as predefinições.
 config-newer-version = As definições foram guardadas por uma versão mais recente do SceneDeck (versão das definições { $version }). Foram carregadas, mas as alterações não serão guardadas, para que as definições mais recentes fiquem intactas.
 config-symlinked = config.json é uma ligação simbólica. O SceneDeck não segue ligações simbólicas, por isso foram carregadas as predefinições e as alterações não serão guardadas. Substitua a ligação por um ficheiro normal para manter as definições.
+registry-startup-failed = Não foi possível ler a organização de cenas guardada: { $detail } — são mostradas as predefinições e o ficheiro não é alterado.
 stats-popout-button = Abrir as estatísticas numa janela separada
 
 ## ui/pages/help.rs — guia de integração inicial. Os corpos têm várias linhas

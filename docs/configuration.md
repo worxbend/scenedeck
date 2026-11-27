@@ -247,7 +247,9 @@ Inventory; it is never overwritten with an empty fallback. Manage named connecti
 `registry.json` carries a schema `version`, currently `1`; a file without one
 reads as version `1`. A file from a newer SceneDeck is read as far as this build
 understands it, but registry saves over it fail with Retry instead of dropping
-the newer fields.
+the newer fields. A `registry.json` that cannot be read or parsed at startup
+loads defaults and adds a notice to the Settings page; saves refuse to replace
+it, so the file stays as it was until you fix it.
 
 All writes and YAML imports capture their destination when accepted. Switching
 while an import is running does not redirect it, and controls from the previous

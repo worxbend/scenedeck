@@ -579,7 +579,7 @@ mod tests {
                 config,
                 Default::default(),
                 None,
-                None,
+                Vec::new(),
             )));
             let stack = gtk4::Stack::new();
             let nav = NavigationContext::new(state, stack, controller);

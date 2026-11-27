@@ -482,8 +482,8 @@ pub struct AppState {
     pub audio_levels: InputLevelSnapshot,
     pub mixer_audio_refresh: MixerAudioRefreshState,
     pub mixer: MixerSelection,
-    /// Human-readable config-load notice shown once on the Settings page.
-    pub startup_notice: Option<String>,
+    /// Config and registry load notices, shown once on the Settings page.
+    pub startup_notices: Vec<String>,
     /// Latest OBS `GetStats` snapshot for the status bar. `None` until the
     /// first poll completes after connecting.
     pub obs_stats: Option<ObsStats>,
@@ -503,7 +503,7 @@ impl AppState {
         config: AppConfig,
         registry: SceneRegistry,
         obs_password: Option<crate::domain::connection::credential::ObsPassword>,
-        startup_notice: Option<String>,
+        startup_notices: Vec<String>,
     ) -> Self {
         let mixer = config.mixer.clone();
         Self {
@@ -548,7 +548,7 @@ impl AppState {
             audio_levels: InputLevelSnapshot::default(),
             mixer_audio_refresh: MixerAudioRefreshState::default(),
             mixer,
-            startup_notice,
+            startup_notices,
             obs_stats: None,
             obs_stats_observed_at: None,
             stream_bitrate_kbps: None,
@@ -2826,7 +2826,7 @@ mod tests {
             state.config.appearance.mode = ThemeMode::Dark;
             state.registry.scene_order = vec!["Preferred".into()];
             state.obs_password = Some("in-memory-fixture".into());
-            state.startup_notice = Some("local notice".into());
+            state.startup_notices = vec!["local notice".into()];
             state.current_page = Page::Mixer;
             state.mixer.mode = MixerMode::PinnedScene;
             state.mixer.selected_scene = Some("Preferred".into());
@@ -2861,7 +2861,7 @@ mod tests {
                     .as_ref()
                     .map(|password| password.expose())
             );
-            assert_eq!(state.startup_notice, before.startup_notice);
+            assert_eq!(state.startup_notices, before.startup_notices);
             assert_eq!(state.current_page, before.current_page);
             assert_eq!(state.mixer, before.mixer);
         }

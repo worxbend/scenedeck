@@ -37,7 +37,7 @@ source of truth for:
 - Active audio inputs.
 - Scoped operating observations, selected source details and freshness.
 - Session activity, bounded output evidence and session-scoped scene thumbnails.
-- One-shot startup notice text.
+- One-shot startup notices for config and registry load problems.
 
 GTK widgets are updated from events in `src/ui/window.rs`. Doctor diagnostics
 are derived from the current inventory, registry snapshot, and graph whenever

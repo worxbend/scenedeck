@@ -7,7 +7,12 @@ use crate::storage::{config::AppConfig, registry::SceneRegistry};
 /// A fresh state with default config, an empty registry, no stored password
 /// and no startup notice.
 pub(crate) fn app_state() -> AppState {
-    AppState::new(AppConfig::default(), SceneRegistry::default(), None, None)
+    AppState::new(
+        AppConfig::default(),
+        SceneRegistry::default(),
+        None,
+        Vec::new(),
+    )
 }
 
 /// An unmuted input at unity gain (0 dB).

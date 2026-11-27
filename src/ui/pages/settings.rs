@@ -45,13 +45,8 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     with_icon(&status_row, "nf-md-lan-connect-symbolic");
     status_group.add(&status_row);
 
-    if let Some(notice) = nav.state.borrow_mut().startup_notice.take() {
-        let notice_group = PreferencesGroup::new();
-        // GObject builder property order may set title before use-markup.
-        let notice_row = ActionRow::builder().use_markup(false).build();
-        notice_row.set_title(&notice);
-        with_icon(&notice_row, "dialog-warning-symbolic");
-        notice_group.add(&notice_row);
+    let notices = std::mem::take(&mut nav.state.borrow_mut().startup_notices);
+    if let Some(notice_group) = startup_notices::group(&notices) {
         page.add(&notice_group);
     }
 
@@ -444,6 +439,7 @@ fn build_language_group(nav: &NavigationContext, cfg: &AppConfig) -> Preferences
 }
 
 mod connections;
+mod startup_notices;
 
 fn build_obs_group(nav: &NavigationContext, _cfg: &AppConfig) -> (PreferencesGroup, ActionRow) {
     connections::build(nav)
@@ -887,7 +883,7 @@ mod tests {
             crate::storage::config::AppConfig::default(),
             crate::storage::registry::SceneRegistry::default(),
             None,
-            Some(payload.into()),
+            vec![payload.into()],
         )));
         state.borrow_mut().obs_status = ObsStatus::Error(payload.into());
         let nav = crate::ui::navigation::NavigationContext::new(

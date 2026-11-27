@@ -598,22 +598,9 @@ fn parse_role_list(keys: &[String]) -> Vec<SceneRole> {
 
 /// Read registry from the XDG config directory.
 ///
-/// Missing or invalid registries fall back to defaults and log a warning.
-pub fn read_registry() -> SceneRegistry {
-    match try_read_registry() {
-        Ok(registry) => registry,
-        Err(err) => {
-            tracing::warn!(%err, "failed to load registry, using defaults");
-            SceneRegistry::default()
-        }
-    }
-}
-
-/// Read registry from the XDG config directory without falling back to defaults.
-///
-/// Use this for explicit user actions, such as export, where silently replacing
-/// an invalid hand-edited registry with defaults would be misleading.
-pub fn try_read_registry() -> Result<SceneRegistry, RegistryStorageError> {
+/// A missing file reads as defaults. An unreadable one is an error: silently
+/// replacing hand-edited curation with defaults would look like lost work.
+pub fn read_registry() -> Result<SceneRegistry, RegistryStorageError> {
     read_registry_from_path(&xdg::registry_path())
 }
 

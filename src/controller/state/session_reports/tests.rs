@@ -29,7 +29,7 @@ fn state() -> AppState {
         Default::default(),
         Default::default(),
         Some("PASSWORD_MUST_NOT_EXPORT".into()),
-        None,
+        Vec::new(),
     )
 }
 fn collect(state: &mut AppState) {
