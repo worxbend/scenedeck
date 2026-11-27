@@ -146,6 +146,9 @@ GTK and libadwaita UI.
 - `widgets/`: reusable scene and audio cards, the volume meter, the icon
   chooser, the bottom status bar, and the
   cairo chart/gauge renderers used by Stats.
+- `test_support.rs` (tests only): the `native_test!` runner that gives each
+  native GTK test its own process and a 60 s deadline, plus the shared
+  `navigation()` fixture and main-loop `pump` helpers.
 
 ## Assets and Resources
 
