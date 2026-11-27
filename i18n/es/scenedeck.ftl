@@ -247,9 +247,6 @@ window-stream-live-tooltip = Transmitiendo en directo
 window-about-tooltip = Acerca de SceneDeck
 window-refresh-tooltip = Actualizar la página actual
 
-window-stream-status-line = Transmisión: { $state }{ $elapsed }
-window-record-status-line = Grabación: { $state }{ $elapsed }
-
 window-status-connecting = Conectando con OBS…
 window-connect-btn-connecting = Conectando…
 window-current-scene-none = Escena actual: —

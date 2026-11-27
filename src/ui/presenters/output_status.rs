@@ -34,7 +34,20 @@ pub(crate) fn output_label(
     }
 }
 
-pub(crate) fn format_elapsed(since: Instant) -> String {
+/// The status-bar text for one output.
+///
+/// Every writer of the slot goes through here, so the once-a-second clock and
+/// the output events cannot render the same state two different ways.
+pub(crate) fn output_status_line(
+    kind: OutputKind,
+    status: &OutputStatus,
+    active_since: Option<Instant>,
+) -> String {
+    let elapsed = active_since.map(format_elapsed);
+    output_label(kind, status, elapsed.as_deref())
+}
+
+fn format_elapsed(since: Instant) -> String {
     let elapsed = since.elapsed().as_secs();
     let hours = elapsed / 3600;
     let minutes = (elapsed % 3600) / 60;
@@ -85,6 +98,42 @@ mod tests {
                 None
             ),
             "Stream: Active"
+        );
+    }
+
+    #[test]
+    fn status_line_counts_elapsed_time_while_active() {
+        assert_eq!(
+            output_status_line(
+                OutputKind::Stream,
+                &output_status(true, OutputRunState::Active),
+                Some(Instant::now())
+            ),
+            "Stream: Active · 0:00"
+        );
+    }
+
+    #[test]
+    fn status_line_hides_elapsed_time_while_inactive_with_a_start_time() {
+        assert_eq!(
+            output_status_line(
+                OutputKind::Record,
+                &output_status(false, OutputRunState::Unknown),
+                Some(Instant::now())
+            ),
+            "Record: Unknown"
+        );
+    }
+
+    #[test]
+    fn status_line_without_a_start_time_shows_the_state_only() {
+        assert_eq!(
+            output_status_line(
+                OutputKind::Record,
+                &output_status(false, OutputRunState::Inactive),
+                None
+            ),
+            "Record: Inactive"
         );
     }
 }

@@ -32,7 +32,7 @@ use crate::ui::markup::plain_toast;
 use crate::ui::navigation::NavigationContext;
 use crate::ui::pages::live::LivePageHandle;
 use crate::ui::pages::stats::PopoutSlot as StatsPopoutSlot;
-use crate::ui::presenters::output_status::{format_elapsed, output_label};
+use crate::ui::presenters::output_status::output_status_line;
 use crate::ui::register_resources;
 use crate::ui::sidebar::{self, HeaderSelectors, SidebarControls, NAV_PAGES};
 use crate::ui::theme::ThemeManager;
@@ -482,27 +482,8 @@ fn install_output_clock(
         let state = state.clone();
         let status_bar = status_bar.clone();
         move || {
-            let state = state.borrow();
-            status_bar::set_stream(
-                &status_bar,
-                &fl!(
-                    LANGUAGE_LOADER,
-                    "window-stream-status-line",
-                    state = state.stream_status.state.label(),
-                    elapsed = elapsed_suffix(state.stream_active_since)
-                ),
-                state.stream_status.active,
-            );
-            status_bar::set_record(
-                &status_bar,
-                &fl!(
-                    LANGUAGE_LOADER,
-                    "window-record-status-line",
-                    state = state.record_status.state.label(),
-                    elapsed = elapsed_suffix(state.record_active_since)
-                ),
-                state.record_status.active,
-            );
+            render_output_slot(&state, &status_bar, OutputKind::Stream);
+            render_output_slot(&state, &status_bar, OutputKind::Record);
             glib::ControlFlow::Continue
         }
     })
@@ -1314,26 +1295,29 @@ fn show_no_session_ui(
 /// can never disagree. Each mutation below stores the status it was given, so
 /// reading it back here shows the same value the event carried.
 fn refresh_output_status_bar(nav: &NavigationContext, ui: &EventUiContext, kind: OutputKind) {
-    let (status, elapsed) = {
-        let state = nav.state.borrow();
-        match kind {
-            OutputKind::Stream => (
-                state.stream_status.clone(),
-                state.stream_active_since.map(format_elapsed),
-            ),
-            OutputKind::Record => (
-                state.record_status.clone(),
-                state.record_active_since.map(format_elapsed),
-            ),
-        }
-    };
-
-    let label = output_label(kind, &status, elapsed.as_deref());
-    match kind {
-        OutputKind::Stream => status_bar::set_stream(&ui.status_bar, &label, status.active),
-        OutputKind::Record => status_bar::set_record(&ui.status_bar, &label, status.active),
-    }
+    render_output_slot(&nav.state, &ui.status_bar, kind);
     sync_output_indicators(nav, &ui.sidebar_controls, &ui.streaming_chrome);
+}
+
+/// Write one output's status-bar slot from `AppState`.
+///
+/// The output events and the once-a-second clock both draw the slot through
+/// here, so neither overwrites the other with a different rendering. The
+/// borrow ends before the widget is touched.
+fn render_output_slot(state: &RefCell<AppState>, status_bar: &StatusBarHandle, kind: OutputKind) {
+    let (label, active) = {
+        let state = state.borrow();
+        let (status, active_since) = match kind {
+            OutputKind::Stream => (&state.stream_status, state.stream_active_since),
+            OutputKind::Record => (&state.record_status, state.record_active_since),
+        };
+        let label = output_status_line(kind, status, active_since);
+        (label, status.active)
+    };
+    match kind {
+        OutputKind::Stream => status_bar::set_stream(status_bar, &label, active),
+        OutputKind::Record => status_bar::set_record(status_bar, &label, active),
+    }
 }
 
 fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiContext>) {
@@ -1397,12 +1381,6 @@ pub(crate) fn should_rebuild_visible_mixer_for_input_event(
         }
         | MixerVisibleRenderSource::MissingScene => false,
     }
-}
-
-fn elapsed_suffix(active_since: Option<Instant>) -> String {
-    active_since
-        .map(|since| format!(" · {}", format_elapsed(since)))
-        .unwrap_or_default()
 }
 
 /// Toast and log a failure; the next render shows the log entry.

@@ -20,7 +20,7 @@ const OVERSIZED_FILES: &[(&str, usize)] = &[
     ("ui/pages/stats.rs", 912),
     ("ui/widgets/audio_card.rs", 884),
     ("ui/widgets/operating_panel.rs", 1613),
-    ("ui/window.rs", 1570),
+    ("ui/window.rs", 1548),
 ];
 
 /// Production files stay small enough to read in one sitting.
@@ -81,7 +81,7 @@ const APP_STATE_BORROWS: &[(&str, [usize; 3])] = &[
     ("ui/widgets/studio_controls.rs", [0, 5, 5]),
     ("ui/widgets/transport_bar.rs", [0, 2, 2]),
     ("ui/widgets/volume_meter.rs", [0, 1, 1]),
-    ("ui/window.rs", [43, 60, 110]),
+    ("ui/window.rs", [43, 59, 110]),
     ("ui/workspace.rs", [6, 0, 7]),
 ];
 
