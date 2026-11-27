@@ -140,6 +140,10 @@ Persistence and local machine integration.
 - `xdg.rs`: XDG config path resolution.
 - `test_support.rs` (tests only): `TempDir`, a scratch directory removed
   with its contents on drop.
+- `golden.rs` and `fixtures/` (tests only): checked-in wire fixtures for
+  every persisted file, the `json_round_trip` and `yaml_round_trip` helpers
+  the per-format tests call, and `enum-spellings.json`, which pins the
+  persisted spelling of every enum variant.
 
 `src/ui/`
 
