@@ -2404,4 +2404,539 @@ mod tests {
         );
         assert!(local.query.is_empty());
     }
+
+    // ── Section characterization (P0-T13) ──────────────────────────────────
+    //
+    // Each native test below pins the widget-tree facts one Sources section
+    // exposes today: the widget names other code finds, their labels and their
+    // sensitivity. Splitting this file must keep every one of them.
+
+    /// Edit `AppState` through `NavigationContext::update`, as pages should.
+    fn edit_state(
+        nav: &crate::ui::navigation::NavigationContext,
+        edit: impl FnOnce(&mut crate::controller::state::AppState),
+    ) {
+        nav.update(edit)
+            .expect("no AppState borrow outlives a test step");
+    }
+
+    /// Change the observed source detail, as a readback would.
+    fn edit_detail(
+        nav: &crate::ui::navigation::NavigationContext,
+        edit: impl FnOnce(&mut super::SourceDetail),
+    ) {
+        edit_state(nav, |state| {
+            edit(
+                state
+                    .workspace
+                    .detail
+                    .as_mut()
+                    .expect("a source detail is observed"),
+            )
+        });
+    }
+
+    /// Connected, freshly observed Sources state that admits every listed request.
+    fn observe_sources(
+        nav: &crate::ui::navigation::NavigationContext,
+        items: Vec<crate::domain::control::SourceItem>,
+        detail: Option<super::SourceDetail>,
+        capabilities: &[&str],
+    ) {
+        edit_state(nav, |state| {
+            state.obs_status = super::ObsStatus::Connected {
+                obs_version: "fixture".into(),
+            };
+            state.scene_collections.current = Some("Fixture".into());
+            state.available_requests = capabilities
+                .iter()
+                .map(|request| (*request).to_owned())
+                .collect();
+            state.workspace.observed_at = Some(std::time::Instant::now());
+            state.workspace.selected_input = detail.as_ref().map(|detail| detail.input.clone());
+            state.workspace.snapshot = Some(crate::domain::control::ControlSnapshot {
+                scene: Some("Main".into()),
+                items,
+                ..Default::default()
+            });
+            state.workspace.detail = detail;
+        });
+    }
+
+    /// Settle the admitted action as acknowledged and freshly read back, so the
+    /// page admits the next one.
+    fn acknowledge(nav: &crate::ui::navigation::NavigationContext) {
+        edit_state(nav, |state| {
+            state.workspace.pending = false;
+            state.workspace.loading = false;
+            state.workspace.active_action = None;
+            state.workspace.observed_at = Some(std::time::Instant::now());
+        });
+    }
+
+    fn active_action(
+        nav: &crate::ui::navigation::NavigationContext,
+    ) -> Option<crate::domain::control::ControlAction> {
+        nav.read(|state| state.workspace.active_action.clone())
+    }
+
+    fn source_item(input: &str, item_id: i64) -> crate::domain::control::SourceItem {
+        crate::domain::control::SourceItem {
+            owner: "Main".into(),
+            item_id,
+            input: input.into(),
+            input_uuid: String::new(),
+            kind: None,
+            path: vec!["Main".into()],
+            enabled: true,
+            ancestor_enabled: true,
+            is_group: false,
+            is_scene: false,
+        }
+    }
+
+    fn find(root: &gtk4::Widget, name: &str) -> Option<gtk4::Widget> {
+        use adw::prelude::*;
+        let mut found = None;
+        super::visit(root, &mut |widget| {
+            if found.is_none() && widget.widget_name() == name {
+                found = Some(widget.clone());
+            }
+        });
+        found
+    }
+
+    fn named<T: gtk4::prelude::IsA<gtk4::Widget>>(root: &gtk4::Widget, name: &str) -> T {
+        use adw::prelude::*;
+        find(root, name)
+            .unwrap_or_else(|| panic!("missing widget {name}"))
+            .downcast::<T>()
+            .unwrap_or_else(|widget| panic!("{name} is a {}", widget.type_()))
+    }
+
+    /// Unnamed status labels are only reachable by their text.
+    fn label_with_text(root: &gtk4::Widget, text: &str) -> Option<super::Label> {
+        use adw::prelude::*;
+        let mut found = None;
+        super::visit(root, &mut |widget| {
+            if let Some(label) = widget.downcast_ref::<super::Label>() {
+                if found.is_none() && label.label() == text {
+                    found = Some(label.clone());
+                }
+            }
+        });
+        found
+    }
+
+    fn buffer_text(view: &gtk4::TextView) -> String {
+        use adw::prelude::*;
+        let buffer = view.buffer();
+        buffer
+            .text(&buffer.start_iter(), &buffer.end_iter(), true)
+            .to_string()
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display; synthetic source observations"]
+    fn native_sources_browser_rows_name_item_checks_inspect_buttons_and_search() {
+        crate::ui::native_test!(|| {
+            use super::*;
+            use crate::domain::{
+                control::{ControlAction, SourceItem},
+                scene::Scene,
+            };
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            let group = SourceItem {
+                is_group: true,
+                ..source_item("Group", 2)
+            };
+            let nested = SourceItem {
+                enabled: false,
+                ancestor_enabled: false,
+                path: vec!["Main".into(), "Group".into()],
+                ..source_item("Hidden mic", 3)
+            };
+            observe_sources(
+                &nav,
+                vec![source_item("Camera", 1), group, nested],
+                None,
+                &["SetSceneItemEnabled"],
+            );
+            edit_state(&nav, |state| {
+                state.workspace.selected_input = Some("Camera".into());
+                state.scene_inventory.scenes = vec![Scene {
+                    id: "Main".into(),
+                    uuid: None,
+                }];
+            });
+            let (page, _refresh) = build(nav.clone());
+
+            assert_eq!(
+                named::<DropDown>(&page, "control-focus-scene").selected(),
+                0
+            );
+            let camera: CheckButton = named(&page, "control-focus-item-Main-1-Main");
+            assert!(camera.is_active() && camera.is_sensitive());
+            assert!(camera.has_css_class("sources-mutation"));
+            assert_eq!(camera.tooltip_text().as_deref(), Some("Camera"));
+            let hidden: CheckButton = named(&page, "control-focus-item-Main-3-Main/Group");
+            assert!(!hidden.is_active());
+            assert!(!named::<Label>(&page, "sources-hidden-parent-Main-1-Main").is_visible());
+            assert!(named::<Label>(&page, "sources-hidden-parent-Main-3-Main/Group").is_visible());
+            let inspect: Button = named(&page, "control-focus-inspect-Main-1-Main");
+            assert!(inspect.is_sensitive());
+            assert!(inspect.has_css_class("sources-inspect"));
+            assert!(inspect.has_css_class("suggested-action"));
+            let group_inspect: Button = named(&page, "control-focus-inspect-Main-2-Main");
+            assert!(!group_inspect.is_sensitive());
+            assert!(!group_inspect.has_css_class("sources-inspect"));
+            assert!(find(&page, "sources-list-scroll").is_some());
+            assert!(find(&page, "sources-detail-scroll").is_some());
+            assert!(find(&page, "control-focus-back").is_some());
+            assert!(
+                label_with_text(&page, &fl!(LANGUAGE_LOADER, "control-request-hint")).is_some(),
+                "a selected source without a detail read asks for one"
+            );
+
+            let search: gtk4::SearchEntry = named(&page, "control-focus-search");
+            let row_of = |check: &CheckButton| check.parent().and_then(|line| line.parent());
+            let (camera_row, hidden_row) = (row_of(&camera).unwrap(), row_of(&hidden).unwrap());
+            let no_matches =
+                label_with_text(&page, &fl!(LANGUAGE_LOADER, "control-no-matches")).unwrap();
+            search.set_text("MIC");
+            search.emit_by_name::<()>("search-changed", &[]);
+            assert!(!camera_row.is_visible() && hidden_row.is_visible());
+            assert!(!no_matches.is_visible());
+            search.set_text("no such source");
+            search.emit_by_name::<()>("search-changed", &[]);
+            assert!(!hidden_row.is_visible());
+            assert!(no_matches.is_visible());
+
+            camera.set_active(false);
+            assert_eq!(
+                active_action(&nav),
+                Some(ControlAction::SetItemEnabled {
+                    owner: "Main".into(),
+                    item_id: 1,
+                    enabled: false,
+                })
+            );
+            acknowledge(&nav);
+            search.set_text("hidden");
+            search.emit_by_name::<()>("activate", &[]);
+            assert_eq!(
+                nav.read(|state| state.workspace.selected_input.clone()),
+                Some("Hidden mic".into())
+            );
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display; synthetic source observations"]
+    fn native_sources_text_detail_names_editor_actions_and_conflict_warning() {
+        crate::ui::native_test!(|| {
+            use super::*;
+            use crate::domain::control::ControlAction;
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            observe_sources(
+                &nav,
+                vec![source_item("Caption", 1)],
+                Some(SourceDetail {
+                    input: "Caption".into(),
+                    text: Some("Hello".into()),
+                    ..Default::default()
+                }),
+                &["SetInputSettings"],
+            );
+            let (page, refresh) = build(nav.clone());
+
+            let editor: gtk4::TextView = named(&page, "control-focus-text-Caption");
+            assert_eq!(buffer_text(&editor), "Hello");
+            let save: Button = named(&page, "control-focus-save-Caption");
+            assert!(save.is_sensitive());
+            assert!(save.has_css_class("sources-mutation"));
+            assert!(save.has_css_class("sources-text-save"));
+            let cancel: Button = named(&page, "control-focus-cancel-Caption");
+            let conflict: Label = named(&page, "sources-text-conflict");
+            assert!(!conflict.is_visible());
+            assert!(find(&page, "source-media-controls").is_none());
+            assert!(find(&page, "control-focus-monitor-Caption").is_none());
+
+            editor.buffer().set_text("Draft");
+            edit_detail(&nav, |detail| detail.text = Some("External".into()));
+            refresh();
+            assert_eq!(
+                named::<gtk4::TextView>(&page, "control-focus-text-Caption"),
+                editor
+            );
+            assert_eq!(buffer_text(&editor), "Draft");
+            assert!(conflict.is_visible());
+            assert!(
+                !save.is_sensitive(),
+                "a conflicting draft must not be saved"
+            );
+
+            cancel.emit_clicked();
+            assert_eq!(buffer_text(&editor), "External");
+            assert!(!conflict.is_visible());
+            assert!(save.is_sensitive());
+
+            editor.buffer().set_text("Edited");
+            save.emit_clicked();
+            assert_eq!(
+                active_action(&nav),
+                Some(ControlAction::SetText {
+                    input: "Caption".into(),
+                    text: "Edited".into(),
+                })
+            );
+
+            acknowledge(&nav);
+            edit_detail(&nav, |detail| detail.text_from_file = true);
+            refresh();
+            assert!(find(&page, "control-focus-text-Caption").is_none());
+            assert!(find(&page, "control-focus-save-Caption").is_none());
+            assert!(label_with_text(&page, &fl!(LANGUAGE_LOADER, "control-text-file")).is_some());
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display; synthetic source observations"]
+    fn native_sources_media_detail_names_transport_seek_and_section() {
+        crate::ui::native_test!(|| {
+            use super::*;
+            use crate::domain::control::{ControlAction, MediaState, MediaStatus};
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            observe_sources(
+                &nav,
+                vec![source_item("Clip", 1)],
+                Some(SourceDetail {
+                    input: "Clip".into(),
+                    media: Some(MediaStatus {
+                        state: MediaState::Playing,
+                        duration_ms: Some(4000),
+                        cursor_ms: Some(1000),
+                    }),
+                    ..Default::default()
+                }),
+                &["TriggerMediaInputAction", "SetMediaInputCursor"],
+            );
+            let (page, refresh) = build(nav.clone());
+
+            assert!(find(&page, "source-media-controls").is_some());
+            let status: Label = named(&page, "sources-media-state");
+            assert_eq!(status.text(), MediaState::Playing.label());
+            for action in [
+                MediaAction::Play,
+                MediaAction::Pause,
+                MediaAction::Stop,
+                MediaAction::Restart,
+                MediaAction::Previous,
+                MediaAction::Next,
+            ] {
+                let control = ControlAction::Media {
+                    input: "Clip".into(),
+                    action,
+                };
+                let button: Button = named(&page, &format!("control-focus-action-{control:?}"));
+                assert!(button.is_sensitive() && button.has_css_class("sources-mutation"));
+            }
+            let position: SpinButton = named(&page, "control-focus-seek-position-Clip");
+            assert_eq!(position.value(), 1.0);
+            assert_eq!(position.adjustment().upper(), 4.0);
+            let seek: Button = named(&page, "control-focus-seek-Clip");
+            assert!(seek.is_sensitive() && seek.has_css_class("sources-mutation"));
+
+            position.set_value(3.0);
+            seek.emit_clicked();
+            assert_eq!(
+                active_action(&nav),
+                Some(ControlAction::SeekMedia {
+                    input: "Clip".into(),
+                    position_ms: 3000,
+                })
+            );
+
+            acknowledge(&nav);
+            edit_detail(&nav, |detail| {
+                let media = detail.media.as_mut().unwrap();
+                media.state = MediaState::Paused;
+                media.cursor_ms = Some(2000);
+            });
+            refresh();
+            assert_eq!(named::<Label>(&page, "sources-media-state"), status);
+            assert_eq!(status.text(), MediaState::Paused.label());
+            assert_eq!(
+                named::<SpinButton>(&page, "control-focus-seek-position-Clip"),
+                position
+            );
+            assert_eq!(position.value(), 2.0);
+
+            edit_detail(&nav, |detail| {
+                detail.media.as_mut().unwrap().duration_ms = None
+            });
+            refresh();
+            assert!(find(&page, "control-focus-seek-position-Clip").is_none());
+            assert!(find(&page, "control-focus-seek-Clip").is_none());
+            assert!(find(&page, "source-media-controls").is_some());
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display; synthetic source observations"]
+    fn native_sources_audio_detail_names_monitor_numbers_and_tracks() {
+        crate::ui::native_test!(|| {
+            use super::*;
+            use crate::domain::control::{AudioSettings, ControlAction};
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            observe_sources(
+                &nav,
+                vec![source_item("Mic", 1)],
+                Some(SourceDetail {
+                    input: "Mic".into(),
+                    audio: Some(AudioSettings {
+                        monitor: AudioMonitor::MonitorOnly,
+                        sync_offset_ms: 150,
+                        balance: 0.25,
+                        tracks: [true, false, true, false, true, false],
+                    }),
+                    ..Default::default()
+                }),
+                &["SetInputAudioMonitorType", "SetInputAudioTracks"],
+            );
+            let (page, _refresh) = build(nav.clone());
+            let sync_title = fl!(LANGUAGE_LOADER, "control-audio-sync");
+            let balance_title = fl!(LANGUAGE_LOADER, "control-audio-balance");
+
+            let monitor: DropDown = named(&page, "control-focus-monitor-Mic");
+            assert_eq!(monitor.selected(), 1);
+            assert!(monitor.is_sensitive() && monitor.has_css_class("sources-mutation"));
+            let sync: SpinButton = named(&page, &format!("control-focus-number-{sync_title}"));
+            assert_eq!(sync.value(), 150.0);
+            let sync_apply: Button = named(&page, &format!("control-focus-apply-{sync_title}"));
+            assert!(
+                !sync_apply.is_sensitive() && !sync_apply.has_css_class("sources-mutation"),
+                "an unsupported request stays disabled"
+            );
+            let balance: SpinButton =
+                named(&page, &format!("control-focus-number-{balance_title}"));
+            assert_eq!(balance.value(), 0.25);
+            assert_eq!(balance.digits(), 2);
+            let balance_apply: Button =
+                named(&page, &format!("control-focus-apply-{balance_title}"));
+            assert!(!balance_apply.is_sensitive());
+            let tracks: Vec<CheckButton> = (0..6)
+                .map(|index| named(&page, &format!("control-focus-track-Mic-{index}")))
+                .collect();
+            assert_eq!(
+                tracks
+                    .iter()
+                    .map(CheckButton::is_active)
+                    .collect::<Vec<_>>(),
+                [true, false, true, false, true, false]
+            );
+            let apply: Button = named(&page, "control-focus-tracks-apply-Mic");
+            assert!(apply.is_sensitive() && apply.has_css_class("sources-mutation"));
+
+            monitor.set_selected(2);
+            assert_eq!(
+                active_action(&nav),
+                Some(ControlAction::SetAudioMonitor {
+                    input: "Mic".into(),
+                    monitor: AudioMonitor::MonitorAndOutput,
+                })
+            );
+            acknowledge(&nav);
+            tracks[1].set_active(true);
+            apply.emit_clicked();
+            assert_eq!(
+                active_action(&nav),
+                Some(ControlAction::SetAudioTracks {
+                    input: "Mic".into(),
+                    tracks: [true, true, true, false, true, false],
+                })
+            );
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display; synthetic source observations"]
+    fn native_sources_numeric_drafts_survive_readback_until_observed_or_scope_loss() {
+        crate::ui::native_test!(|| {
+            use super::*;
+            use crate::domain::control::AudioSettings;
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            observe_sources(
+                &nav,
+                vec![source_item("Mic", 1)],
+                Some(SourceDetail {
+                    input: "Mic".into(),
+                    audio: Some(AudioSettings {
+                        monitor: AudioMonitor::Off,
+                        sync_offset_ms: 100,
+                        balance: 0.5,
+                        tracks: [true; 6],
+                    }),
+                    ..Default::default()
+                }),
+                &[],
+            );
+            let (page, refresh) = build(nav.clone());
+            // Spin buttons only hold typed text once they are realized.
+            let window = gtk4::Window::builder().child(&page).build();
+            window.present();
+            crate::ui::test_support::pump(std::time::Duration::from_millis(100));
+            let sync_name = format!(
+                "control-focus-number-{}",
+                fl!(LANGUAGE_LOADER, "control-audio-sync")
+            );
+            let balance_name = format!(
+                "control-focus-number-{}",
+                fl!(LANGUAGE_LOADER, "control-audio-balance")
+            );
+            let observe_audio = |sync_offset_ms: i64, balance: f32| {
+                edit_detail(&nav, |detail| {
+                    let audio = detail.audio.as_mut().unwrap();
+                    audio.sync_offset_ms = sync_offset_ms;
+                    audio.balance = balance;
+                });
+            };
+            let sync: SpinButton = named(&page, &sync_name);
+            let balance: SpinButton = named(&page, &balance_name);
+
+            sync.set_value(300.0);
+            // GTK rejects a decimal separator foreign to the locale; a lone
+            // sign is an incomplete edit in every locale.
+            balance.set_text("-");
+            observe_audio(200, 0.75);
+            refresh();
+            assert_eq!(named::<SpinButton>(&page, &sync_name), sync);
+            assert_eq!(
+                sync.value(),
+                300.0,
+                "a value draft outlives other readbacks"
+            );
+            assert_eq!(balance.text(), "-", "a text draft outlives other readbacks");
+
+            observe_audio(300, 0.75);
+            refresh();
+            assert_eq!(sync.value(), 300.0);
+            observe_audio(400, 0.75);
+            refresh();
+            assert_eq!(
+                sync.value(),
+                400.0,
+                "a readback equal to the draft retires it, so later readbacks show"
+            );
+            assert_eq!(balance.text(), "-");
+
+            edit_state(&nav, |state| state.workspace.epoch += 1);
+            refresh();
+            let rebuilt: SpinButton = named(&page, &balance_name);
+            assert_ne!(rebuilt, balance, "a new epoch rebuilds the editors");
+            assert_eq!(rebuilt.value(), 0.75);
+            assert_eq!(named::<SpinButton>(&page, &sync_name).value(), 400.0);
+            window.destroy();
+        });
+    }
 }
