@@ -765,6 +765,13 @@ the background and reports success or failure. JSON preserves structured values;
 CSV provides event/evidence columns, telemetry columns and JSON detail cells.
 CSV text that could execute as a spreadsheet formula gets a protective leading
 apostrophe. Connection passwords and configuration are not part of reports.
+By default an export leaves out the OBS address, the connection name and OBS
+file paths, writing `[redacted]` in their place, also where event text or a
+bookmark name quotes the address or a path the report recorded. Tick **Include
+the OBS address and connection name in exports** or **Include OBS file paths in
+exports** before exporting when someone you share the file with needs them.
+The opaque connection ID stays, so reports from one connection can still be
+matched.
 For automatic saving, open **Session history** from Settings or the report window.
 It is off by default. Enable it, choose **1–32 sessions to keep** (default eight),
 and apply the settings. This saves the current report including retained earlier

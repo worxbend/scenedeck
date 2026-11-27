@@ -216,9 +216,206 @@ pub(crate) struct ReportDocument {
     pub bookmarks: Vec<Bookmark>,
 }
 
+/// Written over an identifying value the operator chose not to share.
+const REDACTED: &str = "[redacted]";
+
+impl ReportDocument {
+    /// Leave out the OBS endpoint and connection name, including endpoints
+    /// quoted in free text. The opaque connection ID stays for correlation.
+    pub fn redact_endpoint(&mut self) {
+        let endpoints = std::iter::once(&self.report.endpoint)
+            .chain(self.output_results().map(|result| &result.scope.endpoint))
+            .chain(self.bookmarks.iter().map(|note| &note.endpoint))
+            .cloned()
+            .collect();
+        self.replace_in_free_text(endpoints);
+        self.report.endpoint = REDACTED.into();
+        if self.report.connection_name.is_some() {
+            self.report.connection_name = Some(REDACTED.into());
+        }
+        for result in self.output_results_mut() {
+            result.scope.endpoint = REDACTED.into();
+        }
+        for note in &mut self.bookmarks {
+            note.endpoint = REDACTED.into();
+        }
+    }
+
+    /// Leave out every OBS host path, including paths quoted in free text.
+    pub fn redact_host_paths(&mut self) {
+        let paths = self
+            .output_results()
+            .filter_map(|result| result.path.clone())
+            .collect();
+        self.replace_in_free_text(paths);
+        for path in self
+            .output_results_mut()
+            .filter_map(|result| result.path.as_mut())
+        {
+            *path = REDACTED.into();
+        }
+    }
+
+    fn output_results(&self) -> impl Iterator<Item = &OutputResult> {
+        self.report
+            .events
+            .iter()
+            .filter_map(|record| match &record.event {
+                ReportEvent::Output(result) => Some(result),
+                _ => None,
+            })
+    }
+
+    fn output_results_mut(&mut self) -> impl Iterator<Item = &mut OutputResult> {
+        self.report
+            .events
+            .iter_mut()
+            .filter_map(|record| match &mut record.event {
+                ReportEvent::Output(result) => Some(result),
+                _ => None,
+            })
+    }
+
+    /// Replace known identifiers wherever free text quotes them. Longest
+    /// first, so an identifier that contains another is replaced whole; an
+    /// empty identifier would match between every character, so it is skipped.
+    fn replace_in_free_text(&mut self, mut identifiers: Vec<String>) {
+        identifiers.retain(|identifier| !identifier.is_empty());
+        identifiers.sort_unstable_by_key(|identifier| std::cmp::Reverse(identifier.len()));
+        let scrub = |text: &mut String| {
+            for identifier in &identifiers {
+                if text.contains(identifier.as_str()) {
+                    *text = text.replace(identifier.as_str(), REDACTED);
+                }
+            }
+        };
+        for record in &mut self.report.events {
+            match &mut record.event {
+                ReportEvent::Activity(activity) => scrub(&mut activity.description),
+                ReportEvent::Output(result) => result.detail.iter_mut().for_each(scrub),
+                ReportEvent::Ended { reason } => scrub(reason),
+                ReportEvent::OutputAcknowledged { .. }
+                | ReportEvent::Scene { .. }
+                | ReportEvent::Health { .. } => {}
+            }
+        }
+        for note in &mut self.bookmarks {
+            scrub(&mut note.name);
+        }
+    }
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use crate::domain::{
+        bookmark::RecordingTime,
+        output_result::{OutputResultKind, OutputResultStatus},
+        workflow::{ActivityOrigin, ScopeBinding},
+    };
+
+    pub(crate) const HOST: &str = "studio.lan";
+    pub(crate) const ENDPOINT: &str = "studio.lan:4455";
+    pub(crate) const CONNECTION_NAME: &str = "Studio PC";
+    pub(crate) const HOST_PATH: &str = "/home/alice/Videos/replay.mkv";
+
+    /// A report that quotes its endpoint and an OBS host path in every field
+    /// that can carry them, structured or free text.
+    pub(crate) fn identifying_document() -> ReportDocument {
+        let mut report = SessionReport::new(1, 10, "profile-id".into(), ENDPOINT.into());
+        report.connection_name = Some(CONNECTION_NAME.into());
+        report.push(
+            20,
+            ReportEvent::Output(OutputResult {
+                id: 1,
+                kind: OutputResultKind::ReplaySave,
+                scope: ScopeBinding {
+                    endpoint: ENDPOINT.into(),
+                    collection: "Show".into(),
+                },
+                status: OutputResultStatus::Observed,
+                requested_unix_ms: 20,
+                updated_unix_ms: 20,
+                path: Some(HOST_PATH.into()),
+                detail: Some(format!("moving {HOST_PATH} failed")),
+            }),
+        );
+        report.push(
+            21,
+            ReportEvent::Activity(ActivityRecord {
+                timestamp_unix_ms: 21,
+                origin: ActivityOrigin::Connection,
+                description: format!("#1 endpoint={ENDPOINT} saved {HOST_PATH}"),
+            }),
+        );
+        report.push(
+            22,
+            ReportEvent::Ended {
+                reason: format!("{ENDPOINT} closed"),
+            },
+        );
+        let bookmark = Bookmark {
+            id: 1,
+            name: format!("clip at {HOST_PATH}"),
+            created_unix_ms: 21,
+            session_id: 1,
+            session_started_unix_ms: 10,
+            session_elapsed_ms: 11,
+            connection_id: "profile-id".into(),
+            endpoint: ENDPOINT.into(),
+            collection: Some("Show".into()),
+            scene: Some("Camera".into()),
+            recording: RecordingTime::Unavailable,
+        };
+        ReportDocument {
+            report,
+            bookmarks: vec![bookmark],
+        }
+    }
+
+    fn exported(document: &ReportDocument) -> String {
+        serde_json::to_string(document).unwrap()
+    }
+
+    #[test]
+    fn redacting_the_endpoint_removes_host_and_connection_name_everywhere() {
+        let mut document = identifying_document();
+        document.redact_endpoint();
+        let text = exported(&document);
+        assert!(!text.contains(HOST), "{text}");
+        assert!(!text.contains(CONNECTION_NAME), "{text}");
+        assert!(text.contains(HOST_PATH), "paths are a separate choice");
+        assert_eq!(document.report.connection_id, "profile-id");
+        assert_eq!(document.report.endpoint, REDACTED);
+    }
+
+    #[test]
+    fn redacting_host_paths_removes_every_observed_path() {
+        let mut document = identifying_document();
+        document.redact_host_paths();
+        let text = exported(&document);
+        assert!(!text.contains("/home/alice"), "{text}");
+        assert!(text.contains(ENDPOINT), "the endpoint is a separate choice");
+        let ReportEvent::Output(result) = &document.report.events[0].event else {
+            panic!("the fixture starts with an output result");
+        };
+        assert_eq!(result.path.as_deref(), Some(REDACTED));
+    }
+
+    #[test]
+    fn redaction_never_rewrites_text_around_an_empty_identifier() {
+        let mut document = identifying_document();
+        document.report.endpoint.clear();
+        document.bookmarks[0].endpoint.clear();
+        if let ReportEvent::Output(result) = &mut document.report.events[0].event {
+            result.scope.endpoint.clear();
+            result.path = Some(String::new());
+        }
+        let before = document.report.events[1].clone();
+        document.redact_endpoint();
+        document.redact_host_paths();
+        assert_eq!(document.report.events[1], before);
+    }
 
     #[test]
     fn bounds_disclose_omissions_and_keep_aggregates_from_evicted_samples() {

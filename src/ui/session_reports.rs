@@ -95,6 +95,32 @@ fn control(value: &str) -> Button {
     button
 }
 
+/// Unchecked by default: identifying values leave the machine only on opt-in.
+fn include_toggle(caption: &str, name: &str) -> gtk4::CheckButton {
+    let check = gtk4::CheckButton::new();
+    let text = label(caption);
+    text.set_selectable(false);
+    check.set_child(Some(&text));
+    check.set_widget_name(name);
+    check
+}
+
+/// The snapshot as the operator chose to share it.
+fn shared_copy(
+    document: &ReportDocument,
+    include_endpoint: &gtk4::CheckButton,
+    include_paths: &gtk4::CheckButton,
+) -> ReportDocument {
+    let mut shared = document.clone();
+    if !include_endpoint.is_active() {
+        shared.redact_endpoint();
+    }
+    if !include_paths.is_active() {
+        shared.redact_host_paths();
+    }
+    shared
+}
+
 fn date(ms: u64) -> String {
     glib::DateTime::from_unix_utc((ms / 1_000).min(i64::MAX as u64) as i64)
         .and_then(|date| date.format("%Y-%m-%d %H:%M:%S UTC"))
@@ -321,6 +347,16 @@ pub(super) fn show(parent: &gtk4::Window, nav: &NavigationContext) {
         button.set_widget_name(name);
     }
     content.append(&actions);
+    let include_endpoint = include_toggle(
+        &fl!(LANGUAGE_LOADER, "reports-include-endpoint"),
+        "reports-include-endpoint",
+    );
+    let include_paths = include_toggle(
+        &fl!(LANGUAGE_LOADER, "reports-include-paths"),
+        "reports-include-paths",
+    );
+    content.append(&include_endpoint);
+    content.append(&include_paths);
     let title = label("");
     title.set_widget_name("reports-summary");
     content.append(&title);
@@ -399,14 +435,24 @@ pub(super) fn show(parent: &gtk4::Window, nav: &NavigationContext) {
         let alive = alive.clone();
         let busy = busy.clone();
         let window = window.downgrade();
+        let include_endpoint = include_endpoint.downgrade();
+        let include_paths = include_paths.downgrade();
         button.connect_clicked(move |_| {
             if !alive.get() || busy.get() {
                 return;
             }
-            let Some(document) = snapshot.borrow().clone() else {
+            let (Some(window), Some(include_endpoint), Some(include_paths)) = (
+                window.upgrade(),
+                include_endpoint.upgrade(),
+                include_paths.upgrade(),
+            ) else {
                 return;
             };
-            let Some(window) = window.upgrade() else {
+            let Some(document) = snapshot
+                .borrow()
+                .as_ref()
+                .map(|document| shared_copy(document, &include_endpoint, &include_paths))
+            else {
                 return;
             };
             export(
@@ -649,6 +695,40 @@ mod tests {
             let before = title.text();
             refresh.emit_clicked();
             assert_eq!(title.text(), before);
+            parent.close();
+        });
+    }
+
+    #[test]
+    #[ignore = "requires isolated GTK and temporary XDG files"]
+    fn native_report_export_leaves_out_endpoint_and_paths_unless_included() {
+        use crate::domain::session_report::tests::{identifying_document, ENDPOINT, HOST_PATH};
+        crate::ui::native_test!(|| {
+            let (nav, stack, _runtime, _events) = navigation();
+            let parent = adw::Window::builder().build();
+            parent.set_content(Some(&stack));
+            parent.present();
+            assert!(super::super::action_catalog::execute(
+                &nav,
+                &super::super::action_catalog::CatalogAction::Reports
+            ));
+            let dialog = window("reports-window");
+            let toggle = |name| find(&dialog, name).downcast::<gtk4::CheckButton>().unwrap();
+            let include_endpoint = toggle("reports-include-endpoint");
+            let include_paths = toggle("reports-include-paths");
+            let document = identifying_document();
+
+            let shared = shared_copy(&document, &include_endpoint, &include_paths);
+            let text = serde_json::to_string(&shared).unwrap();
+            assert!(!text.contains(ENDPOINT), "{text}");
+            assert!(!text.contains(HOST_PATH), "{text}");
+
+            include_endpoint.set_active(true);
+            include_paths.set_active(true);
+            let shared = shared_copy(&document, &include_endpoint, &include_paths);
+            assert_eq!(shared.report, document.report);
+            assert_eq!(shared.bookmarks, document.bookmarks);
+            dialog.close();
             parent.close();
         });
     }

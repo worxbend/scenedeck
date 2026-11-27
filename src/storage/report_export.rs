@@ -233,6 +233,25 @@ mod tests {
     }
 
     #[test]
+    fn redacted_exports_contain_no_host_connection_name_or_paths() {
+        use crate::domain::session_report::tests::{
+            identifying_document, CONNECTION_NAME, HOST, HOST_PATH,
+        };
+        let mut document = identifying_document();
+        document.redact_endpoint();
+        document.redact_host_paths();
+        let dir = crate::storage::test_support::TempDir::new("report-redaction");
+        for format in [Format::Json, Format::Csv] {
+            let target = dir.path().join(format!("redacted.{}", format.extension()));
+            write(&target, &document, format).unwrap();
+            let text = std::fs::read_to_string(&target).unwrap();
+            for identifier in [HOST, CONNECTION_NAME, HOST_PATH, "/home/"] {
+                assert!(!text.contains(identifier), "{identifier} in {text}");
+            }
+        }
+    }
+
+    #[test]
     fn report_export_fixture_round_trips() {
         crate::storage::golden::json_round_trip::<crate::domain::session_report::ReportDocument>(
             include_str!("fixtures/report-export.json"),

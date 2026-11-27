@@ -498,7 +498,9 @@ Current and recent session reports retain eight sessions in memory, up to
 4,096 events and 2,048 telemetry samples each, with explicit omission counts.
 Session reports in Stats offers JSON/CSV export to a user-selected path. Exports
 use atomic background writes, retain observed evidence separately from requests
-and acknowledgements, and contain no configuration or connection password.
+and acknowledgements, and contain no configuration or connection password. The
+OBS endpoint, connection name and OBS host paths are replaced with `[redacted]`
+unless the operator ticks the matching include option in the report window.
 `session_history` defaults to `{ "enabled": false, "retain_sessions": 8 }`.
 Retention is bounded to 1–32 sessions. Settings → Session history applies both
 choices explicitly. Disabling leaves saved reports intact; reducing retention
