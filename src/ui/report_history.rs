@@ -216,7 +216,8 @@ fn save(state: &State, force: bool, allow_disabled: bool) {
                         });
                     }
                     Err(error) => {
-                        history.save_error = Some(error.to_string());
+                        history.save_error =
+                            Some(crate::ui::presenters::save_error::save_error_text(&error));
                         FAILURES.with(|failures| {
                             failures.borrow_mut().push((
                                 Rc::downgrade(&state),

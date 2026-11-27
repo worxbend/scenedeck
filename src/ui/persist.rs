@@ -114,7 +114,7 @@ fn registry_write_finished(revision: u64, covers_snapshot: bool, result: std::io
                 writes
                     .failures
                     .push(crate::ui::background_io::record_failure());
-                writes.error = Some(error.to_string());
+                writes.error = Some(crate::ui::presenters::save_error::save_error_text(&error));
             }
         }
     });

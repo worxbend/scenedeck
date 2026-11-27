@@ -142,6 +142,9 @@ Higher-level logic over domain types.
 Persistence and local machine integration.
 
 - `config.rs`: JSON config load, save, defaults, and migrations.
+- `lock.rs`: the inter-process store lock. Every store write holds it on a
+  sibling `<stem>.lock` and fails at once as Busy when another process holds
+  it.
 - `registry.rs`: local scene role registry.
 - `registry/import.rs`: limits on a YAML registry import: a tighter parser
   budget (aliases, anchors, nodes, merge keys) and per-collection count and
@@ -173,7 +176,9 @@ GTK and libadwaita UI.
   GTK.
 - `pages/`: Live, Stats, Mixer, Graph, Inventory, Doctor, Settings, and Help pages.
 - `presenters/`: text formatters shared by several surfaces;
-  `output_status` renders the stream and record labels and elapsed time.
+  `output_status` renders the stream and record labels and elapsed time;
+  `save_error` renders the detail of a failed local save, including a save
+  refused by another SceneDeck process.
 - `widgets/`: reusable scene and audio cards, the volume meter, the icon
   chooser, the bottom status bar, `status_page` (the only status page
   constructor; it escapes the description), and the

@@ -76,7 +76,8 @@ fn write_snapshot(state: &Rc<RefCell<AppState>>) {
                     if revision > notes.saved_revision {
                         if revision >= notes.failed_revision {
                             notes.failed_revision = revision;
-                            notes.save_error = Some(error.to_string());
+                            notes.save_error =
+                                Some(crate::ui::presenters::save_error::save_error_text(&error));
                         }
                         FAILURES.with(|failures| {
                             failures

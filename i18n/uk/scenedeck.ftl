@@ -15,6 +15,8 @@ error-request = Помилка запиту до OBS: { $detail }
 error-config = Помилка конфігурації: { $detail }
 error-storage = Помилка сховища: { $detail }
 error-notification-title = Помилка SceneDeck: { $message }
+# ui/presenters/save_error.rs: shown in place of the detail when another process holds the store lock.
+storage-busy = інший запущений екземпляр SceneDeck зберігає той самий файл; нічого не записано, спробуйте ще раз
 events-resync-warning = Пропущено сповіщення OBS. SceneDeck повторно синхронізується; історія виходів може бути неповною.
 
 ## domain/audio.rs — AudioSourceScope::label()

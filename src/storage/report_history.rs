@@ -7,9 +7,7 @@ use crate::domain::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashSet, VecDeque},
-    fs::{DirBuilder, OpenOptions},
     io,
-    os::unix::fs::{DirBuilderExt, OpenOptionsExt},
     path::Path,
 };
 
@@ -127,26 +125,8 @@ pub(crate) fn write(
     replacement: &HistoryArchive,
 ) -> io::Result<()> {
     replacement.validate()?;
-    if let Some(parent) = path.parent() {
-        DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(parent)?;
-    }
-    // Cooperative writers serialize the read/compare/replace transaction. Never
-    // wait indefinitely for another app process, or follow a special lock file.
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(path.with_extension("lock"))?;
-    if !lock.metadata()?.is_file() {
-        return Err(invalid("Expected a regular history lock file"));
-    }
-    lock.try_lock().map_err(io::Error::other)?;
+    // Cooperative writers serialize the read/compare/replace transaction.
+    let _lock = super::lock::lock_store(path)?;
     if &read(path)? != expected {
         return Err(io::Error::other(
             "Session history changed on disk; reload before retrying",
@@ -160,6 +140,7 @@ pub(crate) fn write(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::OpenOptions;
 
     fn report(id: u64) -> SessionReport {
         SessionReport::new(id, 100 - id, "connection".into(), "fixture:4455".into())

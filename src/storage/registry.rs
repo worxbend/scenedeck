@@ -670,8 +670,10 @@ fn remove_scene_entry_from_path(
 /// Pretty-print registry JSON to an explicit path, creating parents as needed.
 ///
 /// Refused with `io::ErrorKind::Unsupported` over a file from a newer build:
-/// this build would write back only the fields it knows.
+/// this build would write back only the fields it knows, and with
+/// `io::ErrorKind::ResourceBusy` while another process saves it.
 pub fn write_registry_to_path(path: &Path, registry: &SceneRegistry) -> io::Result<()> {
+    let _lock = crate::storage::lock::lock_store(path)?;
     ensure_replaceable(path)?;
     let file = RegistryFile {
         version: REGISTRY_FILE_VERSION,
@@ -911,6 +913,23 @@ mod tests {
             read_registry_from_path(&path).unwrap().scenes["First"].role,
             Some(SceneRole::Primary)
         );
+    }
+
+    #[test]
+    fn a_registry_write_while_another_process_holds_its_lock_is_busy_and_writes_nothing() {
+        let (_dir, path) = scratch_file("registry-busy", "json");
+        write_registry_to_path(&path, &SceneRegistry::default()).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let other_process = crate::storage::lock::lock_store(&path).unwrap();
+        let mut changed = SceneRegistry::default();
+        changed.set_scene_role("Camera", Some(SceneRole::Primary));
+
+        let refused = write_registry_to_path(&path, &changed).unwrap_err();
+
+        assert!(crate::storage::lock::is_busy(&refused));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        drop(other_process);
+        write_registry_to_path(&path, &changed).unwrap();
     }
 
     #[test]

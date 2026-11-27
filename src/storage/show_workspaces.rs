@@ -57,6 +57,7 @@ impl RegistryTarget {
         match self {
             Self::File(path) => write_registry_to_path(path, registry),
             Self::Workspace { path, key } => {
+                let _lock = super::lock::lock_store(path)?;
                 let mut store = read_store(path)?;
                 let entry = store
                     .entries
@@ -75,19 +76,20 @@ impl RegistryTarget {
     /// Adopt legacy data at most once, in the same atomic write as its owner.
     /// The source file is never modified or removed. A refused/corrupt source
     /// must fail the migration rather than adopt a defaults-based replacement.
-    /// A hit writes nothing; its use is recorded by the next store write.
+    /// A hit writes nothing, so it takes no store lock; its use is recorded by
+    /// the next store write. A miss checks again under the lock, so a creation
+    /// never races another process.
     pub(crate) fn load_or_create(&self, legacy: Option<&Path>) -> io::Result<LoadedWorkspace> {
         let Self::Workspace { path, key } = self else {
             return self.read().map(LoadedWorkspace::kept);
         };
+        if let Some(registry) = read_hit(path, key, &read_store(path)?) {
+            return Ok(LoadedWorkspace::kept(registry));
+        }
+        let _lock = super::lock::lock_store(path)?;
         let mut store = read_store(path)?;
-        if let Some(entry) = store.entries.iter().find(|entry| &entry.key == key) {
-            remember_read(RecentRead {
-                path: path.clone(),
-                key: key.clone(),
-                unix_ms: now_unix_ms(),
-            });
-            return Ok(LoadedWorkspace::kept(entry.registry.clone()));
+        if let Some(registry) = read_hit(path, key, &store) {
+            return Ok(LoadedWorkspace::kept(registry));
         }
         let registry = match legacy.filter(|_| store.legacy_owner.is_none()) {
             Some(source) => {
@@ -196,6 +198,17 @@ struct RecentRead {
 /// Reading a workspace must not cost a write, so its use waits here for the
 /// next write to the same store in this process.
 static RECENT_READS: Mutex<Vec<RecentRead>> = Mutex::new(Vec::new());
+
+/// The registry stored for `key`, with its use remembered for the next write.
+fn read_hit(path: &Path, key: &WorkspaceKey, store: &WorkspaceStore) -> Option<SceneRegistry> {
+    let entry = store.entries.iter().find(|entry| &entry.key == key)?;
+    remember_read(RecentRead {
+        path: path.to_path_buf(),
+        key: key.clone(),
+        unix_ms: now_unix_ms(),
+    });
+    Some(entry.registry.clone())
+}
 
 fn remember_read(read: RecentRead) {
     let mut reads = lock_or_recover(&RECENT_READS);
@@ -419,6 +432,29 @@ mod tests {
             std::fs::read_to_string(dir.join("shows.json")).unwrap(),
             future
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn workspace_store_transactions_are_busy_while_another_process_holds_its_lock() {
+        let (dir, podcast) = fixture();
+        podcast.load_or_create(None).unwrap();
+        let path = dir.join("shows.json");
+        let before = std::fs::read(&path).unwrap();
+        let other_process = crate::storage::lock::lock_store(&path).unwrap();
+        let mut changed = SceneRegistry::default();
+        changed.set_scene_icon("Camera", Some("changed"));
+
+        let write = podcast.write(&changed).unwrap_err();
+        let create = workspace(&path, "Gaming").load_or_create(None).unwrap_err();
+        let reopened = podcast.load_or_create(None).unwrap();
+
+        assert!(crate::storage::lock::is_busy(&write));
+        assert!(crate::storage::lock::is_busy(&create));
+        assert!(reopened.evicted.is_empty());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        drop(other_process);
+        podcast.write(&changed).unwrap();
         std::fs::remove_dir_all(dir).unwrap();
     }
 

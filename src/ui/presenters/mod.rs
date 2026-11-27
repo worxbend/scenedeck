@@ -5,3 +5,4 @@
 //! same value renders the same text, and tests need no display.
 
 pub(crate) mod output_status;
+pub(crate) mod save_error;

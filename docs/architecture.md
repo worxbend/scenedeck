@@ -237,6 +237,17 @@ a worker-held handle cannot revive an unaccounted batch. Returned Config errors,
 like worker panics, remain close-barrier failure evidence until an explicit
 informed decision; Config snapshots are not automatically retried.
 
+Those lanes order writes within one process only. The snap build runs without
+GApplication uniqueness, so each store write also holds `storage::lock` on a
+sibling `<stem>.lock` for its whole check-and-replace transaction: config,
+legacy registry, the show-workspace store (including the creating branch of
+`load_or_create`; opening an existing workspace writes nothing and takes no
+lock), bookmarks and session history. The lock never waits: a held lock fails the
+write with `io::ErrorKind::ResourceBusy`, recognised by `storage::lock::is_busy`
+and rendered by `ui::presenters::save_error`, and the write keeps its normal
+failure evidence and retry. The data file cannot carry the lock, because
+`storage::atomic::write` renames a new inode over it.
+
 Configuration should prefer domain types over raw strings where the value has a
 closed set of valid states. For example, `theme_mode` is stored as the same
 lowercase string on disk but is represented as `ThemeMode` in Rust.
@@ -535,8 +546,9 @@ checkpoint during a pending write chains the latest snapshot before the existing
 shutdown barrier can complete. Ordinary checkpoints are spaced by ten seconds,
 with earlier writes for session boundaries. Per-report omissions remain explicit.
 
-`storage::report_history` validates a versioned 64 MiB/32-session archive, uses a
-regular-file advisory lock and compares expected contents before atomic writes.
+`storage::report_history` validates a versioned 64 MiB/32-session archive, holds
+the shared `storage::lock` store lock and compares expected contents before
+atomic writes.
 Startup loads history off GTK. Reports without a stored end become interrupted
 in the local view without an invented timestamp. Reload merges locally owned
 report intent; clear intent survives retry. Settings and history saves retain

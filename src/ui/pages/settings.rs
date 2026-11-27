@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use crate::ui::{index_of, string_list};
+use crate::ui::{index_of, presenters::save_error::save_error_text, string_list};
 use adw::{
     prelude::*, ActionRow, ComboRow, EntryRow, PreferencesGroup, PreferencesPage, SwitchRow,
 };
@@ -815,7 +815,7 @@ fn report_save_failure(row: &ActionRow, err: &std::io::Error) {
     row.set_subtitle(&fl!(
         LANGUAGE_LOADER,
         "settings-failed-to-save",
-        err = err.to_string()
+        err = save_error_text(err)
     ));
 }
 

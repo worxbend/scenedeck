@@ -3,6 +3,7 @@
 pub(crate) mod atomic;
 pub(crate) mod bookmarks;
 pub(crate) mod config;
+pub(crate) mod lock;
 pub(crate) mod registry;
 pub(crate) mod report_export;
 pub(crate) mod report_history;

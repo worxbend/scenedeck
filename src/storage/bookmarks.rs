@@ -66,6 +66,7 @@ pub(crate) fn read(path: &Path) -> io::Result<BookmarkArchive> {
 
 pub(crate) fn write(path: &Path, archive: &BookmarkArchive) -> io::Result<()> {
     archive.validate()?;
+    let _lock = super::lock::lock_store(path)?;
     // Refuse a corrupt or newer-format file even if it changed after startup.
     read(path)?;
     let raw = serde_json::to_vec_pretty(archive).map_err(io::Error::other)?;
@@ -109,6 +110,26 @@ mod tests {
         .unwrap();
         assert!(read(&path).is_err());
         assert!(write(&path, &BookmarkArchive::default()).is_err());
+    }
+
+    #[test]
+    fn a_bookmark_write_while_another_process_holds_its_lock_is_busy_and_writes_nothing() {
+        let dir = TempDir::new("bookmarks-busy");
+        let path = dir.path().join("bookmarks.json");
+        write(&path, &BookmarkArchive::default()).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let other_process = crate::storage::lock::lock_store(&path).unwrap();
+        let changed = BookmarkArchive {
+            next_id: 2,
+            ..Default::default()
+        };
+
+        let refused = write(&path, &changed).unwrap_err();
+
+        assert!(crate::storage::lock::is_busy(&refused));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        drop(other_process);
+        write(&path, &changed).unwrap();
     }
 
     #[test]

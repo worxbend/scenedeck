@@ -463,7 +463,8 @@ pub fn write_config(config: &AppConfig) -> io::Result<()> {
 /// Replace the config at `path` with `config`.
 ///
 /// Refused with `io::ErrorKind::Unsupported` when either side comes from a
-/// newer build: this build would write back only the fields it knows.
+/// newer build: this build would write back only the fields it knows, and
+/// with `io::ErrorKind::ResourceBusy` while another process saves it.
 pub fn write_config_to_path(path: &Path, config: &AppConfig) -> io::Result<()> {
     if config.version > CURRENT_VERSION {
         return Err(schema_version::refuse_newer(
@@ -472,6 +473,7 @@ pub fn write_config_to_path(path: &Path, config: &AppConfig) -> io::Result<()> {
             CURRENT_VERSION,
         ));
     }
+    let _lock = crate::storage::lock::lock_store(path)?;
     ensure_replaceable(path)?;
     // Materialize profiles at the ordered write boundary. Reconnecting must not
     // discover an empty list and trigger a migration write outside the UI lane.
@@ -726,6 +728,28 @@ mod tests {
         ));
         assert!(write_config_to_path(&path, &AppConfig::default()).is_err());
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_config_write_while_another_process_holds_its_lock_is_busy_and_writes_nothing() {
+        let dir = crate::storage::test_support::TempDir::new("config-busy");
+        let path = dir.path().join("config.json");
+        write_config_to_path(&path, &AppConfig::default()).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let other_process = crate::storage::lock::lock_store(&path).unwrap();
+        let mut changed = AppConfig::default();
+        changed.obs.host = "changed.local".into();
+
+        let refused = write_config_to_path(&path, &changed).unwrap_err();
+
+        assert!(crate::storage::lock::is_busy(&refused));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        drop(other_process);
+        write_config_to_path(&path, &changed).unwrap();
+        assert_eq!(
+            read_config_from_path(&path).config.obs.host,
+            "changed.local"
+        );
     }
 
     #[test]

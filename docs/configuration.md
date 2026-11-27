@@ -180,6 +180,14 @@ notice in Settings, but never migrates, moves aside, or saves over that file:
 changes made here are not saved, so going back to the newer build loses
 nothing.
 
+Each save of `config.json`, `registry.json`, `show-workspaces.json`,
+`bookmarks.json` and the session history holds an advisory lock on a sibling
+file named after it (`config.lock`, `registry.lock`, and so on). Two SceneDeck
+processes, which the snap build allows, therefore cannot interleave a save of
+the same file: the second save is refused with "another running SceneDeck is
+saving the same file", writes nothing, and can be retried. The lock files are
+empty and safe to delete while SceneDeck is not running.
+
 ## Config Migration
 
 Schema version `1` stored the color preference as a top-level `theme_mode`

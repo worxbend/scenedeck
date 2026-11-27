@@ -15,6 +15,8 @@ error-request = OBS request failed: { $detail }
 error-config = Configuration error: { $detail }
 error-storage = Storage error: { $detail }
 error-notification-title = SceneDeck error: { $message }
+# ui/presenters/save_error.rs: shown in place of the detail when another process holds the store lock.
+storage-busy = another running SceneDeck is saving the same file; nothing was written, try again
 events-resync-warning = OBS notifications were missed. SceneDeck is resynchronizing; output history may be incomplete.
 
 ## domain/audio.rs — AudioSourceScope::label()
