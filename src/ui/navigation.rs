@@ -86,9 +86,6 @@ impl NavigationContext {
     ///
     /// Panics when `update` already holds the cell. Shared `read` calls nest.
     /// `f` must not `dispatch`, persist, or refresh another page.
-    ///
-    /// shortcut: no production caller until pages leave `state.borrow`; delete the allow then.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn read<R>(&self, f: impl FnOnce(&AppState) -> R) -> R {
         f(&self.state.borrow())
     }

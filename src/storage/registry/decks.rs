@@ -56,6 +56,15 @@ impl SceneRegistry {
         self.scene_filter.matches(name, self.scenes.get(name))
     }
 
+    /// Replace the current view; reports whether it changed.
+    pub(crate) fn set_scene_filter(&mut self, filter: SceneFilter) -> bool {
+        if self.scene_filter == filter {
+            return false;
+        }
+        self.scene_filter = filter;
+        true
+    }
+
     /// Save a uniquely named view; duplicate names require an explicit removal.
     pub(crate) fn save_deck(&mut self, name: &str, filter: SceneFilter) -> bool {
         if !self.can_save_deck(name) {
@@ -110,6 +119,19 @@ mod tests {
         let legacy: SceneRegistry = serde_json::from_str("{}").unwrap();
         assert!(legacy.decks.is_empty());
         assert!(!legacy.scene_filter.is_active());
+    }
+
+    #[test]
+    fn setting_the_scene_filter_reports_only_real_changes() {
+        let mut registry = SceneRegistry::default();
+        let filter = SceneFilter {
+            query: "guest".into(),
+            favorites_only: true,
+        };
+        assert!(!registry.set_scene_filter(SceneFilter::default()));
+        assert!(registry.set_scene_filter(filter.clone()));
+        assert!(!registry.set_scene_filter(filter.clone()));
+        assert_eq!(registry.scene_filter, filter);
     }
 
     #[test]

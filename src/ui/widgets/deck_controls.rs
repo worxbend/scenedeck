@@ -8,7 +8,10 @@ use i18n_embed_fl::fl;
 
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::registry::SceneFilter;
-use crate::ui::{navigation::NavigationContext, persist::persist_registry};
+use crate::ui::{
+    navigation::NavigationContext,
+    persist::{persist_registry, persist_scene_view},
+};
 
 struct Controls {
     nav: NavigationContext,
@@ -54,12 +57,23 @@ impl Controls {
             return;
         }
         persist_registry(&self.nav, "scene view", |registry| {
-            if registry.scene_filter == filter {
-                return false;
-            }
-            registry.scene_filter = filter;
-            true
+            registry.set_scene_filter(filter)
         });
+        self.show_applied();
+    }
+
+    /// Typing saves only once the search settles; see `persist_scene_view`.
+    fn apply_search(self: &Rc<Self>) {
+        if self.synchronizing.get() {
+            return;
+        }
+        if let Some(filter) = self.input_filter() {
+            persist_scene_view(&self.nav, |registry| registry.set_scene_filter(filter));
+            self.show_applied();
+        }
+    }
+
+    fn show_applied(self: &Rc<Self>) {
         if self.nav.registry_is_current() {
             let filter = self.nav.state.borrow().registry.scene_filter.clone();
             self.sync_inputs(filter);
@@ -69,13 +83,19 @@ impl Controls {
     }
 
     fn apply_inputs(self: &Rc<Self>) {
-        if let (Some(search), Some(favorites)) = (self.search.upgrade(), self.favorites.upgrade()) {
-            self.apply(SceneFilter {
-                query: search.text().into(),
-                favorites_only: favorites.is_active(),
-            });
+        if let Some(filter) = self.input_filter() {
+            self.apply(filter);
         }
     }
+
+    fn input_filter(&self) -> Option<SceneFilter> {
+        let (search, favorites) = (self.search.upgrade()?, self.favorites.upgrade()?);
+        Some(SceneFilter {
+            query: search.text().into(),
+            favorites_only: favorites.is_active(),
+        })
+    }
+
     fn rebuild_menu(self: &Rc<Self>, decks: &std::collections::BTreeMap<String, SceneFilter>) {
         let Some(menu) = self.menu.upgrade() else {
             return;
@@ -282,7 +302,7 @@ pub(crate) fn build(nav: &NavigationContext, changed: impl Fn() + 'static) -> gt
     });
     search.connect_search_changed({
         let controls = controls.clone();
-        move |_| controls.apply_inputs()
+        move |_| controls.apply_search()
     });
     favorites.connect_toggled({
         let controls = controls.clone();
@@ -367,6 +387,51 @@ mod tests {
             .unwrap()
             .downcast()
             .unwrap()
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display and isolated registry storage"]
+    fn native_scene_search_writes_nothing_while_typing_and_saves_the_settled_query() {
+        crate::ui::native_test!(|| {
+            use crate::ui::test_support::{navigation, pump, pump_until};
+            use std::time::Duration;
+            let (nav, _stack, _runtime, _events) = navigation();
+            let root = build(&nav, || {});
+            let window = gtk4::Window::builder().child(&root).build();
+            window.present();
+            pump(Duration::from_millis(80));
+            let search = find(root.upcast_ref(), "deck-search")
+                .downcast::<gtk4::SearchEntry>()
+                .unwrap();
+            let registry_file = crate::storage::xdg::registry_path();
+            let disk = || std::fs::read(&registry_file).ok();
+            let before = disk();
+            let disk_query = || {
+                crate::storage::registry::read_registry()
+                    .unwrap()
+                    .scene_filter
+                    .query
+            };
+            // Keystrokes 250 ms apart span more than one settle delay, so a
+            // timer that did not restart on each keystroke would write here.
+            for query in ["p", "po", "pod", "podc", "podca"] {
+                search.set_text(query);
+                pump(Duration::from_millis(250));
+                assert_eq!(
+                    nav.read(|state| state.registry.scene_filter.query.clone()),
+                    query
+                );
+                assert_eq!(disk(), before, "typing {query:?} wrote the registry");
+            }
+            assert!(pump_until(Duration::from_secs(5), || disk_query() == "podca"));
+            // Close submits a pending query without waiting for it to settle.
+            search.set_text("podcast");
+            pump(Duration::from_millis(250));
+            crate::ui::persist::flush_scene_view();
+            assert!(pump_until(Duration::from_millis(500), || disk_query() == "podcast"));
+            window.set_child(gtk4::Widget::NONE);
+            window.destroy();
+        });
     }
 
     #[test]

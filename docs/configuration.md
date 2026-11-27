@@ -287,6 +287,9 @@ maps unique view names to filters of the same shape. Both belong to the selected
 workspace and are included in YAML. Applying a deck changes the current filter;
 removing one does not change the current filter or scene metadata. Names are
 trimmed and duplicate names are rejected without regard to letter case.
+Typing in search changes the view at once but saves `scene_filter` only after
+the query has stayed unchanged for one second, as a single write; closing the
+window saves a query that has not settled yet.
 
 Registry payload within each workspace entry:
 

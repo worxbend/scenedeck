@@ -38,6 +38,15 @@ struct RegistryWrites {
     failures: Vec<crate::ui::background_io::FailureEvidence>,
     error: Option<String>,
     retrying: bool,
+    scene_view: SceneViewSave,
+}
+
+/// A scene view edit waiting for the search to settle before it is saved.
+#[derive(Default)]
+struct SceneViewSave {
+    /// Bumped by every edit, so only the timer of the latest edit saves.
+    edit: u64,
+    pending: Option<NavigationContext>,
 }
 
 thread_local! {
@@ -577,24 +586,99 @@ pub(crate) fn persist_registry(
     if !registry_edit_allowed() || !nav.registry_is_current() {
         return false;
     }
-    let (target, registry) = {
-        let mut state = nav.state.borrow_mut();
-        if !update(&mut state.registry) {
-            drop(state);
-            retry_registry_writes();
-            return false;
-        }
-        state.show_registry.revision = state.show_registry.revision.wrapping_add(1);
-        (state.show_registry.target.clone(), state.registry.clone())
-    };
+    if !update_cached_registry(nav, update) {
+        retry_registry_writes();
+        return false;
+    }
+    submit_registry_snapshot(nav, what);
+    true
+}
 
+/// How long the scene search must stay unchanged before its view is saved.
+const SCENE_VIEW_SETTLE: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Edit the scene view in the cached registry now; save it once edits settle.
+///
+/// Search fires on every typing pause, and each save rewrites the whole
+/// workspace store, so the cached view changes at once while one pending save
+/// waits until `SCENE_VIEW_SETTLE` passes without another edit. Close submits
+/// it early through `flush_scene_view`; any whole-registry save carries it.
+/// An unchanged view does nothing: it echoes a widget sync, not new intent.
+pub(crate) fn persist_scene_view(
+    nav: &NavigationContext,
+    update: impl FnOnce(&mut SceneRegistry) -> bool,
+) {
+    if !registry_edit_allowed() || !nav.registry_is_current() {
+        return;
+    }
+    if !update_cached_registry(nav, update) {
+        return;
+    }
+    let edit = REGISTRY_WRITES.with(|writes| {
+        let save = &mut writes.borrow_mut().scene_view;
+        save.edit = save.edit.wrapping_add(1);
+        save.pending = Some(nav.registry_scoped());
+        save.edit
+    });
+    glib::timeout_add_local_once(SCENE_VIEW_SETTLE, move || save_settled_scene_view(edit));
+}
+
+/// Save the pending scene view only if `edit` is still the latest edit.
+fn save_settled_scene_view(edit: u64) {
+    let settled = REGISTRY_WRITES.with(|writes| {
+        let save = &mut writes.borrow_mut().scene_view;
+        (save.edit == edit).then(|| save.pending.take()).flatten()
+    });
+    if let Some(nav) = settled {
+        save_scene_view(&nav);
+    }
+}
+
+/// Submit a scene view that has not settled yet, before the window closes.
+pub(crate) fn flush_scene_view() {
+    if let Some(nav) = take_pending_scene_view() {
+        save_scene_view(&nav);
+    }
+}
+
+fn take_pending_scene_view() -> Option<NavigationContext> {
+    REGISTRY_WRITES.with(|writes| writes.borrow_mut().scene_view.pending.take())
+}
+
+fn save_scene_view(nav: &NavigationContext) {
+    // A workspace switch, disconnect or import since the edit leaves it unsaved
+    // here: the workspace cache keeps the view for this session, and an import
+    // replaces it.
+    if nav.registry_is_current() {
+        submit_registry_snapshot(nav, "scene view");
+    }
+}
+
+/// Apply `update` to the cached registry and report whether it changed.
+fn update_cached_registry(
+    nav: &NavigationContext,
+    update: impl FnOnce(&mut SceneRegistry) -> bool,
+) -> bool {
+    let mut state = nav.state.borrow_mut();
+    if !update(&mut state.registry) {
+        return false;
+    }
+    state.show_registry.revision = state.show_registry.revision.wrapping_add(1);
+    true
+}
+
+/// Save the cached registry of `nav`'s workspace as one whole snapshot. It
+/// carries any pending scene view, which therefore no longer needs its own save.
+fn submit_registry_snapshot(nav: &NavigationContext, what: &'static str) {
+    take_pending_scene_view();
+    let (target, registry) =
+        nav.read(|state| (state.show_registry.target.clone(), state.registry.clone()));
     submit_registry_write_to(
         what,
         true,
         target.clone(),
         std::sync::Arc::new(move || target.write(&registry)),
     );
-    true
 }
 
 /// Edit one field of the cached scene registry, then apply the same change to

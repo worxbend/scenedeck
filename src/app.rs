@@ -227,6 +227,9 @@ impl CloseGuard {
             return glib::Propagation::Stop;
         }
         self.sensitivity(false);
+        if !self.abandon.get() {
+            ui::persist::flush_scene_view();
+        }
         if self.exiting() {
             self.prepare_exit();
         } else if !self.abandon.get() {
