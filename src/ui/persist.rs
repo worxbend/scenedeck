@@ -1030,14 +1030,27 @@ mod tests {
             serde_json::to_value(&*cached.borrow()).unwrap()
         );
 
-        // Both parse failure and a corrupt destination leave confirmed cache
-        // and destination untouched and release the exclusive edit gate.
-        for corrupt_source in [true, false] {
-            if corrupt_source {
-                std::fs::write(&source, b"scenes: [invalid").unwrap();
-            } else {
-                crate::storage::registry::write_registry_yaml_to_path(&source, &imported).unwrap();
-                std::fs::write(&target, b"broken JSON").unwrap();
+        // Parse failure, a source over an import cap and a corrupt destination
+        // leave confirmed cache and destination untouched and release the
+        // exclusive edit gate.
+        enum Broken {
+            Source(String),
+            Destination,
+        }
+        let decks: String = (0..1_000).map(|n| format!("  deck-{n}: {{}}\n")).collect();
+        let over_deck_cap = format!("decks:\n{decks}");
+        for broken in [
+            Broken::Source("scenes: [invalid".into()),
+            Broken::Source(over_deck_cap),
+            Broken::Destination,
+        ] {
+            match broken {
+                Broken::Source(raw) => std::fs::write(&source, raw).unwrap(),
+                Broken::Destination => {
+                    crate::storage::registry::write_registry_yaml_to_path(&source, &imported)
+                        .unwrap();
+                    std::fs::write(&target, b"broken JSON").unwrap();
+                }
             }
             let original = std::fs::read(&target).unwrap();
             assert!(import_registry_to_path(

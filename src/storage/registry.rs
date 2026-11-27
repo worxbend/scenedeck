@@ -3,6 +3,7 @@
 
 mod decks;
 mod identity;
+mod import;
 
 pub(crate) use decks::SceneFilter;
 pub(crate) use identity::RetainedScene;
@@ -710,7 +711,7 @@ fn ensure_replaceable(path: &Path) -> io::Result<()> {
 pub fn read_registry_yaml_from_path(path: &Path) -> io::Result<SceneRegistry> {
     let raw =
         crate::storage::small_file::read_to_string(path, crate::storage::small_file::YAML_LIMIT)?;
-    let mut registry: SceneRegistry = serde_saphyr::from_str(&raw)
+    let mut registry = import::parse_import(&raw)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
     // YAML is portable named intent. Identities from another connection must
     // never redirect it or revive detached conflicts in this workspace.

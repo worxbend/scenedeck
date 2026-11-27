@@ -212,6 +212,11 @@ XDG paths, and keyring integration. The scene registry storage type remains the
 serde representation for JSON/YAML, and converts to `SceneRegistrySnapshot`
 before application services use it.
 
+A YAML import is a file the user picked from anywhere, so
+`storage::registry::import` parses it under a tighter budget than the parser
+default and refuses any collection over its count cap or any value over 512
+bytes before the registry is replaced.
+
 Local persistence is deliberately not routed through the OBS `AppCommand` /
 `AppEvent` stream. Config, registry, and password snapshots are preloaded on a
 startup worker and cached in `AppState`. GTK page callbacks mutate those

@@ -143,6 +143,9 @@ Persistence and local machine integration.
 
 - `config.rs`: JSON config load, save, defaults, and migrations.
 - `registry.rs`: local scene role registry.
+- `registry/import.rs`: limits on a YAML registry import: a tighter parser
+  budget (aliases, anchors, nodes, merge keys) and per-collection count and
+  length caps, checked before anything is written.
 - `schema_version.rs`: reads a JSON file's `version` and refuses to write
   over a file from a newer build.
 - `secret.rs`: OBS password storage through Secret Service.

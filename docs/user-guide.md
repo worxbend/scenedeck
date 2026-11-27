@@ -390,7 +390,10 @@ file. This includes scene roles, accent colors, scene order, tags, protection
 flags, and graph rule fields.
 Use export to back up a scene setup or move it to another machine; use import to
 replace the local registry from a YAML file.
-Import reports malformed YAML without replacing the saved registry.
+Import reports malformed YAML without replacing the saved registry. It also
+refuses a file that exceeds an import limit: more than 2,000 scenes, 200 decks,
+200 shortcuts or Live controls, 500 audio inputs or audio alerts, 64 tags on one
+scene, or any single name or value longer than 512 bytes.
 
 ## Graph Page
 
