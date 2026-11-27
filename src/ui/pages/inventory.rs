@@ -2370,4 +2370,606 @@ mod tests {
     fn dropping_scene_on_itself_does_not_reorder() {
         assert!(reordered_scene_ids(order(), "Two", "Two", false).is_none());
     }
+
+    // ── Section characterization (P0-T13) ──────────────────────────────────
+    //
+    // Each native test below pins the widget-tree facts one Inventory section
+    // exposes today: the widget names other code finds, their labels and their
+    // sensitivity. Splitting this file must keep every one of them.
+
+    fn scenes(ids: &[&str]) -> Vec<crate::domain::scene::Scene> {
+        ids.iter()
+            .map(|id| crate::domain::scene::Scene {
+                id: (*id).into(),
+                uuid: None,
+            })
+            .collect()
+    }
+
+    /// Every descendant of `root`, `root` included, that is a `T`, in tree order.
+    fn widgets_of<T: gtk4::prelude::IsA<gtk4::Widget>>(root: &gtk4::Widget) -> Vec<T> {
+        use adw::prelude::*;
+        let mut found: Vec<T> = root.downcast_ref::<T>().cloned().into_iter().collect();
+        let mut child = root.first_child();
+        while let Some(widget) = child {
+            found.extend(widgets_of::<T>(&widget));
+            child = widget.next_sibling();
+        }
+        found
+    }
+
+    fn row_names(page: &gtk4::Widget) -> Vec<String> {
+        use adw::prelude::*;
+        let list = find(page, "inventory-scenes").unwrap();
+        widgets_of::<gtk4::ListBoxRow>(&list)
+            .iter()
+            .map(|row| row.widget_name().to_string())
+            .collect()
+    }
+
+    fn options_popover(page: &gtk4::Widget, scene: &str) -> gtk4::Widget {
+        use adw::prelude::*;
+        find(page, &format!("inventory-options-{scene}"))
+            .unwrap()
+            .downcast::<gtk4::MenuButton>()
+            .unwrap()
+            .popover()
+            .unwrap()
+            .upcast()
+    }
+
+    fn icon_buttons(root: &gtk4::Widget, icon: &str) -> Vec<gtk4::Button> {
+        use adw::prelude::*;
+        widgets_of::<gtk4::Button>(root)
+            .into_iter()
+            .filter(|button| button.icon_name().as_deref() == Some(icon))
+            .collect()
+    }
+
+    /// Edit `AppState` through `NavigationContext::update`, as pages should.
+    fn edit_state(
+        nav: &crate::ui::navigation::NavigationContext,
+        edit: impl FnOnce(&mut crate::controller::state::AppState),
+    ) {
+        nav.update(edit)
+            .expect("no AppState borrow outlives a test step");
+    }
+
+    fn scene_entry(
+        nav: &crate::ui::navigation::NavigationContext,
+        scene: &str,
+    ) -> Option<crate::storage::registry::SceneEntry> {
+        nav.read(|state| state.registry.scenes.get(scene).cloned())
+    }
+
+    fn registry_writes_settle() -> bool {
+        crate::ui::test_support::pump_until(std::time::Duration::from_secs(5), || {
+            crate::ui::persist::registry_save_status()
+                == crate::ui::persist::RegistrySaveStatus::Saved
+        })
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display; no OBS or keyring access"]
+    fn native_inventory_rows_name_identity_widgets_in_registry_order() {
+        crate::ui::native_test!(|| {
+            use crate::infra::i18n::LANGUAGE_LOADER;
+            use adw::prelude::*;
+            use i18n_embed_fl::fl;
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            edit_state(&nav, |state| {
+                state.scene_inventory.scenes = scenes(&["Intro", "Main", "Other"]);
+                state.registry.scene_order = vec!["Other".into(), "Intro".into(), "Main".into()];
+                state
+                    .registry
+                    .set_scene_role("Main", Some(SceneRole::Primary));
+                state.registry.set_scene_tags("Main", ["News".into()]);
+                state.registry.set_scene_favorite("Main", true);
+            });
+            let (page, refresh) = super::build(nav.clone());
+
+            assert_eq!(
+                row_names(&page),
+                ["scene-order-Other", "scene-order-Intro", "scene-order-Main"]
+            );
+            for id in ["Intro", "Main", "Other"] {
+                for prefix in [
+                    "inventory-row-layout-",
+                    "inventory-icon-",
+                    "inventory-role-",
+                    "inventory-options-",
+                ] {
+                    assert!(
+                        find(&page, &format!("{prefix}{id}")).is_some(),
+                        "{prefix}{id}"
+                    );
+                }
+                let name = find(&page, &format!("inventory-name-{id}"))
+                    .unwrap()
+                    .downcast::<gtk4::Label>()
+                    .unwrap();
+                assert_eq!(name.text(), id);
+                assert_eq!(name.tooltip_text().as_deref(), Some(id));
+                let drag = find(&page, &format!("inventory-drag-{id}")).unwrap();
+                assert!(drag.is::<gtk4::Image>() && drag.is_sensitive());
+            }
+            let description = |id: &str| {
+                find(&page, &format!("inventory-description-{id}"))
+                    .unwrap()
+                    .downcast::<gtk4::Label>()
+                    .unwrap()
+                    .text()
+                    .to_string()
+            };
+            assert_eq!(description("Main"), SceneRole::Primary.description());
+            assert_eq!(
+                description("Intro"),
+                fl!(LANGUAGE_LOADER, "inventory-no-role-assigned")
+            );
+            let curation = |id: &str| {
+                find(&page, &format!("inventory-curation-{id}"))
+                    .unwrap()
+                    .downcast::<gtk4::Label>()
+                    .unwrap()
+            };
+            assert!(curation("Main").is_visible());
+            assert_eq!(
+                curation("Main").text(),
+                format!(
+                    "{} · News",
+                    fl!(LANGUAGE_LOADER, "inventory-scene-favorite")
+                )
+            );
+            assert!(!curation("Intro").is_visible());
+            assert!(!find(&page, "deck-no-results").unwrap().is_visible());
+            assert!(!find(&page, "deck-reorder-hint").unwrap().is_visible());
+
+            edit_state(&nav, |state| {
+                state.registry.scene_filter.query = "Main".into()
+            });
+            refresh();
+            assert_eq!(row_names(&page), ["scene-order-Main"]);
+            assert!(
+                !find(&page, "inventory-drag-Main").unwrap().is_sensitive(),
+                "a filtered list cannot be reordered"
+            );
+            assert!(find(&page, "deck-reorder-hint").unwrap().is_visible());
+
+            edit_state(&nav, |state| state.workspace.epoch += 1);
+            refresh();
+            assert_eq!(row_names(&page), ["scene-order-Main"]);
+            assert!(
+                !find(&page, "inventory-drag-Main").unwrap().is_sensitive(),
+                "a full rebuild under a filter keeps reordering off"
+            );
+            assert!(find(&page, "deck-reorder-hint").unwrap().is_visible());
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display and isolated registry storage"]
+    fn native_inventory_role_cell_lists_every_role_and_persists_the_selection() {
+        crate::ui::native_test!(|| {
+            use crate::infra::i18n::LANGUAGE_LOADER;
+            use adw::prelude::*;
+            use i18n_embed_fl::fl;
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            edit_state(&nav, |state| {
+                state.scene_inventory.scenes = scenes(&["Main"])
+            });
+            let (page, _refresh) = super::build(nav.clone());
+            let unassigned = fl!(LANGUAGE_LOADER, "inventory-no-role-assigned");
+
+            let role = find(&page, "inventory-role-Main")
+                .unwrap()
+                .downcast::<gtk4::DropDown>()
+                .unwrap();
+            assert!(role.has_css_class("inventory-role-selector"));
+            let model = role
+                .model()
+                .unwrap()
+                .downcast::<gtk4::StringList>()
+                .unwrap();
+            let labels: Vec<String> = (0..model.n_items())
+                .map(|position| model.string(position).unwrap().to_string())
+                .collect();
+            let mut expected = vec![SceneRole::unassigned_label()];
+            expected.extend(SceneRole::ALL.iter().map(|role| role.label()));
+            assert_eq!(labels, expected);
+            assert_eq!(role.selected(), role_row(None));
+            assert_eq!(role.tooltip_text().as_deref(), Some(unassigned.as_str()));
+
+            role.set_selected(role_row(Some(SceneRole::Debug)));
+            assert_eq!(
+                scene_entry(&nav, "Main").and_then(|entry| entry.role),
+                Some(SceneRole::Debug)
+            );
+            let description = find(&page, "inventory-description-Main")
+                .unwrap()
+                .downcast::<gtk4::Label>()
+                .unwrap();
+            assert_eq!(description.text(), SceneRole::Debug.description());
+            assert_eq!(
+                role.tooltip_text().as_deref(),
+                Some(SceneRole::Debug.description().as_str())
+            );
+
+            role.set_selected(role_row(None));
+            assert_eq!(scene_entry(&nav, "Main").and_then(|entry| entry.role), None);
+            assert_eq!(description.text(), unassigned);
+            assert!(registry_writes_settle());
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display and isolated registry storage"]
+    fn native_inventory_options_popover_names_curation_and_accent_controls() {
+        crate::ui::native_test!(|| {
+            use crate::infra::i18n::LANGUAGE_LOADER;
+            use adw::prelude::*;
+            use i18n_embed_fl::fl;
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            edit_state(&nav, |state| {
+                state.scene_inventory.scenes = scenes(&["Main", "Other"]);
+                state
+                    .registry
+                    .set_scene_accent("Main", Some("#336699".into()));
+            });
+            let (page, _refresh) = super::build(nav.clone());
+
+            let options = find(&page, "inventory-options-Main").unwrap();
+            assert_eq!(
+                options.tooltip_text().map(|text| text.to_string()),
+                Some(fl!(
+                    LANGUAGE_LOADER,
+                    "inventory-scene-options",
+                    scene = "Main"
+                ))
+            );
+            let popover = options_popover(&page, "Main");
+            let favorite = find(&popover, "inventory-favorite-Main")
+                .unwrap()
+                .downcast::<gtk4::CheckButton>()
+                .unwrap();
+            assert!(!favorite.is_active());
+            assert_eq!(
+                favorite.label().map(|label| label.to_string()),
+                Some(fl!(LANGUAGE_LOADER, "inventory-scene-favorite"))
+            );
+            let tags = find(&popover, "inventory-tags-Main")
+                .unwrap()
+                .downcast::<gtk4::Entry>()
+                .unwrap();
+            assert_eq!(tags.text(), "");
+            let apply = find(&popover, "inventory-apply-tags-Main")
+                .unwrap()
+                .downcast::<gtk4::Button>()
+                .unwrap();
+            assert_eq!(
+                apply.label().map(|label| label.to_string()),
+                Some(fl!(LANGUAGE_LOADER, "inventory-apply-tags"))
+            );
+            assert!(find(&popover, "inventory-move-up-Main").is_some());
+            assert!(find(&popover, "inventory-move-down-Main").is_some());
+
+            let pickers = widgets_of::<gtk4::ColorDialogButton>(&popover);
+            assert_eq!(pickers.len(), 1);
+            let rgba = pickers[0].rgba();
+            assert_eq!(
+                crate::storage::registry::scene_accent_hex(rgba.red(), rgba.green(), rgba.blue()),
+                "#336699"
+            );
+            let clear = icon_buttons(&popover, "edit-clear-symbolic");
+            assert_eq!(clear.len(), 1);
+            assert!(clear[0].is_sensitive());
+            let other_clear = icon_buttons(&options_popover(&page, "Other"), "edit-clear-symbolic");
+            assert!(
+                !other_clear[0].is_sensitive(),
+                "no accent, nothing to clear"
+            );
+
+            clear[0].emit_clicked();
+            assert_eq!(
+                scene_entry(&nav, "Main").and_then(|entry| entry.accent_color),
+                None
+            );
+            assert!(!clear[0].is_sensitive());
+            let replaced = widgets_of::<gtk4::ColorDialogButton>(&popover);
+            assert_eq!(replaced.len(), 1);
+            assert_ne!(replaced[0], pickers[0], "clearing installs an unset picker");
+            assert!(registry_writes_settle());
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display and isolated registry storage"]
+    fn native_inventory_move_buttons_follow_position_and_filter() {
+        crate::ui::native_test!(|| {
+            use crate::infra::i18n::LANGUAGE_LOADER;
+            use crate::ui::test_support::pump;
+            use adw::prelude::*;
+            use i18n_embed_fl::fl;
+            use std::time::Duration;
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            edit_state(&nav, |state| {
+                state.scene_inventory.scenes = scenes(&["One", "Two", "Three"])
+            });
+            let (page, refresh) = super::build(nav.clone());
+            let move_button = |scene: &str, direction: &str| {
+                find(
+                    &options_popover(&page, scene),
+                    &format!("inventory-move-{direction}-{scene}"),
+                )
+                .unwrap()
+                .downcast::<gtk4::Button>()
+                .unwrap()
+            };
+
+            assert!(!move_button("One", "up").is_sensitive());
+            assert!(move_button("One", "down").is_sensitive());
+            assert!(move_button("Two", "up").is_sensitive());
+            assert!(move_button("Two", "down").is_sensitive());
+            assert!(move_button("Three", "up").is_sensitive());
+            assert!(!move_button("Three", "down").is_sensitive());
+            assert_eq!(
+                move_button("One", "down")
+                    .child()
+                    .and_downcast::<gtk4::Label>()
+                    .unwrap()
+                    .text(),
+                fl!(LANGUAGE_LOADER, "inventory-move-down", scene = "One")
+            );
+
+            move_button("One", "down").emit_clicked();
+            assert_eq!(
+                nav.read(|state| state.registry.ordered_scene_ids(["One", "Two", "Three"])),
+                ["Two", "One", "Three"]
+            );
+            pump(Duration::from_millis(100));
+            assert_eq!(
+                row_names(&page),
+                ["scene-order-Two", "scene-order-One", "scene-order-Three"]
+            );
+            assert!(move_button("One", "up").is_sensitive());
+            assert!(!move_button("Two", "up").is_sensitive());
+
+            edit_state(&nav, |state| {
+                state.registry.scene_filter.query = "One".into()
+            });
+            refresh();
+            assert!(!move_button("One", "up").is_sensitive());
+            assert!(!move_button("One", "down").is_sensitive());
+            assert!(registry_writes_settle());
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display and isolated registry storage"]
+    fn native_inventory_stale_group_lists_missing_scenes_and_removes_them() {
+        crate::ui::native_test!(|| {
+            use crate::infra::i18n::LANGUAGE_LOADER;
+            use adw::prelude::*;
+            use i18n_embed_fl::fl;
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            edit_state(&nav, |state| {
+                state.scene_inventory.scenes = scenes(&["Main"]);
+                state
+                    .registry
+                    .set_scene_role("Gone A", Some(SceneRole::Primary));
+                state.registry.set_scene_icon("Gone B", Some("camera"));
+            });
+            let (page, _refresh) = super::build(nav.clone());
+
+            let group = find(&page, "inventory-stale")
+                .unwrap()
+                .downcast::<adw::PreferencesGroup>()
+                .unwrap();
+            assert_eq!(
+                group.title(),
+                fl!(LANGUAGE_LOADER, "inventory-stale-group-title")
+            );
+            assert_eq!(
+                group.description().map(|text| text.to_string()),
+                Some(fl!(LANGUAGE_LOADER, "inventory-stale-group-description"))
+            );
+            let rows = widgets_of::<adw::ActionRow>(group.upcast_ref());
+            assert_eq!(
+                rows.iter()
+                    .map(|row| (row.title().to_string(), row.subtitle().map(String::from)))
+                    .collect::<Vec<_>>(),
+                [
+                    (
+                        "Gone A".to_string(),
+                        Some(SceneRole::label_or_unassigned(Some(SceneRole::Primary)))
+                    ),
+                    (
+                        "Gone B".to_string(),
+                        Some(SceneRole::label_or_unassigned(None))
+                    ),
+                ]
+            );
+            assert!(rows.iter().all(|row| !row.uses_markup()));
+            let removes = icon_buttons(group.upcast_ref(), "list-remove-symbolic");
+            assert_eq!(removes.len(), 2);
+            assert!(removes
+                .iter()
+                .all(|button| button.has_css_class("destructive-action")));
+
+            removes[0].emit_clicked();
+            assert!(scene_entry(&nav, "Gone A").is_none());
+            let group = find(&page, "inventory-stale").unwrap();
+            let rows = widgets_of::<adw::ActionRow>(&group);
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].title(), "Gone B");
+
+            icon_buttons(&group, "list-remove-symbolic")[0].emit_clicked();
+            assert!(
+                find(&page, "inventory-stale").is_none(),
+                "removing the last stale entry drops the group"
+            );
+            assert!(registry_writes_settle());
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display; no OBS or keyring access"]
+    fn native_inventory_yaml_row_names_export_and_import_actions() {
+        crate::ui::native_test!(|| {
+            use crate::infra::i18n::LANGUAGE_LOADER;
+            use adw::prelude::*;
+            use i18n_embed_fl::fl;
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            edit_state(&nav, |state| {
+                state.scene_inventory.scenes = scenes(&["Main"])
+            });
+            let (page, _refresh) = super::build(nav.clone());
+
+            let row = find(&page, "inventory-yaml-actions")
+                .unwrap()
+                .downcast::<adw::ActionRow>()
+                .unwrap();
+            assert_eq!(
+                row.title(),
+                fl!(LANGUAGE_LOADER, "inventory-yaml-row-title")
+            );
+            assert_eq!(
+                row.subtitle().map(String::from),
+                Some(fl!(LANGUAGE_LOADER, "inventory-yaml-row-subtitle"))
+            );
+            assert!(!row.uses_markup());
+            // The builder sets `icon-name` after `label`, and GTK replaces the
+            // label with the icon: today these buttons are icon-only and their
+            // text lives in the tooltip.
+            for (name, icon, tooltip) in [
+                (
+                    "inventory-export",
+                    "document-save-symbolic",
+                    fl!(LANGUAGE_LOADER, "inventory-export-tooltip"),
+                ),
+                (
+                    "inventory-import",
+                    "document-open-symbolic",
+                    fl!(LANGUAGE_LOADER, "inventory-import-tooltip"),
+                ),
+            ] {
+                let button = find(&page, name)
+                    .unwrap()
+                    .downcast::<gtk4::Button>()
+                    .unwrap();
+                assert!(button.is_sensitive(), "{name}");
+                assert_eq!(button.icon_name().as_deref(), Some(icon));
+                assert_eq!(button.label(), None, "{name}");
+                assert_eq!(button.tooltip_text().map(String::from), Some(tooltip));
+            }
+
+            let filter = super::yaml_file_filter();
+            assert_eq!(
+                filter.name().map(String::from),
+                Some(fl!(LANGUAGE_LOADER, "inventory-yaml-filter-name"))
+            );
+            let rules = filter.to_gvariant().print(false).to_string();
+            assert!(
+                rules.contains("*.yaml") && rules.contains("*.yml"),
+                "{rules}"
+            );
+            let dialog = super::yaml_dialog("Title", "Accept");
+            assert_eq!(dialog.title(), "Title");
+            assert_eq!(
+                dialog.accept_label().map(String::from),
+                Some("Accept".into())
+            );
+            assert!(dialog.is_modal());
+            assert_eq!(
+                dialog.default_filter().and_then(|filter| filter.name()),
+                filter.name()
+            );
+        });
+    }
+
+    #[test]
+    fn dialog_cancellation_covers_dismissal_and_cancelled_io_only() {
+        let error = |domain_error: gtk4::DialogError| glib::Error::new(domain_error, "fixture");
+        assert!(super::dialog_cancelled(&error(
+            gtk4::DialogError::Dismissed
+        )));
+        assert!(super::dialog_cancelled(&error(
+            gtk4::DialogError::Cancelled
+        )));
+        assert!(!super::dialog_cancelled(&error(gtk4::DialogError::Failed)));
+        let io = |io_error: gio::IOErrorEnum| glib::Error::new(io_error, "fixture");
+        assert!(super::dialog_cancelled(&io(gio::IOErrorEnum::Cancelled)));
+        assert!(!super::dialog_cancelled(&io(
+            gio::IOErrorEnum::PermissionDenied
+        )));
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display and isolated registry storage"]
+    fn native_inventory_save_status_reports_a_failed_write_until_retry_succeeds() {
+        crate::ui::native_test!(|| {
+            use crate::infra::i18n::LANGUAGE_LOADER;
+            use crate::ui::persist::{registry_save_status, RegistrySaveStatus};
+            use crate::ui::test_support::{pump, pump_until};
+            use adw::prelude::*;
+            use i18n_embed_fl::fl;
+            use std::time::Duration;
+            // A regular file where the registry directory belongs fails every
+            // write until it is removed.
+            let blocker = crate::storage::xdg::registry_path().with_file_name("blocker");
+            std::fs::create_dir_all(blocker.parent().unwrap()).unwrap();
+            std::fs::write(&blocker, b"").unwrap();
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            edit_state(&nav, |state| {
+                state.scene_inventory.scenes = scenes(&["Main"]);
+                state.show_registry.target = crate::storage::show_workspaces::RegistryTarget::File(
+                    blocker.join("registry.json"),
+                );
+            });
+            let (page, _refresh) = super::build(nav.clone());
+            let status = find(&page, "inventory-registry-save-status").unwrap();
+            let label = status.first_child().and_downcast::<gtk4::Label>().unwrap();
+            let retry = find(&page, "inventory-registry-save-retry")
+                .unwrap()
+                .downcast::<gtk4::Button>()
+                .unwrap();
+            assert!(!status.is_visible(), "nothing to report while saved");
+            assert_eq!(
+                retry.label().map(String::from),
+                Some(fl!(LANGUAGE_LOADER, "window-connect-btn-retry"))
+            );
+
+            find(&page, "inventory-role-Main")
+                .unwrap()
+                .downcast::<gtk4::DropDown>()
+                .unwrap()
+                .set_selected(role_row(Some(SceneRole::Primary)));
+            assert!(pump_until(Duration::from_secs(5), || matches!(
+                registry_save_status(),
+                RegistrySaveStatus::Failed(_)
+            )));
+            let RegistrySaveStatus::Failed(error) = registry_save_status() else {
+                unreachable!("the wait above observed a failure");
+            };
+            pump(Duration::from_millis(150));
+            assert!(status.is_visible());
+            assert_eq!(
+                label.text(),
+                fl!(LANGUAGE_LOADER, "settings-failed-to-save", err = error)
+            );
+            assert!(retry.is_sensitive());
+
+            std::fs::remove_file(&blocker).unwrap();
+            retry.emit_clicked();
+            assert!(registry_writes_settle());
+            pump(Duration::from_millis(150));
+            assert!(!status.is_visible(), "a successful retry clears the report");
+            assert_eq!(
+                crate::storage::registry::read_registry_from_path(&blocker.join("registry.json"))
+                    .unwrap()
+                    .scenes["Main"]
+                    .role,
+                Some(SceneRole::Primary)
+            );
+        });
+    }
 }
