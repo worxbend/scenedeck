@@ -15,11 +15,17 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use crate::controller::state::AppState;
-use crate::storage::config::{write_config, AppConfig};
+use crate::storage::config::write_config;
 use crate::storage::registry::SceneRegistry;
-use crate::storage::show_workspaces::{RegistryTarget, WorkspaceKey, MAX_WORKSPACES};
+use crate::storage::show_workspaces::RegistryTarget;
 use crate::ui::background_io::SerialLane;
 use crate::ui::navigation::NavigationContext;
+
+mod config;
+mod registry_scope;
+
+pub(crate) use config::{persist_config, persist_config_snapshot, persist_config_with};
+pub(crate) use registry_scope::select_registry_scope;
 
 type RegistryWrite = std::sync::Arc<dyn Fn() -> std::io::Result<()> + Send + Sync>;
 
@@ -296,111 +302,6 @@ pub(crate) fn registry_availability_message(nav: &NavigationContext) -> Option<S
     }
 }
 
-/// Resolve curation only after OBS reports its actual collection. The registry
-/// lane and import gate keep migration, imports, and accepted edits in order.
-/// `toast` announces workspaces evicted to make room for a new one.
-pub(crate) fn select_registry_scope(
-    nav: &NavigationContext,
-    toast: Option<adw::ToastOverlay>,
-    refresh: impl Fn() + 'static,
-) {
-    let Some(target) = nav.state.borrow().desired_registry_target() else {
-        return;
-    };
-    let ticket = nav.state.borrow_mut().select_registry(target.clone());
-    if ticket.is_none() && registry_edit_allowed() {
-        reconcile_registry(nav);
-    }
-    refresh();
-    let Some(generation) = ticket else {
-        return;
-    };
-    let nav = nav.scoped();
-    let failed_nav = nav.clone();
-    let failed_target = target.clone();
-    let refresh: Rc<dyn Fn()> = Rc::new(refresh);
-    let failed_refresh = refresh.clone();
-    if !after_registry_import(move || {
-        if !nav.is_current()
-            || !nav
-                .state
-                .borrow()
-                .accepts_registry_load(generation, &target)
-        {
-            return;
-        }
-        let guard = begin_registry_import().expect("deferred registry jobs run outside the gate");
-        let legacy = {
-            let state = nav.state.borrow();
-            let original_endpoint = state
-                .config
-                .legacy_registry_endpoint
-                .clone()
-                .unwrap_or_else(|| format!("{}:{}", state.config.obs.host, state.config.obs.port));
-            matches!(&target, RegistryTarget::Workspace { key, .. }
-                if key.connection == "default" && key.endpoint == original_endpoint)
-            .then(crate::storage::xdg::registry_path)
-        };
-        let destination = target.clone();
-        crate::ui::background_io::run_serialized(
-            SerialLane::Registry,
-            move || destination.load_or_create(legacy.as_deref()),
-            move |result| {
-                let result = result.map(|loaded| {
-                    announce_eviction(toast.as_ref(), &loaded.evicted);
-                    loaded.registry
-                });
-                if nav.is_current() {
-                    nav.state
-                        .borrow_mut()
-                        .finish_registry_load(generation, &target, result);
-                }
-                if nav.is_current() {
-                    reconcile_registry(&nav);
-                }
-                drop(guard);
-                refresh();
-            },
-        );
-    }) {
-        failed_nav.state.borrow_mut().finish_registry_load(
-            generation,
-            &failed_target,
-            Err(std::io::Error::other("too many pending workspace changes")),
-        );
-        failed_refresh();
-    }
-}
-
-/// The eviction is already on disk, so announce it even when this selection
-/// is stale. Name what went: its curation is gone.
-fn announce_eviction(toast: Option<&adw::ToastOverlay>, evicted: &[WorkspaceKey]) {
-    let Some(message) = eviction_notice(evicted) else {
-        return;
-    };
-    tracing::info!(
-        count = evicted.len(),
-        "evicted least recently used show workspaces"
-    );
-    if let Some(toast) = toast {
-        toast.add_toast(crate::ui::markup::plain_toast(&message));
-    }
-}
-
-fn eviction_notice(evicted: &[WorkspaceKey]) -> Option<String> {
-    use crate::infra::i18n::LANGUAGE_LOADER;
-    use i18n_embed_fl::fl;
-    (!evicted.is_empty()).then(|| {
-        let collections: Vec<&str> = evicted.iter().map(|key| key.collection.as_str()).collect();
-        fl!(
-            LANGUAGE_LOADER,
-            "workspace-evicted",
-            limit = MAX_WORKSPACES.to_string(),
-            collections = collections.join(", ")
-        )
-    })
-}
-
 /// Reconcile only the selected ready registry. This also runs inside the import
 /// gate before publication finishes, so no editor can target pre-rename data.
 pub(crate) fn reconcile_registry(nav: &NavigationContext) {
@@ -500,54 +401,6 @@ fn import_registry_to_target(
         },
     );
     true
-}
-
-/// Edit the cached config and save it, retaining failures for the close barrier.
-///
-/// Replaceable snapshots share one pending write/publication per FIFO segment.
-/// Acceptance is synchronous; superseded snapshots have no callback to lose.
-/// A returned error or panic requires an explicit informed close decision;
-/// later successful work does not silently acknowledge potentially lost edits.
-pub(crate) fn persist_config(nav: &NavigationContext, update: impl FnOnce(&mut AppConfig)) {
-    let config = {
-        let mut state = nav.state.borrow_mut();
-        update(&mut state.config);
-        state.config.clone()
-    };
-    persist_config_snapshot(config);
-}
-
-/// Save a config the caller already holds, with the same failure retention as
-/// `persist_config`.
-pub(crate) fn persist_config_snapshot(config: AppConfig) {
-    crate::ui::background_io::run_config_snapshot(move || write_config(&config));
-}
-
-/// Edit the cached config, save it, and report the outcome.
-///
-/// Unlike `persist_config`, this is a non-coalescible FIFO transaction barrier.
-/// `complete` runs back on the GTK thread and is handed the config as it was
-/// written, so a caller can re-apply it — the theme rows need exactly that, to
-/// restyle from the values that actually reached disk.
-pub(crate) fn persist_config_with<Update, Complete>(
-    nav: &NavigationContext,
-    update: Update,
-    complete: Complete,
-) where
-    Update: FnOnce(&mut AppConfig),
-    Complete: FnOnce(std::io::Result<()>, AppConfig) + 'static,
-{
-    let config = {
-        let mut state = nav.state.borrow_mut();
-        update(&mut state.config);
-        state.config.clone()
-    };
-    let persisted = config.clone();
-    crate::ui::background_io::run_serialized(
-        SerialLane::Config,
-        move || write_config(&persisted),
-        move |result| complete(result, config),
-    );
 }
 
 /// Re-admit every write whose failure blocks Close, from the close dialog's
@@ -786,22 +639,6 @@ mod tests {
         assert_eq!(a.read().unwrap().scene_icon("Camera"), Some("A"));
         assert_eq!(b.read().unwrap().scene_icon("Camera"), Some("B"));
         std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn eviction_notice_names_every_evicted_collection_and_stays_silent_otherwise() {
-        let key = |collection: &str| WorkspaceKey {
-            connection: "default".into(),
-            endpoint: "obs:4455".into(),
-            collection: collection.into(),
-        };
-
-        let notice = eviction_notice(&[key("Podcast"), key("Gaming")]).unwrap();
-
-        assert!(notice.contains("Podcast"), "{notice}");
-        assert!(notice.contains("Gaming"), "{notice}");
-        assert!(notice.contains(&MAX_WORKSPACES.to_string()), "{notice}");
-        assert_eq!(eviction_notice(&[]), None);
     }
 
     #[test]

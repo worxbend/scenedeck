@@ -174,6 +174,10 @@ GTK and libadwaita UI.
 - `background_io.rs`: runs blocking work off the GTK thread, with FIFO lanes
   for ordered config and registry writes, and returns completion callbacks to
   GTK.
+- `persist.rs`: saves local state from GTK callbacks: the registry write
+  journal, the import gate and the close-dialog retry. Children:
+  `persist/config.rs` (config snapshot saves) and `persist/registry_scope.rs`
+  (show workspace selection and the eviction notice).
 - `pages/`: Live, Stats, Mixer, Graph, Inventory, Doctor, Settings, and Help pages.
 - `presenters/`: text formatters shared by several surfaces;
   `output_status` renders the stream and record labels and elapsed time;

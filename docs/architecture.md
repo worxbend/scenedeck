@@ -223,7 +223,11 @@ startup worker and cached in `AppState`. GTK page callbacks mutate those
 snapshots and use `ui::background_io` for filesystem and Secret Service work;
 completion callbacks return to the GTK thread for status updates. This keeps
 the OBS controller contract focused while preventing blocking persistence calls
-from running in GTK callbacks. Config and registry writes use separate FIFO
+from running in GTK callbacks. `ui::persist` holds that protocol once: the
+root keeps the registry write journal, the import gate and the close-dialog
+retry, `persist/config.rs` saves config snapshots, and
+`persist/registry_scope.rs` picks the show workspace once OBS reports its
+collection. Config and registry writes use separate FIFO
 worker lanes, so a slow older snapshot cannot finish after and overwrite a
 newer snapshot. Each atomic replacement also uses a unique, exclusively
 created sibling temporary file, allowing concurrent writers without temp-file
