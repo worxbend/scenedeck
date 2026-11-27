@@ -9,6 +9,11 @@ pub(super) fn src_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
 }
 
+fn read_source(path: &Path) -> String {
+    std::fs::read_to_string(src_root().join(path))
+        .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()))
+}
+
 /// Production module files, including modules declared after test-only items.
 fn source_files() -> Vec<PathBuf> {
     let root = src_root();
@@ -18,8 +23,7 @@ fn source_files() -> Vec<PathBuf> {
         if files.contains(&path) {
             continue;
         }
-        let source = std::fs::read_to_string(root.join(&path))
-            .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+        let source = read_source(&path);
         let syntax = syn::parse_file(&source)
             .unwrap_or_else(|error| panic!("cannot parse {}: {error}", path.display()));
         if !test_only(&syntax.attrs) {
@@ -375,8 +379,7 @@ pub(super) fn violations(
                 .any(|prefix| path.starts_with(prefix))
         })
         .flat_map(|path| {
-            let source =
-                std::fs::read_to_string(src_root().join(&path)).expect("source should be readable");
+            let source = read_source(&path);
             source_violations(&source, forbidden)
                 .into_iter()
                 .map(|(number, line)| format!("  {}:{}: {}", path.display(), number, line.trim()))
@@ -397,8 +400,7 @@ pub(super) fn ratchet(scope: &str, pattern: &str, ceilings: &[(&str, usize)]) ->
         .into_iter()
         .filter(|path| path.starts_with(scope))
         .filter_map(|path| {
-            let source =
-                std::fs::read_to_string(src_root().join(&path)).expect("source should be readable");
+            let source = read_source(&path);
             let count = source.matches(pattern).count();
             if count == 0 {
                 return None;
