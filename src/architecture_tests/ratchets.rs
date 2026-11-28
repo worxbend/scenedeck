@@ -75,7 +75,7 @@ const APP_STATE_BORROWS: &[(&str, [usize; 3])] = &[
     ("ui/report_history.rs", [1, 7, 11]),
     ("ui/session_reports.rs", [2, 1, 4]),
     ("ui/sidebar.rs", [0, 1, 1]),
-    ("ui/widgets/audio_card.rs", [5, 4, 9]),
+    ("ui/widgets/audio_card.rs", [1, 3, 4]),
     ("ui/widgets/deck_controls.rs", [1, 11, 12]),
     ("ui/widgets/operating_panel.rs", [1, 8, 10]),
     ("ui/widgets/operating_panel/media_progress.rs", [5, 2, 8]),
@@ -122,7 +122,6 @@ const UI_THREAD_LOCALS: &[(&str, usize)] = &[
     ("ui/report_history.rs", 1),
     ("ui/session_reports.rs", 1),
     ("ui/theme.rs", 1),
-    ("ui/widgets/audio_card.rs", 1),
     ("ui/widgets/scene_card.rs", 1),
 ];
 
