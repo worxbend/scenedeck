@@ -1,7 +1,13 @@
 use super::MAX_CONCURRENT_REQUESTS;
+use crate::domain::control::ControlAction;
 use crate::obs::testing::scripted::{mock_client, unresponsive_client, ScriptedObs};
+use crate::obs::testing::stateful::{Request, StatefulObs, When};
 use crate::obs::testing::wire::Reply;
 use serde_json::json;
+use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tokio::sync::oneshot;
 
 #[tokio::test]
 async fn cancelled_requests_retire_admission_and_bound_unanswered_wire_work() {
@@ -164,4 +170,53 @@ async fn ordinary_server_rejection_keeps_connection_admission_usable() {
     assert!(client.set_current_program_scene("Missing").await.is_err());
     client.set_current_program_scene("Program").await.unwrap();
     assert_eq!(server.await.unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn cancellation_while_waiting_for_connection_admission_does_not_poll_a_mutation() {
+    let mut mock = StatefulObs::default()
+        .hold(Request::GetVersion, When::AfterFirst)
+        .connect()
+        .await;
+    let mut reads = Vec::new();
+    for _ in 0..8 {
+        let client = mock.client.clone();
+        reads.push(tokio::spawn(async move { client.get_version().await }));
+    }
+    mock.wait(Request::GetVersion, 9).await;
+    let valid = Arc::new(AtomicBool::new(true));
+    let lease = valid.clone();
+    let client = mock.client.clone();
+    let (polled, queued) = oneshot::channel();
+    let mutation = tokio::spawn(async move {
+        let action = ControlAction::SetInputMuted {
+            input: "MicA".into(),
+            muted: true,
+        };
+        let check = || lease.load(Ordering::Acquire);
+        let write = client.execute_control_if(&action, &check);
+        tokio::pin!(write);
+        let mut polled = Some(polled);
+        std::future::poll_fn(|context| {
+            if let Some(polled) = polled.take() {
+                let _ = polled.send(());
+            }
+            write.as_mut().poll(context)
+        })
+        .await
+    });
+    queued.await.unwrap();
+    valid.store(false, Ordering::Release);
+    mock.release_all().await;
+    for read in reads {
+        read.await.unwrap().unwrap();
+    }
+    assert!(mutation.await.unwrap().is_err());
+    assert!(
+        mock.client.retirement_reason().is_none(),
+        "a skipped, unpolled request does not poison admission"
+    );
+    let frames = mock.stop().await;
+    assert_eq!(frames.count(Request::GetVersion), 9);
+    assert_eq!(frames.count(Request::SetInputMute), 0);
 }

@@ -19,10 +19,8 @@ use crate::obs::event::ObsEventStream;
 use crate::obs::testing::stateful::{Event, Request, Scene, StatefulObs, When, SCENE_WRITES};
 use futures_util::future::BoxFuture;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
-use tokio::sync::oneshot;
 
 #[tokio::test]
 async fn cancelled_or_collection_invalidated_text_preflight_never_begins_final_write() {
@@ -96,55 +94,6 @@ async fn cancelled_or_collection_invalidated_media_preflight_never_begins_cursor
         scope.retire();
         assert_eq!(mock.stop().await.count(Request::SetMediaInputCursor), 0);
     }
-}
-
-#[tokio::test]
-async fn cancellation_while_waiting_for_connection_admission_does_not_poll_a_mutation() {
-    let mut mock = StatefulObs::default()
-        .hold(Request::GetVersion, When::AfterFirst)
-        .connect()
-        .await;
-    let mut reads = Vec::new();
-    for _ in 0..8 {
-        let client = mock.client.clone();
-        reads.push(tokio::spawn(async move { client.get_version().await }));
-    }
-    mock.wait(Request::GetVersion, 9).await;
-    let valid = Arc::new(AtomicBool::new(true));
-    let lease = valid.clone();
-    let client = mock.client.clone();
-    let (polled, queued) = oneshot::channel();
-    let mutation = tokio::spawn(async move {
-        let action = ControlAction::SetInputMuted {
-            input: "MicA".into(),
-            muted: true,
-        };
-        let check = || lease.load(Ordering::Acquire);
-        let write = client.execute_control_if(&action, &check);
-        tokio::pin!(write);
-        let mut polled = Some(polled);
-        std::future::poll_fn(|context| {
-            if let Some(polled) = polled.take() {
-                let _ = polled.send(());
-            }
-            write.as_mut().poll(context)
-        })
-        .await
-    });
-    queued.await.unwrap();
-    valid.store(false, Ordering::Release);
-    mock.release_all().await;
-    for read in reads {
-        read.await.unwrap().unwrap();
-    }
-    assert!(mutation.await.unwrap().is_err());
-    assert!(
-        mock.client.retirement_reason().is_none(),
-        "a skipped, unpolled request does not poison admission"
-    );
-    let frames = mock.stop().await;
-    assert_eq!(frames.count(Request::GetVersion), 9);
-    assert_eq!(frames.count(Request::SetInputMute), 0);
 }
 
 #[tokio::test]
@@ -609,39 +558,6 @@ async fn transport_publication_overflow_retires_instead_of_stalling_mode_ingress
     scope.retire();
     let frames = mock.stop().await;
     assert!(frames.matching(&SCENE_WRITES).is_empty());
-}
-
-#[tokio::test]
-async fn scene_activation_preserves_current_mode_and_rejects_an_unavailable_mode() {
-    for (studio_enabled, unavailable) in [(false, false), (true, false), (false, true)] {
-        let obs = StatefulObs::default();
-        let obs = if unavailable {
-            obs.refuse(Request::GetStudioModeEnabled, When::Always)
-        } else {
-            obs
-        };
-        let mock = obs.connect().await;
-        mock.emit(Event::StudioModeChanged(studio_enabled)).await;
-        let result = mock
-            .client
-            .activate_scene_if("B", studio_enabled, &|| true)
-            .await;
-        assert_eq!(result.is_err(), unavailable);
-        let frames = mock.stop().await;
-        let writes = frames.matching(&SCENE_WRITES);
-        if unavailable {
-            assert!(writes.is_empty(), "unknown mode must fail closed");
-        } else {
-            assert_eq!(
-                writes,
-                vec![if studio_enabled {
-                    Request::SetCurrentPreviewScene
-                } else {
-                    Request::SetCurrentProgramScene
-                }]
-            );
-        }
-    }
 }
 
 #[tokio::test]

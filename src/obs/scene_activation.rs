@@ -37,3 +37,6 @@ impl ObsClient {
         .map_err(AppError::request)
     }
 }
+
+#[cfg(test)]
+mod tests;
