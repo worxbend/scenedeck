@@ -9,15 +9,15 @@ use obws::responses::recording::RecordStatus;
 use obws::responses::scenes::Scenes;
 use obws::responses::streaming::StreamStatus;
 
-use crate::controller::event::ConnectionInfo;
 use crate::domain::control::MediaState;
 use crate::domain::meter::InputLevels;
+use crate::domain::obs::ConnectionInfo;
 use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::domain::scene::{Scene, SceneInventory};
 use crate::domain::stats::{ObsStats, StreamHealth};
 use crate::obs::event::ObsEvent;
 
-/// Convert OBS version metadata into controller connection info.
+/// Convert OBS version metadata into domain connection info.
 pub(super) fn map_version(v: &Version) -> ConnectionInfo {
     ConnectionInfo {
         connection_id: "default".into(),

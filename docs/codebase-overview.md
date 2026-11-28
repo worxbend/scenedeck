@@ -121,7 +121,8 @@ Application data types that do not depend on GTK or OBS crate types.
 - `meter.rs`: audio level readings in decibels, the volume meter's zone
   thresholds, channel naming, and the per-input level snapshot.
 - `mixer.rs`: Mixer modes and persisted selection/grouping preferences.
-- `obs.rs`: named OBS lists such as profiles and scene collections.
+- `obs.rs`: `ConnectionInfo`, what a connected OBS reported about itself,
+  and named OBS lists such as profiles and scene collections.
 - `output.rs`: stream and record status.
 - `role.rs`: local scene roles.
 - `scene.rs`: scene inventory.

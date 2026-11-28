@@ -231,29 +231,24 @@ fn crate_modules(names: &[&'static str]) -> Vec<Forbidden<'static>> {
     names.iter().copied().map(Forbidden::PathPrefix).collect()
 }
 
-/// KNOWN_DEBT: the adapter names `controller::event::ConnectionInfo`.
-/// P3-T01 moves that type into the domain and deletes this list.
-const OBS_FILES_NAMING_CONNECTION_INFO: &[&str] = &["obs/client.rs", "obs/mapper.rs"];
-
 /// The OBS adapter sits under the application, not beside it.
 ///
 /// `src/obs/` translates the protocol into domain types. If it reaches up
 /// into the controller, the UI, storage or a service, the protocol layer
 /// starts deciding application policy, and no fake OBS can stand in for it
-/// without dragging that policy along. The two known-debt files are exempt
-/// from the controller edge only; they still may not name the others.
+/// without dragging that policy along.
 #[test]
 fn obs_adapter_depends_only_on_domain_and_infra() {
-    let mut offenders = violations(
+    let offenders = violations(
         "obs",
-        &crate_modules(&["crate::ui", "crate::storage", "crate::services"]),
+        &crate_modules(&[
+            "crate::controller",
+            "crate::ui",
+            "crate::storage",
+            "crate::services",
+        ]),
         &[],
     );
-    offenders.extend(violations(
-        "obs",
-        &crate_modules(&["crate::controller"]),
-        OBS_FILES_NAMING_CONNECTION_INFO,
-    ));
 
     assert!(
         offenders.is_empty(),

@@ -11,10 +11,9 @@ use obws::client::ConnectConfig;
 use obws::requests::EventSubscription;
 use obws::Client;
 
-use crate::controller::event::ConnectionInfo;
 use crate::domain::audio::{volume_db_to_mul, MAX_VOLUME_DB, MIN_VOLUME_DB};
 use crate::domain::connection::credential::ObsPassword;
-use crate::domain::obs::ObsNamedList;
+use crate::domain::obs::{ConnectionInfo, ObsNamedList};
 use crate::domain::output::OutputStatus;
 use crate::domain::scene::SceneInventory;
 use crate::domain::stats::{ObsStats, StreamHealth};

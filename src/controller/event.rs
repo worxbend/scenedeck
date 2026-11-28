@@ -1,21 +1,12 @@
 use crate::domain::audio::{AudioInput, InputId};
 use crate::domain::graph::SceneGraph;
 use crate::domain::meter::InputLevels;
+pub use crate::domain::obs::ConnectionInfo;
 use crate::domain::obs::ObsNamedList;
 use crate::domain::output::{OutputKind, OutputRunState, OutputStatus};
 use crate::domain::scene::{SceneId, SceneInventory};
 use crate::domain::stats::{ObsStats, StreamHealth};
 use crate::infra::error::AppError;
-
-#[derive(Debug, Clone)]
-pub struct ConnectionInfo {
-    pub connection_id: String,
-    pub endpoint: String,
-    pub obs_version: String,
-    pub websocket_version: String,
-    pub available_requests: Vec<String>,
-    pub supported_image_formats: Vec<String>,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutputCommandFailureRecovery {

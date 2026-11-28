@@ -1,4 +1,16 @@
-//! Lightweight OBS list state used by selector widgets.
+//! OBS server metadata and lightweight list state used by selector widgets.
+
+/// What a connected OBS reported about itself, bound to the session that
+/// asked.
+#[derive(Debug, Clone)]
+pub struct ConnectionInfo {
+    pub connection_id: String,
+    pub endpoint: String,
+    pub obs_version: String,
+    pub websocket_version: String,
+    pub available_requests: Vec<String>,
+    pub supported_image_formats: Vec<String>,
+}
 
 /// Named OBS resources plus the currently selected item.
 #[derive(Debug, Default, Clone)]
