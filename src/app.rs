@@ -17,13 +17,11 @@ use crate::controller::state::AppState;
 use crate::infra::i18n;
 use crate::storage::config::{read_startup_config, LoadedConfig, PendingRepair};
 use crate::storage::registry::{read_registry, SceneRegistry};
-use crate::storage::secret;
 use crate::ui;
 
 struct StartupData {
     config: LoadedConfig,
     registry: Result<SceneRegistry, String>,
-    password: Option<crate::domain::connection::credential::ObsPassword>,
     bookmarks: Result<crate::storage::bookmarks::BookmarkArchive, String>,
     history: Result<crate::storage::report_history::HistoryArchive, String>,
 }
@@ -39,24 +37,13 @@ pub fn run() {
 
     let tokio_handle = runtime.handle().clone();
     let (event_tx, event_rx) = mpsc::sync_channel::<AppEvent>(128);
-    let startup = std::thread::spawn(|| {
-        let config = read_startup_config();
-        let password =
-            secret::get_obs_password(&config.config.connection_id).unwrap_or_else(|error| {
-                tracing::warn!(%error, "could not preload OBS password from keyring");
-                None
-            });
-        StartupData {
-            config,
-            registry: read_registry().map_err(|error| error.to_string()),
-            password,
-            bookmarks: crate::storage::bookmarks::read(&crate::storage::xdg::bookmarks_path())
-                .map_err(|error| error.to_string()),
-            history: crate::storage::report_history::read(
-                &crate::storage::xdg::report_history_path(),
-            )
+    let startup = std::thread::spawn(|| StartupData {
+        config: read_startup_config(),
+        registry: read_registry().map_err(|error| error.to_string()),
+        bookmarks: crate::storage::bookmarks::read(&crate::storage::xdg::bookmarks_path())
             .map_err(|error| error.to_string()),
-        }
+        history: crate::storage::report_history::read(&crate::storage::xdg::report_history_path())
+            .map_err(|error| error.to_string()),
     })
     .join()
     .unwrap_or_else(|_| {
@@ -68,7 +55,6 @@ pub fn run() {
                 pending_repair: None,
             },
             registry: Err("Startup registry reader failed".into()),
-            password: None,
             bookmarks: Err("Startup bookmark reader failed".into()),
             history: Err("Startup session history reader failed".into()),
         }
@@ -457,7 +443,6 @@ fn build_ui(
     let state = Rc::new(RefCell::new(AppState::new(
         loaded.config.clone(),
         registry,
-        startup.password.clone(),
         notices,
     )));
     persist_startup_migration(loaded);

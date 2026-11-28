@@ -267,7 +267,6 @@ fn session_and_collection_invalidation_preserve_local_preferences() {
         state.config.obs.host = "configured-host".into();
         state.config.appearance.mode = ThemeMode::Dark;
         state.registry.scene_order = vec!["Preferred".into()];
-        state.obs_password = Some("in-memory-fixture".into());
         state.startup_notices = vec!["local notice".into()];
         state.current_page = Page::Mixer;
         state.mixer.mode = MixerMode::PinnedScene;
@@ -293,26 +292,8 @@ fn session_and_collection_invalidation_preserve_local_preferences() {
             format!("{:?}", state.registry),
             format!("{:?}", before.registry)
         );
-        assert_eq!(
-            state
-                .obs_password
-                .as_ref()
-                .map(|password| password.expose()),
-            before
-                .obs_password
-                .as_ref()
-                .map(|password| password.expose())
-        );
         assert_eq!(state.startup_notices, before.startup_notices);
         assert_eq!(state.current_page, before.current_page);
         assert_eq!(state.mixer, before.mixer);
     }
-}
-
-#[test]
-fn debug_output_of_the_state_never_contains_the_obs_password() {
-    let mut state = app_state();
-    state.obs_password = Some("hunter2-fixture".into());
-
-    assert!(!format!("{state:?}").contains("hunter2-fixture"));
 }

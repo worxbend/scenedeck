@@ -118,9 +118,11 @@ only goes down: lower it in the change that lowers the count, never raise it.
 - Config reads and Secret Service access from the controller run on Tokio's
   blocking pool, never on the GTK thread.
 - Local persistence is **not** routed through the `AppCommand`/`AppEvent`
-  stream. Config/registry/password snapshots are cached in `AppState`; GTK page
+  stream. Config/registry snapshots are cached in `AppState`; GTK page
   callbacks mutate them and use `ui::background_io::run` for the blocking write,
-  with the completion callback returning to GTK.
+  with the completion callback returning to GTK. The OBS password is never
+  cached in `AppState`: the Settings connection editor reads it on the Secret
+  lane, and the controller reads the keyring itself at connect time.
 - Prefer domain types over raw strings in config where the value has a closed
   set of states (e.g. `theme_mode` serializes as a lowercase string but is
   `ThemeMode` in Rust).

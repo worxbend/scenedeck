@@ -58,7 +58,6 @@ fn native_settings_rows_render_external_status_and_notice_literally() {
     let state = Rc::new(RefCell::new(AppState::new(
         crate::storage::config::AppConfig::default(),
         crate::storage::registry::SceneRegistry::default(),
-        None,
         vec![payload.into()],
     )));
     state.borrow_mut().obs_status = ObsStatus::Error(payload.into());

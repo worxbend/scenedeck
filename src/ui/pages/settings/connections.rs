@@ -56,7 +56,7 @@ struct Editor {
     profiles: RefCell<Vec<(String, String)>>,
     updating: Cell<bool>,
     generation: Cell<u64>,
-    writes: RefCell<PasswordWrites>,
+    writes: PasswordWrites,
 }
 
 impl Editor {
@@ -115,7 +115,8 @@ impl Editor {
             port.set_text(&state.config.obs.port.to_string());
         }
         if let Some(password) = self.password.upgrade() {
-            password.set_text(state.obs_password.as_ref().map_or("", ObsPassword::expose));
+            // The keyring is the only copy; load_password fills the row.
+            password.set_text("");
         }
     }
 
@@ -123,7 +124,6 @@ impl Editor {
         self.generation.set(self.generation.get().wrapping_add(1));
         let generation = self.generation.get();
         self.busy(true);
-        self.nav.state.borrow_mut().obs_password = None;
         let editor = self.clone();
         persist_config_with(&self.nav, update, move |result, _| {
             if !editor.current(generation, &id) {
@@ -133,6 +133,12 @@ impl Editor {
             editor.load_password(id, generation);
         });
         self.refresh_fields();
+    }
+
+    fn load_selected_password(self: &Rc<Self>) {
+        let id = self.nav.state.borrow().config.connection_id.clone();
+        self.busy(true);
+        self.load_password(id, self.generation.get());
     }
 
     fn load_password(self: &Rc<Self>, id: String, generation: u64) {
@@ -148,8 +154,6 @@ impl Editor {
                 }
                 match result {
                     Ok(password) => {
-                        editor.nav.state.borrow_mut().obs_password = password.clone();
-                        *editor.writes.borrow_mut() = PasswordWrites::new(password.clone());
                         if let Some(row) = editor.password.upgrade() {
                             row.set_text(password.as_ref().map_or("", ObsPassword::expose));
                         }
@@ -158,8 +162,6 @@ impl Editor {
                         }
                     }
                     Err(error) => {
-                        editor.nav.state.borrow_mut().obs_password = None;
-                        *editor.writes.borrow_mut() = PasswordWrites::new(None);
                         editor.report_secret(Err(error));
                     }
                 }
@@ -244,14 +246,13 @@ impl Editor {
         let destination = id.clone();
         let secrets = self.secrets.clone();
         let editor = self.clone();
-        self.writes.borrow().submit(
+        self.writes.submit(
             password,
             move |password| secrets.write(&destination, password.as_ref()),
-            move |result, confirmed| {
+            move |result| {
                 if !editor.current(generation, &id) {
                     return;
                 }
-                editor.nav.state.borrow_mut().obs_password = confirmed;
                 editor.report_secret(result);
             },
         );
@@ -383,9 +384,10 @@ fn build_with_secrets(
         profiles: RefCell::new(Vec::new()),
         updating: Cell::new(false),
         generation: Cell::new(0),
-        writes: RefCell::new(PasswordWrites::new(nav.state.borrow().obs_password.clone())),
+        writes: PasswordWrites::default(),
     });
     editor.refresh_fields();
+    editor.load_selected_password();
     picker.connect_selected_notify({
         let editor = editor.clone();
         move |picker| {
@@ -578,7 +580,6 @@ mod tests {
             let state = Rc::new(RefCell::new(AppState::new(
                 config,
                 Default::default(),
-                None,
                 Vec::new(),
             )));
             let stack = gtk4::Stack::new();
@@ -635,7 +636,6 @@ mod tests {
                         port: 4456,
                     },
                 });
-            nav.state.borrow_mut().obs_password = Some("original-secret".into());
             let secrets = Arc::new(FakeSecrets::default());
             *secrets.passwords.lock().unwrap() = HashMap::from([
                 ("default".into(), "original-secret".into()),
@@ -659,6 +659,12 @@ mod tests {
                 .unwrap()
                 .downcast::<EntryRow>()
                 .unwrap();
+            assert!(
+                !group.is_sensitive(),
+                "the editor waits for its own keyring read"
+            );
+            flush();
+            assert!(group.is_sensitive());
             assert_eq!(password.text(), "original-secret");
 
             let (release, hold) = std::sync::mpsc::channel();
@@ -667,21 +673,13 @@ mod tests {
             password.emit_by_name::<()>("apply", &[]);
             picker.set_selected(1);
             assert_eq!(nav.state.borrow().config.connection_id, "event");
-            assert!(nav.state.borrow().obs_password.is_none());
             assert!(password.text().is_empty());
             assert!(!group.is_sensitive());
             release.send(()).unwrap();
             flush();
             assert_eq!(host.text(), "event.local");
             assert_eq!(password.text(), "event-secret");
-            {
-                let state = nav.state.borrow();
-                assert_eq!(
-                    state.obs_password.as_ref().map(ObsPassword::expose),
-                    Some("event-secret")
-                );
-                assert!(!format!("{state:?}").contains("event-secret"));
-            }
+            assert!(!format!("{:?}", nav.state.borrow()).contains("event-secret"));
             assert_eq!(*secrets.writes.lock().unwrap(), ["default"]);
 
             picker.set_selected(0);
@@ -697,7 +695,6 @@ mod tests {
             assert_ne!(new_id, "default");
             assert_ne!(new_id, "event");
             assert!(password.text().is_empty());
-            assert!(nav.state.borrow().obs_password.is_none());
             name.set_text("Podcast");
             host.set_text("podcast.local");
             name.emit_by_name::<()>("apply", &[]);
@@ -718,7 +715,6 @@ mod tests {
             picker.set_selected(1);
             flush();
             assert!(password.text().is_empty());
-            assert!(nav.state.borrow().obs_password.is_none());
             assert!(group.is_sensitive());
         });
     }

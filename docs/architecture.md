@@ -218,9 +218,12 @@ default and refuses any collection over its count cap or any value over 512
 bytes before the registry is replaced.
 
 Local persistence is deliberately not routed through the OBS `AppCommand` /
-`AppEvent` stream. Config, registry, and password snapshots are preloaded on a
-startup worker and cached in `AppState`. GTK page callbacks mutate those
-snapshots and use `ui::background_io` for filesystem and Secret Service work;
+`AppEvent` stream. Config and registry snapshots are preloaded on a startup
+worker and cached in `AppState`. The OBS password is not: startup does not
+read the keyring, and the Settings connection editor reads the selected
+connection's password on the Secret lane when it is built and on every
+selection. GTK page callbacks mutate those snapshots and use
+`ui::background_io` for filesystem and Secret Service work;
 completion callbacks return to the GTK thread for status updates. This keeps
 the OBS controller contract focused while preventing blocking persistence calls
 from running in GTK callbacks. `ui::persist` holds that protocol once: the

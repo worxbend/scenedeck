@@ -11,7 +11,7 @@ const PRODUCTION_LINE_CAP: usize = 800;
 
 /// Files already over the cap. Each split lowers its entry or removes it.
 const OVERSIZED_FILES: &[(&str, usize)] = &[
-    ("controller/state.rs", 1221),
+    ("controller/state.rs", 1214),
     ("obs/client.rs", 885),
     ("ui/pages/inventory.rs", 1505),
     ("ui/pages/live.rs", 952),
@@ -63,7 +63,7 @@ const APP_STATE_BORROWS: &[(&str, [usize; 3])] = &[
     ("ui/pages/live.rs", [0, 7, 7]),
     ("ui/pages/mixer.rs", [6, 6, 12]),
     ("ui/pages/settings.rs", [3, 9, 15]),
-    ("ui/pages/settings/connections.rs", [5, 16, 22]),
+    ("ui/pages/settings/connections.rs", [0, 13, 14]),
     ("ui/pages/stats.rs", [0, 10, 10]),
     ("ui/persist.rs", [3, 3, 7]),
     ("ui/persist/config.rs", [2, 0, 2]),

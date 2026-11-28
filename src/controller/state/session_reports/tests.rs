@@ -25,12 +25,7 @@ fn connect(state: &mut AppState, name: &str) {
 }
 
 fn state() -> AppState {
-    AppState::new(
-        Default::default(),
-        Default::default(),
-        Some("PASSWORD_MUST_NOT_EXPORT".into()),
-        Vec::new(),
-    )
+    AppState::new(Default::default(), Default::default(), Vec::new())
 }
 fn collect(state: &mut AppState) {
     state.collect_report(Instant::now(), crate::controller::workspace::unix_ms());
@@ -188,9 +183,6 @@ fn collector_preserves_transitions_and_noops_do_not_duplicate_evidence() {
     assert_eq!(outputs[2].status, OutputResultStatus::Observed);
     assert_ne!(outputs[1].id, outputs[2].id);
     assert_eq!(outputs[2].path.as_deref(), Some("/obs/replay.mkv"));
-    assert!(!serde_json::to_string(report)
-        .unwrap()
-        .contains("PASSWORD_MUST_NOT_EXPORT"));
 }
 
 #[test]

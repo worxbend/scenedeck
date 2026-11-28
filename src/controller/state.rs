@@ -453,7 +453,6 @@ pub struct AppState {
     pub config: AppConfig,
     pub registry: SceneRegistry,
     pub(crate) show_registry: ShowRegistryState,
-    pub obs_password: Option<crate::domain::connection::credential::ObsPassword>,
     pub current_page: Page,
     pub obs_status: ObsStatus,
     pub scene_inventory: SceneInventory,
@@ -499,12 +498,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(
-        config: AppConfig,
-        registry: SceneRegistry,
-        obs_password: Option<crate::domain::connection::credential::ObsPassword>,
-        startup_notices: Vec<String>,
-    ) -> Self {
+    pub fn new(config: AppConfig, registry: SceneRegistry, startup_notices: Vec<String>) -> Self {
         let mixer = config.mixer.clone();
         Self {
             preset_run: None,
@@ -522,7 +516,6 @@ impl AppState {
             config,
             registry,
             show_registry: ShowRegistryState::default(),
-            obs_password,
             current_page: Page::Live,
             obs_status: ObsStatus::Disconnected,
             scene_inventory: SceneInventory::default(),

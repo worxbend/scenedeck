@@ -428,6 +428,10 @@ actually using. A failed save does not trigger reconnect.
 Each connection’s OBS password is stored through the system Secret Service keyring. It is not
 written to configuration, registries, or workspace exports.
 
+Startup does not read the keyring. Settings reads the selected connection's
+password in the background, and the connection fields stay disabled until that
+read answers. Connecting reads the password from the keyring again.
+
 The default connection keeps the existing `obs-websocket` keyring username.
 Other connections use `obs-websocket:<connection-id>` under the same application
 ID, with no fallback to the default credential. Selecting another profile clears

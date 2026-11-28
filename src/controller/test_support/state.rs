@@ -5,15 +5,10 @@ use crate::controller::state::AppState;
 use crate::domain::audio::AudioInput;
 use crate::storage::{config::AppConfig, registry::SceneRegistry};
 
-/// A fresh state with default config, an empty registry, no stored password
-/// and no startup notice.
+/// A fresh state with default config, an empty registry and no startup
+/// notice.
 pub(crate) fn app_state() -> AppState {
-    AppState::new(
-        AppConfig::default(),
-        SceneRegistry::default(),
-        None,
-        Vec::new(),
-    )
+    AppState::new(AppConfig::default(), SceneRegistry::default(), Vec::new())
 }
 
 /// An unmuted input at unity gain (0 dB).
