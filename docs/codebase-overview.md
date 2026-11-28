@@ -91,7 +91,10 @@ Application orchestration.
   (panics on any config or keyring access) and `NoPassword` (a keyring with
   no saved password that panics on a write), and `dependencies()` built from
   them. `state.rs` holds the default `app_state()` and the unity-gain
-  `input(id)`. `loopback.rs` runs the real event loop over a `StatefulObs`
+  `input(id)`. `output.rs` reaches AppState's stream and record slots by
+  `OutputKind` (`status`, `command_error`, `set_status`, `set_pending`,
+  `succeed`, `fail_with_recovery`, `fail_command`, `other`), so one test table covers
+  both outputs. `loopback.rs` runs the real event loop over a `StatefulObs`
   (`pump`) and pushes Program and mute/volume echoes through it.
   `workspace.rs` builds a `WorkspaceRequest` bound to a loopback client.
 

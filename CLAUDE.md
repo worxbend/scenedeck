@@ -159,9 +159,12 @@ testable without a running OBS: `SessionRunner` (`session_controller.rs`),
 Reuse the shared fixtures in `src/controller/test_support/` (`app_state()`,
 `StaticConfigProvider`, `NoServices`, `NoPassword`, `dependencies()`,
 `recv_event`/`recv_matching`/`wait_until` with `TEST_DEADLINE`, `peel`,
-`graph_ready`, and the `StatefulObs` event-loop driver `loopback::pump`)
-and the widget lookups in `src/ui/test_support.rs` (`find_named`,
-`expect_named`, `find_where`) instead of local copies. Protocol tests use
+`graph_ready`, the `StatefulObs` event-loop driver `loopback::pump`, and
+`output::*`, which addresses the stream and record slots by `OutputKind` so
+a stream/record case is one table, not two tests), the domain fixtures in
+`src/domain/test_support/`, and the widget lookups in
+`src/ui/test_support.rs` (`find_named`, `expect_named`, `find_where`)
+instead of local copies. Protocol tests use
 the loopback OBS in `src/obs/testing/`: `wire.rs` speaks the handshake and
 frames, `scripted.rs` (`ScriptedObs`) answers requests in strict order or by
 `requestType`, with typed `Reply::Ok`/`Reply::Err`, counts each request
