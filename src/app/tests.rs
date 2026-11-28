@@ -191,7 +191,10 @@ fn native_last_detached_report_close_supports_cancel_retry_and_informed_abandon(
 }
 
 fn final_stats_exit(quit: bool) {
-    use crate::controller::{dependencies::ControllerDependencies, test_support::deps::NoServices};
+    use crate::controller::{
+        dependencies::ControllerDependencies,
+        test_support::deps::{NoPassword, NoServices},
+    };
     fn find(
         widget: &gtk4::Widget,
         predicate: &impl Fn(&gtk4::Widget) -> bool,
@@ -224,7 +227,7 @@ fn final_stats_exit(quit: bool) {
         let completed = completed.clone();
         move |app| {
             let (tx, rx) = mpsc::sync_channel(128);
-            let controller = Rc::new(RefCell::new(AppController::with_dependencies(runtime.clone(), tx.clone(), ControllerDependencies::new(std::sync::Arc::new(NoServices), std::sync::Arc::new(NoServices)))));
+            let controller = Rc::new(RefCell::new(AppController::with_dependencies(runtime.clone(), tx.clone(), ControllerDependencies::new(std::sync::Arc::new(NoServices), std::sync::Arc::new(NoPassword)))));
             let mut initial = crate::controller::test_support::state::app_state();
             initial.config.onboarding.welcome_shown = true;
             initial.configure_report_history(true, 8);

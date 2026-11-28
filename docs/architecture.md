@@ -181,6 +181,10 @@ mapped to domain types before crossing into the controller or UI.
 events into GTK-side updates. Runtime dependencies such as config loading and
 OBS password retrieval are injected through `controller::dependencies`; the
 default production adapters still use local storage and the system keyring.
+Passwords have one port, `domain::connection::credential::CredentialStore`,
+implemented once by `storage::secret::KeyringCredentialStore`. The window
+hands the controller's store to the Settings page builder, so the editor
+writes the password that Connect reads.
 The password travels as `domain::connection::credential::ObsPassword`, whose
 `Debug` is redacted, from the keyring to the OBS handshake. Its text is read
 only by `storage::secret`, `obs::client` and the Settings password field.

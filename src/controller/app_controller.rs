@@ -24,6 +24,7 @@ use crate::controller::refresh_controller::{
 use crate::controller::runtime::single_flight::{Admission, SingleFlight};
 use crate::controller::session_controller::SessionController;
 use crate::controller::state::MixerAudioRequest;
+use crate::domain::connection::credential::CredentialStore;
 use crate::infra::error::AppError;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::obs::client::ObsClient;
@@ -93,6 +94,11 @@ impl AppController {
             bitrate_sample,
             workspace,
         }
+    }
+
+    /// The credential store Connect reads, shared with the Settings editor.
+    pub(crate) fn credentials(&self) -> Arc<dyn CredentialStore> {
+        self.dependencies.credentials()
     }
 
     pub fn handle(&mut self, cmd: AppCommand) {

@@ -6,33 +6,29 @@
 
 use std::sync::Arc;
 
-use crate::domain::connection::credential::ObsPassword;
+use crate::domain::connection::credential::{CredentialStore, ObsPassword};
 use crate::infra::error::AppError;
 use crate::storage::config::{read_config, AppConfig, ConfigStartupNotice, LoadedConfig};
-use crate::storage::secret;
+use crate::storage::secret::KeyringCredentialStore;
 
 pub trait AppConfigProvider: Send + Sync {
     fn load_config(&self) -> Result<AppConfig, AppError>;
 }
 
-pub trait ObsPasswordProvider: Send + Sync {
-    fn obs_password(&self, _connection_id: &str) -> Result<Option<ObsPassword>, AppError>;
-}
-
 #[derive(Clone)]
 pub struct ControllerDependencies {
     config_provider: Arc<dyn AppConfigProvider>,
-    password_provider: Arc<dyn ObsPasswordProvider>,
+    credentials: Arc<dyn CredentialStore>,
 }
 
 impl ControllerDependencies {
     pub fn new(
         config_provider: Arc<dyn AppConfigProvider>,
-        password_provider: Arc<dyn ObsPasswordProvider>,
+        credentials: Arc<dyn CredentialStore>,
     ) -> Self {
         Self {
             config_provider,
-            password_provider,
+            credentials,
         }
     }
 
@@ -41,7 +37,13 @@ impl ControllerDependencies {
     }
 
     pub fn obs_password(&self, connection_id: &str) -> Result<Option<ObsPassword>, AppError> {
-        self.password_provider.obs_password(connection_id)
+        self.credentials.read(connection_id)
+    }
+
+    /// The credential store the controller reads, for the Settings editor
+    /// to write through: a password saved there is the one Connect reads.
+    pub fn credentials(&self) -> Arc<dyn CredentialStore> {
+        Arc::clone(&self.credentials)
     }
 }
 
@@ -49,7 +51,7 @@ impl Default for ControllerDependencies {
     fn default() -> Self {
         Self::new(
             Arc::new(FileAppConfigProvider),
-            Arc::new(KeyringObsPasswordProvider),
+            Arc::new(KeyringCredentialStore),
         )
     }
 }
@@ -79,14 +81,6 @@ fn stored_config(loaded: LoadedConfig) -> Result<AppConfig, AppError> {
     }
 }
 
-pub struct KeyringObsPasswordProvider;
-
-impl ObsPasswordProvider for KeyringObsPasswordProvider {
-    fn obs_password(&self, connection_id: &str) -> Result<Option<ObsPassword>, AppError> {
-        secret::get_obs_password(connection_id)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,12 +88,20 @@ mod tests {
     use crate::domain::appearance::{ThemeMode, ThemePreference};
     use crate::storage::config::{LiveConfig, ObsConfig};
 
-    struct StaticPasswordProvider(&'static str);
+    struct StaticCredentials(&'static str);
 
-    impl ObsPasswordProvider for StaticPasswordProvider {
-        fn obs_password(&self, connection_id: &str) -> Result<Option<ObsPassword>, AppError> {
+    impl CredentialStore for StaticCredentials {
+        fn read(&self, connection_id: &str) -> Result<Option<ObsPassword>, AppError> {
             assert_eq!(connection_id, "studio");
             Ok(Some(ObsPassword::from(self.0)))
+        }
+
+        fn write(&self, _connection_id: &str, _password: &ObsPassword) -> Result<(), AppError> {
+            panic!("the controller never writes a password")
+        }
+
+        fn delete(&self, _connection_id: &str) -> Result<(), AppError> {
+            panic!("the controller never deletes a password")
         }
     }
 
@@ -123,15 +125,17 @@ mod tests {
             ..AppConfig::default()
         };
 
+        let credentials: Arc<dyn CredentialStore> = Arc::new(StaticCredentials("secret"));
         let dependencies = ControllerDependencies::new(
             Arc::new(StaticConfigProvider(config)),
-            Arc::new(StaticPasswordProvider("secret")),
+            credentials.clone(),
         );
 
         let loaded = dependencies.load_config().unwrap();
         assert_eq!(loaded.obs.host, "192.0.2.10");
         let password = dependencies.obs_password(&loaded.connection_id).unwrap();
         assert_eq!(password.as_ref().map(ObsPassword::expose), Some("secret"));
+        assert!(Arc::ptr_eq(&dependencies.credentials(), &credentials));
     }
 
     fn loaded(startup_notice: Option<ConfigStartupNotice>) -> LoadedConfig {

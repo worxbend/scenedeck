@@ -1,7 +1,6 @@
 //! Settings page: appearance and OBS connection.
 
-use std::path::PathBuf;
-use std::rc::Rc;
+use std::{path::PathBuf, rc::Rc, sync::Arc};
 
 use crate::ui::{index_of, presenters::save_error::save_error_text, string_list};
 use adw::{
@@ -11,6 +10,7 @@ use i18n_embed_fl::fl;
 
 use crate::controller::state::ObsStatus;
 use crate::domain::appearance::{Language, MotionLevel, ThemeId, ThemeMode};
+use crate::domain::connection::credential::CredentialStore;
 use crate::domain::hotkey::{
     LeaderKey, SceneHotkeyConfig, SceneHotkeyStyle, MAX_LEADER_TIMEOUT_MS, MAX_SLOTS,
     MIN_LEADER_TIMEOUT_MS,
@@ -24,7 +24,10 @@ use crate::ui::theme::ThemeManager;
 
 use super::super::window::apply_color_scheme;
 
-pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
+pub(crate) fn build(
+    nav: &NavigationContext,
+    credentials: Arc<dyn CredentialStore>,
+) -> (gtk4::Widget, Rc<dyn Fn()>) {
     let page = PreferencesPage::builder()
         .title(fl!(LANGUAGE_LOADER, "settings-page-title"))
         .icon_name("preferences-system-symbolic")
@@ -35,11 +38,11 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
 
     let cfg = nav.state.borrow().config.clone();
 
-    let appearance_group = build_appearance_group(&nav, &cfg);
-    let language_group = build_language_group(&nav, &cfg);
-    let (obs_group, status_row) = build_obs_group(&nav, &cfg);
-    let output_group = build_output_group(&nav, &cfg);
-    let hotkey_group = build_hotkey_group(&nav);
+    let appearance_group = build_appearance_group(nav, &cfg);
+    let language_group = build_language_group(nav, &cfg);
+    let (obs_group, status_row) = connections::build(nav, credentials);
+    let output_group = build_output_group(nav, &cfg);
+    let hotkey_group = build_hotkey_group(nav);
 
     let status_group = PreferencesGroup::new();
     with_icon(&status_row, "nf-md-lan-connect-symbolic");
@@ -68,8 +71,8 @@ pub(crate) fn build(nav: NavigationContext) -> (gtk4::Widget, Rc<dyn Fn()>) {
     page.add(&obs_group);
     page.add(&output_group);
     page.add(&hotkey_group);
-    page.add(&crate::ui::action_shortcuts::settings_group(&nav));
-    page.add(&crate::ui::report_history::settings_group(&nav));
+    page.add(&crate::ui::action_shortcuts::settings_group(nav));
+    page.add(&crate::ui::report_history::settings_group(nav));
     page.add(&status_group);
 
     // Closure that refreshes the status row when navigating back to this page
@@ -440,10 +443,6 @@ fn build_language_group(nav: &NavigationContext, cfg: &AppConfig) -> Preferences
 
 mod connections;
 mod startup_notices;
-
-fn build_obs_group(nav: &NavigationContext, _cfg: &AppConfig) -> (PreferencesGroup, ActionRow) {
-    connections::build(nav)
-}
 
 /// Which output actions ask for confirmation first.
 fn build_output_group(nav: &NavigationContext, cfg: &AppConfig) -> PreferencesGroup {

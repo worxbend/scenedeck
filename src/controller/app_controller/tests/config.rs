@@ -12,6 +12,7 @@ use crate::controller::app_controller::{load_config_blocking, AppController};
 use crate::controller::command::AppCommand;
 use crate::controller::dependencies::ControllerDependencies;
 use crate::controller::event::AppEvent;
+use crate::controller::test_support::deps::NoPassword;
 use crate::controller::test_support::events::recv_event;
 use crate::controller::test_support::state::app_state;
 use crate::infra::error::AppError;
@@ -30,17 +31,6 @@ impl crate::controller::dependencies::AppConfigProvider for ThreadRecordingConfi
     }
 }
 
-struct EmptyPasswordProvider;
-
-impl crate::controller::dependencies::ObsPasswordProvider for EmptyPasswordProvider {
-    fn obs_password(
-        &self,
-        _connection_id: &str,
-    ) -> Result<Option<crate::domain::connection::credential::ObsPassword>, AppError> {
-        Ok(None)
-    }
-}
-
 #[test]
 fn config_loading_runs_on_blocking_worker() {
     let runtime = Runtime::new().expect("test runtime");
@@ -51,7 +41,7 @@ fn config_loading_runs_on_blocking_worker() {
             caller,
             observed: Arc::clone(&observed),
         }),
-        Arc::new(EmptyPasswordProvider),
+        Arc::new(NoPassword),
     );
 
     runtime
@@ -72,10 +62,8 @@ impl crate::controller::dependencies::AppConfigProvider for PanickingConfigProvi
 #[test]
 fn a_crashed_config_worker_is_a_storage_error_not_default_settings() {
     let runtime = Runtime::new().expect("test runtime");
-    let dependencies = ControllerDependencies::new(
-        Arc::new(PanickingConfigProvider),
-        Arc::new(EmptyPasswordProvider),
-    );
+    let dependencies =
+        ControllerDependencies::new(Arc::new(PanickingConfigProvider), Arc::new(NoPassword));
 
     let loaded = runtime.block_on(load_config_blocking(dependencies));
 
@@ -101,7 +89,7 @@ async fn connected_controller_with_unusable_config() -> (
         tx,
         ControllerDependencies::new(
             Arc::new(crate::controller::test_support::deps::UnusableConfigProvider),
-            Arc::new(EmptyPasswordProvider),
+            Arc::new(NoPassword),
         ),
     );
     assert!(controller.session.scope().install(client));

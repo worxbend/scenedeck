@@ -155,9 +155,10 @@ time via `rust-embed`. Adding a string means adding it to **every** locale:
 Controller components accept injectable boundaries so lifecycle behavior is
 testable without a running OBS: `SessionRunner` (`session_controller.rs`),
 `FakeOutputCommandClient` (`output_controller.rs`), and
-`ControllerDependencies` for config/password. Reuse the shared fixtures in
-`src/controller/test_support/` (`app_state()`, `StaticConfigProvider`,
-`NoServices`, `recv_event`/`recv_matching`/`wait_until` with `TEST_DEADLINE`)
+`ControllerDependencies` for config and the `CredentialStore` password port.
+Reuse the shared fixtures in `src/controller/test_support/` (`app_state()`,
+`StaticConfigProvider`, `NoServices`, `NoPassword`,
+`recv_event`/`recv_matching`/`wait_until` with `TEST_DEADLINE`)
 and the widget lookups in `src/ui/test_support.rs` (`find_named`,
 `expect_named`, `find_where`) instead of local copies. Protocol tests use
 the loopback OBS in `src/obs/testing/`: `wire.rs` speaks the handshake and

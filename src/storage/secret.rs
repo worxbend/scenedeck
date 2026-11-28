@@ -7,7 +7,7 @@
 use keyring::{Entry, Error as KeyringError};
 
 use crate::app_info::APP_ID;
-use crate::domain::connection::credential::ObsPassword;
+use crate::domain::connection::credential::{CredentialStore, ObsPassword};
 use crate::infra::error::AppError;
 
 const SECRET_USER: &str = "obs-websocket";
@@ -30,27 +30,29 @@ fn entry(connection_id: &str) -> Result<Entry, AppError> {
     Entry::new(APP_ID, &secret_user(connection_id)?).map_err(AppError::storage)
 }
 
-/// Retrieve the stored OBS password, or `None` if none is set.
-pub fn get_obs_password(connection_id: &str) -> Result<Option<ObsPassword>, AppError> {
-    match entry(connection_id)?.get_password() {
-        Ok(password) => Ok(Some(ObsPassword::from(password))),
-        Err(KeyringError::NoEntry) => Ok(None),
-        Err(e) => Err(AppError::storage(e)),
+/// The production [`CredentialStore`]: the Linux Secret Service.
+pub struct KeyringCredentialStore;
+
+impl CredentialStore for KeyringCredentialStore {
+    fn read(&self, connection_id: &str) -> Result<Option<ObsPassword>, AppError> {
+        match entry(connection_id)?.get_password() {
+            Ok(password) => Ok(Some(ObsPassword::from(password))),
+            Err(KeyringError::NoEntry) => Ok(None),
+            Err(e) => Err(AppError::storage(e)),
+        }
     }
-}
 
-/// Store the OBS password in the keyring (overwriting any existing value).
-pub fn set_obs_password(connection_id: &str, password: &ObsPassword) -> Result<(), AppError> {
-    entry(connection_id)?
-        .set_password(password.expose())
-        .map_err(AppError::storage)
-}
+    fn write(&self, connection_id: &str, password: &ObsPassword) -> Result<(), AppError> {
+        entry(connection_id)?
+            .set_password(password.expose())
+            .map_err(AppError::storage)
+    }
 
-/// Delete the stored OBS password.  Succeeds even if none was set.
-pub fn delete_obs_password(connection_id: &str) -> Result<(), AppError> {
-    match entry(connection_id)?.delete_credential() {
-        Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
-        Err(e) => Err(AppError::storage(e)),
+    fn delete(&self, connection_id: &str) -> Result<(), AppError> {
+        match entry(connection_id)?.delete_credential() {
+            Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
+            Err(e) => Err(AppError::storage(e)),
+        }
     }
 }
 

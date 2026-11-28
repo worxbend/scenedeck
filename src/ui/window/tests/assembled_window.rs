@@ -9,7 +9,8 @@ use crate::ui::window::*;
 fn native_assembled_window_releases_shell_sources_while_stats_popout_survives() {
     crate::ui::native_test!(|| {
         use crate::controller::{
-            dependencies::ControllerDependencies, test_support::deps::NoServices,
+            dependencies::ControllerDependencies,
+            test_support::deps::{NoPassword, NoServices},
         };
         fn find(
             widget: &gtk4::Widget,
@@ -42,7 +43,7 @@ fn native_assembled_window_releases_shell_sources_while_stats_popout_survives() 
             tx.clone(),
             ControllerDependencies::new(
                 std::sync::Arc::new(NoServices),
-                std::sync::Arc::new(NoServices),
+                std::sync::Arc::new(NoPassword),
             ),
         )));
         let weak_controller = Rc::downgrade(&controller);

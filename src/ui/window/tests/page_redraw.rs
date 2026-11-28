@@ -1,6 +1,9 @@
 //! Page redraws: audio events, background reads and refreshes must not
 //! blink pages or drop live previews.
 
+use std::sync::Arc;
+
+use crate::controller::test_support::deps::NoPassword;
 use crate::domain::audio::AudioInput;
 use crate::ui::window::*;
 
@@ -48,7 +51,7 @@ fn native_audio_events_and_background_reads_do_not_blink_pages() {
             state.available_requests.push("SetInputMute".into());
         }
         let mut sources = WindowSources::default();
-        let (live, refreshers) = add_pages(&stack, &nav, &mut sources);
+        let (live, refreshers) = add_pages(&stack, &nav, &mut sources, Arc::new(NoPassword));
         let (_, _, sidebar_controls) = sidebar::build(&nav);
         let ui = EventUiContext {
             live: live.clone(),
@@ -251,7 +254,7 @@ fn native_refresh_button_waits_for_new_data_before_redrawing() {
         let (nav, stack, _runtime, _events) = crate::ui::test_support::navigation();
         nav.state.borrow_mut().current_page = Page::Graph;
         let mut sources = WindowSources::default();
-        let (_live, _refreshers) = add_pages(&stack, &nav, &mut sources);
+        let (_live, _refreshers) = add_pages(&stack, &nav, &mut sources, Arc::new(NoPassword));
         let app = adw::Application::builder()
             .application_id("io.github.worxbend.scenedeck.RefreshFixture")
             .flags(gio::ApplicationFlags::NON_UNIQUE)
@@ -308,7 +311,7 @@ fn native_identical_inventory_readback_keeps_live_preview_paintables() {
             state.workspace.snapshot = Some(Default::default());
         }
         let mut sources = WindowSources::default();
-        let (live, refreshers) = add_pages(&stack, &nav, &mut sources);
+        let (live, refreshers) = add_pages(&stack, &nav, &mut sources, Arc::new(NoPassword));
         let (_, _, sidebar_controls) = sidebar::build(&nav);
         let ui = EventUiContext {
             live: live.clone(),

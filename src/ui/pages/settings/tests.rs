@@ -1,4 +1,6 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
+
+use crate::controller::test_support::deps::NoPassword;
 
 #[test]
 #[ignore = "requires a disposable GTK display; no keyring or OBS access"]
@@ -6,7 +8,7 @@ fn native_settings_constructor_releases_entries_and_hotkey_rows() {
     crate::ui::native_test!(|| {
         use adw::prelude::*;
         let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
-        let (page, refresh) = super::build(nav);
+        let (page, refresh) = super::build(&nav, Arc::new(NoPassword));
         fn rows(widget: &gtk4::Widget, tracked: &mut Vec<glib::WeakRef<gtk4::Widget>>) {
             if widget.is::<adw::EntryRow>()
                 || widget.is::<adw::ComboRow>()
@@ -69,7 +71,7 @@ fn native_settings_rows_render_external_status_and_notice_literally() {
             tx,
         ))),
     );
-    let (page, _) = super::build(nav);
+    let (page, _) = super::build(&nav, Arc::new(NoPassword));
     fn visit(widget: &gtk4::Widget, payload: &str, literal_count: &mut usize) {
         if let Some(row) = widget.downcast_ref::<adw::PreferencesRow>() {
             assert!(

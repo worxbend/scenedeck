@@ -11,12 +11,9 @@ use i18n_embed_fl::fl;
 
 use crate::{
     controller::command::AppCommand,
-    domain::connection::credential::ObsPassword,
+    domain::connection::credential::{CredentialStore, ObsPassword},
     infra::{error::AppError, i18n::LANGUAGE_LOADER},
-    storage::{
-        config::{AppConfig, ObsConfig, SavedConnection},
-        secret,
-    },
+    storage::config::{AppConfig, ObsConfig, SavedConnection},
     ui::{navigation::NavigationContext, persist::persist_config_with, string_list},
 };
 
@@ -24,27 +21,9 @@ mod password_writes;
 
 use password_writes::PasswordWrites;
 
-trait ConnectionSecrets: Send + Sync {
-    fn read(&self, id: &str) -> Result<Option<ObsPassword>, AppError>;
-    fn write(&self, id: &str, password: Option<&ObsPassword>) -> Result<(), AppError>;
-}
-
-struct KeyringSecrets;
-impl ConnectionSecrets for KeyringSecrets {
-    fn read(&self, id: &str) -> Result<Option<ObsPassword>, AppError> {
-        secret::get_obs_password(id)
-    }
-    fn write(&self, id: &str, password: Option<&ObsPassword>) -> Result<(), AppError> {
-        match password {
-            Some(password) => secret::set_obs_password(id, password),
-            None => secret::delete_obs_password(id),
-        }
-    }
-}
-
 struct Editor {
     nav: NavigationContext,
-    secrets: Arc<dyn ConnectionSecrets>,
+    credentials: Arc<dyn CredentialStore>,
     group: glib::WeakRef<PreferencesGroup>,
     picker: glib::WeakRef<ComboRow>,
     name: glib::WeakRef<EntryRow>,
@@ -143,11 +122,11 @@ impl Editor {
 
     fn load_password(self: &Rc<Self>, id: String, generation: u64) {
         let destination = id.clone();
-        let secrets = self.secrets.clone();
+        let credentials = self.credentials.clone();
         let editor = self.clone();
         crate::ui::background_io::run_serialized(
             crate::ui::background_io::SerialLane::Secret,
-            move || secrets.read(&destination),
+            move || credentials.read(&destination),
             move |result| {
                 if !editor.current(generation, &id) {
                     return;
@@ -244,11 +223,14 @@ impl Editor {
         let id = self.nav.state.borrow().config.connection_id.clone();
         let generation = self.generation.get();
         let destination = id.clone();
-        let secrets = self.secrets.clone();
+        let credentials = self.credentials.clone();
         let editor = self.clone();
         self.writes.submit(
             password,
-            move |password| secrets.write(&destination, password.as_ref()),
+            move |password| match password {
+                Some(password) => credentials.write(&destination, password),
+                None => credentials.delete(&destination),
+            },
             move |result| {
                 if !editor.current(generation, &id) {
                     return;
@@ -281,13 +263,9 @@ impl Editor {
     }
 }
 
-pub(super) fn build(nav: &NavigationContext) -> (PreferencesGroup, ActionRow) {
-    build_with_secrets(nav, Arc::new(KeyringSecrets))
-}
-
-fn build_with_secrets(
+pub(super) fn build(
     nav: &NavigationContext,
-    secrets: Arc<dyn ConnectionSecrets>,
+    credentials: Arc<dyn CredentialStore>,
 ) -> (PreferencesGroup, ActionRow) {
     let group = PreferencesGroup::builder()
         .title(fl!(LANGUAGE_LOADER, "settings-obs-connection-title"))
@@ -372,7 +350,7 @@ fn build_with_secrets(
     super::with_entry_icon(&password, "nf-md-key-variant-symbolic");
     let editor = Rc::new(Editor {
         nav: nav.clone(),
-        secrets,
+        credentials,
         group: group.downgrade(),
         picker: picker.downgrade(),
         name: name.downgrade(),
@@ -467,7 +445,15 @@ mod tests {
         fail_read: AtomicBool,
     }
 
-    impl ConnectionSecrets for FakeSecrets {
+    impl FakeSecrets {
+        fn wait_for_release(&self) {
+            if let Some(hold) = self.hold_write.lock().unwrap().take() {
+                hold.recv_timeout(Duration::from_secs(10)).unwrap();
+            }
+        }
+    }
+
+    impl CredentialStore for FakeSecrets {
         fn read(&self, id: &str) -> Result<Option<ObsPassword>, AppError> {
             if self.fail_read.load(Ordering::SeqCst) {
                 return Err(AppError::storage(std::io::Error::other(
@@ -481,22 +467,19 @@ mod tests {
                 .get(id)
                 .map(|password| ObsPassword::from(password.as_str())))
         }
-        fn write(&self, id: &str, password: Option<&ObsPassword>) -> Result<(), AppError> {
-            if let Some(hold) = self.hold_write.lock().unwrap().take() {
-                hold.recv_timeout(Duration::from_secs(10)).unwrap();
-            }
+        fn write(&self, id: &str, password: &ObsPassword) -> Result<(), AppError> {
+            self.wait_for_release();
             self.writes.lock().unwrap().push(id.into());
-            match password {
-                Some(password) => {
-                    self.passwords
-                        .lock()
-                        .unwrap()
-                        .insert(id.into(), password.expose().into());
-                }
-                None => {
-                    self.passwords.lock().unwrap().remove(id);
-                }
-            }
+            self.passwords
+                .lock()
+                .unwrap()
+                .insert(id.into(), password.expose().into());
+            Ok(())
+        }
+        fn delete(&self, id: &str) -> Result<(), AppError> {
+            self.wait_for_release();
+            self.writes.lock().unwrap().push(id.into());
+            self.passwords.lock().unwrap().remove(id);
             Ok(())
         }
     }
@@ -534,7 +517,7 @@ mod tests {
         crate::ui::native_test!(|| {
             use crate::controller::{
                 app_controller::AppController,
-                dependencies::{AppConfigProvider, ControllerDependencies, ObsPasswordProvider},
+                dependencies::{AppConfigProvider, ControllerDependencies},
                 state::AppState,
             };
             #[derive(Default)]
@@ -547,12 +530,18 @@ mod tests {
                     Ok(config)
                 }
             }
-            impl ObsPasswordProvider for Observed {
-                fn obs_password(&self, id: &str) -> Result<Option<ObsPassword>, AppError> {
+            impl CredentialStore for Observed {
+                fn read(&self, id: &str) -> Result<Option<ObsPassword>, AppError> {
                     assert_eq!(id, "event");
                     Err(AppError::storage(std::io::Error::other(
                         "fixture stops before OBS connection",
                     )))
+                }
+                fn write(&self, _id: &str, _password: &ObsPassword) -> Result<(), AppError> {
+                    panic!("the controller never writes a password")
+                }
+                fn delete(&self, _id: &str) -> Result<(), AppError> {
+                    panic!("the controller never deletes a password")
                 }
             }
             let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -584,7 +573,7 @@ mod tests {
             )));
             let stack = gtk4::Stack::new();
             let nav = NavigationContext::new(state, stack, controller);
-            let (group, _status) = build_with_secrets(&nav, Arc::new(FakeSecrets::default()));
+            let (group, _status) = build(&nav, Arc::new(FakeSecrets::default()));
             let connect = named(&group.clone().upcast(), "settings-connection-connect")
                 .unwrap()
                 .downcast::<gtk4::Button>()
@@ -641,7 +630,7 @@ mod tests {
                 ("default".into(), "original-secret".into()),
                 ("event".into(), "event-secret".into()),
             ]);
-            let (group, _status) = build_with_secrets(&nav, secrets.clone());
+            let (group, _status) = build(&nav, secrets.clone());
             let root = group.clone().upcast::<gtk4::Widget>();
             let picker = named(&root, "settings-connection-picker")
                 .unwrap()

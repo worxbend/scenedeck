@@ -1,4 +1,7 @@
 //! Mapped-window checks: widget identity alone does not detect layout flashes.
+use std::sync::Arc;
+
+use crate::controller::test_support::deps::NoPassword;
 use crate::domain::{audio::AudioInput, role::SceneRole, scene::Scene};
 use crate::ui::test_support::{navigation, pump};
 use crate::ui::window::*;
@@ -239,7 +242,7 @@ fn native_scene_readback_retains_audio_and_page_geometry() {
             state.apply_active_audio(Some("Main".into()), Ok(inputs.clone()));
         }
         let mut sources = WindowSources::default();
-        let (live, refreshers) = add_pages(&stack, &nav, &mut sources);
+        let (live, refreshers) = add_pages(&stack, &nav, &mut sources, Arc::new(NoPassword));
         let (_, _, sidebar_controls) = sidebar::build(&nav);
         let ui = EventUiContext {
             live: live.clone(),

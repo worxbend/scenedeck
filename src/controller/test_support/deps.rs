@@ -1,7 +1,7 @@
 //! Fake `ControllerDependencies` providers.
 
-use crate::controller::dependencies::{AppConfigProvider, ObsPasswordProvider};
-use crate::domain::connection::credential::ObsPassword;
+use crate::controller::dependencies::AppConfigProvider;
+use crate::domain::connection::credential::{CredentialStore, ObsPassword};
 use crate::infra::error::AppError;
 use crate::storage::config::AppConfig;
 
@@ -34,8 +34,34 @@ impl AppConfigProvider for NoServices {
     }
 }
 
-impl ObsPasswordProvider for NoServices {
-    fn obs_password(&self, _connection_id: &str) -> Result<Option<ObsPassword>, AppError> {
+impl CredentialStore for NoServices {
+    fn read(&self, _connection_id: &str) -> Result<Option<ObsPassword>, AppError> {
         panic!("fixture must not access the keyring")
+    }
+
+    fn write(&self, _connection_id: &str, _password: &ObsPassword) -> Result<(), AppError> {
+        panic!("fixture must not access the keyring")
+    }
+
+    fn delete(&self, _connection_id: &str) -> Result<(), AppError> {
+        panic!("fixture must not access the keyring")
+    }
+}
+
+/// A keyring with no saved password, for fixtures that may read it but
+/// must never change it.
+pub(crate) struct NoPassword;
+
+impl CredentialStore for NoPassword {
+    fn read(&self, _connection_id: &str) -> Result<Option<ObsPassword>, AppError> {
+        Ok(None)
+    }
+
+    fn write(&self, _connection_id: &str, _password: &ObsPassword) -> Result<(), AppError> {
+        panic!("fixture must not write a password")
+    }
+
+    fn delete(&self, _connection_id: &str) -> Result<(), AppError> {
+        panic!("fixture must not delete a password")
     }
 }

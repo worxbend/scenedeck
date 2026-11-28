@@ -76,8 +76,9 @@ Application orchestration.
   UI tests that drive the controller. `events.rs` holds `TEST_DEADLINE` and
   the bounded waits `recv_event`, `recv_matching` (async, they yield instead
   of blocking the runtime) and `wait_until` (synchronous tests only).
-  `deps.rs` holds the provider fakes `StaticConfigProvider` and `NoServices`
-  (panics on any config or keyring access). `state.rs` holds the default
+  `deps.rs` holds the provider fakes `StaticConfigProvider`, `NoServices`
+  (panics on any config or keyring access) and `NoPassword` (a keyring with
+  no saved password that panics on a write). `state.rs` holds the default
   `app_state()` and the unity-gain `input(id)`.
 
 `src/domain/`
@@ -89,6 +90,8 @@ Application data types that do not depend on GTK or OBS crate types.
 - `connection/credential.rs`: `ObsPassword`, the OBS password. Its `Debug`
   prints a placeholder and it has no `Display`; `expose()` is called only at
   the keyring, the OBS handshake and the Settings password field.
+  `CredentialStore` is the one port for reading, writing and deleting a
+  connection's password; the controller and the Settings editor share it.
 - `diagnostic.rs`: Doctor diagnostic model.
 - `graph.rs`: scene dependency graph.
 - `hotkey.rs`: Live scene-shortcut preferences, slot numbering, and the key
@@ -168,7 +171,8 @@ Persistence and local machine integration.
   length caps, checked before anything is written.
 - `schema_version.rs`: reads a JSON file's `version` and refuses to write
   over a file from a newer build.
-- `secret.rs`: OBS password storage through Secret Service.
+- `secret.rs`: `KeyringCredentialStore`, the Secret Service implementation of
+  `CredentialStore`.
 - `xdg.rs`: XDG config path resolution.
 - `test_support.rs` (tests only): `TempDir`, a scratch directory removed
   with its contents on drop.

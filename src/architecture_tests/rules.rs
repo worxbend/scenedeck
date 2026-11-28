@@ -263,6 +263,35 @@ fn obs_adapter_depends_only_on_domain_and_infra() {
     );
 }
 
+/// OBS passwords go through one port.
+///
+/// `CredentialStore` is the only way to read or write a password, and
+/// `storage::secret::KeyringCredentialStore` is its only implementation,
+/// built once by the controller's dependencies. The controller and the
+/// Settings editor once had a keyring trait each, so a fix to one path
+/// missed the other.
+#[test]
+fn the_keyring_is_reached_only_through_the_credential_store() {
+    let mut offenders = violations(
+        "",
+        &[Forbidden::PathPrefix("keyring")],
+        &["storage/secret.rs"],
+    );
+    offenders.extend(violations(
+        "",
+        &[Forbidden::PathPrefix("crate::storage::secret")],
+        &["controller/dependencies.rs"],
+    ));
+
+    assert!(
+        offenders.is_empty(),
+        "Read and write OBS passwords through `CredentialStore`; only \
+         src/storage/secret.rs uses `keyring`, and only \
+         src/controller/dependencies.rs builds its store:\n{}",
+        offenders.join("\n")
+    );
+}
+
 /// Storage persists domain snapshots and knows nothing above them.
 ///
 /// `src/storage/` is called by the controller and by GTK-side persistence.

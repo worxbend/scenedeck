@@ -6,7 +6,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 type RefreshFn = Rc<dyn Fn()>;
@@ -95,8 +95,9 @@ pub fn build_main_window(
         .build();
     content_stack.add_css_class("scenedeck-content-stack");
 
+    let credentials = controller.borrow().credentials();
     let nav = NavigationContext::new(state.clone(), content_stack.clone(), controller);
-    let (live_handle, refreshers) = add_pages(&content_stack, &nav, &mut sources);
+    let (live_handle, refreshers) = add_pages(&content_stack, &nav, &mut sources, credentials);
 
     let current_page = state.borrow().current_page;
     content_stack.set_visible_child_name(current_page.id());
@@ -281,15 +282,15 @@ fn add_pages(
     content_stack: &Stack,
     nav: &NavigationContext,
     sources: &mut WindowSources,
+    credentials: Arc<dyn crate::domain::connection::credential::CredentialStore>,
 ) -> (Rc<LivePageHandle>, PageRefreshers) {
-    // Live returns a handle; the others return (widget, refresh_fn).
     let live_handle = Rc::new(crate::ui::pages::live::build(nav.clone()));
     let (stats_widget, stats_refresh, stats_popout) = crate::ui::pages::stats::build(nav.clone());
     let (mixer_widget, mixer_refresh, mixer_handle) = crate::ui::pages::mixer::build(nav.clone());
     let (graph_widget, graph_refresh) = crate::ui::pages::graph::build(nav.clone());
     let (inventory_widget, inventory_refresh) = crate::ui::pages::inventory::build(nav.clone());
     let (doctor_widget, doctor_refresh) = crate::ui::pages::doctor::build(nav.clone());
-    let (settings_widget, settings_refresh) = crate::ui::pages::settings::build(nav.clone());
+    let (settings_widget, settings_refresh) = crate::ui::pages::settings::build(nav, credentials);
     let (help_widget, help_refresh) = crate::ui::pages::help::build(nav.clone());
     let (sources_widget, sources_refresh) = crate::ui::pages::sources::build(nav.clone());
     let weak_live = live_handle.root.downgrade();
