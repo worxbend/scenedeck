@@ -9,11 +9,11 @@ use crate::controller::state::{
 };
 use crate::domain::audio::AudioInput;
 use crate::domain::obs::ObsNamedList;
-use crate::domain::output::{OutputRunState, OutputStatus};
+use crate::domain::output::{OutputKind, OutputRunState, OutputStatus};
 use crate::domain::stats::{ObsStats, StreamHealth};
 
+use crate::controller::test_support::output;
 pub(in crate::controller::state) use crate::controller::test_support::state::{app_state, input};
-use crate::controller::test_support::state::{fail_record_command, fail_stream_command};
 
 pub(in crate::controller::state) fn visible_loaded_input<'a>(
     state: &'a AppState,
@@ -137,8 +137,8 @@ pub(in crate::controller::state) fn seed_session_observations(state: &mut AppSta
     state.stream_active_since = Some(Instant::now());
     state.record_active_since = Some(Instant::now());
     state.last_recording_path = Some("old-recording.mkv".into());
-    fail_stream_command(state, "old stream failure");
-    fail_record_command(state, "old record failure");
+    output::fail_command(state, OutputKind::Stream, "old stream failure");
+    output::fail_command(state, OutputKind::Record, "old record failure");
     state.set_obs_stats_at(
         obs_stats(60.0),
         Some(6000.0),

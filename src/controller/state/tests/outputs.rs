@@ -6,7 +6,7 @@ use std::time::Instant;
 use super::fixtures::{app_state, output_status};
 use crate::controller::event::OutputCommandFailureRecovery;
 use crate::controller::state::{ObsStatus, Page};
-use crate::controller::test_support::state::{fail_record_command, fail_stream_command};
+use crate::controller::test_support::output;
 use crate::domain::output::{OutputKind, OutputRunState, OutputStatus};
 
 fn command_failure_recovery(
@@ -289,315 +289,284 @@ fn late_recording_output_observation_keeps_file_evidence_without_undoing_a_resta
     );
 }
 
-#[test]
-fn stream_command_failure_sets_stream_error_only() {
-    let mut state = app_state();
-
-    fail_stream_command(&mut state, "stream failed");
-
-    assert_eq!(
-        state.last_stream_command_error.as_deref(),
-        Some("stream failed")
-    );
-    assert_eq!(state.last_record_command_error, None);
+/// A case run once per output. `label` is the name the case had as its own
+/// test, so a failure still points at it.
+struct OutputCase {
+    label: &'static str,
+    kind: OutputKind,
 }
 
+const COMMAND_FAILURE_ISOLATION: [OutputCase; 2] = [
+    OutputCase {
+        label: "stream_command_failure_sets_stream_error_only",
+        kind: OutputKind::Stream,
+    },
+    OutputCase {
+        label: "record_command_failure_sets_record_error_only",
+        kind: OutputKind::Record,
+    },
+];
+
 #[test]
-fn record_command_failure_sets_record_error_only() {
-    let mut state = app_state();
+fn command_failure_sets_only_its_own_output_error() {
+    for OutputCase { label, kind } in COMMAND_FAILURE_ISOLATION {
+        let mut state = app_state();
 
-    fail_record_command(&mut state, "record failed");
+        output::fail_command(&mut state, kind, "command failed");
 
-    assert_eq!(state.last_stream_command_error, None);
-    assert_eq!(
-        state.last_record_command_error.as_deref(),
-        Some("record failed")
-    );
+        assert_eq!(
+            output::command_error(&state, kind),
+            Some("command failed"),
+            "{label}"
+        );
+        assert_eq!(
+            output::command_error(&state, output::other(kind)),
+            None,
+            "{label}"
+        );
+    }
 }
 
-#[test]
-fn stream_command_start_failure_applies_inactive_recovery_payload() {
-    let mut state = app_state();
-    fail_record_command(&mut state, "existing record failure");
-    state.set_stream_command_pending(output_status(false, OutputRunState::Starting));
-
-    state.set_stream_command_failure_with_recovery(command_failure_recovery(
-        "stream start failed",
-        output_status(false, OutputRunState::Inactive),
-    ));
-
-    assert_eq!(
-        state.stream_status,
-        output_status(false, OutputRunState::Inactive)
-    );
-    assert_non_transitioning(&state.stream_status);
-    assert_eq!(
-        state.last_stream_command_error.as_deref(),
-        Some("stream start failed")
-    );
-    assert_eq!(
-        state.last_record_command_error.as_deref(),
-        Some("existing record failure")
-    );
+/// A command that went pending and then failed with a recovery payload.
+struct RecoveryCase {
+    label: &'static str,
+    kind: OutputKind,
+    pending: OutputStatus,
+    fallback: OutputStatus,
 }
 
+const START_AND_STOP_FAILURES: [RecoveryCase; 4] = [
+    RecoveryCase {
+        label: "stream_command_start_failure_applies_inactive_recovery_payload",
+        kind: OutputKind::Stream,
+        pending: OutputStatus::new(false, OutputRunState::Starting),
+        fallback: OutputStatus::new(false, OutputRunState::Inactive),
+    },
+    RecoveryCase {
+        label: "stream_command_stop_failure_applies_active_recovery_payload",
+        kind: OutputKind::Stream,
+        pending: OutputStatus::new(true, OutputRunState::Stopping),
+        fallback: OutputStatus::new(true, OutputRunState::Active),
+    },
+    RecoveryCase {
+        label: "record_command_start_failure_applies_inactive_recovery_payload",
+        kind: OutputKind::Record,
+        pending: OutputStatus::new(false, OutputRunState::Starting),
+        fallback: OutputStatus::new(false, OutputRunState::Inactive),
+    },
+    RecoveryCase {
+        label: "record_command_stop_failure_applies_active_recovery_payload",
+        kind: OutputKind::Record,
+        pending: OutputStatus::new(true, OutputRunState::Stopping),
+        fallback: OutputStatus::new(true, OutputRunState::Active),
+    },
+];
+
 #[test]
-fn stream_command_stop_failure_applies_active_recovery_payload() {
-    let mut state = app_state();
-    fail_record_command(&mut state, "existing record failure");
-    state.set_stream_command_pending(output_status(true, OutputRunState::Stopping));
+fn start_and_stop_failures_apply_the_recovery_payload_and_keep_the_other_error() {
+    for case in START_AND_STOP_FAILURES {
+        let label = case.label;
+        let other = output::other(case.kind);
+        let mut state = app_state();
+        output::fail_command(&mut state, other, "existing failure");
+        output::set_pending(&mut state, case.kind, case.pending);
 
-    state.set_stream_command_failure_with_recovery(command_failure_recovery(
-        "stream stop failed",
-        output_status(true, OutputRunState::Active),
-    ));
+        output::fail_with_recovery(
+            &mut state,
+            case.kind,
+            command_failure_recovery("command failed", case.fallback.clone()),
+        );
 
-    assert_eq!(
-        state.stream_status,
-        output_status(true, OutputRunState::Active)
-    );
-    assert_non_transitioning(&state.stream_status);
-    assert_eq!(
-        state.last_stream_command_error.as_deref(),
-        Some("stream stop failed")
-    );
-    assert_eq!(
-        state.last_record_command_error.as_deref(),
-        Some("existing record failure")
-    );
+        let status = output::status(&state, case.kind);
+        assert_eq!(status, &case.fallback, "{label}");
+        assert_non_transitioning(status);
+        assert_eq!(
+            output::command_error(&state, case.kind),
+            Some("command failed"),
+            "{label}"
+        );
+        assert_eq!(
+            output::command_error(&state, other),
+            Some("existing failure"),
+            "{label}"
+        );
+    }
 }
 
-#[test]
-fn record_command_start_failure_applies_inactive_recovery_payload() {
-    let mut state = app_state();
-    fail_stream_command(&mut state, "existing stream failure");
-    state.set_record_command_pending(output_status(false, OutputRunState::Starting));
+type RecoveryConstructor = fn(&str, OutputStatus) -> OutputCommandFailureRecovery;
 
-    state.set_record_command_failure_with_recovery(command_failure_recovery(
-        "record start failed",
-        output_status(false, OutputRunState::Inactive),
-    ));
-
-    assert_eq!(
-        state.record_status,
-        output_status(false, OutputRunState::Inactive)
-    );
-    assert_non_transitioning(&state.record_status);
-    assert_eq!(
-        state.last_stream_command_error.as_deref(),
-        Some("existing stream failure")
-    );
-    assert_eq!(
-        state.last_record_command_error.as_deref(),
-        Some("record start failed")
-    );
+/// A recovery payload the reducer must apply as given, even when it is not
+/// what the pending status would suggest.
+struct PayloadCase {
+    label: &'static str,
+    kind: OutputKind,
+    pending: OutputStatus,
+    recovery: RecoveryConstructor,
+    payload: OutputStatus,
 }
 
+const EXACT_PAYLOADS: [PayloadCase; 4] = [
+    PayloadCase {
+        label: "stream_failure_recovery_applies_exact_payload_status",
+        kind: OutputKind::Stream,
+        pending: OutputStatus::new(false, OutputRunState::Starting),
+        recovery: unchecked_command_failure_recovery,
+        payload: OutputStatus::new(false, OutputRunState::Reconnecting),
+    },
+    PayloadCase {
+        label: "record_failure_recovery_applies_exact_payload_status",
+        kind: OutputKind::Record,
+        pending: OutputStatus::new(true, OutputRunState::Stopping),
+        recovery: unchecked_command_failure_recovery,
+        payload: OutputStatus::new(true, OutputRunState::Reconnecting),
+    },
+    PayloadCase {
+        label: "stream_failure_recovery_applies_payload_instead_of_current_state",
+        kind: OutputKind::Stream,
+        pending: OutputStatus::new(false, OutputRunState::Starting),
+        recovery: command_failure_recovery,
+        payload: OutputStatus::new(true, OutputRunState::Active),
+    },
+    PayloadCase {
+        label: "record_failure_recovery_applies_payload_instead_of_current_state",
+        kind: OutputKind::Record,
+        pending: OutputStatus::new(true, OutputRunState::Stopping),
+        recovery: command_failure_recovery,
+        payload: OutputStatus::new(false, OutputRunState::Inactive),
+    },
+];
+
 #[test]
-fn record_command_stop_failure_applies_active_recovery_payload() {
-    let mut state = app_state();
-    fail_stream_command(&mut state, "existing stream failure");
-    state.set_record_command_pending(output_status(true, OutputRunState::Stopping));
+fn failure_recovery_applies_the_payload_status_exactly() {
+    for case in EXACT_PAYLOADS {
+        let label = case.label;
+        let mut state = app_state();
+        output::set_pending(&mut state, case.kind, case.pending);
 
-    state.set_record_command_failure_with_recovery(command_failure_recovery(
-        "record stop failed",
-        output_status(true, OutputRunState::Active),
-    ));
+        output::fail_with_recovery(
+            &mut state,
+            case.kind,
+            (case.recovery)("command failed", case.payload.clone()),
+        );
 
-    assert_eq!(
-        state.record_status,
-        output_status(true, OutputRunState::Active)
-    );
-    assert_non_transitioning(&state.record_status);
-    assert_eq!(
-        state.last_stream_command_error.as_deref(),
-        Some("existing stream failure")
-    );
-    assert_eq!(
-        state.last_record_command_error.as_deref(),
-        Some("record stop failed")
-    );
+        assert_eq!(output::status(&state, case.kind), &case.payload, "{label}");
+        assert_eq!(
+            output::command_error(&state, case.kind),
+            Some("command failed"),
+            "{label}"
+        );
+    }
 }
 
+const RECONNECT_AFTER_RECOVERY: [OutputCase; 2] = [
+    OutputCase {
+        label: "separate_status_event_can_reconnect_after_stream_failure_recovery",
+        kind: OutputKind::Stream,
+    },
+    OutputCase {
+        label: "separate_status_event_can_reconnect_after_record_failure_recovery",
+        kind: OutputKind::Record,
+    },
+];
+
 #[test]
-fn stream_failure_recovery_applies_exact_payload_status() {
-    let mut state = app_state();
-    state.set_stream_command_pending(output_status(false, OutputRunState::Starting));
+fn separate_status_event_can_reconnect_after_failure_recovery() {
+    for OutputCase { label, kind } in RECONNECT_AFTER_RECOVERY {
+        let mut state = app_state();
+        output::set_pending(
+            &mut state,
+            kind,
+            output_status(false, OutputRunState::Starting),
+        );
+        output::fail_with_recovery(
+            &mut state,
+            kind,
+            command_failure_recovery(
+                "command failed",
+                output_status(false, OutputRunState::Inactive),
+            ),
+        );
+        assert_non_transitioning(output::status(&state, kind));
 
-    state.set_stream_command_failure_with_recovery(unchecked_command_failure_recovery(
-        "stream failed",
-        output_status(false, OutputRunState::Reconnecting),
-    ));
+        output::set_status(
+            &mut state,
+            kind,
+            output_status(false, OutputRunState::Reconnecting),
+        );
 
-    assert_eq!(
-        state.stream_status,
-        output_status(false, OutputRunState::Reconnecting)
-    );
-    assert_eq!(
-        state.last_stream_command_error.as_deref(),
-        Some("stream failed")
-    );
+        assert_eq!(
+            output::status(&state, kind),
+            &output_status(false, OutputRunState::Reconnecting),
+            "{label}"
+        );
+        assert_eq!(
+            output::command_error(&state, kind),
+            Some("command failed"),
+            "{label}"
+        );
+    }
 }
 
-#[test]
-fn record_failure_recovery_applies_exact_payload_status() {
-    let mut state = app_state();
-    state.set_record_command_pending(output_status(true, OutputRunState::Stopping));
-
-    state.set_record_command_failure_with_recovery(unchecked_command_failure_recovery(
-        "record failed",
-        output_status(true, OutputRunState::Reconnecting),
-    ));
-
-    assert_eq!(
-        state.record_status,
-        output_status(true, OutputRunState::Reconnecting)
-    );
-    assert_eq!(
-        state.last_record_command_error.as_deref(),
-        Some("record failed")
-    );
+/// A command that goes pending, fails, and is then confirmed by OBS.
+struct PendingCase {
+    label: &'static str,
+    kind: OutputKind,
+    pending: OutputStatus,
 }
 
-#[test]
-fn stream_failure_recovery_applies_payload_instead_of_current_state() {
-    let mut state = app_state();
-    state.set_stream_command_pending(output_status(false, OutputRunState::Starting));
-
-    state.set_stream_command_failure_with_recovery(command_failure_recovery(
-        "stream failed",
-        output_status(true, OutputRunState::Active),
-    ));
-
-    assert_eq!(
-        state.stream_status,
-        output_status(true, OutputRunState::Active)
-    );
-    assert_eq!(
-        state.last_stream_command_error.as_deref(),
-        Some("stream failed")
-    );
-}
+const PENDING_AND_SUCCESS: [PendingCase; 2] = [
+    PendingCase {
+        label: "stream_pending_and_success_clear_only_stream_error",
+        kind: OutputKind::Stream,
+        pending: OutputStatus::new(false, OutputRunState::Starting),
+    },
+    PendingCase {
+        label: "record_pending_and_success_clear_only_record_error",
+        kind: OutputKind::Record,
+        pending: OutputStatus::new(true, OutputRunState::Stopping),
+    },
+];
 
 #[test]
-fn record_failure_recovery_applies_payload_instead_of_current_state() {
-    let mut state = app_state();
-    state.set_record_command_pending(output_status(true, OutputRunState::Stopping));
+fn pending_and_success_clear_only_their_own_output_error() {
+    for case in PENDING_AND_SUCCESS {
+        let label = case.label;
+        let other = output::other(case.kind);
+        let mut state = app_state();
+        output::fail_command(&mut state, case.kind, "old failure");
+        output::fail_command(&mut state, other, "other failure");
 
-    state.set_record_command_failure_with_recovery(command_failure_recovery(
-        "record failed",
-        output_status(false, OutputRunState::Inactive),
-    ));
+        output::set_pending(&mut state, case.kind, case.pending.clone());
 
-    assert_eq!(
-        state.record_status,
-        output_status(false, OutputRunState::Inactive)
-    );
-    assert_eq!(
-        state.last_record_command_error.as_deref(),
-        Some("record failed")
-    );
-}
+        assert_eq!(output::command_error(&state, case.kind), None, "{label}");
+        assert_eq!(
+            output::command_error(&state, other),
+            Some("other failure"),
+            "{label}"
+        );
+        assert_eq!(
+            output::status(&state, case.kind).state,
+            case.pending.state,
+            "{label}"
+        );
 
-#[test]
-fn separate_status_event_can_reconnect_after_stream_failure_recovery() {
-    let mut state = app_state();
-    state.set_stream_command_pending(output_status(false, OutputRunState::Starting));
-    state.set_stream_command_failure_with_recovery(command_failure_recovery(
-        "stream failed",
-        output_status(false, OutputRunState::Inactive),
-    ));
-    assert_non_transitioning(&state.stream_status);
+        output::fail_command(&mut state, case.kind, "new failure");
+        output::succeed(&mut state, case.kind);
 
-    state.set_stream_status(output_status(false, OutputRunState::Reconnecting));
-
-    assert_eq!(
-        state.stream_status,
-        output_status(false, OutputRunState::Reconnecting)
-    );
-    assert_eq!(
-        state.last_stream_command_error.as_deref(),
-        Some("stream failed")
-    );
-}
-
-#[test]
-fn separate_status_event_can_reconnect_after_record_failure_recovery() {
-    let mut state = app_state();
-    state.set_record_command_pending(output_status(false, OutputRunState::Starting));
-    state.set_record_command_failure_with_recovery(command_failure_recovery(
-        "record failed",
-        output_status(false, OutputRunState::Inactive),
-    ));
-    assert_non_transitioning(&state.record_status);
-
-    state.set_record_status(output_status(false, OutputRunState::Reconnecting));
-
-    assert_eq!(
-        state.record_status,
-        output_status(false, OutputRunState::Reconnecting)
-    );
-    assert_eq!(
-        state.last_record_command_error.as_deref(),
-        Some("record failed")
-    );
-}
-
-#[test]
-fn stream_pending_and_success_clear_only_stream_error() {
-    let mut state = app_state();
-    fail_stream_command(&mut state, "old stream failure");
-    fail_record_command(&mut state, "record failure");
-
-    state.set_stream_command_pending(output_status(false, OutputRunState::Starting));
-
-    assert_eq!(state.last_stream_command_error, None);
-    assert_eq!(
-        state.last_record_command_error.as_deref(),
-        Some("record failure")
-    );
-    assert_eq!(state.stream_status.state, OutputRunState::Starting);
-
-    fail_stream_command(&mut state, "new stream failure");
-    state.set_stream_command_success();
-
-    assert_eq!(state.last_stream_command_error, None);
-    assert_eq!(
-        state.last_record_command_error.as_deref(),
-        Some("record failure")
-    );
-}
-
-#[test]
-fn record_pending_and_success_clear_only_record_error() {
-    let mut state = app_state();
-    fail_stream_command(&mut state, "stream failure");
-    fail_record_command(&mut state, "old record failure");
-
-    state.set_record_command_pending(output_status(true, OutputRunState::Stopping));
-
-    assert_eq!(
-        state.last_stream_command_error.as_deref(),
-        Some("stream failure")
-    );
-    assert_eq!(state.last_record_command_error, None);
-    assert_eq!(state.record_status.state, OutputRunState::Stopping);
-
-    fail_record_command(&mut state, "new record failure");
-    state.set_record_command_success();
-
-    assert_eq!(
-        state.last_stream_command_error.as_deref(),
-        Some("stream failure")
-    );
-    assert_eq!(state.last_record_command_error, None);
+        assert_eq!(output::command_error(&state, case.kind), None, "{label}");
+        assert_eq!(
+            output::command_error(&state, other),
+            Some("other failure"),
+            "{label}"
+        );
+    }
 }
 
 #[test]
 fn output_command_errors_clear_together_on_session_reset() {
     let mut state = app_state();
-    fail_stream_command(&mut state, "stream failure");
-    fail_record_command(&mut state, "record failure");
+    output::fail_command(&mut state, OutputKind::Stream, "stream failure");
+    output::fail_command(&mut state, OutputKind::Record, "record failure");
 
     state.clear_output_command_errors();
 
@@ -605,124 +574,98 @@ fn output_command_errors_clear_together_on_session_reset() {
     assert_eq!(state.last_record_command_error, None);
 }
 
-#[test]
-fn stream_command_failure_sequence_keeps_obs_connected_and_record_error() {
-    let mut state = app_state();
-    state.current_page = Page::Live;
-    state.set_obs_status(ObsStatus::Connected {
-        obs_version: "32.1.2".to_string(),
-    });
-    fail_record_command(&mut state, "existing record failure");
-
-    state.set_stream_command_pending(output_status(false, OutputRunState::Starting));
-    assert_eq!(state.stream_status.state, OutputRunState::Starting);
-    assert_eq!(state.last_stream_command_error, None);
-
-    let failure = command_failure_recovery(
-        "stream command failed",
-        output_status(false, OutputRunState::Inactive),
-    );
-    state.set_stream_command_failure_with_recovery(failure);
-
-    assert_eq!(
-        state.obs_status,
-        ObsStatus::Connected {
-            obs_version: "32.1.2".to_string()
-        }
-    );
-    assert_eq!(state.current_page, Page::Live);
-    assert!(!state.stream_status.state.is_transitioning());
-    assert_eq!(
-        state.last_stream_command_error.as_deref(),
-        Some("stream command failed")
-    );
-    assert_eq!(
-        state.last_record_command_error.as_deref(),
-        Some("existing record failure")
-    );
-
-    state.set_stream_command_pending(output_status(false, OutputRunState::Starting));
-    assert_eq!(state.last_stream_command_error, None);
-    assert_eq!(
-        state.last_record_command_error.as_deref(),
-        Some("existing record failure")
-    );
-
-    state.set_stream_status(output_status(true, OutputRunState::Active));
-    state.set_stream_command_success();
-
-    assert_eq!(
-        state.obs_status,
-        ObsStatus::Connected {
-            obs_version: "32.1.2".to_string()
-        }
-    );
-    assert_eq!(state.current_page, Page::Live);
-    assert!(!state.stream_status.state.is_transitioning());
-    assert_eq!(state.last_stream_command_error, None);
-    assert_eq!(
-        state.last_record_command_error.as_deref(),
-        Some("existing record failure")
-    );
+/// A failed command, its retry, and the status OBS then reports.
+struct FailureSequenceCase {
+    label: &'static str,
+    kind: OutputKind,
+    pending: OutputStatus,
+    fallback: OutputStatus,
+    settled: OutputStatus,
 }
 
+const FAILURE_SEQUENCES: [FailureSequenceCase; 2] = [
+    FailureSequenceCase {
+        label: "stream_command_failure_sequence_keeps_obs_connected_and_record_error",
+        kind: OutputKind::Stream,
+        pending: OutputStatus::new(false, OutputRunState::Starting),
+        fallback: OutputStatus::new(false, OutputRunState::Inactive),
+        settled: OutputStatus::new(true, OutputRunState::Active),
+    },
+    FailureSequenceCase {
+        label: "record_command_failure_sequence_keeps_obs_connected_and_stream_error",
+        kind: OutputKind::Record,
+        pending: OutputStatus::new(true, OutputRunState::Stopping),
+        fallback: OutputStatus::new(true, OutputRunState::Active),
+        settled: OutputStatus::new(false, OutputRunState::Inactive),
+    },
+];
+
 #[test]
-fn record_command_failure_sequence_keeps_obs_connected_and_stream_error() {
-    let mut state = app_state();
-    state.current_page = Page::Live;
-    state.set_obs_status(ObsStatus::Connected {
+fn command_failure_sequence_keeps_obs_connected_and_the_other_error() {
+    let connected = ObsStatus::Connected {
         obs_version: "32.1.2".to_string(),
-    });
-    fail_stream_command(&mut state, "existing stream failure");
+    };
+    for case in FAILURE_SEQUENCES {
+        let label = case.label;
+        let other = output::other(case.kind);
+        let mut state = app_state();
+        state.current_page = Page::Live;
+        state.set_obs_status(connected.clone());
+        output::fail_command(&mut state, other, "existing failure");
 
-    state.set_record_command_pending(output_status(true, OutputRunState::Stopping));
-    assert_eq!(state.record_status.state, OutputRunState::Stopping);
-    assert_eq!(state.last_record_command_error, None);
+        output::set_pending(&mut state, case.kind, case.pending.clone());
+        assert_eq!(
+            output::status(&state, case.kind).state,
+            case.pending.state,
+            "{label}"
+        );
+        assert_eq!(output::command_error(&state, case.kind), None, "{label}");
 
-    let failure = command_failure_recovery(
-        "record command failed",
-        output_status(true, OutputRunState::Active),
-    );
-    state.set_record_command_failure_with_recovery(failure);
+        output::fail_with_recovery(
+            &mut state,
+            case.kind,
+            command_failure_recovery("command failed", case.fallback),
+        );
 
-    assert_eq!(
-        state.obs_status,
-        ObsStatus::Connected {
-            obs_version: "32.1.2".to_string()
-        }
-    );
-    assert_eq!(state.current_page, Page::Live);
-    assert!(!state.record_status.state.is_transitioning());
-    assert_eq!(
-        state.last_stream_command_error.as_deref(),
-        Some("existing stream failure")
-    );
-    assert_eq!(
-        state.last_record_command_error.as_deref(),
-        Some("record command failed")
-    );
+        assert_eq!(state.obs_status, connected, "{label}");
+        assert_eq!(state.current_page, Page::Live, "{label}");
+        assert!(
+            !output::status(&state, case.kind).state.is_transitioning(),
+            "{label}"
+        );
+        assert_eq!(
+            output::command_error(&state, case.kind),
+            Some("command failed"),
+            "{label}"
+        );
+        assert_eq!(
+            output::command_error(&state, other),
+            Some("existing failure"),
+            "{label}"
+        );
 
-    state.set_record_command_pending(output_status(true, OutputRunState::Stopping));
-    assert_eq!(
-        state.last_stream_command_error.as_deref(),
-        Some("existing stream failure")
-    );
-    assert_eq!(state.last_record_command_error, None);
+        output::set_pending(&mut state, case.kind, case.pending);
+        assert_eq!(output::command_error(&state, case.kind), None, "{label}");
+        assert_eq!(
+            output::command_error(&state, other),
+            Some("existing failure"),
+            "{label}"
+        );
 
-    state.set_record_status(output_status(false, OutputRunState::Inactive));
-    state.set_record_command_success();
+        output::set_status(&mut state, case.kind, case.settled);
+        output::succeed(&mut state, case.kind);
 
-    assert_eq!(
-        state.obs_status,
-        ObsStatus::Connected {
-            obs_version: "32.1.2".to_string()
-        }
-    );
-    assert_eq!(state.current_page, Page::Live);
-    assert!(!state.record_status.state.is_transitioning());
-    assert_eq!(
-        state.last_stream_command_error.as_deref(),
-        Some("existing stream failure")
-    );
-    assert_eq!(state.last_record_command_error, None);
+        assert_eq!(state.obs_status, connected, "{label}");
+        assert_eq!(state.current_page, Page::Live, "{label}");
+        assert!(
+            !output::status(&state, case.kind).state.is_transitioning(),
+            "{label}"
+        );
+        assert_eq!(output::command_error(&state, case.kind), None, "{label}");
+        assert_eq!(
+            output::command_error(&state, other),
+            Some("existing failure"),
+            "{label}"
+        );
+    }
 }

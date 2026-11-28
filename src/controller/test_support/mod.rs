@@ -4,5 +4,6 @@
 pub(crate) mod deps;
 pub(crate) mod events;
 pub(crate) mod loopback;
+pub(crate) mod output;
 pub(crate) mod state;
 pub(crate) mod workspace;
