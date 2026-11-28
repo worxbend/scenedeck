@@ -64,7 +64,7 @@ const APP_STATE_BORROWS: &[(&str, [usize; 3])] = &[
     ("ui/pages/mixer.rs", [6, 6, 12]),
     ("ui/pages/settings.rs", [3, 9, 15]),
     ("ui/pages/settings/connections.rs", [5, 16, 22]),
-    ("ui/pages/stats.rs", [3, 10, 14]),
+    ("ui/pages/stats.rs", [0, 10, 10]),
     ("ui/persist.rs", [3, 3, 7]),
     ("ui/persist/config.rs", [2, 0, 2]),
     ("ui/persist/registry_scope.rs", [2, 2, 5]),
