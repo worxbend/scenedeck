@@ -59,11 +59,17 @@ Application orchestration.
   dispatch. It delegates session, refresh, and output lifecycles to focused
   controller components. `app_controller/tests/` (tests only) holds the
   tests that drive `AppController::handle`, one file per command family
-  (`outputs`, `config`, `refresh`).
+  (`outputs`, `config`, `refresh`, `scenes`, `session`).
 - `output_controller.rs`: stream/record command guards, status refreshes,
   graceful disconnect shutdown, and the injectable output-client boundary.
 - `session_controller.rs`: connection task ownership, reconnect replacement,
   graceful disconnect, and the injectable session-runner boundary.
+- `workspace.rs`: session-scoped workspace reads and explicit native
+  operations. Its loopback suites sit beside it (tests only):
+  `workspace/lifecycle_tests.rs`, `workspace/cancellation_tests.rs` (a
+  cancelled or collection-invalidated preflight never begins its write) and
+  `workspace/scene_activation_tests.rs` (Studio mode changes fence an obsolete
+  scene click).
 - `runtime/single_flight.rs`: the single-worker queue behind graph refresh,
   Mixer audio reads and workspace reads. The queue runs only while its worker
   lives, and a refused spawn hands the job back so its failure is still
@@ -71,15 +77,23 @@ Application orchestration.
 - `refresh_controller.rs`: OBS list/data refresh helpers, the session-owned
   one-second stats/bitrate poll loop, and OBS event-stream routing.
   `refresh_controller/event_loop_tests.rs` (tests only) pins one
-  characterization test per `ObsEvent` arm of `run_event_loop`.
+  characterization test per `ObsEvent` arm of `run_event_loop`. Beside it
+  (tests only), over a `StatefulObs`: `ingress_tests.rs` (what each event
+  refreshes, and failing closed while GTK is blocked), `graph_scan_tests.rs`
+  (an invalidated scan never publishes a stale graph) and `snapshot_tests.rs`
+  (audio and output snapshots never undo a newer echo).
 - `test_support/` (tests only): fixtures shared by controller tests and the
-  UI tests that drive the controller. `events.rs` holds `TEST_DEADLINE` and
+  UI tests that drive the controller. `events.rs` holds `TEST_DEADLINE`,
   the bounded waits `recv_event`, `recv_matching` (async, they yield instead
-  of blocking the runtime) and `wait_until` (synchronous tests only).
+  of blocking the runtime), `graph_ready` and `wait_until` (synchronous tests
+  only), and `peel`, which unwraps `SessionEvent` layers.
   `deps.rs` holds the provider fakes `StaticConfigProvider`, `NoServices`
   (panics on any config or keyring access) and `NoPassword` (a keyring with
-  no saved password that panics on a write). `state.rs` holds the default
-  `app_state()` and the unity-gain `input(id)`.
+  no saved password that panics on a write), and `dependencies()` built from
+  them. `state.rs` holds the default `app_state()` and the unity-gain
+  `input(id)`. `loopback.rs` runs the real event loop over a `StatefulObs`
+  (`pump`) and pushes Program and mute/volume echoes through it.
+  `workspace.rs` builds a `WorkspaceRequest` bound to a loopback client.
 
 `src/domain/`
 
@@ -134,6 +148,9 @@ OBS WebSocket integration.
   reads, source and graph traversal, operator property reads, and request
   admission. Each keeps its mock-wire tests in `<module>/tests.rs`
   (tests only).
+- `scene_activation.rs`: scene clicks resolved against the authoritative
+  Studio mode, failing closed when it is unknown. `scene_activation/tests.rs`
+  (tests only) holds its tests.
 - `testing/wire.rs` (tests only): loopback OBS WebSocket handshake, request,
   response and event frames, the `GetVersion` payload, and input, scene and
   scene-item rows.

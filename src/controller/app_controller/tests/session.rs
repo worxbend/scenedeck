@@ -1,95 +1,33 @@
-//! Deterministic loopback regressions for the actual adapter/controllers/state.
-use super::*;
-use crate::controller::lifecycle::{OperationKind, SessionRetirement};
+//! Connect, Disconnect and session retirement routed through
+//! `AppController`: disconnect drains the refresh before shutting outputs
+//! down, and a retired session's operation evidence survives a delayed or
+//! full GTK queue and a reconnect.
+
+use std::collections::VecDeque;
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use futures_util::future::BoxFuture;
+use tokio::runtime::Handle;
+
+use crate::controller::app_controller::AppController;
+use crate::controller::command::AppCommand;
+use crate::controller::event::AppEvent;
+use crate::controller::event_sender::EventSender;
+use crate::controller::lifecycle::{OperationKind, SessionRetirement, SessionScope};
 use crate::controller::session_controller::SessionRunner;
-use crate::controller::state::{MixerVisibleAudioStatus, ObsStatus};
+use crate::controller::state::ObsStatus;
 use crate::controller::test_support::deps::dependencies;
 use crate::controller::test_support::events::{graph_ready, peel, recv_event, TEST_DEADLINE};
-use crate::controller::test_support::loopback::{consume_echo_pair, echo_pair, pump};
 use crate::controller::test_support::state::app_state;
 use crate::controller::test_support::workspace::request;
 use crate::domain::control::ControlAction;
 use crate::domain::output::{OutputKind, OutputRunState, OutputStatus};
+use crate::infra::error::AppError;
+use crate::obs::client::ObsClient;
 use crate::obs::event::ObsEventStream;
 use crate::obs::testing::stateful::{Request, StatefulObs, When};
-use futures_util::future::BoxFuture;
-use std::collections::VecDeque;
-use std::sync::mpsc;
-use std::time::Duration;
-
-#[tokio::test]
-async fn queued_primary_scene_switch_cannot_cross_a_collection_boundary() {
-    let mut mock = StatefulObs::default()
-        .hold(Request::GetVersion, When::AfterFirst)
-        .connect()
-        .await;
-    let (tx, _rx) = mpsc::sync_channel(16);
-    let mut controller = AppController::with_dependencies(Handle::current(), tx, dependencies());
-    let scope = controller.session_scope();
-    assert!(scope.install(mock.client.clone()));
-    let mut reads = Vec::new();
-    for _ in 0..8 {
-        let client = mock.client.clone();
-        reads.push(tokio::spawn(async move { client.get_version().await }));
-    }
-    mock.wait(Request::GetVersion, 9).await;
-    controller.handle(AppCommand::SwitchPrimaryScene("A".into()));
-    scope.advance_collection();
-    mock.release_all().await;
-    for read in reads {
-        read.await.unwrap().unwrap();
-    }
-    tokio::time::timeout(TEST_DEADLINE, scope.quiesce())
-        .await
-        .unwrap();
-    assert!(mock.client.retirement_reason().is_none());
-    controller.shutdown().await.unwrap();
-    let frames = mock.stop().await;
-    assert_eq!(
-        frames.count(Request::SetCurrentProgramScene),
-        0,
-        "a queued scene switch must not target a replacement collection"
-    );
-}
-
-#[tokio::test]
-async fn selected_audio_real_command_snapshot_merges_newer_echoes() {
-    let mut mock = StatefulObs::default()
-        .hold(Request::GetInputVolume, When::Nth(2))
-        .connect()
-        .await;
-    let (tx, rx) = mpsc::sync_channel(128);
-    let task = pump(&mut mock, tx.clone());
-    graph_ready(&rx).await;
-    let mut controller = AppController::with_dependencies(Handle::current(), tx, dependencies());
-    *controller.client_slot.lock().unwrap() = Some(mock.client.clone());
-    let mut state = app_state();
-    let request = state.set_mixer_audio_loading("A".into());
-    controller.handle(AppCommand::RefreshMixerSceneAudio(request.clone()));
-    mock.wait(Request::GetInputVolume, 2).await;
-    echo_pair(&mock).await;
-    consume_echo_pair(&rx, &mut state).await;
-    mock.release_all().await;
-    loop {
-        if let AppEvent::Observation { revision, event } = peel(recv_event(&rx).await) {
-            if let Some(AppEvent::MixerAudioInputsUpdated {
-                request: completed,
-                inputs,
-            }) = state.reconcile_observation(revision, *event)
-            {
-                assert_eq!(completed, request);
-                state.set_mixer_audio_success(completed, inputs);
-                break;
-            }
-        }
-    }
-    assert!(
-        matches!(state.visible_mixer_audio_status("A"), MixerVisibleAudioStatus::Loaded(inputs) if inputs[0].muted && inputs[0].volume_mul == 0.25)
-    );
-    controller.shutdown().await.unwrap();
-    task.await.unwrap();
-    mock.stop().await;
-}
 
 #[tokio::test]
 async fn app_disconnect_drains_controller_owned_refresh_before_output_shutdown() {
@@ -130,6 +68,7 @@ async fn app_disconnect_drains_controller_owned_refresh_before_output_shutdown()
 struct Runner {
     clients: Mutex<VecDeque<(ObsClient, ObsEventStream)>>,
 }
+
 impl SessionRunner for Runner {
     fn run(&self, tx: EventSender, scope: SessionScope) -> BoxFuture<'static, ()> {
         let (client, events) = self.clients.lock().unwrap().pop_front().unwrap();
@@ -145,56 +84,6 @@ impl SessionRunner for Runner {
             .await;
         })
     }
-}
-
-/// Installs one client and holds the session open without an event loop,
-/// so only the command under test reads from OBS.
-struct InstallOnlyRunner(ObsClient);
-impl SessionRunner for InstallOnlyRunner {
-    fn run(&self, _: EventSender, scope: SessionScope) -> BoxFuture<'static, ()> {
-        let client = self.0.clone();
-        Box::pin(async move {
-            assert!(scope.install(client));
-            std::future::pending::<()>().await;
-        })
-    }
-}
-
-#[tokio::test]
-async fn manual_refresh_publishes_a_failed_stream_readback() {
-    let mock = StatefulObs::default()
-        .refuse(Request::GetStreamStatus, When::Always)
-        .connect()
-        .await;
-    let (tx, rx) = mpsc::sync_channel(128);
-    let mut controller = AppController::with_session_runner(
-        Handle::current(),
-        tx,
-        dependencies(),
-        Arc::new(InstallOnlyRunner(mock.client.clone())),
-    );
-    controller.handle(AppCommand::Connect);
-    tokio::time::timeout(TEST_DEADLINE, async {
-        while controller.connected_client().is_none() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("the session installs its client");
-
-    controller.handle(AppCommand::RefreshData);
-
-    let mut failed_readbacks = Vec::new();
-    loop {
-        match peel(recv_event(&rx).await) {
-            AppEvent::OutputReadbackFailed { kind, .. } => failed_readbacks.push(kind),
-            AppEvent::Observation { event, .. } if matches!(*event, AppEvent::GraphUpdated(_)) => {
-                break
-            }
-            _ => {}
-        }
-    }
-    assert_eq!(failed_readbacks, [OutputKind::Stream]);
 }
 
 /// Which reply of the stream command OBS withholds until the session times out.
@@ -321,18 +210,22 @@ async fn terminal_case(delivery: Delivery, channel: Channel, followup: Followup)
         assert_eq!(second.stop().await.count(Request::StartStream), 0);
     }
 }
+
 #[tokio::test]
 async fn delayed_gtk_drain_preserves_unknown_mutation_evidence_after_real_session_timeout() {
     terminal_case(Delivery::Unacknowledged, Channel::Roomy, Followup::Nothing).await;
 }
+
 #[tokio::test]
 async fn delayed_gtk_drain_preserves_acknowledgement_when_readback_retires_the_session() {
     terminal_case(Delivery::Acknowledged, Channel::Roomy, Followup::Nothing).await;
 }
+
 #[tokio::test]
 async fn full_gtk_channel_does_not_erase_owner_completed_terminal_evidence() {
     terminal_case(Delivery::Unacknowledged, Channel::Full, Followup::Nothing).await;
 }
+
 #[tokio::test]
 async fn reconnect_before_terminal_delivery_keeps_old_evidence_audit_only() {
     terminal_case(Delivery::Unacknowledged, Channel::Full, Followup::Reconnect).await;
@@ -405,57 +298,4 @@ async fn real_session_retirement_preserves_workspace_ack_and_unknown_outcomes() 
         controller.shutdown().await.unwrap();
         assert_eq!(mock.stop().await.count(Request::SetSceneItemEnabled), 1);
     }
-}
-
-#[tokio::test]
-async fn doctor_refresh_without_client_completes_loading_with_failure_even_after_retirement() {
-    let (tx, rx) = mpsc::sync_channel(1);
-    let mut controller = AppController::with_dependencies(Handle::current(), tx, dependencies());
-    for retired in [false, true] {
-        if retired {
-            controller.session_scope().retire();
-        }
-        controller.handle(AppCommand::RefreshData);
-        assert!(matches!(
-            peel(recv_event(&rx).await),
-            AppEvent::GraphRefreshRejected(_)
-        ));
-        controller.take_refresh_task().unwrap().await.unwrap();
-    }
-    controller.shutdown().await.unwrap();
-}
-
-#[tokio::test]
-async fn doctor_refresh_is_one_coalesced_worker_even_at_optional_command_saturation() {
-    let mut mock = StatefulObs::default()
-        .hold(Request::GetSceneList, When::Nth(1))
-        .connect()
-        .await;
-    let (tx, rx) = mpsc::sync_channel(128);
-    let mut controller = AppController::with_dependencies(Handle::current(), tx, dependencies());
-    assert!(controller.session_scope().install(mock.client.clone()));
-    for _ in 0..64 {
-        controller
-            .session_scope()
-            .spawn(&Handle::current(), std::future::pending())
-            .unwrap();
-    }
-    assert!(controller
-        .session_scope()
-        .spawn(&Handle::current(), std::future::pending())
-        .is_none());
-    controller.handle(AppCommand::RefreshData);
-    mock.wait(Request::GetSceneList, 1).await;
-    for _ in 0..256 {
-        controller.handle(AppCommand::RefreshData);
-    }
-    mock.release_all().await;
-    graph_ready(&rx).await;
-    graph_ready(&rx).await;
-    tokio::time::timeout(TEST_DEADLINE, controller.take_refresh_task().unwrap())
-        .await
-        .unwrap()
-        .unwrap();
-    controller.shutdown().await.unwrap();
-    assert_eq!(mock.stop().await.count(Request::GetSceneList), 2);
 }

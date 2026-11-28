@@ -91,9 +91,7 @@ directory.
   `<module>/<topic>_tests.rs`, as in `obs/client/control_tests.rs`.
 
 Do not mount a test file with `#[path]` or keep it next to its module instead
-of inside the module's directory. The one remaining mount,
-`controller/final_regression_tests.rs`, goes when that file is split by owning
-component (review plan task P2-T10).
+of inside the module's directory.
 
 A move that keeps the module path needs no other edit: native test names and
 `isolated_test_child` names stay valid. A move that changes it must update

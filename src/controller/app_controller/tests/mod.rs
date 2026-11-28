@@ -4,3 +4,5 @@
 mod config;
 mod outputs;
 mod refresh;
+mod scenes;
+mod session;

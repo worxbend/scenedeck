@@ -481,8 +481,4 @@ async fn load_config_blocking(
 }
 
 #[cfg(test)]
-#[path = "final_regression_tests.rs"]
-mod final_regression_tests;
-
-#[cfg(test)]
 mod tests;
