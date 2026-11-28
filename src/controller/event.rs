@@ -1,8 +1,7 @@
 use crate::domain::audio::{AudioInput, InputId};
 use crate::domain::graph::SceneGraph;
 use crate::domain::meter::InputLevels;
-pub use crate::domain::obs::ConnectionInfo;
-use crate::domain::obs::ObsNamedList;
+use crate::domain::obs::{ConnectionInfo, ObsNamedList};
 use crate::domain::output::{OutputKind, OutputRunState, OutputStatus};
 use crate::domain::scene::{SceneId, SceneInventory};
 use crate::domain::stats::{ObsStats, StreamHealth};

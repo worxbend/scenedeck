@@ -116,7 +116,7 @@ fn native_assembled_window_releases_shell_sources_while_stats_popout_survives() 
             "output clock retained status bar"
         );
         weak_state.upgrade().unwrap().borrow_mut().apply_connected(
-            crate::controller::event::ConnectionInfo {
+            crate::domain::obs::ConnectionInfo {
                 connection_id: "report-fixture".into(),
                 endpoint: "fixture:4455".into(),
                 obs_version: "fixture".into(),

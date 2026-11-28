@@ -201,8 +201,8 @@ impl AppState {
 mod tests {
     use super::*;
     use crate::{
-        controller::{event::ConnectionInfo, state::ObsStatus, test_support::state::app_state},
-        domain::{session_report::HistoryPolicy, workflow::ActivityOrigin},
+        controller::{state::ObsStatus, test_support::state::app_state},
+        domain::{obs::ConnectionInfo, session_report::HistoryPolicy, workflow::ActivityOrigin},
     };
 
     fn connect(state: &mut AppState, name: &str) {

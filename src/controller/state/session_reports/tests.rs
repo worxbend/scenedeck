@@ -1,10 +1,8 @@
 use super::*;
 use crate::{
-    controller::{
-        event::{AppEvent, ConnectionInfo},
-        state::ObsStatus,
-    },
+    controller::{event::AppEvent, state::ObsStatus},
     domain::{
+        obs::ConnectionInfo,
         output_result::{OutputResultKind, OutputResultStatus},
         workflow::{ActivityOrigin, ActivityRecord},
     },

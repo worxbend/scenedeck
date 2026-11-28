@@ -88,7 +88,7 @@ fn isolated_config_dir(suffix: &str) -> std::path::PathBuf {
 }
 
 fn connect_report(state: &mut AppState) {
-    state.apply_connected(crate::controller::event::ConnectionInfo {
+    state.apply_connected(crate::domain::obs::ConnectionInfo {
         connection_id: "report-fixture".into(),
         endpoint: "fixture:4455".into(),
         obs_version: "fixture".into(),

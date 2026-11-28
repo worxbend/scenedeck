@@ -565,7 +565,8 @@ fn export_to_path(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::controller::{event::ConnectionInfo, state::ObsStatus};
+    use crate::controller::state::ObsStatus;
+    use crate::domain::obs::ConnectionInfo;
     use crate::ui::{
         preflight::tests::{find, window},
         test_support::{navigation, pump, pump_until},

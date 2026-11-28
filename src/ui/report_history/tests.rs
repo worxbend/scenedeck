@@ -4,8 +4,8 @@ use crate::ui::{
     test_support::{navigation, pump, pump_until},
 };
 use crate::{
-    controller::{event::ConnectionInfo, state::ObsStatus},
-    domain::{session_report::SessionReport, workflow::ActivityOrigin},
+    controller::state::ObsStatus,
+    domain::{obs::ConnectionInfo, session_report::SessionReport, workflow::ActivityOrigin},
     storage::report_history::{read, write},
 };
 

@@ -327,7 +327,7 @@ mod tests {
     use std::sync::{mpsc, Mutex};
     use std::time::Duration;
 
-    use crate::controller::event::ConnectionInfo;
+    use crate::domain::obs::ConnectionInfo;
 
     struct FakeSessionRunner {
         runs: Arc<AtomicUsize>,

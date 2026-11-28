@@ -11,10 +11,11 @@ use std::time::{Duration, Instant};
 
 use super::fixtures::{app_state, obs_stats, stream_health};
 use crate::controller::command::AppCommand;
-use crate::controller::event::{AppEvent, ConnectionInfo};
+use crate::controller::event::AppEvent;
 use crate::controller::lifecycle::{OperationEvidence, OperationKind, SessionRetirement};
 use crate::controller::state::{AppState, ObsStatus};
 use crate::domain::health::AlertKind;
+use crate::domain::obs::ConnectionInfo;
 use crate::domain::output::{OutputKind, OutputRunState, OutputStatus};
 use crate::domain::output_result::OutputResultStatus;
 use crate::domain::workflow::ActivityOrigin;

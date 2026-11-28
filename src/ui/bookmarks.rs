@@ -463,8 +463,11 @@ mod tests {
         test_support::{navigation, pump, pump_until},
     };
     use crate::{
-        controller::event::{AppEvent, ConnectionInfo},
-        domain::output::{OutputKind, OutputRunState, OutputStatus},
+        controller::event::AppEvent,
+        domain::{
+            obs::ConnectionInfo,
+            output::{OutputKind, OutputRunState, OutputStatus},
+        },
     };
 
     fn connect(nav: &NavigationContext) {

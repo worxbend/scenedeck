@@ -137,7 +137,7 @@ fn connecting_resets_outputs_to_unknown_and_records_the_session() {
     use crate::domain::output::OutputRunState;
     let mut state = app_state();
     state.stream_status = OutputStatus::new(true, OutputRunState::Active);
-    let status = state.apply_connected(crate::controller::event::ConnectionInfo {
+    let status = state.apply_connected(crate::domain::obs::ConnectionInfo {
         connection_id: "default".into(),
         endpoint: "ws://obs:4455".into(),
         obs_version: "32.2.2".into(),

@@ -172,7 +172,8 @@ mod tests {
 
     #[tokio::test]
     async fn lifecycle_envelope_and_collection_admission_follow_the_same_policy() {
-        use crate::controller::event::{ConnectionInfo, OutputCommandFailureRecovery};
+        use crate::controller::event::OutputCommandFailureRecovery;
+        use crate::domain::obs::ConnectionInfo;
         use crate::domain::output::{OutputKind, OutputRunState, OutputStatus};
         use crate::infra::error::AppError;
 

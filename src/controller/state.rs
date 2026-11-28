@@ -743,7 +743,7 @@ impl AppState {
     }
 
     /// A new session starts with unknown outputs until readback arrives.
-    pub fn apply_connected(&mut self, info: crate::controller::event::ConnectionInfo) -> ObsStatus {
+    pub fn apply_connected(&mut self, info: crate::domain::obs::ConnectionInfo) -> ObsStatus {
         use crate::domain::output::OutputRunState;
         self.finish_report(&ObsStatus::Connecting.label());
         self.health.connected();

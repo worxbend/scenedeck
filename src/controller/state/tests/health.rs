@@ -55,11 +55,8 @@ fn delayed_output_publication_uses_source_times_for_stop_correlation() {
 #[test]
 fn health_alerts_follow_observed_outputs_and_connection_lifecycle_not_fallbacks() {
     use crate::{
-        controller::{
-            command::AppCommand,
-            event::{AppEvent, ConnectionInfo},
-        },
-        domain::health::AlertKind,
+        controller::{command::AppCommand, event::AppEvent},
+        domain::{health::AlertKind, obs::ConnectionInfo},
     };
     let info = || ConnectionInfo {
         connection_id: "test".into(),
