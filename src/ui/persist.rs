@@ -135,11 +135,6 @@ fn registry_write_finished(revision: u64, covers_snapshot: bool, result: std::io
     });
 }
 
-#[cfg(test)]
-fn submit_registry_write(what: &'static str, covers_snapshot: bool, write: RegistryWrite) {
-    submit_registry_write_to(what, covers_snapshot, RegistryTarget::legacy(), write);
-}
-
 fn submit_registry_write_to(
     what: &'static str,
     covers_snapshot: bool,
@@ -350,16 +345,6 @@ pub(crate) fn import_registry(
         },
         complete,
     )
-}
-
-#[cfg(test)]
-fn import_registry_to_path(
-    source: std::path::PathBuf,
-    target: std::path::PathBuf,
-    publish: impl FnOnce(SceneRegistry) + 'static,
-    complete: impl FnOnce(std::io::Result<()>) + 'static,
-) -> bool {
-    import_registry_to_target(source, RegistryTarget::File(target), publish, complete)
 }
 
 fn import_registry_to_target(
@@ -590,6 +575,19 @@ pub(crate) fn persist_registry_field<Cached, Disk>(
 mod tests {
     use super::*;
     use std::{cell::RefCell, time::Duration};
+
+    fn submit_registry_write(what: &'static str, covers_snapshot: bool, write: RegistryWrite) {
+        submit_registry_write_to(what, covers_snapshot, RegistryTarget::legacy(), write);
+    }
+
+    fn import_registry_to_path(
+        source: std::path::PathBuf,
+        target: std::path::PathBuf,
+        publish: impl FnOnce(SceneRegistry) + 'static,
+        complete: impl FnOnce(std::io::Result<()>) + 'static,
+    ) -> bool {
+        import_registry_to_target(source, RegistryTarget::File(target), publish, complete)
+    }
 
     #[test]
     fn successful_workspace_snapshot_cannot_retire_another_workspaces_failed_intent() {
