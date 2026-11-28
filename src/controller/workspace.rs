@@ -582,7 +582,13 @@ async fn read_observation(
 }
 
 #[cfg(test)]
+mod cancellation_tests;
+
+#[cfg(test)]
 mod lifecycle_tests;
+
+#[cfg(test)]
+mod scene_activation_tests;
 
 pub fn unix_ms() -> u64 {
     SystemTime::now()
