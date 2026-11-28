@@ -10,11 +10,12 @@ use crate::controller::test_support::events::{recv_event, recv_matching, TEST_DE
 use crate::controller::test_support::state::app_state;
 use crate::controller::workspace::{WorkspaceController, WorkspaceRequest};
 use crate::domain::control::ControlAction;
-use crate::domain::output::OutputKind;
+use crate::domain::output::{OutputKind, OutputRunState, OutputStatus};
 use crate::domain::workflow::ScopeBinding;
 use crate::obs::event::ObsEventStream;
 use crate::obs::testing::scripted::ScriptedObs;
 use crate::obs::testing::wire::Reply;
+use futures_util::future::BoxFuture;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};

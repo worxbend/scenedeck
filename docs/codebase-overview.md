@@ -56,7 +56,9 @@ Application orchestration.
   inspection snapshots. `state/mixer/tests.rs` (tests only) holds its tests.
 - `app_controller.rs`: top-level command routing and small per-command task
   dispatch. It delegates session, refresh, and output lifecycles to focused
-  controller components.
+  controller components. `app_controller/tests/` (tests only) holds the
+  tests that drive `AppController::handle`, one file per command family
+  (`outputs`, `config`, `refresh`).
 - `output_controller.rs`: stream/record command guards, status refreshes,
   graceful disconnect shutdown, and the injectable output-client boundary.
 - `session_controller.rs`: connection task ownership, reconnect replacement,
