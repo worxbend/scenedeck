@@ -2,4 +2,5 @@
 //! need the same domain values.
 
 pub(crate) mod health;
+pub(crate) mod meter;
 pub(crate) mod session_report;

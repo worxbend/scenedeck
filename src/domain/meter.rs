@@ -78,14 +78,6 @@ pub struct ChannelLevel {
 }
 
 impl ChannelLevel {
-    /// Silence, used before the first reading arrives.
-    #[cfg(test)]
-    pub const SILENT: Self = Self {
-        magnitude_db: f64::NEG_INFINITY,
-        peak_db: f64::NEG_INFINITY,
-        input_peak_db: f64::NEG_INFINITY,
-    };
-
     /// Convert OBS's `[magnitude, peak, inputPeak]` multipliers to decibels.
     pub fn from_mul(levels: [f32; 3]) -> Self {
         Self {
@@ -137,24 +129,6 @@ impl InputLevels {
             channels: levels.iter().copied().map(ChannelLevel::from_mul).collect(),
         }
     }
-
-    /// How many channels this input reports.
-    #[cfg(test)]
-    pub fn channel_count(&self) -> usize {
-        self.channels.len()
-    }
-
-    /// Loudest peak across all channels, or `None` when the input is silent.
-    #[cfg(test)]
-    pub fn loudest_peak_db(&self) -> Option<f64> {
-        self.channels
-            .iter()
-            .map(|channel| channel.peak_db)
-            .filter(|db| db.is_finite())
-            .fold(None, |loudest: Option<f64>, db| {
-                Some(loudest.map_or(db, |current| current.max(db)))
-            })
-    }
 }
 
 /// The most recent levels for every input OBS is currently metering.
@@ -175,11 +149,6 @@ pub struct InputLevelSnapshot {
 
 impl InputLevelSnapshot {
     /// Replace the snapshot with a fresh set of readings.
-    #[cfg(test)]
-    pub fn update(&mut self, levels: Vec<InputLevels>) {
-        self.update_at(levels, std::time::Instant::now());
-    }
-
     pub fn update_at(&mut self, levels: Vec<InputLevels>, observed_at: std::time::Instant) {
         self.observed_at = Some(observed_at);
         self.sequence = self.sequence.wrapping_add(1);
@@ -252,17 +221,38 @@ pub fn channel_label(channel: usize, channel_count: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use super::*;
+    use crate::domain::test_support::meter::SILENT_CHANNEL;
+
+    /// Loudest peak across all channels, or `None` when the input is silent.
+    fn loudest_peak_db(levels: &InputLevels) -> Option<f64> {
+        levels
+            .channels
+            .iter()
+            .map(|channel| channel.peak_db)
+            .filter(|db| db.is_finite())
+            .fold(None, |loudest: Option<f64>, db| {
+                Some(loudest.map_or(db, |current| current.max(db)))
+            })
+    }
 
     #[test]
     fn duplicate_input_names_cannot_supply_trusted_meter_evidence() {
         let mut snapshot = InputLevelSnapshot::default();
-        snapshot.update(vec![
-            InputLevels::from_mul("Mic".into(), &[[0.0; 3]]),
-            InputLevels::from_mul("Mic".into(), &[[0.1; 3]]),
-        ]);
+        snapshot.update_at(
+            vec![
+                InputLevels::from_mul("Mic".into(), &[[0.0; 3]]),
+                InputLevels::from_mul("Mic".into(), &[[0.1; 3]]),
+            ],
+            Instant::now(),
+        );
         assert!(!snapshot.get("Mic").unwrap().valid);
-        snapshot.update(vec![InputLevels::from_mul("Mic".into(), &[[0.0; 3]])]);
+        snapshot.update_at(
+            vec![InputLevels::from_mul("Mic".into(), &[[0.0; 3]])],
+            Instant::now(),
+        );
         assert!(snapshot.get("Mic").unwrap().valid);
     }
 
@@ -326,11 +316,11 @@ mod tests {
             &[[1.0, 1.0, 1.0], [0.5, 0.5, 0.25], [0.0, 0.0, 0.0]],
         );
 
-        assert_eq!(levels.channel_count(), 3);
+        assert_eq!(levels.channels.len(), 3);
         assert!((levels.channels[0].peak_db - 0.0).abs() < 1e-9);
         assert!((levels.channels[1].magnitude_db - (-6.0206)).abs() < 1e-3);
         assert!((levels.channels[1].input_peak_db - (-12.041)).abs() < 1e-3);
-        assert_eq!(levels.channels[2], ChannelLevel::SILENT);
+        assert_eq!(levels.channels[2], SILENT_CHANNEL);
     }
 
     #[test]
@@ -340,7 +330,7 @@ mod tests {
             &[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5], [0.1, 0.25, 0.25]],
         );
 
-        let loudest = levels.loudest_peak_db().unwrap();
+        let loudest = loudest_peak_db(&levels).unwrap();
         assert!((loudest - (-6.0206)).abs() < 1e-3);
     }
 
@@ -348,9 +338,9 @@ mod tests {
     fn loudest_peak_is_none_for_a_fully_silent_input() {
         let levels = InputLevels::from_mul("Muted".to_string(), &[[0.0, 0.0, 0.0]]);
 
-        assert_eq!(levels.loudest_peak_db(), None);
+        assert_eq!(loudest_peak_db(&levels), None);
         assert_eq!(
-            InputLevels::from_mul("None".to_string(), &[]).loudest_peak_db(),
+            loudest_peak_db(&InputLevels::from_mul("None".to_string(), &[])),
             None
         );
     }
@@ -360,20 +350,23 @@ mod tests {
         let mut snapshot = InputLevelSnapshot::default();
         assert!(snapshot.is_empty());
 
-        snapshot.update(vec![
-            InputLevels::from_mul("Mic".to_string(), &[[0.5, 0.5, 0.5]]),
-            InputLevels::from_mul("Music".to_string(), &[[0.25, 0.25, 0.25]]),
-        ]);
+        snapshot.update_at(
+            vec![
+                InputLevels::from_mul("Mic".to_string(), &[[0.5, 0.5, 0.5]]),
+                InputLevels::from_mul("Music".to_string(), &[[0.25, 0.25, 0.25]]),
+            ],
+            Instant::now(),
+        );
         let first = snapshot.sequence();
 
-        assert_eq!(snapshot.get("Mic").unwrap().channel_count(), 1);
+        assert_eq!(snapshot.get("Mic").unwrap().channels.len(), 1);
         assert!(snapshot.get("Missing").is_none());
 
         // An input that stops reporting drops out of the next update entirely.
-        snapshot.update(vec![InputLevels::from_mul(
-            "Mic".to_string(),
-            &[[0.5, 0.5, 0.5]],
-        )]);
+        snapshot.update_at(
+            vec![InputLevels::from_mul("Mic".to_string(), &[[0.5, 0.5, 0.5]])],
+            Instant::now(),
+        );
 
         assert!(snapshot.get("Music").is_none());
         assert_ne!(snapshot.sequence(), first);
@@ -382,10 +375,10 @@ mod tests {
     #[test]
     fn clearing_a_snapshot_moves_the_sequence_only_when_it_had_levels() {
         let mut snapshot = InputLevelSnapshot::default();
-        snapshot.update(vec![InputLevels::from_mul(
-            "Mic".to_string(),
-            &[[0.5, 0.5, 0.5]],
-        )]);
+        snapshot.update_at(
+            vec![InputLevels::from_mul("Mic".to_string(), &[[0.5, 0.5, 0.5]])],
+            Instant::now(),
+        );
 
         snapshot.clear();
         let cleared = snapshot.sequence();

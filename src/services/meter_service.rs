@@ -218,6 +218,7 @@ fn decay(db: Option<f64>, fall_db: f64) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::test_support::meter::SILENT_CHANNEL;
 
     fn level(magnitude: f64, peak: f64, input_peak: f64) -> ChannelLevel {
         ChannelLevel {
@@ -371,7 +372,7 @@ mod tests {
     fn silence_and_nonsense_readings_leave_the_meter_empty() {
         let mut state = MeterChannelState::new();
 
-        state.observe(ChannelLevel::SILENT);
+        state.observe(SILENT_CHANNEL);
         assert_eq!(state.display(), MeterChannelDisplay::EMPTY);
 
         state.observe(level(f64::NAN, -90.0, f64::NEG_INFINITY));

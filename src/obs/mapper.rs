@@ -383,7 +383,7 @@ mod tests {
         };
         assert_eq!(levels.len(), 1);
         assert_eq!(levels[0].input, "Mic");
-        assert_eq!(levels[0].channel_count(), 1);
+        assert_eq!(levels[0].channels.len(), 1);
     }
 
     #[test]
