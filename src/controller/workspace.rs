@@ -9,8 +9,6 @@ use crate::domain::control::{
 use crate::domain::operator_input::{InputIdentity, InputObservation, InputRead};
 use crate::domain::workflow::ScopeBinding;
 use crate::infra::i18n::LANGUAGE_LOADER;
-// Transition re-export: callers move to infra::clock in the next commit.
-pub(crate) use crate::infra::clock::unix_ms;
 use crate::obs::client::ObsClient;
 use futures_util::FutureExt;
 use i18n_embed_fl::fl;

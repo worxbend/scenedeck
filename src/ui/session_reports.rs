@@ -396,7 +396,7 @@ pub(super) fn show(parent: &gtk4::Window, nav: &NavigationContext) {
                 return;
             };
             let mut state = nav.state.borrow_mut();
-            state.collect_report(Instant::now(), crate::controller::workspace::unix_ms());
+            state.collect_report(Instant::now(), crate::infra::clock::unix_ms());
             let entries = state.report_list();
             let index = selected
                 .borrow()

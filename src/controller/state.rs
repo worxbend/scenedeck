@@ -11,6 +11,7 @@ use crate::domain::obs::ObsNamedList;
 use crate::domain::output::{OutputKind, OutputStatus};
 use crate::domain::scene::{SceneId, SceneInventory};
 use crate::domain::stats::{ObsStats, StatsHistory, StreamHealth};
+use crate::infra::clock::unix_ms;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use crate::storage::config::AppConfig;
 use crate::storage::registry::SceneRegistry;
@@ -379,7 +380,7 @@ impl WorkspaceState {
         self.screenshot = None;
         self.screenshot_scene = None;
         self.screenshot_observed_at = None;
-        self.output_results.invalidate(super::workspace::unix_ms());
+        self.output_results.invalidate(unix_ms());
         self.loading = false;
         self.pending = false;
         self.pending_scene = None;
@@ -397,7 +398,7 @@ impl WorkspaceState {
     }
     pub fn log(&mut self, origin: crate::domain::workflow::ActivityOrigin, description: String) {
         self.activity.push(crate::domain::workflow::ActivityRecord {
-            timestamp_unix_ms: super::workspace::unix_ms(),
+            timestamp_unix_ms: unix_ms(),
             origin,
             description,
         });
@@ -747,8 +748,7 @@ impl AppState {
         use crate::domain::output::OutputRunState;
         self.finish_report(&ObsStatus::Connecting.label());
         self.health.connected();
-        self.bookmarks
-            .begin_session(Instant::now(), crate::controller::workspace::unix_ms());
+        self.bookmarks.begin_session(Instant::now(), unix_ms());
         self.invalidate_registry_selection();
         self.available_requests = info.available_requests;
         self.supported_image_formats = info.supported_image_formats;
@@ -825,7 +825,7 @@ impl AppState {
     /// the new collection; keep them separate from the caches cleared here.
     pub fn invalidate_collection_runtime(&mut self) {
         self.retire_preset();
-        self.collect_report(Instant::now(), crate::controller::workspace::unix_ms());
+        self.collect_report(Instant::now(), unix_ms());
         self.invalidate_registry_selection();
         self.workspace.invalidate();
         self.scene_inventory = SceneInventory::default();
@@ -844,7 +844,7 @@ impl AppState {
     /// Forget all observations from the retired connection, but retain local
     /// preferences and explicitly scope-bound activity/output evidence.
     pub fn reset_obs_session(&mut self, status: ObsStatus) {
-        self.collect_report(Instant::now(), crate::controller::workspace::unix_ms());
+        self.collect_report(Instant::now(), unix_ms());
         self.health.disconnected();
         self.invalidate_collection_runtime();
         self.workspace.log(
@@ -922,7 +922,7 @@ impl AppState {
             terminal.omitted_sessions,
             operations.join("; ")
         );
-        self.collect_report(Instant::now(), crate::controller::workspace::unix_ms());
+        self.collect_report(Instant::now(), unix_ms());
         self.workspace
             .log(crate::domain::workflow::ActivityOrigin::Connection, audit);
         self.report_terminal_audit(terminal.generation);

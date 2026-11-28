@@ -81,7 +81,7 @@ impl AppState {
                 if matches!(self.obs_status, ObsStatus::Connected { .. }) {
                     let (_, unix_ms, at) = self.bookmarks.session.unwrap_or((
                         0,
-                        crate::controller::workspace::unix_ms(),
+                        crate::infra::clock::unix_ms(),
                         Instant::now(),
                     ));
                     self.bookmarks.begin_session(at, unix_ms);

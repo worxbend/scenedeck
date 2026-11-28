@@ -301,7 +301,7 @@ fn act_expected(
             request.result_id = Some(nav.state.borrow_mut().workspace.output_results.request(
                 kind,
                 request.scope.clone(),
-                crate::controller::workspace::unix_ms(),
+                crate::infra::clock::unix_ms(),
             ));
         }
         nav.state

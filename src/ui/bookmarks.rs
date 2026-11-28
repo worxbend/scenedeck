@@ -317,7 +317,7 @@ pub(super) fn show(parent: &gtk4::Window, nav: &NavigationContext) {
             let result = nav.state.borrow_mut().capture_bookmark(
                 &title,
                 Instant::now(),
-                crate::controller::workspace::unix_ms(),
+                crate::infra::clock::unix_ms(),
             );
             match result {
                 Ok(_) => {
@@ -493,7 +493,7 @@ mod tests {
                 },
                 Instant::now(),
             ),
-            crate::controller::workspace::unix_ms(),
+            crate::infra::clock::unix_ms(),
         );
     }
 

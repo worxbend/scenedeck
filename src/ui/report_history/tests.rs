@@ -20,7 +20,7 @@ fn connect(nav: &NavigationContext, name: &str) {
         supported_image_formats: Vec::new(),
     });
     state.scene_collections.current = Some("Podcast".into());
-    state.collect_report(Instant::now(), crate::controller::workspace::unix_ms());
+    state.collect_report(Instant::now(), crate::infra::clock::unix_ms());
 }
 
 fn done(nav: &NavigationContext) {

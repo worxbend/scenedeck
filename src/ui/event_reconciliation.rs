@@ -2,8 +2,9 @@
 
 use crate::controller::state::update_active_since;
 use crate::controller::state::AppState;
-use crate::controller::workspace::{unix_ms, WorkspaceObservation};
+use crate::controller::workspace::WorkspaceObservation;
 use crate::domain::control::SourceDetail;
+use crate::infra::clock::unix_ms;
 use crate::infra::i18n::LANGUAGE_LOADER;
 use i18n_embed_fl::fl;
 

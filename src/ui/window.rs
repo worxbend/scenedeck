@@ -331,7 +331,7 @@ fn add_pages(
                 if state
                     .workspace
                     .output_results
-                    .expire(crate::controller::workspace::unix_ms())
+                    .expire(crate::infra::clock::unix_ms())
                 {
                     state.workspace.touch();
                 }
@@ -427,7 +427,7 @@ fn install_event_polling(
         move |event| {
             nav.state
                 .borrow_mut()
-                .collect_report(Instant::now(), crate::controller::workspace::unix_ms());
+                .collect_report(Instant::now(), crate::infra::clock::unix_ms());
             let shell = event_ui.upgrade().and_then(|slot| slot.borrow().clone());
             let before = {
                 let state = nav.state.borrow();
@@ -439,7 +439,7 @@ fn install_event_polling(
             apply_event(&nav, event, shell.as_ref());
             nav.state
                 .borrow_mut()
-                .collect_report(Instant::now(), crate::controller::workspace::unix_ms());
+                .collect_report(Instant::now(), crate::infra::clock::unix_ms());
             let changed = {
                 let state = nav.state.borrow();
                 before
@@ -462,7 +462,7 @@ fn install_event_polling(
             report_nav
                 .state
                 .borrow_mut()
-                .collect_report(Instant::now(), crate::controller::workspace::unix_ms());
+                .collect_report(Instant::now(), crate::infra::clock::unix_ms());
             super::report_history::tick(&report_nav.state);
         },
     );
@@ -1325,7 +1325,7 @@ fn apply_output_event(nav: &NavigationContext, event: AppEvent, ui: Option<&Even
     let kind = nav
         .state
         .borrow_mut()
-        .apply_output_event(&event, crate::controller::workspace::unix_ms());
+        .apply_output_event(&event, crate::infra::clock::unix_ms());
     // `apply_event` forwards only output variants here.
     let Some(kind) = kind else {
         debug_assert!(false, "non-output event routed to output handler");

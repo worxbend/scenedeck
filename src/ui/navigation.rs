@@ -270,7 +270,7 @@ impl NavigationContext {
         }
         self.state
             .borrow_mut()
-            .note_command_intent(&cmd, crate::controller::workspace::unix_ms());
+            .note_command_intent(&cmd, crate::infra::clock::unix_ms());
         self.controller.borrow_mut().handle(cmd);
     }
 }

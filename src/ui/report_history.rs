@@ -99,7 +99,7 @@ pub(crate) fn finish_for_shutdown() {
             .borrow_mut()
             .workspace
             .output_results
-            .invalidate(crate::controller::workspace::unix_ms());
+            .invalidate(crate::infra::clock::unix_ms());
         state
             .borrow_mut()
             .finish_report(&fl!(LANGUAGE_LOADER, "history-app-closed"));
@@ -150,7 +150,7 @@ fn save(state: &State, force: bool, allow_disabled: bool) {
         if !force && history.save_error.is_some() {
             return;
         }
-        state.collect_report(Instant::now(), crate::controller::workspace::unix_ms());
+        state.collect_report(Instant::now(), crate::infra::clock::unix_ms());
         state.stage_report_history();
         let history = &mut state.report_history;
         if let Some(error) = &history.load_error {

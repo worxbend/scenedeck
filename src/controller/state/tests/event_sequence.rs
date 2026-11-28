@@ -164,7 +164,7 @@ fn at(base: Instant, seconds: u64) -> Instant {
 }
 
 fn now_ms() -> u64 {
-    crate::controller::workspace::unix_ms()
+    crate::infra::clock::unix_ms()
 }
 
 fn output(state: &mut AppState, event: AppEvent) {

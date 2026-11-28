@@ -64,7 +64,7 @@ impl ReportsState {
 impl AppState {
     pub(crate) fn prepare_report_exit(&mut self, reason: &str) -> Option<ReportExit> {
         use crate::domain::output_result::OutputResultStatus;
-        let now = crate::controller::workspace::unix_ms();
+        let now = crate::infra::clock::unix_ms();
         self.collect_report(Instant::now(), now);
         let baseline = self.reports.output_baseline;
         let report = self.reports.current()?;
@@ -118,7 +118,7 @@ impl AppState {
         {
             return;
         }
-        let now = crate::controller::workspace::unix_ms();
+        let now = crate::infra::clock::unix_ms();
         report.ended_unix_ms = None;
         report.push(
             now,
@@ -211,7 +211,7 @@ impl AppState {
     }
 
     pub(crate) fn finish_report(&mut self, reason: &str) {
-        let now = crate::controller::workspace::unix_ms();
+        let now = crate::infra::clock::unix_ms();
         self.collect_report(Instant::now(), now);
         if let Some(report) = self.reports.current() {
             report.push(

@@ -26,7 +26,7 @@ fn state() -> AppState {
     AppState::new(Default::default(), Default::default(), Vec::new())
 }
 fn collect(state: &mut AppState) {
-    state.collect_report(Instant::now(), crate::controller::workspace::unix_ms());
+    state.collect_report(Instant::now(), crate::infra::clock::unix_ms());
 }
 
 #[test]
