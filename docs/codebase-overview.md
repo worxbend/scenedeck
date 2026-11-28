@@ -20,7 +20,8 @@ Entry point. Initializes logging and starts the app.
 `src/app.rs`
 
 Creates the Tokio runtime, GTK application, event channel, controller, initial
-state, and main window.
+state, and main window. `app/tests.rs` (tests only) holds its tests, including
+the native close and quit save-barrier tests.
 
 `src/app_info.rs`
 
@@ -193,11 +194,12 @@ GTK and libadwaita UI.
 - `actions.rs`: app-level actions and keyboard shortcuts.
 - `background_io.rs`: runs blocking work off the GTK thread, with FIFO lanes
   for ordered config and registry writes, and returns completion callbacks to
-  GTK.
+  GTK. `background_io/tests.rs` (tests only) holds its tests.
 - `persist.rs`: saves local state from GTK callbacks: the registry write
   journal, the import gate and the close-dialog retry. Children:
   `persist/config.rs` (config snapshot saves) and `persist/registry_scope.rs`
-  (show workspace selection and the eviction notice).
+  (show workspace selection and the eviction notice). `persist/tests.rs`
+  (tests only) holds its tests.
 - `pages/`: Live, Stats, Mixer, Graph, Inventory, Doctor, Settings, and Help pages.
 - `presenters/`: text formatters shared by several surfaces;
   `output_status` renders the stream and record labels and elapsed time;

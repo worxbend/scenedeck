@@ -74,6 +74,32 @@ Native visual verification is a separate gate: inspect actual screenshots and
 record gaps, rather than treating a passing build as layout evidence. See the
 [manual test plan](manual-test-plan.md).
 
+## Test Layout
+
+Tests are `#[cfg(test)]` child modules of the code they test, so they reach
+private items and their path names the owner. There is no top-level `tests/`
+directory.
+
+- A few short tests stay inline: `#[cfg(test)] mod tests { ... }` at the end
+  of the file.
+- A longer suite moves to `<module>/tests.rs`, declared with
+  `#[cfg(test)] mod tests;`. For `x.rs` that is `x/tests.rs`, beside the other
+  children of `x`.
+- A suite grouped by topic uses `<module>/tests/mod.rs` with one file per
+  topic, as in `ui/window/tests/` and `controller/state/tests/`.
+- A second suite with its own fixtures may sit beside it as
+  `<module>/<topic>_tests.rs`, as in `obs/client/control_tests.rs`.
+
+Do not mount a test file with `#[path]` or keep it next to its module instead
+of inside the module's directory. The one remaining mount,
+`controller/final_regression_tests.rs`, goes when that file is split by owning
+component (review plan task P2-T10).
+
+A move that keeps the module path needs no other edit: native test names and
+`isolated_test_child` names stay valid. A move that changes it must update
+every embedded path; grep for the old one. A relative `include_str!` gains one
+`../` per directory the file moves down.
+
 ## Development Workflow
 
 1. Identify the boundary you are changing: UI, controller, OBS adapter, domain,
