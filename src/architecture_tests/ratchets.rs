@@ -77,7 +77,7 @@ const APP_STATE_BORROWS: &[(&str, [usize; 3])] = &[
     ("ui/sidebar.rs", [0, 1, 1]),
     ("ui/widgets/audio_card.rs", [5, 4, 9]),
     ("ui/widgets/deck_controls.rs", [1, 11, 12]),
-    ("ui/widgets/operating_panel.rs", [12, 13, 27]),
+    ("ui/widgets/operating_panel.rs", [1, 8, 10]),
     ("ui/widgets/operating_panel/media_progress.rs", [5, 2, 8]),
     ("ui/widgets/scene_card.rs", [0, 3, 3]),
     ("ui/widgets/studio_controls.rs", [0, 5, 5]),
