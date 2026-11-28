@@ -53,7 +53,7 @@ Application orchestration.
   tests also use. `event_sequence.rs` replays one OBS session through the
   reducers `ui/window.rs` calls and compares each step to a golden snapshot.
 - `state/mixer.rs`: Mixer audio view model — request fencing, visibility and
-  inspection snapshots.
+  inspection snapshots. `state/mixer/tests.rs` (tests only) holds its tests.
 - `app_controller.rs`: top-level command routing and small per-command task
   dispatch. It delegates session, refresh, and output lifecycles to focused
   controller components.
