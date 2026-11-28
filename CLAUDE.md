@@ -60,8 +60,8 @@ Ignored tests named `measure_*` are manual timing harnesses that no gate runs:
 
 Tests are `#[cfg(test)]` child modules: inline `mod tests` blocks, or, for
 longer suites, `<module>/tests.rs`, `<module>/tests/<topic>.rs` or a second
-suite at `<module>/<topic>_tests.rs`. Do not add `#[path]` mounts; the one
-left and the layout rules are in `docs/developer-guide.md`. There is no
+suite at `<module>/<topic>_tests.rs`. Do not add `#[path]` mounts; the
+layout rules are in `docs/developer-guide.md`. There is no
 top-level `tests/` directory. CI also runs `cargo audit` and `cargo deny check
 advisories bans licenses sources` (`deny.toml`).
 
