@@ -768,6 +768,19 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// A field save of the Camera icon to the legacy registry file, resolved
+    /// when it runs, the way `persist_registry_field` writes one.
+    fn legacy_camera_icon_write(icon: &'static str) -> RegistryWrite {
+        std::sync::Arc::new(move || {
+            let target = RegistryTarget::legacy();
+            let mut registry = target.read()?;
+            if registry.set_scene_icon("Camera", Some(icon)) {
+                target.write(&registry)?;
+            }
+            Ok(())
+        })
+    }
+
     #[test]
     fn registry_field_retry_replays_successful_successors_and_preserves_external_fields() {
         if !crate::ui::background_io::isolated_test_child(
@@ -780,29 +793,13 @@ mod tests {
         let target = crate::storage::xdg::registry_path();
         let parent = target.parent().unwrap();
         std::fs::write(parent, b"blocked").unwrap();
-        submit_registry_write(
-            "older icon",
-            false,
-            std::sync::Arc::new(|| {
-                crate::storage::registry::set_scene_icon("Camera", Some("older"))
-                    .map(|_| ())
-                    .map_err(std::io::Error::other)
-            }),
-        );
+        submit_registry_write("older icon", false, legacy_camera_icon_write("older"));
         drain_expect(Err(crate::ui::background_io::FlushError::WorkerFailed));
         std::fs::remove_file(parent).unwrap();
         let mut external = SceneRegistry::default();
         external.set_input_icon("External", Some("preserved"));
         crate::storage::registry::write_registry_to_path(&target, &external).unwrap();
-        submit_registry_write(
-            "newer icon",
-            false,
-            std::sync::Arc::new(|| {
-                crate::storage::registry::set_scene_icon("Camera", Some("newer"))
-                    .map(|_| ())
-                    .map_err(std::io::Error::other)
-            }),
-        );
+        submit_registry_write("newer icon", false, legacy_camera_icon_write("newer"));
         drain_expect(Err(crate::ui::background_io::FlushError::WorkerFailed));
         assert_eq!(
             REGISTRY_WRITES.with(|writes| writes.borrow().operations.len()),

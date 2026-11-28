@@ -164,22 +164,6 @@ pub enum RegistryStorageError {
     },
 }
 
-/// Typed failures while mutating the persisted registry.
-#[derive(Debug, Error)]
-#[cfg(test)]
-pub enum RegistryMutationError {
-    /// The existing registry could not be loaded safely.
-    #[error(transparent)]
-    Load(#[from] RegistryStorageError),
-    /// The updated registry could not be written.
-    #[error("failed to write scene registry: {source}")]
-    Write {
-        /// Underlying I/O failure.
-        #[source]
-        source: io::Error,
-    },
-}
-
 impl SceneRegistry {
     /// Follow an observed OBS rename without replacing another scene's metadata.
     /// Repeated delivery is harmless; the old card's position survives even if
@@ -491,32 +475,6 @@ impl SceneRegistry {
     }
 }
 
-/// Persist one scene icon to the registry in the XDG config directory.
-#[cfg(test)]
-pub fn set_scene_icon(scene_id: &str, icon: Option<&str>) -> Result<bool, RegistryMutationError> {
-    mutate_registry(&xdg::registry_path(), |registry| {
-        registry.set_scene_icon(scene_id, icon)
-    })
-}
-
-/// Load, mutate, and re-persist the registry only when `change` reports a change.
-///
-/// Load failures are returned rather than coerced to an empty registry, so a
-/// hand-edited but temporarily invalid file is never overwritten.
-#[cfg(test)]
-fn mutate_registry(
-    path: &Path,
-    change: impl FnOnce(&mut SceneRegistry) -> bool,
-) -> Result<bool, RegistryMutationError> {
-    let mut registry = read_registry_from_path(path)?;
-    let changed = change(&mut registry);
-    if changed {
-        write_registry_to_path(path, &registry)
-            .map_err(|source| RegistryMutationError::Write { source })?;
-    }
-    Ok(changed)
-}
-
 /// Normalize a GTK color selection to the persisted `#RRGGBB` form.
 pub fn scene_accent_hex(red: f32, green: f32, blue: f32) -> String {
     fn channel(value: f32) -> u8 {
@@ -635,23 +593,6 @@ fn parse_registry(path: &Path, raw: &str) -> Result<SceneRegistry, RegistryStora
         path: path.to_path_buf(),
         source,
     })
-}
-
-#[cfg(test)]
-fn set_scene_role_from_path(
-    path: &Path,
-    scene_id: &str,
-    role: Option<SceneRole>,
-) -> Result<bool, RegistryMutationError> {
-    mutate_registry(path, |registry| registry.set_scene_role(scene_id, role))
-}
-
-#[cfg(test)]
-fn remove_scene_entry_from_path(
-    path: &Path,
-    scene_id: &str,
-) -> Result<bool, RegistryMutationError> {
-    mutate_registry(path, |registry| registry.scenes.remove(scene_id).is_some())
 }
 
 /// Pretty-print registry JSON to an explicit path, creating parents as needed.
@@ -885,11 +826,6 @@ mod tests {
                 }
             }
             assert!(write_registry_to_path(&path, &registry).is_err());
-            assert!(mutate_registry(&path, |existing| {
-                *existing = registry;
-                true
-            })
-            .is_err());
             assert_eq!(std::fs::read(&path).unwrap(), original);
         }
         std::fs::remove_file(&path).unwrap();
@@ -1008,6 +944,7 @@ mod tests {
     }
     use super::*;
     use crate::domain::registry::RoleDependency;
+    use crate::storage::show_workspaces::RegistryTarget;
     use crate::storage::test_support::TempDir;
 
     /// A path for a file that does not exist yet, inside a scratch directory
@@ -1016,6 +953,30 @@ mod tests {
         let dir = TempDir::new(name);
         let path = dir.path().join(format!("registry.{extension}"));
         (dir, path)
+    }
+
+    /// Apply `change` to the registry file the way a field save does: read it,
+    /// edit it, and write it back only when `change` reports a change.
+    fn edit_registry_file(
+        path: &Path,
+        change: impl FnOnce(&mut SceneRegistry) -> bool,
+    ) -> io::Result<bool> {
+        let target = RegistryTarget::File(path.to_path_buf());
+        let mut registry = target.read()?;
+        let changed = change(&mut registry);
+        if changed {
+            target.write(&registry)?;
+        }
+        Ok(changed)
+    }
+
+    fn is_parse_failure(error: &io::Error) -> bool {
+        matches!(
+            error
+                .get_ref()
+                .and_then(|source| source.downcast_ref::<RegistryStorageError>()),
+            Some(RegistryStorageError::Parse { .. })
+        )
     }
 
     #[test]
@@ -1397,7 +1358,7 @@ rules:
     }
 
     #[test]
-    fn set_scene_role_from_path_preserves_existing_metadata() {
+    fn a_role_edit_of_the_registry_file_preserves_existing_metadata() {
         let (_dir, path) = scratch_file("registry-set-role", "json");
         let mut registry = SceneRegistry::default();
         registry.scenes.insert(
@@ -1413,7 +1374,10 @@ rules:
         );
         write_registry_to_path(&path, &registry).unwrap();
 
-        let changed = set_scene_role_from_path(&path, "Main", Some(SceneRole::Secondary)).unwrap();
+        let changed = edit_registry_file(&path, |registry| {
+            registry.set_scene_role("Main", Some(SceneRole::Secondary))
+        })
+        .unwrap();
         let parsed = read_registry_from_path(&path).unwrap();
 
         assert!(changed);
@@ -1424,22 +1388,22 @@ rules:
     }
 
     #[test]
-    fn set_scene_role_from_path_does_not_overwrite_invalid_registry() {
+    fn a_role_edit_does_not_overwrite_an_invalid_registry_file() {
         let (_dir, path) = scratch_file("registry-set-role-invalid", "json");
         std::fs::write(&path, "{").unwrap();
 
-        let err = set_scene_role_from_path(&path, "Main", Some(SceneRole::Primary)).unwrap_err();
+        let err = edit_registry_file(&path, |registry| {
+            registry.set_scene_role("Main", Some(SceneRole::Primary))
+        })
+        .unwrap_err();
         let raw = std::fs::read_to_string(&path).unwrap();
 
-        assert!(matches!(
-            err,
-            RegistryMutationError::Load(RegistryStorageError::Parse { .. })
-        ));
+        assert!(is_parse_failure(&err), "{err}");
         assert_eq!(raw, "{");
     }
 
     #[test]
-    fn remove_scene_entry_removes_only_requested_scene() {
+    fn removing_a_scene_from_the_registry_file_keeps_the_others() {
         let (_dir, path) = scratch_file("registry-remove-entry", "json");
         let mut registry = SceneRegistry::default();
         registry.scenes.insert(
@@ -1466,7 +1430,8 @@ rules:
         );
         write_registry_to_path(&path, &registry).unwrap();
 
-        let removed = remove_scene_entry_from_path(&path, "Main").unwrap();
+        let removed =
+            edit_registry_file(&path, |registry| registry.scenes.remove("Main").is_some()).unwrap();
         let parsed = read_registry_from_path(&path).unwrap();
 
         assert!(removed);
@@ -1476,17 +1441,15 @@ rules:
     }
 
     #[test]
-    fn remove_scene_entry_does_not_overwrite_invalid_registry() {
+    fn a_scene_removal_does_not_overwrite_an_invalid_registry_file() {
         let (_dir, path) = scratch_file("registry-remove-invalid", "json");
         std::fs::write(&path, "{").unwrap();
 
-        let err = remove_scene_entry_from_path(&path, "Main").unwrap_err();
+        let err = edit_registry_file(&path, |registry| registry.scenes.remove("Main").is_some())
+            .unwrap_err();
         let raw = std::fs::read_to_string(&path).unwrap();
 
-        assert!(matches!(
-            err,
-            RegistryMutationError::Load(RegistryStorageError::Parse { .. })
-        ));
+        assert!(is_parse_failure(&err), "{err}");
         assert_eq!(raw, "{");
     }
 
