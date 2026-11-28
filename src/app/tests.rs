@@ -992,3 +992,126 @@ fn a_panicked_startup_reader_names_the_reader_in_the_translated_registry_notice(
     );
     assert!(notice.contains(&reader), "{notice}");
 }
+
+/// A Secret Service that answers no read until it is unlocked, the way a
+/// locked keyring waits on its unlock prompt. A read on the GTK thread
+/// returns at once and is counted instead: blocking there would hold the
+/// first frame until the test gave up.
+struct LockedKeyring {
+    gtk_thread: std::thread::ThreadId,
+    unlocked: std::sync::Mutex<mpsc::Receiver<()>>,
+    started: std::sync::atomic::AtomicUsize,
+    on_gtk_thread: std::sync::atomic::AtomicUsize,
+    answered: std::sync::atomic::AtomicUsize,
+}
+
+impl LockedKeyring {
+    /// Unlocks when the sender paired with `unlocked` is dropped.
+    fn new(unlocked: mpsc::Receiver<()>) -> Self {
+        Self {
+            gtk_thread: std::thread::current().id(),
+            unlocked: std::sync::Mutex::new(unlocked),
+            started: Default::default(),
+            on_gtk_thread: Default::default(),
+            answered: Default::default(),
+        }
+    }
+
+    fn count(counter: &std::sync::atomic::AtomicUsize) -> usize {
+        counter.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl crate::domain::connection::credential::CredentialStore for LockedKeyring {
+    fn read(
+        &self,
+        _connection_id: &str,
+    ) -> Result<
+        Option<crate::domain::connection::credential::ObsPassword>,
+        crate::infra::error::AppError,
+    > {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.started.fetch_add(1, SeqCst);
+        if std::thread::current().id() == self.gtk_thread {
+            self.on_gtk_thread.fetch_add(1, SeqCst);
+            return Ok(None);
+        }
+        let unlock = self
+            .unlocked
+            .lock()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(5));
+        assert!(
+            matches!(unlock, Err(mpsc::RecvTimeoutError::Disconnected)),
+            "the test never unlocked the keyring: {unlock:?}"
+        );
+        self.answered.fetch_add(1, SeqCst);
+        Ok(None)
+    }
+
+    fn write(
+        &self,
+        _connection_id: &str,
+        _password: &crate::domain::connection::credential::ObsPassword,
+    ) -> Result<(), crate::infra::error::AppError> {
+        panic!("startup must not write a password")
+    }
+
+    fn delete(&self, _connection_id: &str) -> Result<(), crate::infra::error::AppError> {
+        panic!("startup must not delete a password")
+    }
+}
+
+#[test]
+#[ignore = "requires isolated GTK and scratch XDG dirs; fake keyring, no OBS"]
+fn native_startup_shows_the_window_while_the_keyring_is_locked() {
+    crate::ui::native_test!(|| {
+        use crate::controller::{
+            dependencies::ControllerDependencies, test_support::deps::NoServices,
+        };
+        let (unlock, unlocked) = mpsc::channel();
+        let keyring = std::sync::Arc::new(LockedKeyring::new(unlocked));
+
+        let startup = read_startup_data();
+        assert_eq!(
+            LockedKeyring::count(&keyring.started),
+            0,
+            "nothing before activation may read the keyring"
+        );
+
+        let app = adw::Application::builder()
+            .application_id("io.github.worxbend.scenedeck.LockedKeyringFixture")
+            .flags(gio::ApplicationFlags::NON_UNIQUE)
+            .build();
+        app.register(None::<&gio::Cancellable>).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (tx, rx) = mpsc::sync_channel(128);
+        let controller = Rc::new(RefCell::new(AppController::with_dependencies(
+            runtime.handle().clone(),
+            tx,
+            ControllerDependencies::new(std::sync::Arc::new(NoServices), keyring.clone()),
+        )));
+        let window = build_ui(&app, controller, rx, &startup);
+
+        assert!(
+            window.is_visible(),
+            "the window must show while the keyring is still locked"
+        );
+        assert_eq!(
+            LockedKeyring::count(&keyring.on_gtk_thread),
+            0,
+            "building the window must not read the keyring on the GTK thread"
+        );
+
+        drop(unlock);
+        assert!(
+            ui::test_support::pump_until(Duration::from_secs(5), || {
+                LockedKeyring::count(&keyring.answered) == 1
+            }),
+            "the Settings editor must read the password once the keyring answers"
+        );
+    });
+}
