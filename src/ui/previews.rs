@@ -289,5 +289,4 @@ mod tests {
 }
 
 #[cfg(test)]
-#[path = "preview_scheduler_tests.rs"]
 mod scheduler_tests;

@@ -582,7 +582,6 @@ async fn read_observation(
 }
 
 #[cfg(test)]
-#[path = "workspace_lifecycle_tests.rs"]
 mod lifecycle_tests;
 
 pub fn unix_ms() -> u64 {

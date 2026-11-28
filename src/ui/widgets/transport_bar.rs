@@ -429,5 +429,4 @@ mod tests {
 }
 
 #[cfg(test)]
-#[path = "transport_bar_tests.rs"]
 mod native_layout_tests;
