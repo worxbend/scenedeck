@@ -47,7 +47,7 @@ const APP_STATE_BORROW_PATTERNS: [&str; 3] =
 
 const APP_STATE_BORROWS: &[(&str, [usize; 3])] = &[
     ("ui/action_catalog.rs", [0, 1, 1]),
-    ("ui/action_shortcuts.rs", [7, 17, 27]),
+    ("ui/action_shortcuts.rs", [0, 4, 4]),
     ("ui/audio_presets.rs", [1, 11, 12]),
     ("ui/bookmarks.rs", [12, 10, 24]),
     ("ui/command_palette.rs", [3, 6, 10]),
