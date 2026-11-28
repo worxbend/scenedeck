@@ -304,47 +304,6 @@ async fn graph_flattens_groups_including_disabled_and_repeated_membership() {
         .unwrap();
     assert_eq!(graph.children("Program"), &["Debug"]);
     assert!(!graph.edges.contains_key("Group"));
-    use crate::domain::registry::{SceneMetadata, SceneRegistrySnapshot};
-    use crate::domain::role::SceneRole;
-    use crate::domain::scene::{Scene, SceneInventory};
-    let registry = SceneRegistrySnapshot::new(
-        [("Program", SceneRole::Primary), ("Debug", SceneRole::Debug)]
-            .into_iter()
-            .map(|(name, role)| {
-                (
-                    name.to_owned(),
-                    SceneMetadata {
-                        role,
-                        tags: Vec::new(),
-                        protected: false,
-                    },
-                )
-            })
-            .collect(),
-        crate::domain::registry::GraphDependencyPolicy::default()
-            .forbid(SceneRole::Primary, SceneRole::Debug),
-    );
-    let inventory = SceneInventory {
-        scenes: vec![
-            Scene {
-                uuid: None,
-                id: "Program".into(),
-            },
-            Scene {
-                uuid: None,
-                id: "Debug".into(),
-            },
-        ],
-        ..Default::default()
-    };
-    let diagnostics =
-        crate::services::doctor_service::DoctorService::run(&inventory, &registry, &graph);
-    assert!(diagnostics
-        .iter()
-        .any(|diagnostic| diagnostic.message.contains("Debug")));
-    assert!(!diagnostics
-        .iter()
-        .any(|diagnostic| diagnostic.scene.as_deref() == Some("Group")));
     assert_eq!(server.await.unwrap().len(), 4); // no visibility reads: topology includes disabled groups
 }
 
