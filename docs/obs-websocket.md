@@ -11,6 +11,16 @@ SceneDeck connects with:
 - Port from config, default `4455`.
 - Optional password from the system keyring.
 
+The transport is plain `ws://`. obs-websocket has no native TLS, and the `obws`
+`tls` feature is not enabled, so the authentication exchange and every request
+and event cross the network unencrypted. The Settings connection editor shows a
+warning while the saved host is not loopback (`localhost`, `127.0.0.0/8` or
+`::1`; see `domain::connection::endpoint::is_loopback`). For a remote OBS, run an
+SSH tunnel (`ssh -L 4455:127.0.0.1:4455 obs-host`, then connect to
+`127.0.0.1`) or a VPN. A TLS reverse proxy in front of OBS is not enough on its
+own: SceneDeck does not speak `wss://`, so TLS has to terminate on this machine
+too (for example an stunnel pair). Native `wss://` support is deferred.
+
 After connecting, SceneDeck reads OBS version information, including
 `availableRequests` and supported image formats, and starts an OBS event stream.
 The operating UI gates individual writes by advertised request availability;

@@ -11,7 +11,10 @@ use i18n_embed_fl::fl;
 
 use crate::{
     controller::command::AppCommand,
-    domain::connection::credential::{CredentialStore, ObsPassword},
+    domain::connection::{
+        credential::{CredentialStore, ObsPassword},
+        endpoint::is_loopback,
+    },
     infra::{error::AppError, i18n::LANGUAGE_LOADER},
     storage::config::{AppConfig, ObsConfig, SavedConnection},
     ui::{navigation::NavigationContext, persist::persist_config_with, string_list},
@@ -29,6 +32,7 @@ struct Editor {
     name: glib::WeakRef<EntryRow>,
     host: glib::WeakRef<EntryRow>,
     port: glib::WeakRef<EntryRow>,
+    unencrypted_warning: glib::WeakRef<ActionRow>,
     password: glib::WeakRef<PasswordEntryRow>,
     status: glib::WeakRef<ActionRow>,
     password_status: glib::WeakRef<ActionRow>,
@@ -93,9 +97,17 @@ impl Editor {
         if let Some(port) = self.port.upgrade() {
             port.set_text(&state.config.obs.port.to_string());
         }
+        self.show_unencrypted_warning(&state.config.obs.host);
         if let Some(password) = self.password.upgrade() {
             // The keyring is the only copy; load_password fills the row.
             password.set_text("");
+        }
+    }
+
+    /// Follows the saved host, not the typed text: Connect uses the saved one.
+    fn show_unencrypted_warning(&self, saved_host: &str) {
+        if let Some(warning) = self.unencrypted_warning.upgrade() {
+            warning.set_visible(!is_loopback(saved_host));
         }
     }
 
@@ -208,12 +220,13 @@ impl Editor {
             move |config| {
                 config.save_connection(profile);
             },
-            move |result, _| {
+            move |result, config| {
                 if !editor.current(generation, &id) {
                     return;
                 }
                 editor.report_save(result);
                 editor.refresh_picker();
+                editor.show_unencrypted_warning(&config.obs.host);
                 editor.busy(false);
             },
         );
@@ -317,6 +330,7 @@ pub(super) fn build(
         &fl!(LANGUAGE_LOADER, "settings-port-title"),
         "settings-obs-port",
     );
+    let unencrypted_warning = unencrypted_remote_warning();
     let password = PasswordEntryRow::builder()
         .use_markup(false)
         .title(fl!(LANGUAGE_LOADER, "settings-password-title"))
@@ -358,6 +372,7 @@ pub(super) fn build(
         name.clone().upcast(),
         host.clone().upcast(),
         port.clone().upcast(),
+        unencrypted_warning.clone().upcast(),
         password.clone().upcast(),
         password_status.clone().upcast(),
         add_row.upcast(),
@@ -376,6 +391,7 @@ pub(super) fn build(
         name: name.downgrade(),
         host: host.downgrade(),
         port: port.downgrade(),
+        unencrypted_warning: unencrypted_warning.downgrade(),
         password: password.downgrade(),
         status: status.downgrade(),
         password_status: password_status.downgrade(),
@@ -443,6 +459,24 @@ pub(super) fn build(
     });
     connect.connect_clicked(move |_| editor.connect());
     (group, status)
+}
+
+/// Shown while the saved host is not loopback. obs-websocket speaks plain
+/// `ws://`, so the authentication exchange and every command cross the
+/// network unencrypted.
+fn unencrypted_remote_warning() -> ActionRow {
+    // GObject builder property order may set title before use-markup.
+    let row = ActionRow::builder()
+        .use_markup(false)
+        .visible(false)
+        .build();
+    row.set_title(&fl!(
+        LANGUAGE_LOADER,
+        "settings-connection-unencrypted-remote"
+    ));
+    row.set_widget_name("settings-connection-unencrypted-remote");
+    super::with_icon(&row, "dialog-warning-symbolic");
+    row
 }
 
 #[cfg(test)]
@@ -700,6 +734,56 @@ mod tests {
                 *credentials.reads.lock().unwrap(),
                 [Some("new-secret".to_string())]
             );
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display; fake credentials and scratch config, no OBS access"]
+    fn native_unencrypted_warning_follows_whether_the_saved_host_is_loopback() {
+        crate::ui::native_test!(|| {
+            let (nav, _stack, _runtime, _events) = crate::ui::test_support::navigation();
+            let (group, _status) = build(&nav, Arc::new(FakeSecrets::default()));
+            let root = group.upcast::<gtk4::Widget>();
+            let host = named(&root, "settings-obs-host")
+                .unwrap()
+                .downcast::<EntryRow>()
+                .unwrap();
+            let warning = named(&root, "settings-connection-unencrypted-remote").unwrap();
+            flush();
+            assert!(!warning.is_visible(), "the default 127.0.0.1 is loopback");
+
+            for (address, remote) in [
+                ("192.168.1.20", true),
+                ("127.0.0.1", false),
+                ("obs.example.net", true),
+                ("::1", false),
+                ("localhost", false),
+            ] {
+                host.set_text(address);
+                host.emit_by_name::<()>("apply", &[]);
+                flush();
+                assert_eq!(nav.read(|state| state.config.obs.host.clone()), address);
+                assert_eq!(warning.is_visible(), remote, "host {address}");
+            }
+
+            host.set_text("192.168.1.20");
+            host.emit_by_name::<()>("apply", &[]);
+            flush();
+            assert!(warning.is_visible());
+            named(&root, "settings-connection-add")
+                .unwrap()
+                .downcast::<gtk4::Button>()
+                .unwrap()
+                .emit_clicked();
+            flush();
+            assert!(!warning.is_visible(), "a new connection starts on loopback");
+            named(&root, "settings-connection-picker")
+                .unwrap()
+                .downcast::<ComboRow>()
+                .unwrap()
+                .set_selected(0);
+            flush();
+            assert!(warning.is_visible(), "reselecting the remote connection");
         });
     }
 

@@ -40,6 +40,14 @@ In Settings, use **Add connection** to create a separate setup, such as
 controls, then save its password separately. Each connection has its own keyring
 entry. New setups begin without a password.
 
+OBS WebSocket does not encrypt its traffic. When a saved host is not this
+computer (`localhost`, `127.0.0.1` or `::1`), Settings shows an
+**Unencrypted** warning under the port: every command travels as plain text,
+and anyone on the network path can capture the login and try to crack the
+password offline. For a remote OBS, forward the port over SSH
+(`ssh -L 4455:127.0.0.1:4455 obs-host`) and connect SceneDeck to `127.0.0.1`,
+or reach OBS over a VPN.
+
 Choose a setup from **Saved connection**, then use **Connect saved setup** when
 ready. Choosing a setup alone keeps the current OBS session connected. The
 status row shows the actual connected setup and endpoint, which can differ from

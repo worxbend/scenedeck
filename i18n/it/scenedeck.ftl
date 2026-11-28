@@ -1028,6 +1028,7 @@ settings-connection-add = Aggiungi connessione
 settings-connection-connect = Connetti configurazione salvata
 settings-connection-new-name = Nuova connessione { $number }
 settings-connection-invalid = Inserisci un nome, un host e una porta da 1 a 65535.
+settings-connection-unencrypted-remote = Non cifrato: OBS WebSocket invia ogni comando in chiaro e il suo accesso può essere intercettato e violato. Per un host remoto, usa un tunnel SSH o una VPN.
 settings-obs-connected-profile = Connesso a { $name } ({ $endpoint }), OBS { $version }
 
 inventory-retained-identity = { $role } · Conservato dopo un conflitto di nome o identità; non applicato a una scena.

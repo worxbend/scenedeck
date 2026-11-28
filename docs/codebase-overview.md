@@ -92,6 +92,9 @@ Application data types that do not depend on GTK or OBS crate types.
   the keyring, the OBS handshake and the Settings password field.
   `CredentialStore` is the one port for reading, writing and deleting a
   connection's password; the controller and the Settings editor share it.
+- `connection/endpoint.rs`: `is_loopback`, which decides whether an OBS host
+  keeps the plain `ws://` traffic on this machine. The Settings connection
+  editor warns for any host it cannot prove local.
 - `diagnostic.rs`: Doctor diagnostic model.
 - `graph.rs`: scene dependency graph.
 - `hotkey.rs`: Live scene-shortcut preferences, slot numbering, and the key

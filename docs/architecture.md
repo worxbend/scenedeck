@@ -192,6 +192,9 @@ Password retrieval takes the selected immutable connection ID from the same
 configuration snapshot used for its endpoint. The live client carries that ID
 into connection observations, so later Settings selections cannot change the
 identity of an already connected session.
+`domain::connection::endpoint::is_loopback` decides whether a saved host keeps
+the plain `ws://` traffic on this machine; the Settings connection editor warns
+while the saved host is not loopback.
 Stream and recording command guards, status refreshes, fake-client injection,
 and graceful shutdown are isolated in `controller::output_controller` rather
 than growing the main application controller.
