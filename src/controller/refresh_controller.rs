@@ -167,10 +167,7 @@ pub(crate) async fn run_stats_poll_loop(
 /// Compute kbps from the delta against the last (time, bytes) sample, then
 /// store `bytes` as the new sample. Returns `None` on the first sample or
 /// whenever the counter goes backwards (stream restarted).
-pub(crate) fn bitrate_kbps_since_last_sample(
-    bitrate_sample: &BitrateSample,
-    bytes: u64,
-) -> Option<f64> {
+fn bitrate_kbps_since_last_sample(bitrate_sample: &BitrateSample, bytes: u64) -> Option<f64> {
     let now = Instant::now();
     let mut sample = crate::infra::sync::lock_or_recover(bitrate_sample.as_ref());
     let previous = *sample;
@@ -647,6 +644,37 @@ mod tests {
             requests.snapshot().keys().collect::<Vec<_>>(),
             ["GetVersion"],
             "no readback request reaches OBS"
+        );
+    }
+
+    #[test]
+    fn bitrate_sample_is_none_until_a_second_sample_arrives() {
+        let sample: BitrateSample = Arc::new(Mutex::new(None));
+
+        assert_eq!(bitrate_kbps_since_last_sample(&sample, 1_000), None);
+        assert_eq!(sample.lock().unwrap().map(|(_, bytes)| bytes), Some(1_000));
+    }
+
+    #[test]
+    fn bitrate_sample_returns_none_when_byte_counter_goes_backwards() {
+        let sample: BitrateSample = Arc::new(Mutex::new(Some((Instant::now(), 5_000))));
+
+        assert_eq!(bitrate_kbps_since_last_sample(&sample, 1_000), None);
+        assert_eq!(sample.lock().unwrap().map(|(_, bytes)| bytes), Some(1_000));
+    }
+
+    #[test]
+    fn bitrate_sample_computes_kbps_from_byte_delta_over_elapsed_time() {
+        let previous_time = Instant::now() - Duration::from_secs(1);
+        let sample: BitrateSample = Arc::new(Mutex::new(Some((previous_time, 0))));
+
+        // 125_000 bytes/sec == 1_000_000 bits/sec == 1000 kbps.
+        let kbps = bitrate_kbps_since_last_sample(&sample, 125_000)
+            .expect("expected a bitrate sample after a prior reading");
+
+        assert!(
+            (900.0..=1100.0).contains(&kbps),
+            "expected ~1000 kbps, got {kbps}"
         );
     }
 }

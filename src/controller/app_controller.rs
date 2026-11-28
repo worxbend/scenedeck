@@ -11,8 +11,6 @@ use i18n_embed_fl::fl;
 use std::future::Future;
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
-#[cfg(test)]
-use std::time::Instant;
 use tokio::runtime::Handle;
 
 use crate::controller::command::AppCommand;
@@ -23,8 +21,6 @@ use crate::controller::lifecycle::SessionScope;
 use crate::controller::output_controller::{refresh_output_statuses, OutputController};
 #[cfg(test)]
 use crate::controller::output_controller::{FakeOutputCommandClient, OutputCommandClient};
-#[cfg(test)]
-use crate::controller::refresh_controller::bitrate_kbps_since_last_sample;
 use crate::controller::refresh_controller::{
     publish_profiles_after, refresh_after_collection_change, refresh_live_data, refresh_obs_stats,
     refresh_profile_and_collection_lists, BitrateSample,
@@ -470,7 +466,6 @@ mod tests {
     use crate::domain::output::OutputKind;
     use std::sync::mpsc;
     use std::thread::ThreadId;
-    use std::time::Duration;
     use tokio::runtime::Runtime;
 
     fn controller_with_receiver() -> (Runtime, AppController, mpsc::Receiver<AppEvent>) {
@@ -814,37 +809,6 @@ mod tests {
             assert_eq!(failed, request);
             assert_eq!(message, "Not connected to OBS");
         }
-    }
-
-    #[test]
-    fn bitrate_sample_is_none_until_a_second_sample_arrives() {
-        let sample: BitrateSample = Arc::new(Mutex::new(None));
-
-        assert_eq!(bitrate_kbps_since_last_sample(&sample, 1_000), None);
-        assert_eq!(sample.lock().unwrap().map(|(_, bytes)| bytes), Some(1_000));
-    }
-
-    #[test]
-    fn bitrate_sample_returns_none_when_byte_counter_goes_backwards() {
-        let sample: BitrateSample = Arc::new(Mutex::new(Some((Instant::now(), 5_000))));
-
-        assert_eq!(bitrate_kbps_since_last_sample(&sample, 1_000), None);
-        assert_eq!(sample.lock().unwrap().map(|(_, bytes)| bytes), Some(1_000));
-    }
-
-    #[test]
-    fn bitrate_sample_computes_kbps_from_byte_delta_over_elapsed_time() {
-        let previous_time = Instant::now() - Duration::from_secs(1);
-        let sample: BitrateSample = Arc::new(Mutex::new(Some((previous_time, 0))));
-
-        // 125_000 bytes/sec == 1_000_000 bits/sec == 1000 kbps.
-        let kbps = bitrate_kbps_since_last_sample(&sample, 125_000)
-            .expect("expected a bitrate sample after a prior reading");
-
-        assert!(
-            (900.0..=1100.0).contains(&kbps),
-            "expected ~1000 kbps, got {kbps}"
-        );
     }
 
     fn receive_events(rx: &mpsc::Receiver<AppEvent>, count: usize, context: &str) -> Vec<AppEvent> {

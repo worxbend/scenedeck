@@ -1,11 +1,13 @@
 //! Scene inventory updates and scene-graph topology observations.
 
 use super::fixtures::{app_state, input};
+use crate::controller::event::AppEvent;
 use crate::controller::state::{
     previous_scene_for_inventory_update, ActiveAudioStatus, ObsStatus, TopologyStatus,
 };
 use crate::domain::graph::SceneGraph;
 use crate::domain::scene::SceneInventory;
+use crate::infra::error::AppError;
 
 #[test]
 fn inventory_refresh_tracks_previous_scene_only_when_current_changes() {
@@ -115,4 +117,42 @@ fn topology_session_and_collection_resets_clear_every_observation_status() {
             assert!(state.scene_graph.edges.is_empty());
         }
     }
+}
+
+#[test]
+fn graph_reducer_rejects_superseded_success_failure_and_invalidation() {
+    let mut state = app_state();
+    state
+        .reconcile_observation(10, AppEvent::GraphInvalidated)
+        .unwrap();
+    state.set_topology_loading();
+    state
+        .reconcile_observation(12, AppEvent::GraphInvalidated)
+        .unwrap();
+    assert!(state
+        .reconcile_observation(10, AppEvent::GraphUpdated(Default::default()))
+        .is_none());
+    assert!(state
+        .reconcile_observation(
+            10,
+            AppEvent::GraphFailed(AppError::Request("old failure".into()))
+        )
+        .is_none());
+    assert!(state
+        .reconcile_observation(11, AppEvent::GraphInvalidated)
+        .is_none());
+    assert_eq!(state.topology_status, TopologyStatus::Loading);
+    let graph = match state
+        .reconcile_observation(12, AppEvent::GraphUpdated(Default::default()))
+        .unwrap()
+    {
+        AppEvent::GraphUpdated(graph) => graph,
+        _ => unreachable!(),
+    };
+    state.set_topology_ready(graph);
+    assert_eq!(
+        state.topology_status,
+        TopologyStatus::Ready,
+        "valid empty topology remains Ready"
+    );
 }

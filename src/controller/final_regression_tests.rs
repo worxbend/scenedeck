@@ -957,45 +957,6 @@ async fn scene_activation_preserves_current_mode_and_rejects_an_unavailable_mode
     }
 }
 
-#[test]
-fn graph_reducer_rejects_superseded_success_failure_and_invalidation() {
-    use crate::controller::state::TopologyStatus;
-    let mut state = app_state();
-    state
-        .reconcile_observation(10, AppEvent::GraphInvalidated)
-        .unwrap();
-    state.set_topology_loading();
-    state
-        .reconcile_observation(12, AppEvent::GraphInvalidated)
-        .unwrap();
-    assert!(state
-        .reconcile_observation(10, AppEvent::GraphUpdated(Default::default()))
-        .is_none());
-    assert!(state
-        .reconcile_observation(
-            10,
-            AppEvent::GraphFailed(AppError::Request("old failure".into()))
-        )
-        .is_none());
-    assert!(state
-        .reconcile_observation(11, AppEvent::GraphInvalidated)
-        .is_none());
-    assert_eq!(state.topology_status, TopologyStatus::Loading);
-    let graph = match state
-        .reconcile_observation(12, AppEvent::GraphUpdated(Default::default()))
-        .unwrap()
-    {
-        AppEvent::GraphUpdated(graph) => graph,
-        _ => unreachable!(),
-    };
-    state.set_topology_ready(graph);
-    assert_eq!(
-        state.topology_status,
-        TopologyStatus::Ready,
-        "valid empty topology remains Ready"
-    );
-}
-
 #[tokio::test]
 async fn manual_graph_scan_invalidated_midscan_cannot_publish_ready() {
     let mut mock = mock(Plan {
