@@ -13,7 +13,7 @@ use crate::controller::command::AppCommand;
 use crate::controller::event::AppEvent;
 use crate::controller::output_controller::{FakeOutputCommandClient, OutputCommandClient};
 use crate::controller::test_support::events::{wait_until, TEST_DEADLINE};
-use crate::controller::test_support::state::app_state;
+use crate::controller::test_support::state::{app_state, fail_record_command, fail_stream_command};
 use crate::domain::output::{OutputKind, OutputRunState, OutputStatus};
 use crate::infra::error::AppError;
 
@@ -507,7 +507,7 @@ fn stream_command_failure_with_stream_status_refresh_failure_unblocks_stream() {
 
     let mut state = app_state();
     mark_obs_connected(&mut state);
-    state.set_record_command_failure("existing record error".to_string());
+    fail_record_command(&mut state, "existing record error");
     for event in &events {
         state.apply_output_event(event, 0);
     }
@@ -575,7 +575,7 @@ fn record_command_failure_with_record_status_refresh_failure_unblocks_record() {
 
     let mut state = app_state();
     mark_obs_connected(&mut state);
-    state.set_stream_command_failure("existing stream error".to_string());
+    fail_stream_command(&mut state, "existing stream error");
     for event in &events {
         state.apply_output_event(event, 0);
     }
@@ -647,7 +647,7 @@ fn stream_command_failure_with_both_status_refreshes_failing_unblocks_stream_sto
 
     let mut state = app_state();
     mark_obs_connected(&mut state);
-    state.set_record_command_failure("existing record error".to_string());
+    fail_record_command(&mut state, "existing record error");
     for event in &events {
         state.apply_output_event(event, 0);
     }
@@ -723,7 +723,7 @@ fn record_command_failure_with_both_status_refreshes_failing_unblocks_record_sto
 
     let mut state = app_state();
     mark_obs_connected(&mut state);
-    state.set_stream_command_failure("existing stream error".to_string());
+    fail_stream_command(&mut state, "existing stream error");
     for event in &events {
         state.apply_output_event(event, 0);
     }

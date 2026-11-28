@@ -28,8 +28,8 @@ fn telemetry_keeps_observation_time_through_publication_and_clears_it_on_reset()
 fn stats_updates_accumulate_history_for_the_charts() {
     let mut state = app_state();
 
-    state.set_obs_stats(obs_stats(60.0), None, Some(stream_health()));
-    state.set_obs_stats(obs_stats(59.0), None, Some(stream_health()));
+    state.set_obs_stats_at(obs_stats(60.0), None, Some(stream_health()), Instant::now());
+    state.set_obs_stats_at(obs_stats(59.0), None, Some(stream_health()), Instant::now());
 
     assert_eq!(state.stats_history.len(), 2);
     assert_eq!(
@@ -43,7 +43,12 @@ fn stats_updates_accumulate_history_for_the_charts() {
 fn bitrate_is_dropped_from_state_and_history_while_not_streaming() {
     let mut state = app_state();
 
-    state.set_obs_stats(obs_stats(60.0), Some(6_000.0), Some(stream_health()));
+    state.set_obs_stats_at(
+        obs_stats(60.0),
+        Some(6_000.0),
+        Some(stream_health()),
+        Instant::now(),
+    );
 
     assert_eq!(state.stream_bitrate_kbps, None);
     assert_eq!(
@@ -60,7 +65,12 @@ fn bitrate_is_recorded_once_the_stream_output_is_active() {
     let mut state = app_state();
     state.set_stream_status(OutputStatus::active());
 
-    state.set_obs_stats(obs_stats(60.0), Some(6_000.0), Some(stream_health()));
+    state.set_obs_stats_at(
+        obs_stats(60.0),
+        Some(6_000.0),
+        Some(stream_health()),
+        Instant::now(),
+    );
 
     assert_eq!(state.stream_bitrate_kbps, Some(6_000.0));
     assert_eq!(
@@ -75,7 +85,7 @@ fn bitrate_is_recorded_once_the_stream_output_is_active() {
 #[test]
 fn clearing_stats_empties_the_history_and_stream_health() {
     let mut state = app_state();
-    state.set_obs_stats(obs_stats(60.0), None, Some(stream_health()));
+    state.set_obs_stats_at(obs_stats(60.0), None, Some(stream_health()), Instant::now());
 
     state.clear_obs_stats();
 

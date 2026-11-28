@@ -13,6 +13,7 @@ use crate::domain::output::{OutputRunState, OutputStatus};
 use crate::domain::stats::{ObsStats, StreamHealth};
 
 pub(in crate::controller::state) use crate::controller::test_support::state::{app_state, input};
+use crate::controller::test_support::state::{fail_record_command, fail_stream_command};
 
 pub(in crate::controller::state) fn visible_loaded_input<'a>(
     state: &'a AppState,
@@ -136,7 +137,12 @@ pub(in crate::controller::state) fn seed_session_observations(state: &mut AppSta
     state.stream_active_since = Some(Instant::now());
     state.record_active_since = Some(Instant::now());
     state.last_recording_path = Some("old-recording.mkv".into());
-    state.set_stream_command_failure("old stream failure".into());
-    state.set_record_command_failure("old record failure".into());
-    state.set_obs_stats(obs_stats(60.0), Some(6000.0), Some(stream_health()));
+    fail_stream_command(state, "old stream failure");
+    fail_record_command(state, "old record failure");
+    state.set_obs_stats_at(
+        obs_stats(60.0),
+        Some(6000.0),
+        Some(stream_health()),
+        Instant::now(),
+    );
 }

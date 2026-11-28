@@ -6,6 +6,7 @@ use std::time::Instant;
 use super::fixtures::{app_state, output_status};
 use crate::controller::event::OutputCommandFailureRecovery;
 use crate::controller::state::{ObsStatus, Page};
+use crate::controller::test_support::state::{fail_record_command, fail_stream_command};
 use crate::domain::output::{OutputKind, OutputRunState, OutputStatus};
 
 fn command_failure_recovery(
@@ -292,7 +293,7 @@ fn late_recording_output_observation_keeps_file_evidence_without_undoing_a_resta
 fn stream_command_failure_sets_stream_error_only() {
     let mut state = app_state();
 
-    state.set_stream_command_failure("stream failed".to_string());
+    fail_stream_command(&mut state, "stream failed");
 
     assert_eq!(
         state.last_stream_command_error.as_deref(),
@@ -305,7 +306,7 @@ fn stream_command_failure_sets_stream_error_only() {
 fn record_command_failure_sets_record_error_only() {
     let mut state = app_state();
 
-    state.set_record_command_failure("record failed".to_string());
+    fail_record_command(&mut state, "record failed");
 
     assert_eq!(state.last_stream_command_error, None);
     assert_eq!(
@@ -317,7 +318,7 @@ fn record_command_failure_sets_record_error_only() {
 #[test]
 fn stream_command_start_failure_applies_inactive_recovery_payload() {
     let mut state = app_state();
-    state.set_record_command_failure("existing record failure".to_string());
+    fail_record_command(&mut state, "existing record failure");
     state.set_stream_command_pending(output_status(false, OutputRunState::Starting));
 
     state.set_stream_command_failure_with_recovery(command_failure_recovery(
@@ -343,7 +344,7 @@ fn stream_command_start_failure_applies_inactive_recovery_payload() {
 #[test]
 fn stream_command_stop_failure_applies_active_recovery_payload() {
     let mut state = app_state();
-    state.set_record_command_failure("existing record failure".to_string());
+    fail_record_command(&mut state, "existing record failure");
     state.set_stream_command_pending(output_status(true, OutputRunState::Stopping));
 
     state.set_stream_command_failure_with_recovery(command_failure_recovery(
@@ -369,7 +370,7 @@ fn stream_command_stop_failure_applies_active_recovery_payload() {
 #[test]
 fn record_command_start_failure_applies_inactive_recovery_payload() {
     let mut state = app_state();
-    state.set_stream_command_failure("existing stream failure".to_string());
+    fail_stream_command(&mut state, "existing stream failure");
     state.set_record_command_pending(output_status(false, OutputRunState::Starting));
 
     state.set_record_command_failure_with_recovery(command_failure_recovery(
@@ -395,7 +396,7 @@ fn record_command_start_failure_applies_inactive_recovery_payload() {
 #[test]
 fn record_command_stop_failure_applies_active_recovery_payload() {
     let mut state = app_state();
-    state.set_stream_command_failure("existing stream failure".to_string());
+    fail_stream_command(&mut state, "existing stream failure");
     state.set_record_command_pending(output_status(true, OutputRunState::Stopping));
 
     state.set_record_command_failure_with_recovery(command_failure_recovery(
@@ -545,8 +546,8 @@ fn separate_status_event_can_reconnect_after_record_failure_recovery() {
 #[test]
 fn stream_pending_and_success_clear_only_stream_error() {
     let mut state = app_state();
-    state.set_stream_command_failure("old stream failure".to_string());
-    state.set_record_command_failure("record failure".to_string());
+    fail_stream_command(&mut state, "old stream failure");
+    fail_record_command(&mut state, "record failure");
 
     state.set_stream_command_pending(output_status(false, OutputRunState::Starting));
 
@@ -557,7 +558,7 @@ fn stream_pending_and_success_clear_only_stream_error() {
     );
     assert_eq!(state.stream_status.state, OutputRunState::Starting);
 
-    state.set_stream_command_failure("new stream failure".to_string());
+    fail_stream_command(&mut state, "new stream failure");
     state.set_stream_command_success();
 
     assert_eq!(state.last_stream_command_error, None);
@@ -570,8 +571,8 @@ fn stream_pending_and_success_clear_only_stream_error() {
 #[test]
 fn record_pending_and_success_clear_only_record_error() {
     let mut state = app_state();
-    state.set_stream_command_failure("stream failure".to_string());
-    state.set_record_command_failure("old record failure".to_string());
+    fail_stream_command(&mut state, "stream failure");
+    fail_record_command(&mut state, "old record failure");
 
     state.set_record_command_pending(output_status(true, OutputRunState::Stopping));
 
@@ -582,7 +583,7 @@ fn record_pending_and_success_clear_only_record_error() {
     assert_eq!(state.last_record_command_error, None);
     assert_eq!(state.record_status.state, OutputRunState::Stopping);
 
-    state.set_record_command_failure("new record failure".to_string());
+    fail_record_command(&mut state, "new record failure");
     state.set_record_command_success();
 
     assert_eq!(
@@ -595,8 +596,8 @@ fn record_pending_and_success_clear_only_record_error() {
 #[test]
 fn output_command_errors_clear_together_on_session_reset() {
     let mut state = app_state();
-    state.set_stream_command_failure("stream failure".to_string());
-    state.set_record_command_failure("record failure".to_string());
+    fail_stream_command(&mut state, "stream failure");
+    fail_record_command(&mut state, "record failure");
 
     state.clear_output_command_errors();
 
@@ -611,7 +612,7 @@ fn stream_command_failure_sequence_keeps_obs_connected_and_record_error() {
     state.set_obs_status(ObsStatus::Connected {
         obs_version: "32.1.2".to_string(),
     });
-    state.set_record_command_failure("existing record failure".to_string());
+    fail_record_command(&mut state, "existing record failure");
 
     state.set_stream_command_pending(output_status(false, OutputRunState::Starting));
     assert_eq!(state.stream_status.state, OutputRunState::Starting);
@@ -672,7 +673,7 @@ fn record_command_failure_sequence_keeps_obs_connected_and_stream_error() {
     state.set_obs_status(ObsStatus::Connected {
         obs_version: "32.1.2".to_string(),
     });
-    state.set_stream_command_failure("existing stream failure".to_string());
+    fail_stream_command(&mut state, "existing stream failure");
 
     state.set_record_command_pending(output_status(true, OutputRunState::Stopping));
     assert_eq!(state.record_status.state, OutputRunState::Stopping);

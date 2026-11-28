@@ -940,11 +940,6 @@ impl AppState {
     }
 
     /// Store the newest volume-meter readings, replacing the previous set.
-    #[cfg(test)]
-    pub fn set_audio_levels(&mut self, levels: Vec<InputLevels>) {
-        self.set_audio_levels_at(levels, Instant::now());
-    }
-
     pub fn set_audio_levels_at(&mut self, levels: Vec<InputLevels>, at: Instant) {
         self.audio_levels.update_at(levels, at);
     }
@@ -1109,16 +1104,6 @@ impl AppState {
         self.last_record_command_error = None;
     }
 
-    #[cfg(test)]
-    pub fn set_stream_command_failure(&mut self, message: String) {
-        self.last_stream_command_error = Some(message);
-    }
-
-    #[cfg(test)]
-    pub fn set_record_command_failure(&mut self, message: String) {
-        self.last_record_command_error = Some(message);
-    }
-
     pub fn set_stream_command_failure_with_recovery(
         &mut self,
         failure: OutputCommandFailureRecovery,
@@ -1138,16 +1123,6 @@ impl AppState {
     pub fn clear_output_command_errors(&mut self) {
         self.last_stream_command_error = None;
         self.last_record_command_error = None;
-    }
-
-    #[cfg(test)]
-    pub fn set_obs_stats(
-        &mut self,
-        stats: ObsStats,
-        bitrate_kbps: Option<f64>,
-        stream: Option<StreamHealth>,
-    ) {
-        self.set_obs_stats_at(stats, bitrate_kbps, stream, Instant::now());
     }
 
     pub fn set_obs_stats_at(

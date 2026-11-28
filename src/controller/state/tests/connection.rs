@@ -27,7 +27,10 @@ fn seed_collection_observations(state: &mut AppState) -> MixerAudioRequest {
         edges: std::collections::BTreeMap::from([("A".into(), vec!["Nested".into()])]),
     });
     state.audio_inputs = vec![input("Mic")];
-    state.set_audio_levels(vec![InputLevels::from_mul("Mic".into(), &[[0.5; 3]])]);
+    state.set_audio_levels_at(
+        vec![InputLevels::from_mul("Mic".into(), &[[0.5; 3]])],
+        Instant::now(),
+    );
     state.mixer.locked_inputs.insert("Mic".into());
     let loaded = state.set_mixer_audio_loading("A".into());
     state.set_mixer_audio_success(loaded, vec![input("Old Mic")]);
