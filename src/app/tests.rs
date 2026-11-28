@@ -958,7 +958,7 @@ fn unreadable_registry_loads_defaults_and_names_the_file_in_a_startup_notice() {
     let path = dir.path().join("registry.json");
     std::fs::write(&path, "{ not json").unwrap();
     let read =
-        crate::storage::registry::read_registry_from_path(&path).map_err(|error| error.to_string());
+        crate::storage::registry::read_registry_from_path(&path).map_err(StartupReadError::store);
 
     let (registry, notice) = startup_registry(&read);
 
@@ -978,4 +978,17 @@ fn readable_registry_loads_without_a_startup_notice() {
 
     assert_eq!(registry, saved);
     assert_eq!(notice, None);
+}
+
+#[test]
+fn a_panicked_startup_reader_names_the_reader_in_the_translated_registry_notice() {
+    let (registry, notice) = startup_registry(&Err(StartupReadError::ReaderPanicked));
+
+    assert_eq!(registry, SceneRegistry::default());
+    let notice = notice.expect("a registry the reader never read must be reported");
+    let reader = i18n_embed_fl::fl!(
+        crate::infra::i18n::LANGUAGE_LOADER,
+        "app-startup-reader-failed"
+    );
+    assert!(notice.contains(&reader), "{notice}");
 }

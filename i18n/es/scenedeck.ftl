@@ -582,6 +582,7 @@ config-parse-failed-backed-up = No se pudieron analizar los ajustes: { $detail }
 config-newer-version = Los ajustes se guardaron con una versión más reciente de SceneDeck (versión de ajustes { $version }). Se cargaron, pero los cambios no se guardarán, para que los ajustes más recientes queden intactos.
 config-symlinked = config.json es un enlace simbólico. SceneDeck no sigue enlaces simbólicos, así que se cargaron los valores predeterminados y los cambios no se guardarán. Sustituye el enlace por un archivo normal para conservar tus ajustes.
 registry-startup-failed = No se pudo leer la organización de escenas guardada: { $detail } — se muestran los valores predeterminados y el archivo no se modifica.
+app-startup-reader-failed = la lectura inicial se detuvo de forma inesperada
 stats-popout-button = Abrir las estadísticas en una ventana aparte
 
 ## ui/pages/help.rs — guía de incorporación. Los cuerpos tienen varias líneas

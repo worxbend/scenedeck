@@ -136,6 +136,7 @@ config-parse-failed-backed-up = Settings could not be parsed: { $detail } — th
 config-newer-version = Settings were saved by a newer SceneDeck (settings version { $version }). They are loaded, but changes will not be saved, so the newer settings stay intact.
 config-symlinked = config.json is a symbolic link. SceneDeck does not follow symbolic links, so defaults were loaded and changes will not be saved. Replace the link with a regular file to keep your settings.
 registry-startup-failed = Saved scene curation could not be read: { $detail } — defaults are shown and the file is left unchanged.
+app-startup-reader-failed = the startup reader stopped unexpectedly
 
 ## graph.rs
 

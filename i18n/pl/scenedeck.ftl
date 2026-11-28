@@ -585,6 +585,7 @@ config-parse-failed-backed-up = Nie udało się przeanalizować ustawień: { $de
 config-newer-version = Ustawienia zostały zapisane przez nowszą wersję SceneDeck (wersja ustawień { $version }). Zostały wczytane, ale zmiany nie będą zapisywane, aby nowsze ustawienia pozostały nienaruszone.
 config-symlinked = config.json jest dowiązaniem symbolicznym. SceneDeck nie podąża za dowiązaniami symbolicznymi, więc wczytano ustawienia domyślne, a zmiany nie będą zapisywane. Zastąp dowiązanie zwykłym plikiem, aby zachować ustawienia.
 registry-startup-failed = Nie udało się odczytać zapisanych ustawień scen: { $detail } — wyświetlane są ustawienia domyślne, a plik pozostaje bez zmian.
+app-startup-reader-failed = odczyt przy uruchamianiu nieoczekiwanie się przerwał
 stats-popout-button = Otwórz statystyki w osobnym oknie
 
 help-page-title = Pomoc i wprowadzenie

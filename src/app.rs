@@ -15,15 +15,86 @@ use crate::controller::app_controller::AppController;
 use crate::controller::event::AppEvent;
 use crate::controller::state::AppState;
 use crate::infra::i18n;
+use crate::storage::bookmarks::BookmarkArchive;
 use crate::storage::config::{read_startup_config, LoadedConfig, PendingRepair};
 use crate::storage::registry::{read_registry, SceneRegistry};
+use crate::storage::report_history::HistoryArchive;
 use crate::ui;
 
 struct StartupData {
     config: LoadedConfig,
-    registry: Result<SceneRegistry, String>,
-    bookmarks: Result<crate::storage::bookmarks::BookmarkArchive, String>,
-    history: Result<crate::storage::report_history::HistoryArchive, String>,
+    registry: Result<SceneRegistry, StartupReadError>,
+    bookmarks: Result<BookmarkArchive, StartupReadError>,
+    history: Result<HistoryArchive, StartupReadError>,
+}
+
+impl StartupData {
+    fn read() -> Self {
+        Self {
+            config: read_startup_config(),
+            registry: read_registry().map_err(StartupReadError::store),
+            bookmarks: crate::storage::bookmarks::read(&crate::storage::xdg::bookmarks_path())
+                .map_err(StartupReadError::store),
+            history: crate::storage::report_history::read(
+                &crate::storage::xdg::report_history_path(),
+            )
+            .map_err(StartupReadError::store),
+        }
+    }
+
+    fn reader_panicked() -> Self {
+        Self {
+            config: LoadedConfig {
+                config: Default::default(),
+                startup_notice: None,
+                pending_repair: None,
+            },
+            registry: Err(StartupReadError::ReaderPanicked),
+            bookmarks: Err(StartupReadError::ReaderPanicked),
+            history: Err(StartupReadError::ReaderPanicked),
+        }
+    }
+}
+
+/// Why a file read before the first frame reached the window without its
+/// contents.
+#[derive(Clone, Debug)]
+enum StartupReadError {
+    /// The store's own error text.
+    Store(String),
+    /// The startup reader thread panicked before the file was read.
+    ReaderPanicked,
+}
+
+impl StartupReadError {
+    fn store(error: impl std::fmt::Display) -> Self {
+        Self::Store(error.to_string())
+    }
+
+    /// Translated only when shown: the reader runs before `i18n::init`
+    /// applies the configured language.
+    fn detail(&self) -> String {
+        match self {
+            Self::Store(detail) => detail.clone(),
+            Self::ReaderPanicked => i18n_embed_fl::fl!(
+                crate::infra::i18n::LANGUAGE_LOADER,
+                "app-startup-reader-failed"
+            ),
+        }
+    }
+}
+
+/// Read the files the first frame needs. The thread isolates a reader panic
+/// from the GTK thread; it does not overlap the reads with GTK. Nothing here
+/// reaches the Secret Service: the Settings editor reads the password on the
+/// Secret lane once the window is built.
+fn read_startup_data() -> StartupData {
+    std::thread::spawn(StartupData::read)
+        .join()
+        .unwrap_or_else(|_| {
+            tracing::error!("startup persistence worker panicked; using defaults");
+            StartupData::reader_panicked()
+        })
 }
 
 /// Initialize runtime state and run the GTK application.
@@ -37,28 +108,7 @@ pub fn run() {
 
     let tokio_handle = runtime.handle().clone();
     let (event_tx, event_rx) = mpsc::sync_channel::<AppEvent>(128);
-    let startup = std::thread::spawn(|| StartupData {
-        config: read_startup_config(),
-        registry: read_registry().map_err(|error| error.to_string()),
-        bookmarks: crate::storage::bookmarks::read(&crate::storage::xdg::bookmarks_path())
-            .map_err(|error| error.to_string()),
-        history: crate::storage::report_history::read(&crate::storage::xdg::report_history_path())
-            .map_err(|error| error.to_string()),
-    })
-    .join()
-    .unwrap_or_else(|_| {
-        tracing::error!("startup persistence worker panicked; using defaults");
-        StartupData {
-            config: LoadedConfig {
-                config: Default::default(),
-                startup_notice: None,
-                pending_repair: None,
-            },
-            registry: Err("Startup registry reader failed".into()),
-            bookmarks: Err("Startup bookmark reader failed".into()),
-            history: Err("Startup session history reader failed".into()),
-        }
-    });
+    let startup = read_startup_data();
 
     let event_rx = Rc::new(RefCell::new(Some(event_rx)));
 
@@ -447,10 +497,12 @@ fn build_ui(
     )));
     persist_startup_migration(loaded);
 
-    state.borrow_mut().load_bookmarks(startup.bookmarks.clone());
     state
         .borrow_mut()
-        .load_report_history(startup.history.clone());
+        .load_bookmarks(startup.bookmarks.clone().map_err(|error| error.detail()));
+    state
+        .borrow_mut()
+        .load_report_history(startup.history.clone().map_err(|error| error.detail()));
     let owner = Rc::downgrade(&state);
     let window = ui::build_main_window(app, state, controller, event_rx);
     install_persistence_close_guard(app, &window, owner);
@@ -460,15 +512,18 @@ fn build_ui(
 /// Defaults stand in for an unreadable registry.json, but never silently:
 /// empty curation would look like lost work. Registry saves refuse to replace
 /// the unreadable file, so the notice is the operator's cue to repair it.
-fn startup_registry(read: &Result<SceneRegistry, String>) -> (SceneRegistry, Option<String>) {
+fn startup_registry(
+    read: &Result<SceneRegistry, StartupReadError>,
+) -> (SceneRegistry, Option<String>) {
     match read {
         Ok(registry) => (registry.clone(), None),
-        Err(detail) => {
+        Err(error) => {
+            let detail = error.detail();
             tracing::warn!(%detail, "failed to load registry, using defaults");
             let notice = i18n_embed_fl::fl!(
                 crate::infra::i18n::LANGUAGE_LOADER,
                 "registry-startup-failed",
-                detail = detail.as_str()
+                detail = detail
             );
             (SceneRegistry::default(), Some(notice))
         }
