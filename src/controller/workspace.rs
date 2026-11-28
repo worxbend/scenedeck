@@ -9,12 +9,14 @@ use crate::domain::control::{
 use crate::domain::operator_input::{InputIdentity, InputObservation, InputRead};
 use crate::domain::workflow::ScopeBinding;
 use crate::infra::i18n::LANGUAGE_LOADER;
+// Transition re-export: callers move to infra::clock in the next commit.
+pub(crate) use crate::infra::clock::unix_ms;
 use crate::obs::client::ObsClient;
 use futures_util::FutureExt;
 use i18n_embed_fl::fl;
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 use tokio::{runtime::Handle, task::JoinHandle};
 
 mod audio_presets;
@@ -589,14 +591,6 @@ mod lifecycle_tests;
 
 #[cfg(test)]
 mod scene_activation_tests;
-
-pub fn unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-        .min(u128::from(u64::MAX)) as u64
-}
 
 #[cfg(test)]
 mod tests {

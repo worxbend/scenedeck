@@ -140,6 +140,8 @@ Application data types that do not depend on GTK or OBS crate types.
 
 Infrastructure helpers.
 
+- `clock.rs`: `unix_ms()`, the wall-clock timestamp that state and UI code
+  stamp records with.
 - `error.rs`: application error type.
 - `logging.rs`: tracing subscriber setup.
 - `perf.rs`: opt-in `perf-trace` counters (events drained, pump batches,
