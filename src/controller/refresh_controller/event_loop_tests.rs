@@ -545,7 +545,7 @@ async fn input_levels_skip_the_bounded_handoff_and_drop_while_gtk_is_full() {
     let before = event_loop.fences();
 
     // Through the bounded handoff this many publications would retire the
-    // connection; see final_regression_tests::
+    // connection; see ingress_tests::
     // transport_publication_overflow_retires_instead_of_stalling_mode_ingress.
     for _ in 0..TRANSPORT_PUBLICATION_CAPACITY + 2 {
         event_loop.push(

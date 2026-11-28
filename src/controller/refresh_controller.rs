@@ -595,6 +595,15 @@ pub(crate) async fn run_event_loop(
 mod event_loop_tests;
 
 #[cfg(test)]
+mod graph_scan_tests;
+
+#[cfg(test)]
+mod ingress_tests;
+
+#[cfg(test)]
+mod snapshot_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
