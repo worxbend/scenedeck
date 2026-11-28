@@ -59,7 +59,7 @@ const APP_STATE_BORROWS: &[(&str, [usize; 3])] = &[
     ("ui/operator_picker.rs", [13, 18, 31]),
     ("ui/pages/doctor.rs", [5, 6, 15]),
     ("ui/pages/graph.rs", [5, 3, 12]),
-    ("ui/pages/inventory.rs", [16, 19, 45]),
+    ("ui/pages/inventory.rs", [0, 10, 10]),
     ("ui/pages/live.rs", [14, 16, 37]),
     ("ui/pages/mixer.rs", [13, 8, 22]),
     ("ui/pages/settings.rs", [3, 9, 15]),
