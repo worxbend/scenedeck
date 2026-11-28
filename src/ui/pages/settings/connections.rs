@@ -254,10 +254,30 @@ impl Editor {
                 }
                 let saved = result.is_ok();
                 editor.report_save(result);
-                editor.busy(false);
                 if saved {
-                    editor.nav.dispatch(AppCommand::Connect);
+                    editor.connect_after_password_writes(id, generation);
+                } else {
+                    editor.busy(false);
                 }
+            },
+        );
+    }
+
+    /// The controller reads the keyring itself when it connects. The Secret
+    /// lane is FIFO, so this empty job completes only after every password
+    /// write submitted before it, and Connect never reads a password that is
+    /// still being saved.
+    fn connect_after_password_writes(self: &Rc<Self>, id: String, generation: u64) {
+        let editor = self.clone();
+        crate::ui::background_io::run_serialized(
+            crate::ui::background_io::SerialLane::Secret,
+            || (),
+            move |()| {
+                if !editor.current(generation, &id) {
+                    return;
+                }
+                editor.busy(false);
+                editor.nav.dispatch(AppCommand::Connect);
             },
         );
     }
@@ -441,6 +461,7 @@ mod tests {
     struct FakeSecrets {
         passwords: Mutex<HashMap<String, String>>,
         writes: Mutex<Vec<String>>,
+        reads: Mutex<Vec<Option<String>>>,
         hold_write: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
         fail_read: AtomicBool,
     }
@@ -455,17 +476,14 @@ mod tests {
 
     impl CredentialStore for FakeSecrets {
         fn read(&self, id: &str) -> Result<Option<ObsPassword>, AppError> {
+            let stored = self.passwords.lock().unwrap().get(id).cloned();
+            self.reads.lock().unwrap().push(stored.clone());
             if self.fail_read.load(Ordering::SeqCst) {
                 return Err(AppError::storage(std::io::Error::other(
                     "fixture read failed",
                 )));
             }
-            Ok(self
-                .passwords
-                .lock()
-                .unwrap()
-                .get(id)
-                .map(|password| ObsPassword::from(password.as_str())))
+            Ok(stored.map(ObsPassword::from))
         }
         fn write(&self, id: &str, password: &ObsPassword) -> Result<(), AppError> {
             self.wait_for_release();
@@ -606,6 +624,82 @@ mod tests {
             );
             std::fs::remove_dir(&path).unwrap();
             std::fs::rename(backup, path).unwrap();
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a disposable GTK display; fake credentials and scratch config, no OBS access"]
+    fn native_connect_waits_for_a_queued_password_write() {
+        crate::ui::native_test!(|| {
+            use crate::controller::{
+                app_controller::AppController, dependencies::ControllerDependencies,
+                state::AppState, test_support::deps::StaticConfigProvider,
+            };
+            let credentials = Arc::new(FakeSecrets::default());
+            *credentials.passwords.lock().unwrap() =
+                HashMap::from([("default".into(), "old-secret".into())]);
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .unwrap();
+            let (tx, _events) = std::sync::mpsc::sync_channel(128);
+            let controller = Rc::new(RefCell::new(AppController::with_dependencies(
+                runtime.handle().clone(),
+                tx,
+                ControllerDependencies::new(
+                    Arc::new(StaticConfigProvider(AppConfig::default())),
+                    credentials.clone(),
+                ),
+            )));
+            let state = Rc::new(RefCell::new(AppState::new(
+                AppConfig::default(),
+                Default::default(),
+                Vec::new(),
+            )));
+            let nav = NavigationContext::new(state, gtk4::Stack::new(), controller);
+            let (group, status) = build(&nav, credentials.clone());
+            let root = group.upcast::<gtk4::Widget>();
+            let password = named(&root, "settings-obs-password")
+                .unwrap()
+                .downcast::<PasswordEntryRow>()
+                .unwrap();
+            let connect = named(&root, "settings-connection-connect")
+                .unwrap()
+                .downcast::<gtk4::Button>()
+                .unwrap();
+            flush();
+            // From here every read is the controller's, and failing it stops
+            // the session before it opens a socket.
+            credentials.fail_read.store(true, Ordering::SeqCst);
+            credentials.reads.lock().unwrap().clear();
+
+            let (release, hold) = std::sync::mpsc::channel();
+            *credentials.hold_write.lock().unwrap() = Some(hold);
+            password.set_text("new-secret");
+            password.emit_by_name::<()>("apply", &[]);
+            connect.emit_clicked();
+            let saved = fl!(LANGUAGE_LOADER, "settings-saved");
+            assert!(crate::ui::test_support::pump_until(
+                Duration::from_secs(5),
+                || status.subtitle().as_deref() == Some(saved.as_str())
+            ));
+            crate::ui::test_support::pump(Duration::from_millis(200));
+            assert!(
+                credentials.reads.lock().unwrap().is_empty(),
+                "Connect must not read the keyring while a password write is queued"
+            );
+
+            release.send(()).unwrap();
+            flush();
+            assert!(crate::ui::test_support::pump_until(
+                Duration::from_secs(5),
+                || !credentials.reads.lock().unwrap().is_empty()
+            ));
+            assert_eq!(
+                *credentials.reads.lock().unwrap(),
+                [Some("new-secret".to_string())]
+            );
         });
     }
 

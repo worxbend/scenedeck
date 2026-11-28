@@ -226,7 +226,9 @@ Local persistence is deliberately not routed through the OBS `AppCommand` /
 worker and cached in `AppState`. The OBS password is not: startup does not
 read the keyring, and the Settings connection editor reads the selected
 connection's password on the Secret lane when it is built and on every
-selection. GTK page callbacks mutate those snapshots and use
+selection. Its Connect button waits for the config save and then for an
+empty Secret-lane job, so the controller never reads a password that is
+still being written. GTK page callbacks mutate those snapshots and use
 `ui::background_io` for filesystem and Secret Service work;
 completion callbacks return to the GTK thread for status updates. This keeps
 the OBS controller contract focused while preventing blocking persistence calls
