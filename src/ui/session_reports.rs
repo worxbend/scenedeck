@@ -702,7 +702,9 @@ mod tests {
     #[test]
     #[ignore = "requires isolated GTK and temporary XDG files"]
     fn native_report_export_leaves_out_endpoint_and_paths_unless_included() {
-        use crate::domain::session_report::tests::{identifying_document, ENDPOINT, HOST_PATH};
+        use crate::domain::test_support::session_report::{
+            identifying_document, ENDPOINT, HOST_PATH,
+        };
         crate::ui::native_test!(|| {
             let (nav, stack, _runtime, _events) = navigation();
             let parent = adw::Window::builder().build();

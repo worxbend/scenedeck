@@ -231,7 +231,7 @@ fn samples_use_source_time_and_gaps_are_explicit() {
     connect(&mut state, "podcast");
     let now = Instant::now();
     state.set_obs_stats_at(
-        crate::domain::health::tests::stats(),
+        crate::domain::test_support::health::stats(),
         None,
         None,
         now - Duration::from_secs(2),
@@ -299,7 +299,7 @@ fn health_disappearance_is_not_a_claim_of_recovery() {
     let mut state = state();
     connect(&mut state, "podcast");
     let now = Instant::now();
-    crate::domain::health::tests::raise(
+    crate::domain::test_support::health::raise(
         &mut state.health,
         AlertKind::NetworkDrops,
         now - Duration::from_secs(6),

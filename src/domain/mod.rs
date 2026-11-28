@@ -25,6 +25,8 @@ pub mod role;
 pub mod scene;
 pub(crate) mod session_report;
 pub mod stats;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod workflow;
 
 /// Derive `Serialize`/`Deserialize` for an enum stored as a lowercase string.

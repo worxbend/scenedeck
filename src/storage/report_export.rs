@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn redacted_exports_contain_no_host_connection_name_or_paths() {
-        use crate::domain::session_report::tests::{
+        use crate::domain::test_support::session_report::{
             identifying_document, CONNECTION_NAME, HOST, HOST_PATH,
         };
         let mut document = identifying_document();

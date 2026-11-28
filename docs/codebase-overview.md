@@ -124,6 +124,12 @@ Application data types that do not depend on GTK or OBS crate types.
 - `scene.rs`: scene inventory.
 - `stats.rs`: OBS performance statistics, stream health, and the bounded
   `StatsHistory` ring buffer backing the Stats page charts.
+- `test_support.rs` (tests only): fixtures shared by domain tests and the
+  layers above. `test_support/health.rs` holds healthy `stats()` and
+  `stream()` samples, `feed` and `raise`, which drives a `HealthMonitor`
+  into a sampled alert. `test_support/session_report.rs` holds
+  `identifying_document()`, a report that quotes `ENDPOINT`, `HOST`,
+  `CONNECTION_NAME` and `HOST_PATH` in every field that can carry them.
 
 `src/infra/`
 

@@ -336,7 +336,7 @@ mod tests {
             pump(Duration::from_millis(300));
             assert!(!root.is_visible());
             let start = Instant::now() - Duration::from_secs(6);
-            crate::domain::health::tests::raise(
+            crate::domain::test_support::health::raise(
                 &mut nav.state.borrow_mut().health,
                 AlertKind::NetworkDrops,
                 start,
@@ -374,7 +374,7 @@ mod tests {
                 .text()
                 .contains(&fl!(LANGUAGE_LOADER, "health-network-help")));
             let mut stale = crate::domain::health::HealthMonitor::default();
-            crate::domain::health::tests::raise(
+            crate::domain::test_support::health::raise(
                 &mut stale,
                 AlertKind::NetworkDrops,
                 Instant::now() - Duration::from_secs(20),

@@ -135,7 +135,7 @@ fn native_compact_large_text_outputs_and_hidden_pages_fit() {
     }
     let with_alerts = std::env::var("SCENEDECK_NATIVE_COMPACT_HEALTH").as_deref() == Ok("1");
     if with_alerts {
-        crate::domain::health::tests::raise(
+        crate::domain::test_support::health::raise(
             &mut state.borrow_mut().health,
             crate::domain::health::AlertKind::NetworkDrops,
             Instant::now() - Duration::from_secs(6),

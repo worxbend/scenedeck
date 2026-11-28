@@ -223,7 +223,7 @@ mod tests {
         let empty = HistoryArchive::default();
         let mut archive = empty.clone();
         let mut report = report(1);
-        let mut stats = crate::domain::health::tests::stats();
+        let mut stats = crate::domain::test_support::health::stats();
         // Without serde_json's exact float parser this loses one bit on read,
         // so the next checkpoint incorrectly sees a concurrent file change.
         stats.cpu_usage_percent = f64::from_bits(0x405c0d86c7a996b8);

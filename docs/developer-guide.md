@@ -93,6 +93,11 @@ directory.
 Do not mount a test file with `#[path]` or keep it next to its module instead
 of inside the module's directory.
 
+A `tests` module stays private. A fixture that another module's tests also
+need goes in its layer's tests-only `test_support` module:
+`controller/test_support/`, `domain/test_support.rs`,
+`storage/test_support.rs` or `ui/test_support.rs`.
+
 A move that keeps the module path needs no other edit: native test names and
 `isolated_test_child` names stay valid. A move that changes it must update
 every embedded path; grep for the old one. A relative `include_str!` gains one
