@@ -118,7 +118,10 @@ Infrastructure helpers.
 
 OBS WebSocket integration.
 
-- `client.rs`: thin async wrapper around `obws::Client`.
+- `client.rs`: thin async wrapper around `obws::Client`. `client/tests.rs`
+  (tests only) covers connection and bounded collection;
+  `client/control_tests.rs` (tests only) covers control execution, scene
+  snapshots and thumbnails.
 - `mapper.rs`: conversion from OBS response types into domain types.
 - `testing/wire.rs` (tests only): loopback OBS WebSocket handshake, request,
   response and event frames, and the `GetVersion` payload.

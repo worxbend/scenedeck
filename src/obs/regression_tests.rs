@@ -1,10 +1,9 @@
 //! Mock-wire regressions for incomplete observations and bounded work.
 #![cfg(test)]
 
-use super::control_tests::mock_client;
 use super::*;
 use crate::domain::control::{ControlAction, WorkspaceWarning};
-use crate::obs::testing::scripted::{unresponsive_client, ScriptedObs};
+use crate::obs::testing::scripted::{mock_client, unresponsive_client, ScriptedObs};
 use crate::obs::testing::wire::{request_data, Reply};
 use serde_json::{json, Value};
 
