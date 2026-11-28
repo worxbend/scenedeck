@@ -154,10 +154,14 @@ Higher-level logic over domain types.
 Persistence and local machine integration.
 
 - `config.rs`: JSON config load, save, defaults, and migrations.
+  `config/tests.rs` (tests only) holds its tests.
 - `lock.rs`: the inter-process store lock. Every store write holds it on a
   sibling `<stem>.lock` and fails at once as Busy when another process holds
   it.
-- `registry.rs`: local scene role registry.
+- `registry.rs`: local scene role registry. `registry/tests/` (tests only)
+  holds its tests: `curation.rs` (in-memory edits), `persistence.rs` (JSON
+  and YAML files) and `snapshot.rs` (the domain snapshot and the golden
+  fixtures).
 - `registry/import.rs`: limits on a YAML registry import: a tighter parser
   budget (aliases, anchors, nodes, merge keys) and per-collection count and
   length caps, checked before anything is written.
