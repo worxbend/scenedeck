@@ -242,3 +242,6 @@ struct AudioInputSource {
     scope: AudioSourceScope,
     parent_scene_path: Vec<String>,
 }
+
+#[cfg(test)]
+mod tests;

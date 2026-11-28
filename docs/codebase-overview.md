@@ -119,12 +119,17 @@ Infrastructure helpers.
 OBS WebSocket integration.
 
 - `client.rs`: thin async wrapper around `obws::Client`. `client/tests.rs`
-  (tests only) covers connection and bounded collection;
+  (tests only) covers connection, bounded collection and stats;
   `client/control_tests.rs` (tests only) covers control execution, scene
   snapshots and thumbnails.
 - `mapper.rs`: conversion from OBS response types into domain types.
+- `audio.rs`, `sources.rs`, `operator_inputs.rs`, `requests.rs`: audio
+  reads, source and graph traversal, operator property reads, and request
+  admission. Each keeps its mock-wire tests in `<module>/tests.rs`
+  (tests only).
 - `testing/wire.rs` (tests only): loopback OBS WebSocket handshake, request,
-  response and event frames, and the `GetVersion` payload.
+  response and event frames, the `GetVersion` payload, and input, scene and
+  scene-item rows.
 - `testing/scripted.rs` (tests only): `ScriptedObs`, a loopback OBS that
   answers from a script (strict order or by `requestType`) and counts requests
   per type. `connect_with_events` also returns the client's event stream and

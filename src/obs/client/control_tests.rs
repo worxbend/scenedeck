@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::control::{ControlAction, MediaAction, WorkspaceWarning};
+use crate::domain::control::{ControlAction, MediaAction};
 use crate::obs::testing::scripted::{mock_client, ScriptedObs};
 use crate::obs::testing::wire::{request_data, Reply};
 use serde_json::json;
@@ -109,70 +109,6 @@ async fn seeking_checks_fresh_duration_before_sending_cursor() {
 }
 
 #[tokio::test]
-async fn recursive_inventory_keeps_disabled_group_owner_and_input_identity() {
-    let input = json!({"inputName":"Mic", "inputUuid":"00000000-0000-0000-0000-000000000001", "inputKind":"pulse_input_capture", "unversionedInputKind":"pulse_input_capture"});
-    let (client, server) = mock_client(vec![
-        ("GetInputList", json!({"inputs":[input]})),
-        ("GetSceneItemList", json!({"sceneItems":[{"sceneItemId":7,"sceneItemIndex":0,"sourceName":"Group","sourceType":"OBS_SOURCE_TYPE_SCENE","isGroup":true}]})),
-        ("GetSceneItemEnabled", json!({"sceneItemEnabled":false})),
-        ("GetGroupSceneItemList", json!({"sceneItems":[{"sceneItemId":9,"sceneItemIndex":0,"sourceName":"Mic","sourceType":"OBS_SOURCE_TYPE_INPUT","inputKind":"pulse_input_capture"}]})),
-        ("GetSceneItemEnabled", json!({"sceneItemEnabled":true})),
-    ]).await;
-    let (items, warnings) = client.scan_source_items("Program", 4096).await;
-    assert!(warnings.is_empty());
-    assert_eq!(items.len(), 2);
-    assert_eq!(items[1].owner, "Group");
-    assert_eq!(items[1].item_id, 9);
-    assert_eq!(items[1].path, ["Program", "Group"]);
-    assert!(items[1].enabled);
-    assert!(!items[1].ancestor_enabled);
-    assert_eq!(items[1].input_uuid, "00000000-0000-0000-0000-000000000001");
-    assert_eq!(server.await.unwrap().len(), 6);
-}
-
-#[tokio::test]
-async fn source_inventory_budget_stops_extra_visibility_requests_and_reports_partial() {
-    let (client, server) = mock_client(vec![
-        ("GetInputList", json!({"inputs":[]})),
-        ("GetSceneItemList", json!({"sceneItems":[
-            {"sceneItemId":1,"sceneItemIndex":0,"sourceName":"First","sourceType":"OBS_SOURCE_TYPE_INPUT","inputKind":"image_source"},
-            {"sceneItemId":2,"sceneItemIndex":1,"sourceName":"Second","sourceType":"OBS_SOURCE_TYPE_INPUT","inputKind":"image_source"}
-        ]})),
-        ("GetSceneItemEnabled", json!({"sceneItemEnabled":true})),
-    ]).await;
-    let (items, warnings) = client.scan_source_items("Program", 1).await;
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0].input, "First");
-    assert!(warnings.contains(&WorkspaceWarning::InventoryTruncated));
-    assert_eq!(server.await.unwrap().len(), 4);
-}
-
-#[tokio::test]
-async fn missing_nested_scene_reports_partial_coverage_without_losing_other_items() {
-    let (client, server) = ScriptedObs::ordered(vec![
-        ("GetInputList", Reply::Ok(json!({"inputs":[]}))),
-        ("GetSceneItemList", Reply::Ok(json!({"sceneItems":[
-            {"sceneItemId":1,"sceneItemIndex":0,"sourceName":"Missing nested scene","sourceType":"OBS_SOURCE_TYPE_SCENE","isGroup":false},
-            {"sceneItemId":2,"sceneItemIndex":1,"sourceName":"Sibling","sourceType":"OBS_SOURCE_TYPE_INPUT","inputKind":"image_source"}
-        ]}))),
-        ("GetSceneItemEnabled",Reply::Ok(json!({"sceneItemEnabled":true}))),
-        ("GetSceneItemEnabled",Reply::Ok(json!({"sceneItemEnabled":true}))),
-        ("GetSceneItemList",Reply::err(600)),
-    ])
-    .connect()
-    .await;
-    let (items, warnings) = client.scan_source_items("Program", 4096).await;
-    assert_eq!(items.len(), 2);
-    assert!(items.iter().any(|item| item.input == "Sibling"));
-    assert_eq!(warnings.len(), 1);
-    assert!(matches!(
-        &warnings[0],
-        WorkspaceWarning::ContainerUnavailable { path, .. } if path.contains("Missing nested scene")
-    ));
-    server.await.unwrap();
-}
-
-#[tokio::test]
 async fn text_edit_only_overlays_text_and_preserves_other_properties() {
     let (client, server) = mock_client(vec![
         ("GetInputSettings", json!({"inputKind":"text_ft2_source_v2", "inputSettings":{"text":"Old","color":123,"from_file":false}})),
@@ -242,6 +178,7 @@ fn thumbnails_fit_canvas_without_stretching_or_unbounded_decode() {
     assert_eq!(thumbnail_dimensions(0, 0), (1, 1));
     assert_eq!(thumbnail_dimensions(320, 180), (320, 180));
 }
+
 #[tokio::test]
 async fn cancelled_thumbnail_does_not_request_canvas_settings() {
     let (client, server) = mock_client(vec![]).await;
@@ -287,4 +224,96 @@ async fn invalid_audio_values_never_reach_obs() {
         .await
         .is_err());
     assert_eq!(server.await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn fader_silence_unity_and_finite_levels_reach_wire_canonically() {
+    let (client, server) = mock_client(vec![
+        ("SetInputVolume", json!({})),
+        ("SetInputVolume", json!({})),
+        ("SetInputVolume", json!({})),
+    ])
+    .await;
+    for db in [MIN_VOLUME_DB, MAX_VOLUME_DB, -6.0] {
+        client
+            .execute_control(&ControlAction::SetInputVolumeDb {
+                input: "Mic".into(),
+                db,
+            })
+            .await
+            .unwrap();
+    }
+    let requests = server.await.unwrap();
+    assert_eq!(request_data(&requests[1])["inputVolumeMul"], 0.0);
+    assert_eq!(request_data(&requests[2])["inputVolumeMul"], 1.0);
+    let finite = request_data(&requests[3])["inputVolumeMul"]
+        .as_f64()
+        .unwrap();
+    assert!((finite - volume_db_to_mul(-6.0)).abs() < 0.000001);
+    assert_eq!(requests.len(), 4);
+}
+
+#[tokio::test]
+async fn invalid_gain_commands_are_rejected_before_network_work() {
+    let (client, server) = mock_client(vec![]).await;
+    for db in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -100.1, 0.1] {
+        assert!(client
+            .execute_control(&ControlAction::SetInputVolumeDb {
+                input: "Mic".into(),
+                db
+            })
+            .await
+            .is_err());
+    }
+    assert_eq!(server.await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn explicit_actions_send_identity_without_cached_names() {
+    let uuid = "00000000-0000-0000-0000-000000000001";
+    let (client, server) = mock_client(vec![
+        ("SetInputMute", json!({})),
+        ("TriggerMediaInputAction", json!({})),
+        ("SetSourceFilterEnabled", json!({})),
+        ("GetStudioModeEnabled", json!({"studioModeEnabled":true})),
+        ("SetCurrentPreviewScene", json!({})),
+    ])
+    .await;
+    for action in [
+        ControlAction::SetInputMuted {
+            input: "Reused name".into(),
+            muted: true,
+        },
+        ControlAction::Media {
+            input: "Reused name".into(),
+            action: MediaAction::Restart,
+        },
+        ControlAction::SetFilterEnabled {
+            input: "Reused name".into(),
+            filter: "Limiter".into(),
+            enabled: true,
+        },
+        ControlAction::ActivateScene {
+            scene: "Reused scene".into(),
+            studio_enabled: true,
+        },
+    ] {
+        client
+            .execute_control_with_identity_if(&action, Some(uuid), &|| true)
+            .await
+            .unwrap();
+    }
+    let requests = server.await.unwrap();
+    for (index, key) in [
+        (1, "inputUuid"),
+        (2, "inputUuid"),
+        (3, "sourceUuid"),
+        (5, "sceneUuid"),
+    ] {
+        let data = request_data(&requests[index]);
+        assert_eq!(data[key], uuid);
+        for name in ["inputName", "sourceName", "sceneName"] {
+            assert!(data.get(name).is_none());
+        }
+    }
 }

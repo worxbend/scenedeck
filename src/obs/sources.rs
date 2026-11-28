@@ -286,29 +286,4 @@ impl ObsClient {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn warnings_keep_a_bounded_sample_and_count_the_rest() {
-        let mut warnings = ScanWarnings::default();
-        for _ in 0..MAX_WARNING_SAMPLES + 3 {
-            warnings.push(WorkspaceWarning::InventoryTruncated);
-        }
-        let finished = warnings.finish();
-        assert_eq!(finished.len(), MAX_WARNING_SAMPLES + 1);
-        assert_eq!(finished.last(), Some(&WorkspaceWarning::Omitted(3)));
-        assert!(ScanWarnings::default().finish().is_empty());
-    }
-
-    #[test]
-    fn budget_charges_items_and_containers_separately() {
-        let mut budget = ScanBudget::new(2);
-        assert!(budget.inspect(2).is_ok());
-        assert!(budget.inspect(1).is_err());
-        for _ in 0..2 + MAX_ROOT_SCENES {
-            assert!(budget.container().is_ok());
-        }
-        assert!(budget.container().is_err());
-    }
-}
+mod tests;

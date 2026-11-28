@@ -897,7 +897,3 @@ mod tests;
 
 #[cfg(test)]
 mod control_tests;
-
-#[cfg(test)]
-#[path = "regression_tests.rs"]
-mod regression_tests;

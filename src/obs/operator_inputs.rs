@@ -102,3 +102,6 @@ impl ObsClient {
         result.expect("operator property reads retain errors per input")
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -203,3 +203,6 @@ impl Drop for RequestLease<'_> {
         self.gate.drained.send_modify(|revision| *revision += 1);
     }
 }
+
+#[cfg(test)]
+mod tests;

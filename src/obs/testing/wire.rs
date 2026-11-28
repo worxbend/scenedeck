@@ -97,6 +97,21 @@ pub(crate) fn request_data(request: &Value) -> &Value {
     &request["d"]["requestData"]
 }
 
+/// A `GetInputList` row with a fixed UUID.
+pub(crate) fn input(name: &str) -> Value {
+    json!({"inputName":name,"inputUuid":"00000000-0000-0000-0000-000000000001","inputKind":"mock","unversionedInputKind":"mock"})
+}
+
+/// A `GetSceneItemList` row for an input source.
+pub(crate) fn scene_item(id: i64, name: &str) -> Value {
+    json!({"sceneItemId":id,"sceneItemIndex":0,"sourceName":name,"sourceType":"OBS_SOURCE_TYPE_INPUT","inputKind":"mock"})
+}
+
+/// A `GetSceneList` row with a fixed UUID.
+pub(crate) fn scene(name: &str) -> Value {
+    json!({"sceneName":name,"sceneUuid":"00000000-0000-0000-0000-000000000001","sceneIndex":0})
+}
+
 /// `GetVersion` response data.
 pub(crate) fn version(image_formats: &[&str]) -> Value {
     json!({

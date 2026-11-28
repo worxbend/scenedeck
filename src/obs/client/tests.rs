@@ -6,6 +6,7 @@ use serde_json::json;
 
 use super::{collect_bounded_ordered, ObsClient};
 use crate::obs::event::ObsEvent;
+use crate::obs::testing::scripted::mock_client;
 use crate::obs::testing::wire::{self, Reply};
 
 #[tokio::test]
@@ -108,4 +109,26 @@ async fn bounded_collection_reports_the_first_error_in_input_order() {
     .unwrap_err();
 
     assert_eq!(error, "first");
+}
+
+#[tokio::test]
+async fn configured_fps_is_observed_separately_from_measured_jitter() {
+    for (numerator, denominator, expected) in [
+        (30, 1, Some(30.0)),
+        (60000, 1001, Some(60000.0 / 1001.0)),
+        (60, 1, Some(60.0)),
+        (120, 1, Some(120.0)),
+        (144, 1, Some(144.0)),
+        (0, 1, None),
+        (60, 0, None),
+    ] {
+        let (client,server)=mock_client(vec![
+            ("GetStats",json!({"cpuUsage":1.0,"memoryUsage":2.0,"availableDiskSpace":3.0,"activeFps":60.01,"averageFrameRenderTime":1.0,"renderSkippedFrames":0,"renderTotalFrames":100,"outputSkippedFrames":0,"outputTotalFrames":100,"webSocketSessionIncomingMessages":0,"webSocketSessionOutgoingMessages":0})),
+            ("GetVideoSettings",json!({"fpsNumerator":numerator,"fpsDenominator":denominator,"baseWidth":1920,"baseHeight":1080,"outputWidth":1920,"outputHeight":1080})),
+        ]).await;
+        let stats = client.get_obs_stats().await.unwrap();
+        assert_eq!(stats.configured_fps, expected);
+        assert_eq!(stats.active_fps, 60.01);
+        assert_eq!(server.await.unwrap().len(), 3);
+    }
 }
