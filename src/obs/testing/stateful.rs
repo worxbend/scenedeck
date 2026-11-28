@@ -80,6 +80,12 @@ requests!(
     SetMediaInputCursor,
 );
 
+/// Both scene writes; an obsolete click must reach neither.
+pub(crate) const SCENE_WRITES: [Request; 2] = [
+    Request::SetCurrentProgramScene,
+    Request::SetCurrentPreviewScene,
+];
+
 /// The two scenes of the show. Each holds one input, `Mic<scene>`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Scene {

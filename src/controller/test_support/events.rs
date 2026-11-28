@@ -45,6 +45,30 @@ pub(crate) async fn recv_matching(
     }
 }
 
+/// The event a session-scoped sender wrapped, with every `SessionEvent`
+/// layer removed.
+pub(crate) fn peel(event: AppEvent) -> AppEvent {
+    match event {
+        AppEvent::SessionEvent { event, .. } => peel(*event),
+        event => event,
+    }
+}
+
+/// Waits for the next `GraphUpdated`, observed or not, dropping the events
+/// before it.
+pub(crate) async fn graph_ready(rx: &mpsc::Receiver<AppEvent>) {
+    loop {
+        let event = peel(recv_event(rx).await);
+        let event = match event {
+            AppEvent::Observation { event, .. } => *event,
+            event => event,
+        };
+        if matches!(event, AppEvent::GraphUpdated(_)) {
+            return;
+        }
+    }
+}
+
 /// Polls `ready` until it holds or `TEST_DEADLINE` passes; true when ready.
 /// It sleeps the calling thread, so only synchronous tests may call it.
 pub(crate) fn wait_until(mut ready: impl FnMut() -> bool) -> bool {

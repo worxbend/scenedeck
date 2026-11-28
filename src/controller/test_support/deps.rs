@@ -1,6 +1,8 @@
 //! Fake `ControllerDependencies` providers.
 
-use crate::controller::dependencies::AppConfigProvider;
+use std::sync::Arc;
+
+use crate::controller::dependencies::{AppConfigProvider, ControllerDependencies};
 use crate::domain::connection::credential::{CredentialStore, ObsPassword};
 use crate::infra::error::AppError;
 use crate::storage::config::AppConfig;
@@ -64,4 +66,13 @@ impl CredentialStore for NoPassword {
     fn delete(&self, _connection_id: &str) -> Result<(), AppError> {
         panic!("fixture must not delete a password")
     }
+}
+
+/// Dependencies with a default config and a keyring the fixture must never
+/// reach.
+pub(crate) fn dependencies() -> ControllerDependencies {
+    ControllerDependencies::new(
+        Arc::new(StaticConfigProvider(Default::default())),
+        Arc::new(NoServices),
+    )
 }

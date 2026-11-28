@@ -3,56 +3,26 @@ use super::*;
 use crate::controller::lifecycle::{OperationKind, SessionRetirement};
 use crate::controller::session_controller::SessionRunner;
 use crate::controller::state::{
-    ActiveAudioStatus, AppState, MixerVisibleAudioStatus, MixerVisibleRenderSource, ObsStatus,
+    ActiveAudioStatus, MixerVisibleAudioStatus, MixerVisibleRenderSource, ObsStatus,
 };
-use crate::controller::test_support::deps::{NoServices, StaticConfigProvider};
-use crate::controller::test_support::events::{recv_event, recv_matching, TEST_DEADLINE};
+use crate::controller::test_support::deps::dependencies;
+use crate::controller::test_support::events::{
+    graph_ready, peel, recv_event, recv_matching, TEST_DEADLINE,
+};
+use crate::controller::test_support::loopback::{consume_echo_pair, echo_pair, pump, switch_b};
 use crate::controller::test_support::state::app_state;
-use crate::controller::workspace::{WorkspaceController, WorkspaceRequest};
+use crate::controller::test_support::workspace::{binding, request};
+use crate::controller::workspace::WorkspaceController;
 use crate::domain::control::ControlAction;
 use crate::domain::output::{OutputKind, OutputRunState, OutputStatus};
-use crate::domain::workflow::ScopeBinding;
 use crate::obs::event::ObsEventStream;
-use crate::obs::testing::stateful::{Event, Request, Scene, StatefulObs, StatefulSession, When};
+use crate::obs::testing::stateful::{Event, Request, Scene, StatefulObs, When, SCENE_WRITES};
 use futures_util::future::BoxFuture;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 use tokio::sync::oneshot;
-
-/// Both scene writes; an obsolete click must reach neither.
-const SCENE_WRITES: [Request; 2] = [
-    Request::SetCurrentProgramScene,
-    Request::SetCurrentPreviewScene,
-];
-
-fn peel(event: AppEvent) -> AppEvent {
-    match event {
-        AppEvent::SessionEvent { event, .. } => peel(*event),
-        event => event,
-    }
-}
-fn binding(client: &ObsClient) -> ScopeBinding {
-    ScopeBinding {
-        endpoint: client.endpoint().into(),
-        collection: "Show".into(),
-    }
-}
-fn request(client: &ObsClient) -> WorkspaceRequest {
-    WorkspaceRequest {
-        operator_reads: Vec::new(),
-        target_uuid: None,
-        epoch: 1,
-        sequence: 1,
-        scope: binding(client),
-        scene: None,
-        input: Some("Text".into()),
-        include_sources: false,
-        screenshot: false,
-        result_id: None,
-    }
-}
 
 #[tokio::test]
 async fn cancelled_or_collection_invalidated_text_preflight_never_begins_final_write() {
@@ -210,28 +180,6 @@ async fn queued_primary_scene_switch_cannot_cross_a_collection_boundary() {
         0,
         "a queued scene switch must not target a replacement collection"
     );
-}
-
-fn pump(mock: &mut StatefulSession, tx: mpsc::SyncSender<AppEvent>) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(crate::controller::refresh_controller::run_event_loop(
-        mock.client.clone(),
-        mock.take_events(),
-        EventSender::new(tx),
-        vec![],
-        Arc::new(Mutex::new(None)),
-    ))
-}
-async fn graph_ready(rx: &mpsc::Receiver<AppEvent>) {
-    loop {
-        let event = peel(recv_event(rx).await);
-        let event = match event {
-            AppEvent::Observation { event, .. } => *event,
-            event => event,
-        };
-        if matches!(event, AppEvent::GraphUpdated(_)) {
-            return;
-        }
-    }
 }
 
 #[tokio::test]
@@ -881,40 +829,6 @@ async fn graph_invalidated_midscan_never_publishes_ready_before_followup_complet
     task.await.unwrap();
     mock.stop().await;
 }
-async fn echo_pair(mock: &StatefulSession) {
-    mock.emit(Event::MicMuted(true)).await;
-    mock.emit(Event::MicVolume {
-        mul: 0.25,
-        db: -12.0,
-    })
-    .await;
-}
-async fn consume_echo_pair(rx: &mpsc::Receiver<AppEvent>, state: &mut AppState) {
-    let mut echoes = 0;
-    while echoes < 2 {
-        if let AppEvent::Observation { revision, event } = peel(recv_event(rx).await) {
-            let Some(event) = state.reconcile_observation(revision, *event) else {
-                continue;
-            };
-            match event {
-                AppEvent::InputMuteChanged { input, muted } => {
-                    state.apply_input_mute(&input, muted);
-                    echoes += 1;
-                }
-                AppEvent::InputVolumeChanged {
-                    input,
-                    volume_mul,
-                    volume_db,
-                } => {
-                    state.apply_input_volume(&input, volume_mul, volume_db);
-                    echoes += 1;
-                }
-                _ => {}
-            }
-        }
-    }
-}
-
 #[tokio::test]
 async fn bootstrap_active_audio_snapshot_merges_newer_mute_and_volume_echoes() {
     let mut mock = StatefulObs::default()
@@ -961,13 +875,6 @@ async fn bootstrap_active_audio_snapshot_merges_newer_mute_and_volume_echoes() {
     mock.stop().await;
 }
 
-fn dependencies() -> ControllerDependencies {
-    ControllerDependencies::new(
-        Arc::new(StaticConfigProvider(Default::default())),
-        Arc::new(NoServices),
-    )
-}
-
 #[tokio::test]
 async fn selected_audio_real_command_snapshot_merges_newer_echoes() {
     let mut mock = StatefulObs::default()
@@ -1005,10 +912,6 @@ async fn selected_audio_real_command_snapshot_merges_newer_echoes() {
     controller.shutdown().await.unwrap();
     task.await.unwrap();
     mock.stop().await;
-}
-
-async fn switch_b(mock: &StatefulSession) {
-    mock.emit(Event::ProgramChanged(Scene::B)).await;
 }
 
 #[tokio::test]
