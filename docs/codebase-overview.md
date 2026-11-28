@@ -186,7 +186,8 @@ GTK and libadwaita UI.
   family (`outputs`, `scene_catalog`, `workspace`, `feedback`,
   `page_redraw`, `assembled_window`, and `render` for mapped-window layout
   checks).
-- `sidebar.rs`: sidebar controls and header selectors.
+- `sidebar.rs`: sidebar controls and header selectors. `sidebar/tests.rs`
+  (tests only) holds its tests.
 - `hotkeys.rs`: window-level Live scene shortcut handling.
 - `navigation.rs`: page switching and command dispatch helper.
 - `markup.rs`: the Pango markup boundary: `escape` and `plain_toast`, the
@@ -201,6 +202,9 @@ GTK and libadwaita UI.
   (show workspace selection and the eviction notice). `persist/tests.rs`
   (tests only) holds its tests.
 - `pages/`: Live, Stats, Mixer, Graph, Inventory, Doctor, Settings, and Help pages.
+  The Live, Stats, Mixer, Inventory and Settings pages keep their tests in
+  `<page>/tests.rs` (tests only); Mixer's layout suite sits beside it in
+  `mixer/layout_tests.rs`.
 - `presenters/`: text formatters shared by several surfaces;
   `output_status` renders the stream and record labels and elapsed time;
   `save_error` renders the detail of a failed local save, including a save
@@ -208,7 +212,8 @@ GTK and libadwaita UI.
 - `widgets/`: reusable scene and audio cards, the volume meter, the icon
   chooser, the bottom status bar, `status_page` (the only status page
   constructor; it escapes the description), and the
-  cairo chart/gauge renderers used by Stats.
+  cairo chart/gauge renderers used by Stats. `operating_panel/tests.rs` and
+  `audio_card/tests.rs` (tests only) hold those widgets' tests.
 - `test_support.rs` (tests only): the `native_test!` runner that gives each
   native GTK test its own process and a 60 s deadline, the shared
   `navigation()` fixture, main-loop `pump` helpers, and the widget lookups
