@@ -83,7 +83,7 @@ const APP_STATE_BORROWS: &[(&str, [usize; 3])] = &[
     ("ui/widgets/studio_controls.rs", [0, 5, 5]),
     ("ui/widgets/transport_bar.rs", [0, 2, 2]),
     ("ui/widgets/volume_meter.rs", [0, 1, 1]),
-    ("ui/window.rs", [43, 59, 110]),
+    ("ui/window.rs", [30, 20, 57]),
     ("ui/workspace.rs", [6, 0, 7]),
 ];
 

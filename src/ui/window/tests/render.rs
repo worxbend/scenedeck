@@ -1,7 +1,7 @@
 //! Mapped-window checks: widget identity alone does not detect layout flashes.
-use super::*;
 use crate::domain::{audio::AudioInput, role::SceneRole, scene::Scene};
 use crate::ui::test_support::{navigation, pump};
+use crate::ui::window::*;
 
 fn capture(window: &gtk4::Window, name: &str) {
     let Some(directory) = std::env::var_os("SCENEDECK_UI_CAPTURE_DIR") else {

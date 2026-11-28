@@ -181,6 +181,10 @@ Persistence and local machine integration.
 GTK and libadwaita UI.
 
 - `window.rs`: main shell, page orchestration, and event application.
+  `window/tests/` (tests only) holds its tests, one file per scenario
+  family (`outputs`, `scene_catalog`, `workspace`, `feedback`,
+  `page_redraw`, `assembled_window`, and `render` for mapped-window layout
+  checks).
 - `sidebar.rs`: sidebar controls and header selectors.
 - `hotkeys.rs`: window-level Live scene shortcut handling.
 - `navigation.rs`: page switching and command dispatch helper.

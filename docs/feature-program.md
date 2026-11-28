@@ -140,7 +140,7 @@ Native evidence: the first full run stopped on
 `app::tests::native_close_waits_for_accepted_save_and_gtk_publication` with
 `GTK completion deadline exceeded` (existing two-second fixture deadline).
 Both that test and the new
-`ui::window::tests::native_scene_rename_preserves_imported_curation_and_rejects_retired_scope`
+`ui::window::tests::scene_catalog::native_scene_rename_preserves_imported_curation_and_rejects_retired_scope`
 passed on a focused run without code changes. The full rerun repeated the close
 fixture timeout. The test-only `app::tests::fixture` now waits for the first
 `after-paint` signal before beginning the existing two-second persistence
