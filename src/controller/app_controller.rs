@@ -402,6 +402,39 @@ impl AppController {
     }
 }
 
+/// Seams for controller tests outside this module.
+#[cfg(test)]
+impl AppController {
+    /// A controller whose session runs `runner` instead of connecting to OBS.
+    pub(super) fn with_session_runner(
+        runtime: Handle,
+        event_tx: SyncSender<AppEvent>,
+        dependencies: ControllerDependencies,
+        runner: Arc<dyn crate::controller::session_controller::SessionRunner>,
+    ) -> Self {
+        let mut controller =
+            Self::with_dependencies(runtime.clone(), event_tx.clone(), dependencies);
+        controller.session = SessionController::with_runner(
+            runtime,
+            EventSender::new(event_tx),
+            runner,
+            SessionScope::initial(Arc::clone(&controller.client_slot)),
+            Arc::clone(&controller.bitrate_sample),
+        );
+        controller.sync_session_scope();
+        controller
+    }
+
+    pub(super) fn session_scope(&self) -> SessionScope {
+        self.session.scope()
+    }
+
+    /// The retained Doctor refresh worker, leaving none behind.
+    pub(super) fn take_refresh_task(&mut self) -> Option<tokio::task::JoinHandle<()>> {
+        self.refresh_task.take()
+    }
+}
+
 impl Drop for AppController {
     fn drop(&mut self) {
         if let Some(task) = self.refresh_task.take() {

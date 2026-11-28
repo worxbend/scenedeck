@@ -141,6 +141,11 @@ OBS WebSocket integration.
   answers from a script (strict order or by `requestType`) and counts requests
   per type. `connect_with_events` also returns the client's event stream and
   an `EventFeed` that pushes OBS event frames into it.
+- `testing/stateful.rs` (tests only): `StatefulObs`, a two-scene loopback OBS
+  whose replies follow the events a test emits. Tests drive it with typed
+  `Request`, `Event`, `Scene` and `When` values: hold replies until released,
+  refuse requests, and count what arrived in a `RequestLog`. Controller tests
+  use it so the wire JSON stays in `src/obs/`.
 
 No other module should import `obws` directly.
 

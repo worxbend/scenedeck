@@ -3,7 +3,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
-use futures_util::StreamExt;
 use serde_json::Value;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
@@ -166,7 +165,7 @@ impl ScriptedObs {
         while !self.script.is_exhausted() {
             // A dropped feed disables its branch; requests keep being served.
             let request = tokio::select! {
-                request = next_request(socket) => request,
+                request = wire::next_request(socket) => request,
                 Some(frame) = pushed.recv() => {
                     wire::send_json(socket, &frame).await;
                     continue;
@@ -189,16 +188,6 @@ impl ScriptedObs {
 /// The `GetVersion` exchange `ObsClient::connect` performs first.
 fn handshake() -> (&'static str, Reply) {
     ("GetVersion", Reply::Ok(wire::version(&["png"])))
-}
-
-/// The next request frame, or `None` once the client disconnects.
-async fn next_request(socket: &mut MockSocket) -> Option<Value> {
-    loop {
-        let message = socket.next().await?.ok()?;
-        if let Some(text) = message.as_text() {
-            return Some(serde_json::from_str(text).unwrap());
-        }
-    }
 }
 
 /// [`ScriptedObs::ordered`] for a script where every request succeeds.
@@ -225,7 +214,7 @@ pub(crate) async fn unresponsive_client() -> (
         let reply = Reply::Ok(wire::version(&[]));
         wire::send_json(&mut socket, &wire::response(&version, &reply)).await;
         let mut requests = Vec::new();
-        while let Some(request) = next_request(&mut socket).await {
+        while let Some(request) = wire::next_request(&mut socket).await {
             // The test may stop watching early; keep recording regardless.
             let _ = seen_tx.send(request.clone());
             requests.push(request);

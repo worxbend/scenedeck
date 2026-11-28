@@ -13,222 +13,20 @@ use crate::domain::control::ControlAction;
 use crate::domain::output::{OutputKind, OutputRunState, OutputStatus};
 use crate::domain::workflow::ScopeBinding;
 use crate::obs::event::ObsEventStream;
-use crate::obs::testing::scripted::ScriptedObs;
-use crate::obs::testing::wire::Reply;
+use crate::obs::testing::stateful::{Event, Request, Scene, StatefulObs, StatefulSession, When};
 use futures_util::future::BoxFuture;
-use futures_util::{SinkExt, StreamExt};
-use serde_json::{json, Value};
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
-use tokio::sync::{mpsc as async_mpsc, oneshot};
-use tokio_websockets::Message;
+use tokio::sync::oneshot;
 
-#[derive(Default)]
-struct Plan {
-    hold: Option<(&'static str, usize)>,
-    second_hold: Option<(&'static str, usize)>,
-    saturated_versions: bool,
-    fail_b: Option<&'static str>,
-    empty_b: bool,
-    mode_unavailable: bool,
-    active_outputs: bool,
-    fail_at: Option<(&'static str, usize)>,
-}
+/// Both scene writes; an obsolete click must reach neither.
+const SCENE_WRITES: [Request; 2] = [
+    Request::SetCurrentProgramScene,
+    Request::SetCurrentPreviewScene,
+];
 
-enum Signal {
-    Release,
-    ReleaseKind(&'static str),
-    Event(&'static str, u64, Value),
-}
-struct Mock {
-    client: ObsClient,
-    events: Option<ObsEventStream>,
-    signals: async_mpsc::UnboundedSender<(Signal, oneshot::Sender<()>)>,
-    entered: async_mpsc::UnboundedReceiver<(String, usize)>,
-    finish: oneshot::Sender<()>,
-    server: tokio::task::JoinHandle<Vec<String>>,
-}
-
-fn version() -> Value {
-    crate::obs::testing::wire::version(&[])
-}
-async fn mock(plan: Plan) -> Mock {
-    let (listener, port) = crate::obs::testing::wire::listen().await;
-    let (signals, mut commands) = async_mpsc::unbounded_channel::<(Signal, oneshot::Sender<()>)>();
-    let (entered_tx, entered) = async_mpsc::unbounded_channel();
-    let (finish, mut finished) = oneshot::channel();
-    let server = tokio::spawn(async move {
-        let mut socket = crate::obs::testing::wire::accept(listener).await;
-        let mut counts = HashMap::<String, usize>::new();
-        let mut held = Vec::new();
-        let mut names = Vec::new();
-        let mut scene = "A".to_owned();
-        let mut muted = false;
-        let mut volume = 0.5;
-        let mut studio = false;
-        let mut stream_active = plan.active_outputs;
-        let mut record_active = plan.active_outputs;
-        loop {
-            let message = tokio::select! {
-                _ = &mut finished => break,
-                command = commands.recv() => {
-                    let Some((signal, acknowledged)) = command else { break };
-                    match signal {
-                        Signal::Release => {
-                            for (_, response) in held.drain(..) { socket.send(Message::text(response)).await.unwrap(); }
-                        }
-                        Signal::ReleaseKind(kind) => {
-                            let mut remaining = Vec::new();
-                            for (name, response) in held.drain(..) {
-                                if name == kind { socket.send(Message::text(response)).await.unwrap(); }
-                                else { remaining.push((name, response)); }
-                            }
-                            held = remaining;
-                        }
-                        Signal::Event(name, intent, data) => {
-                            if name == "CurrentProgramSceneChanged" { scene = data["sceneName"].as_str().unwrap().to_owned(); }
-                            if name == "StudioModeStateChanged" { studio = data["studioModeEnabled"].as_bool().unwrap(); }
-                            if name == "InputMuteStateChanged" { muted = data["inputMuted"].as_bool().unwrap(); }
-                            if name == "InputVolumeChanged" { volume = data["inputVolumeMul"].as_f64().unwrap(); }
-                            socket.send(Message::text(json!({"op":5,"d":{"eventType":name,"eventIntent":intent,"eventData":data}}).to_string())).await.unwrap();
-                        }
-                    }
-                    let _ = acknowledged.send(());
-                    continue;
-                }
-                message = socket.next() => match message {
-                    Some(Ok(message)) if message.is_text() => message,
-                    _ => break,
-                },
-            };
-            let request: Value = serde_json::from_str(message.as_text().unwrap()).unwrap();
-            let name = request["d"]["requestType"].as_str().unwrap();
-            let count = counts.entry(name.to_owned()).or_default();
-            *count += 1;
-            let count = *count;
-            names.push(name.to_owned());
-            let mut success = plan.fail_at != Some((name, count))
-                && !(scene == "B" && plan.fail_b == Some(name))
-                && !(name == "GetStudioModeEnabled" && plan.mode_unavailable);
-            let data = match name {
-                "GetVersion" => Some(version()),
-                "GetStudioModeEnabled" => Some(json!({"studioModeEnabled":studio})),
-                "SetCurrentProgramScene" | "SetCurrentPreviewScene" => None,
-                "StopStream" => {
-                    stream_active = false;
-                    None
-                }
-                "StopRecord" => {
-                    record_active = false;
-                    Some(json!({"outputPath":"fixture.mkv"}))
-                }
-                "GetProfileList" => Some(json!({"currentProfileName":"Main","profiles":["Main"]})),
-                "GetSceneCollectionList" => {
-                    Some(json!({"currentSceneCollectionName":"Show","sceneCollections":["Show"]}))
-                }
-                "GetStreamStatus" => Some(
-                    json!({"outputActive":stream_active,"outputReconnecting":false,"outputTimecode":"00:00:00.000","outputDuration":0,"outputCongestion":0.0,"outputBytes":0,"outputSkippedFrames":0,"outputTotalFrames":0}),
-                ),
-                "GetRecordStatus" => Some(
-                    json!({"outputActive":record_active,"outputPaused":false,"outputTimecode":"00:00:00.000","outputDuration":0,"outputBytes":0}),
-                ),
-                "GetSceneList" => Some(
-                    json!({"currentProgramSceneName":scene,"currentProgramSceneUuid":"00000000-0000-0000-0000-000000000001","scenes":[{"sceneName":"A","sceneUuid":"00000000-0000-0000-0000-000000000001","sceneIndex":0},{"sceneName":"B","sceneUuid":"00000000-0000-0000-0000-000000000002","sceneIndex":1}]}),
-                ),
-                "GetSpecialInputs" => Some(
-                    json!({"desktop1":null,"desktop2":null,"mic1":null,"mic2":null,"mic3":null,"mic4":null}),
-                ),
-                "GetSceneItemList" => {
-                    let owner = request["d"]["requestData"]["sceneName"].as_str().unwrap();
-                    if owner == "B" && plan.empty_b {
-                        Some(json!({"sceneItems":[]}))
-                    } else {
-                        Some(
-                            json!({"sceneItems":[{"sceneItemId":1,"sceneItemIndex":0,"sourceName":format!("Mic{owner}"),"sourceType":"OBS_SOURCE_TYPE_INPUT","inputKind":"mock"}]}),
-                        )
-                    }
-                }
-                "GetSceneItemEnabled" => Some(json!({"sceneItemEnabled":true})),
-                "GetInputMute" => Some(json!({"inputMuted":muted})),
-                "GetInputVolume" => Some(json!({"inputVolumeMul":volume,"inputVolumeDb":-6.0})),
-                "GetInputList" => Some(json!({"inputs":[]})),
-                "GetInputSettings" => Some(
-                    json!({"inputKind":"text_ft2_source_v2","inputSettings":{"text":"before","from_file":false}}),
-                ),
-                "GetInputDefaultSettings" => {
-                    Some(json!({"defaultInputSettings":{"text":"","from_file":false}}))
-                }
-                "GetSourceFilterList" => Some(json!({"filters":[]})),
-                "GetMediaInputStatus" => Some(
-                    json!({"mediaState":"OBS_MEDIA_STATE_PLAYING","mediaDuration":10000,"mediaCursor":0}),
-                ),
-                "SetInputSettings"
-                | "SetMediaInputCursor"
-                | "SetInputMute"
-                | "SetSceneItemEnabled"
-                | "StartStream" => None,
-                _ => {
-                    success = false;
-                    None
-                }
-            };
-            let mut response = json!({"op":7,"d":{"requestId":request["d"]["requestId"],"requestType":name,"requestStatus":{"result":success,"code":if success {100} else {702}}}});
-            if let Some(data) = data {
-                response["d"]["responseData"] = data;
-            }
-            if plan.hold == Some((name, count))
-                || plan.second_hold == Some((name, count))
-                || (plan.saturated_versions && name == "GetVersion" && count > 1)
-            {
-                held.push((name.to_owned(), response.to_string()));
-            } else {
-                socket
-                    .send(Message::text(response.to_string()))
-                    .await
-                    .unwrap();
-            }
-            let _ = entered_tx.send((name.to_owned(), count));
-        }
-        names
-    });
-    let (client, events) = ObsClient::connect("127.0.0.1", port, None).await.unwrap();
-    Mock {
-        client,
-        events: Some(events),
-        signals,
-        entered,
-        finish,
-        server,
-    }
-}
-impl Mock {
-    async fn signal(&self, signal: Signal) {
-        let (done, acknowledged) = oneshot::channel();
-        self.signals.send((signal, done)).unwrap();
-        tokio::time::timeout(TEST_DEADLINE, acknowledged)
-            .await
-            .unwrap()
-            .unwrap();
-    }
-    async fn wait(&mut self, name: &str, count: usize) {
-        tokio::time::timeout(TEST_DEADLINE, async {
-            while let Some(observed) = self.entered.recv().await {
-                if observed == (name.into(), count) {
-                    return;
-                }
-            }
-            panic!("mock closed before {name} #{count}");
-        })
-        .await
-        .unwrap();
-    }
-    async fn stop(self) -> Vec<String> {
-        self.finish.send(()).unwrap();
-        self.server.await.unwrap()
-    }
-}
 fn peel(event: AppEvent) -> AppEvent {
     match event {
         AppEvent::SessionEvent { event, .. } => peel(*event),
@@ -259,11 +57,10 @@ fn request(client: &ObsClient) -> WorkspaceRequest {
 #[tokio::test]
 async fn cancelled_or_collection_invalidated_text_preflight_never_begins_final_write() {
     for cancel_ui in [true, false] {
-        let mut mock = mock(Plan {
-            hold: Some(("GetInputDefaultSettings", 2)),
-            ..Default::default()
-        })
-        .await;
+        let mut mock = StatefulObs::default()
+            .hold(Request::GetInputDefaultSettings, When::Nth(2))
+            .connect()
+            .await;
         let slot = Arc::new(Mutex::new(None));
         let scope = SessionScope::initial(slot.clone()).next();
         assert!(scope.install(mock.client.clone()));
@@ -278,37 +75,30 @@ async fn cancelled_or_collection_invalidated_text_preflight_never_begins_final_w
             }),
             Some("before".into()),
         );
-        mock.wait("GetInputDefaultSettings", 2).await;
+        mock.wait(Request::GetInputDefaultSettings, 2).await;
         if cancel_ui {
             workspace.cancel();
         } else {
             scope.advance_collection();
         }
-        mock.signal(Signal::Release).await;
+        mock.release_all().await;
         tokio::time::timeout(TEST_DEADLINE, scope.quiesce())
             .await
             .unwrap();
         mock.client.get_version().await.unwrap(); // Drained socket remains reusable.
         scope.retire();
         let frames = mock.stop().await;
-        assert_eq!(
-            frames
-                .iter()
-                .filter(|name| *name == "SetInputSettings")
-                .count(),
-            0
-        );
+        assert_eq!(frames.count(Request::SetInputSettings), 0);
     }
 }
 
 #[tokio::test]
 async fn cancelled_or_collection_invalidated_media_preflight_never_begins_cursor_write() {
     for cancel_ui in [true, false] {
-        let mut mock = mock(Plan {
-            hold: Some(("GetMediaInputStatus", 1)),
-            ..Default::default()
-        })
-        .await;
+        let mut mock = StatefulObs::default()
+            .hold(Request::GetMediaInputStatus, When::Nth(1))
+            .connect()
+            .await;
         let slot = Arc::new(Mutex::new(None));
         let scope = SessionScope::initial(slot.clone()).next();
         scope.install(mock.client.clone());
@@ -322,39 +112,34 @@ async fn cancelled_or_collection_invalidated_media_preflight_never_begins_cursor
                 position_ms: 500,
             },
         );
-        mock.wait("GetMediaInputStatus", 1).await;
+        mock.wait(Request::GetMediaInputStatus, 1).await;
         if cancel_ui {
             workspace.cancel();
         } else {
             scope.advance_collection();
         }
-        mock.signal(Signal::Release).await;
+        mock.release_all().await;
         tokio::time::timeout(TEST_DEADLINE, scope.quiesce())
             .await
             .unwrap();
         mock.client.get_version().await.unwrap();
         scope.retire();
-        assert!(!mock
-            .stop()
-            .await
-            .iter()
-            .any(|name| name == "SetMediaInputCursor"));
+        assert_eq!(mock.stop().await.count(Request::SetMediaInputCursor), 0);
     }
 }
 
 #[tokio::test]
 async fn cancellation_while_waiting_for_connection_admission_does_not_poll_a_mutation() {
-    let mut mock = mock(Plan {
-        saturated_versions: true,
-        ..Default::default()
-    })
-    .await;
+    let mut mock = StatefulObs::default()
+        .hold(Request::GetVersion, When::AfterFirst)
+        .connect()
+        .await;
     let mut reads = Vec::new();
     for _ in 0..8 {
         let client = mock.client.clone();
         reads.push(tokio::spawn(async move { client.get_version().await }));
     }
-    mock.wait("GetVersion", 9).await;
+    mock.wait(Request::GetVersion, 9).await;
     let valid = Arc::new(AtomicBool::new(true));
     let lease = valid.clone();
     let client = mock.client.clone();
@@ -378,7 +163,7 @@ async fn cancellation_while_waiting_for_connection_admission_does_not_poll_a_mut
     });
     queued.await.unwrap();
     valid.store(false, Ordering::Release);
-    mock.signal(Signal::Release).await;
+    mock.release_all().await;
     for read in reads {
         read.await.unwrap().unwrap();
     }
@@ -388,33 +173,29 @@ async fn cancellation_while_waiting_for_connection_admission_does_not_poll_a_mut
         "a skipped, unpolled request does not poison admission"
     );
     let frames = mock.stop().await;
-    assert_eq!(
-        frames.iter().filter(|name| *name == "GetVersion").count(),
-        9
-    );
-    assert!(!frames.iter().any(|name| name == "SetInputMute"));
+    assert_eq!(frames.count(Request::GetVersion), 9);
+    assert_eq!(frames.count(Request::SetInputMute), 0);
 }
 
 #[tokio::test]
 async fn queued_primary_scene_switch_cannot_cross_a_collection_boundary() {
-    let mut mock = mock(Plan {
-        saturated_versions: true,
-        ..Default::default()
-    })
-    .await;
+    let mut mock = StatefulObs::default()
+        .hold(Request::GetVersion, When::AfterFirst)
+        .connect()
+        .await;
     let (tx, _rx) = mpsc::sync_channel(16);
     let mut controller = AppController::with_dependencies(Handle::current(), tx, dependencies());
-    let scope = controller.session.scope();
+    let scope = controller.session_scope();
     assert!(scope.install(mock.client.clone()));
     let mut reads = Vec::new();
     for _ in 0..8 {
         let client = mock.client.clone();
         reads.push(tokio::spawn(async move { client.get_version().await }));
     }
-    mock.wait("GetVersion", 9).await;
+    mock.wait(Request::GetVersion, 9).await;
     controller.handle(AppCommand::SwitchPrimaryScene("A".into()));
     scope.advance_collection();
-    mock.signal(Signal::Release).await;
+    mock.release_all().await;
     for read in reads {
         read.await.unwrap().unwrap();
     }
@@ -424,16 +205,17 @@ async fn queued_primary_scene_switch_cannot_cross_a_collection_boundary() {
     assert!(mock.client.retirement_reason().is_none());
     controller.shutdown().await.unwrap();
     let frames = mock.stop().await;
-    assert!(
-        !frames.iter().any(|name| name == "SetCurrentProgramScene"),
+    assert_eq!(
+        frames.count(Request::SetCurrentProgramScene),
+        0,
         "a queued scene switch must not target a replacement collection"
     );
 }
 
-fn pump(mock: &mut Mock, tx: mpsc::SyncSender<AppEvent>) -> tokio::task::JoinHandle<()> {
+fn pump(mock: &mut StatefulSession, tx: mpsc::SyncSender<AppEvent>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(crate::controller::refresh_controller::run_event_loop(
         mock.client.clone(),
-        mock.events.take().unwrap(),
+        mock.take_events(),
         EventSender::new(tx),
         vec![],
         Arc::new(Mutex::new(None)),
@@ -454,14 +236,15 @@ async fn graph_ready(rx: &mpsc::Receiver<AppEvent>) {
 
 #[tokio::test]
 async fn scene_rename_publishes_identity_and_refreshes_topology() {
-    let mut mock = mock(Plan::default()).await;
+    let mut mock = StatefulObs::default().connect().await;
     let (tx, rx) = mpsc::sync_channel(128);
     let task = pump(&mut mock, tx);
     graph_ready(&rx).await;
-    mock.signal(Signal::Event(
-        "SceneNameChanged", 4,
-        json!({"oldSceneName":"A", "sceneName":"Guest", "sceneUuid":"00000000-0000-0000-0000-000000000001"}),
-    )).await;
+    mock.emit(Event::SceneRenamed {
+        scene: Scene::A,
+        to: "Guest",
+    })
+    .await;
     let mut renamed = false;
     let mut refreshed = false;
     while !renamed || !refreshed {
@@ -486,27 +269,16 @@ async fn scene_rename_publishes_identity_and_refreshes_topology() {
 
 #[tokio::test]
 async fn visibility_and_transition_events_do_not_reload_topology_or_scene_mode() {
-    let mut mock = mock(Plan::default()).await;
+    let mut mock = StatefulObs::default().connect().await;
     let (tx, rx) = mpsc::sync_channel(128);
     let task = pump(&mut mock, tx);
     graph_ready(&rx).await;
-    mock.signal(Signal::Event(
-        "SceneTransitionEnded",
-        16,
-        json!({"transitionName":"Fade", "transitionUuid":"00000000-0000-0000-0000-000000000001"}),
-    ))
-    .await;
-    mock.signal(Signal::Event(
-        "CurrentPreviewSceneChanged",
-        4,
-        json!({"sceneName":"B", "sceneUuid":"00000000-0000-0000-0000-000000000002"}),
-    ))
-    .await;
-    mock.signal(Signal::Event(
-        "SceneItemEnableStateChanged",
-        128,
-        json!({"sceneName":"A", "sceneUuid":"00000000-0000-0000-0000-000000000001", "sceneItemId":1, "sceneItemEnabled":false}),
-    ))
+    mock.emit(Event::TransitionEnded).await;
+    mock.emit(Event::PreviewChanged(Scene::B)).await;
+    mock.emit(Event::ItemEnabledChanged {
+        scene: Scene::A,
+        enabled: false,
+    })
     .await;
     let mut values_changed = false;
     loop {
@@ -532,20 +304,14 @@ async fn visibility_and_transition_events_do_not_reload_topology_or_scene_mode()
     task.abort();
     let _ = task.await;
     let requests = mock.stop().await;
-    for name in ["GetProfileList", "GetSceneCollectionList"] {
-        assert_eq!(
-            requests
-                .iter()
-                .filter(|request| request.as_str() == name)
-                .count(),
-            1
-        );
+    for request in [Request::GetProfileList, Request::GetSceneCollectionList] {
+        assert_eq!(requests.count(request), 1);
     }
 }
 
 #[tokio::test]
 async fn program_switch_refreshes_audio_without_reloading_topology_or_setup() {
-    let mut mock = mock(Plan::default()).await;
+    let mut mock = StatefulObs::default().connect().await;
     let (tx, rx) = mpsc::sync_channel(128);
     let task = pump(&mut mock, tx);
     graph_ready(&rx).await;
@@ -572,25 +338,25 @@ async fn program_switch_refreshes_audio_without_reloading_topology_or_setup() {
     task.abort();
     let _ = task.await;
     let requests = mock.stop().await;
-    for request in ["GetSceneList", "GetProfileList", "GetSceneCollectionList"] {
+    for request in [
+        Request::GetSceneList,
+        Request::GetProfileList,
+        Request::GetSceneCollectionList,
+    ] {
         assert_eq!(
-            requests
-                .iter()
-                .filter(|name| name.as_str() == request)
-                .count(),
+            requests.count(request),
             1,
-            "Program switching repeated {request}"
+            "Program switching repeated {request:?}"
         );
     }
 }
 
 #[tokio::test]
 async fn queued_scene_activation_rejects_authoritative_mode_change_during_collection_read() {
-    let mut mock = mock(Plan {
-        hold: Some(("GetSceneCollectionList", 1)),
-        ..Default::default()
-    })
-    .await;
+    let mut mock = StatefulObs::default()
+        .hold(Request::GetSceneCollectionList, When::Nth(1))
+        .connect()
+        .await;
     let slot = Arc::new(Mutex::new(None));
     let scope = SessionScope::initial(slot.clone()).next();
     scope.install(mock.client.clone());
@@ -604,14 +370,9 @@ async fn queued_scene_activation_rejects_authoritative_mode_change_during_collec
     cached.observed_at = Some(std::time::Instant::now());
     let action = cached.scene_action("B").unwrap();
     workspace.request(request(&mock.client), Some(action), None);
-    mock.wait("GetSceneCollectionList", 1).await;
-    mock.signal(Signal::Event(
-        "StudioModeStateChanged",
-        1,
-        json!({"studioModeEnabled":true}),
-    ))
-    .await;
-    mock.signal(Signal::Release).await;
+    mock.wait(Request::GetSceneCollectionList, 1).await;
+    mock.emit(Event::StudioModeChanged(true)).await;
+    mock.release_all().await;
     tokio::time::timeout(TEST_DEADLINE, scope.quiesce())
         .await
         .unwrap();
@@ -619,35 +380,56 @@ async fn queued_scene_activation_rejects_authoritative_mode_change_during_collec
     scope.retire();
     let frames = mock.stop().await;
     assert!(
-        !frames
-            .iter()
-            .any(|name| name == "SetCurrentProgramScene" || name == "SetCurrentPreviewScene"),
+        frames.matching(&SCENE_WRITES).is_empty(),
         "an obsolete click must be rejected, not rerouted or replayed in the new mode"
     );
 }
 
 #[tokio::test]
 async fn scene_activation_mode_echo_during_delayed_mode_reply_fences_old_click() {
-    mode_echo_fences_activation(false, false).await;
+    mode_echo_fences_activation(GatePoint::DelayedModeReply, ModeEcho::Once).await;
 }
 
 #[tokio::test]
 async fn scene_activation_mode_echo_while_final_mutation_waits_for_gate_fences_old_click() {
-    mode_echo_fences_activation(true, false).await;
+    mode_echo_fences_activation(GatePoint::FinalMutationAdmission, ModeEcho::Once).await;
 }
 
 #[tokio::test]
 async fn scene_activation_mode_aba_while_waiting_for_gate_does_not_revive_old_click() {
-    mode_echo_fences_activation(true, true).await;
+    mode_echo_fences_activation(GatePoint::FinalMutationAdmission, ModeEcho::ThereAndBack).await;
 }
 
-async fn mode_echo_fences_activation(at_final_gate: bool, aba: bool) {
-    let mut mock = mock(Plan {
-        hold: Some(("GetStudioModeEnabled", 1)),
-        saturated_versions: at_final_gate,
-        ..Default::default()
-    })
-    .await;
+/// Where the scene click waits when the studio mode echo arrives.
+#[derive(Clone, Copy, PartialEq)]
+enum GatePoint {
+    /// Its mode read is still unanswered.
+    DelayedModeReply,
+    /// Its final mutation queues behind saturated connection admission.
+    FinalMutationAdmission,
+}
+
+/// How many studio mode echoes reach the event loop.
+#[derive(Clone, Copy, PartialEq)]
+enum ModeEcho {
+    Once,
+    /// The mode flips and flips back (A-B-A).
+    ThereAndBack,
+}
+
+/// An OBS holding the click's mode read, and every later `GetVersion` when
+/// the click must also wait at the final gate.
+fn mode_read_held(gate: GatePoint) -> StatefulObs {
+    let obs = StatefulObs::default().hold(Request::GetStudioModeEnabled, When::Nth(1));
+    match gate {
+        GatePoint::DelayedModeReply => obs,
+        GatePoint::FinalMutationAdmission => obs.hold(Request::GetVersion, When::AfterFirst),
+    }
+}
+
+async fn mode_echo_fences_activation(gate: GatePoint, echo: ModeEcho) {
+    let at_final_gate = gate == GatePoint::FinalMutationAdmission;
+    let mut mock = mode_read_held(gate).connect().await;
     let slot = Arc::new(Mutex::new(None));
     let scope = SessionScope::initial(slot.clone()).next();
     scope.install(mock.client.clone());
@@ -662,7 +444,7 @@ async fn mode_echo_fences_activation(at_final_gate: bool, aba: bool) {
         }),
         None,
     );
-    mock.wait("GetStudioModeEnabled", 1).await;
+    mock.wait(Request::GetStudioModeEnabled, 1).await;
     let mut reads = Vec::new();
     if at_final_gate {
         // The held mode read occupies one permit; seven reads fill the rest.
@@ -671,42 +453,31 @@ async fn mode_echo_fences_activation(at_final_gate: bool, aba: bool) {
             let client = mock.client.clone();
             reads.push(tokio::spawn(async move { client.get_version().await }));
         }
-        mock.wait("GetVersion", 8).await;
-        mock.signal(Signal::ReleaseKind("GetStudioModeEnabled"))
-            .await;
-        mock.wait("GetVersion", 9).await;
+        mock.wait(Request::GetVersion, 8).await;
+        mock.release(Request::GetStudioModeEnabled).await;
+        mock.wait(Request::GetVersion, 9).await;
     }
     // Bootstrap/stats requests may queue, but event pumping remains independent.
     let task = tokio::spawn(crate::controller::refresh_controller::run_event_loop(
         mock.client.clone(),
-        mock.events.take().unwrap(),
+        mock.take_events(),
         EventSender::new(tx).scoped(&scope),
         vec![],
         Arc::new(Mutex::new(None)),
     ));
-    mock.signal(Signal::Event(
-        "StudioModeStateChanged",
-        1,
-        json!({"studioModeEnabled":true}),
-    ))
-    .await;
+    mock.emit(Event::StudioModeChanged(true)).await;
     recv_matching(&rx, |event| {
         matches!(peel(event.clone()), AppEvent::StudioModeChanged(_))
     })
     .await;
-    if aba {
-        mock.signal(Signal::Event(
-            "StudioModeStateChanged",
-            1,
-            json!({"studioModeEnabled":false}),
-        ))
-        .await;
+    if echo == ModeEcho::ThereAndBack {
+        mock.emit(Event::StudioModeChanged(false)).await;
         recv_matching(&rx, |event| {
             matches!(peel(event.clone()), AppEvent::StudioModeChanged(_))
         })
         .await;
     }
-    mock.signal(Signal::Release).await;
+    mock.release_all().await;
     for read in reads {
         read.await.unwrap().unwrap();
     }
@@ -722,30 +493,24 @@ async fn mode_echo_fences_activation(at_final_gate: bool, aba: bool) {
     scope.retire();
     let frames = mock.stop().await;
     assert!(
-        !frames
-            .iter()
-            .any(|name| name == "SetCurrentProgramScene" || name == "SetCurrentPreviewScene"),
+        frames.matching(&SCENE_WRITES).is_empty(),
         "mode invalidation must fence the original click at final gate admission, without replay"
     );
 }
 
 #[tokio::test]
 async fn full_gtk_queue_does_not_hide_mode_echo_during_delayed_mode_reply() {
-    mode_echo_with_full_gtk_queue(false).await;
+    mode_echo_with_full_gtk_queue(GatePoint::DelayedModeReply).await;
 }
 
 #[tokio::test]
 async fn full_gtk_queue_does_not_hide_mode_echo_at_final_mutation_admission() {
-    mode_echo_with_full_gtk_queue(true).await;
+    mode_echo_with_full_gtk_queue(GatePoint::FinalMutationAdmission).await;
 }
 
-async fn mode_echo_with_full_gtk_queue(at_final_gate: bool) {
-    let mut mock = mock(Plan {
-        hold: Some(("GetStudioModeEnabled", 1)),
-        saturated_versions: at_final_gate,
-        ..Default::default()
-    })
-    .await;
+async fn mode_echo_with_full_gtk_queue(gate: GatePoint) {
+    let at_final_gate = gate == GatePoint::FinalMutationAdmission;
+    let mut mock = mode_read_held(gate).connect().await;
     let slot = Arc::new(Mutex::new(None));
     let scope = SessionScope::initial(slot.clone()).next();
     scope.install(mock.client.clone());
@@ -755,19 +520,14 @@ async fn mode_echo_with_full_gtk_queue(at_final_gate: bool) {
     workspace.set_scope(scope.clone());
     let task = tokio::spawn(crate::controller::refresh_controller::run_event_loop(
         mock.client.clone(),
-        mock.events.take().unwrap(),
+        mock.take_events(),
         EventSender::new(tx).scoped(&scope),
         vec![],
         Arc::new(Mutex::new(None)),
     ));
     // First event reaches ingress, but its publication cannot enter the full
     // GTK queue. Accept the click only AFTER this event's revision advances.
-    mock.signal(Signal::Event(
-        "StudioModeStateChanged",
-        1,
-        json!({"studioModeEnabled":false}),
-    ))
-    .await;
+    mock.emit(Event::StudioModeChanged(false)).await;
     tokio::time::timeout(TEST_DEADLINE, async {
         while scope.scene_activation_revision() == 0 {
             tokio::task::yield_now().await;
@@ -784,7 +544,7 @@ async fn mode_echo_with_full_gtk_queue(at_final_gate: bool) {
         }),
         None,
     );
-    mock.wait("GetStudioModeEnabled", 1).await;
+    mock.wait(Request::GetStudioModeEnabled, 1).await;
     let mut reads = Vec::new();
     if at_final_gate {
         // Bootstrap's held GetVersion already owns one of the eight slots.
@@ -792,17 +552,11 @@ async fn mode_echo_with_full_gtk_queue(at_final_gate: bool) {
             let client = mock.client.clone();
             reads.push(tokio::spawn(async move { client.get_version().await }));
         }
-        mock.wait("GetVersion", 8).await;
-        mock.signal(Signal::ReleaseKind("GetStudioModeEnabled"))
-            .await;
-        mock.wait("GetVersion", 9).await;
+        mock.wait(Request::GetVersion, 8).await;
+        mock.release(Request::GetStudioModeEnabled).await;
+        mock.wait(Request::GetVersion, 9).await;
     }
-    mock.signal(Signal::Event(
-        "StudioModeStateChanged",
-        1,
-        json!({"studioModeEnabled":true}),
-    ))
-    .await;
+    mock.emit(Event::StudioModeChanged(true)).await;
     let ingested_before_gtk_drain = tokio::time::timeout(Duration::from_millis(250), async {
         while scope.scene_activation_revision() == accepted {
             tokio::task::yield_now().await;
@@ -810,7 +564,7 @@ async fn mode_echo_with_full_gtk_queue(at_final_gate: bool) {
     })
     .await
     .is_ok();
-    mock.signal(Signal::Release).await;
+    mock.release_all().await;
     for read in reads {
         read.await.unwrap().unwrap();
     }
@@ -830,32 +584,29 @@ async fn mode_echo_with_full_gtk_queue(at_final_gate: bool) {
         "mode ingress was blocked by unrelated UI publication; {frames:?}"
     );
     assert!(
-        !frames
-            .iter()
-            .any(|name| name == "SetCurrentProgramScene" || name == "SetCurrentPreviewScene"),
+        frames.matching(&SCENE_WRITES).is_empty(),
         "a full GTK queue must not let an obsolete scene click mutate OBS: {frames:?}"
     );
 }
 
 #[tokio::test]
 async fn bootstrap_failure_fences_mutations_before_waiting_for_full_gtk_queue() {
-    let mut mock = mock(Plan {
-        fail_at: Some(("GetVersion", 2)),
-        ..Default::default()
-    })
-    .await;
+    let mut mock = StatefulObs::default()
+        .refuse(Request::GetVersion, When::Nth(2))
+        .connect()
+        .await;
     let scope = SessionScope::initial(Arc::new(Mutex::new(None))).next();
     scope.install(mock.client.clone());
     let (tx, rx) = mpsc::sync_channel(1);
     tx.send(AppEvent::Connecting).unwrap();
     let task = tokio::spawn(crate::controller::refresh_controller::run_event_loop(
         mock.client.clone(),
-        mock.events.take().unwrap(),
+        mock.take_events(),
         EventSender::new(tx).scoped(&scope),
         vec![],
         Arc::new(Mutex::new(None)),
     ));
-    mock.wait("GetVersion", 2).await;
+    mock.wait(Request::GetVersion, 2).await;
     let fenced_without_ui =
         tokio::time::timeout(Duration::from_millis(250), mock.client.wait_retired())
             .await
@@ -876,14 +627,14 @@ async fn bootstrap_failure_fences_mutations_before_waiting_for_full_gtk_queue() 
 
 #[tokio::test]
 async fn transport_publication_overflow_retires_instead_of_stalling_mode_ingress() {
-    let mut mock = mock(Plan::default()).await;
+    let mut mock = StatefulObs::default().connect().await;
     let scope = SessionScope::initial(Arc::new(Mutex::new(None))).next();
     scope.install(mock.client.clone());
     let (tx, _rx) = mpsc::sync_channel(1);
     tx.send(AppEvent::Connecting).unwrap();
     let task = tokio::spawn(crate::controller::refresh_controller::run_event_loop(
         mock.client.clone(),
-        mock.events.take().unwrap(),
+        mock.take_events(),
         EventSender::new(tx).scoped(&scope),
         vec![],
         Arc::new(Mutex::new(None)),
@@ -891,12 +642,7 @@ async fn transport_publication_overflow_retires_instead_of_stalling_mode_ingress
     // One publication may be selected by the publisher and another 64 queued.
     // There is no GTK drain: exceeding that bound must fail the connection closed.
     for _ in 0..crate::controller::refresh_controller::TRANSPORT_PUBLICATION_CAPACITY + 2 {
-        mock.signal(Signal::Event(
-            "StudioModeStateChanged",
-            1,
-            json!({"studioModeEnabled":false}),
-        ))
-        .await;
+        mock.emit(Event::StudioModeChanged(false)).await;
     }
     tokio::time::timeout(TEST_DEADLINE, task)
         .await
@@ -914,44 +660,36 @@ async fn transport_publication_overflow_retires_instead_of_stalling_mode_ingress
         .is_err());
     scope.retire();
     let frames = mock.stop().await;
-    assert!(!frames
-        .iter()
-        .any(|name| name == "SetCurrentProgramScene" || name == "SetCurrentPreviewScene"));
+    assert!(frames.matching(&SCENE_WRITES).is_empty());
 }
 
 #[tokio::test]
 async fn scene_activation_preserves_current_mode_and_rejects_an_unavailable_mode() {
     for (studio_enabled, unavailable) in [(false, false), (true, false), (false, true)] {
-        let mock = mock(Plan {
-            mode_unavailable: unavailable,
-            ..Default::default()
-        })
-        .await;
-        mock.signal(Signal::Event(
-            "StudioModeStateChanged",
-            1,
-            json!({"studioModeEnabled":studio_enabled}),
-        ))
-        .await;
+        let obs = StatefulObs::default();
+        let obs = if unavailable {
+            obs.refuse(Request::GetStudioModeEnabled, When::Always)
+        } else {
+            obs
+        };
+        let mock = obs.connect().await;
+        mock.emit(Event::StudioModeChanged(studio_enabled)).await;
         let result = mock
             .client
             .activate_scene_if("B", studio_enabled, &|| true)
             .await;
         assert_eq!(result.is_err(), unavailable);
         let frames = mock.stop().await;
-        let writes: Vec<_> = frames
-            .iter()
-            .filter(|name| name.starts_with("SetCurrent"))
-            .collect();
+        let writes = frames.matching(&SCENE_WRITES);
         if unavailable {
             assert!(writes.is_empty(), "unknown mode must fail closed");
         } else {
             assert_eq!(
                 writes,
                 vec![if studio_enabled {
-                    "SetCurrentPreviewScene"
+                    Request::SetCurrentPreviewScene
                 } else {
-                    "SetCurrentProgramScene"
+                    Request::SetCurrentProgramScene
                 }]
             );
         }
@@ -960,19 +698,18 @@ async fn scene_activation_preserves_current_mode_and_rejects_an_unavailable_mode
 
 #[tokio::test]
 async fn manual_graph_scan_invalidated_midscan_cannot_publish_ready() {
-    let mut mock = mock(Plan {
-        hold: Some(("GetSceneItemList", 5)),
-        second_hold: Some(("GetSceneList", 3)),
-        ..Default::default()
-    })
-    .await;
+    let mut mock = StatefulObs::default()
+        .hold(Request::GetSceneItemList, When::Nth(5))
+        .hold(Request::GetSceneList, When::Nth(3))
+        .connect()
+        .await;
     let scope = SessionScope::initial(Arc::new(Mutex::new(None))).next();
     scope.install(mock.client.clone());
     let (tx, rx) = mpsc::sync_channel(128);
     let sender = EventSender::new(tx).scoped(&scope);
     let task = tokio::spawn(crate::controller::refresh_controller::run_event_loop(
         mock.client.clone(),
-        mock.events.take().unwrap(),
+        mock.take_events(),
         sender.clone(),
         vec![],
         Arc::new(Mutex::new(None)),
@@ -983,22 +720,21 @@ async fn manual_graph_scan_invalidated_midscan_cannot_publish_ready() {
         crate::controller::refresh_controller::refresh_live_data(&client, &sender.fresh(), &[])
             .await;
     });
-    mock.wait("GetSceneItemList", 5).await;
+    mock.wait(Request::GetSceneItemList, 5).await;
     // Ignore earlier loading/audio publications; establish the actual structural
     // invalidation before releasing the old graph's held scene response.
     while rx.try_recv().is_ok() {}
-    mock.signal(Signal::Event("SceneListChanged", 4, json!({"scenes":[]})))
-        .await;
+    mock.emit(Event::SceneListChanged).await;
     recv_matching(&rx, |event| {
         matches!(peel(event.clone()), AppEvent::Observation { event, .. } if matches!(*event, AppEvent::GraphInvalidated))
     })
     .await;
-    mock.signal(Signal::ReleaseKind("GetSceneItemList")).await;
+    mock.release(Request::GetSceneItemList).await;
     tokio::time::timeout(TEST_DEADLINE, manual)
         .await
         .unwrap()
         .unwrap();
-    mock.wait("GetSceneList", 3).await;
+    mock.wait(Request::GetSceneList, 3).await;
     while let Ok(event) = rx.try_recv() {
         let event = peel(event);
         assert!(
@@ -1006,7 +742,7 @@ async fn manual_graph_scan_invalidated_midscan_cannot_publish_ready() {
             "a manual scan invalidated mid-read must not publish a graph completion"
         );
     }
-    mock.signal(Signal::Release).await;
+    mock.release_all().await;
     graph_ready(&rx).await;
     mock.client.retire();
     task.await.unwrap();
@@ -1016,20 +752,29 @@ async fn manual_graph_scan_invalidated_midscan_cannot_publish_ready() {
 
 #[tokio::test]
 async fn manual_graph_completion_waiting_for_gtk_capacity_rechecks_ingress_revision() {
-    graph_completion_with_full_gtk_queue(false).await;
+    graph_completion_with_full_gtk_queue(GraphScan::Completes).await;
 }
 
 #[tokio::test]
 async fn manual_graph_failure_waiting_for_gtk_capacity_rechecks_ingress_revision() {
-    graph_completion_with_full_gtk_queue(true).await;
+    graph_completion_with_full_gtk_queue(GraphScan::Fails).await;
 }
 
-async fn graph_completion_with_full_gtk_queue(fail: bool) {
-    let mut mock = mock(Plan {
-        fail_at: fail.then_some(("GetSceneItemList", 3)),
-        ..Default::default()
-    })
-    .await;
+/// How the manual graph scan ends.
+#[derive(Clone, Copy)]
+enum GraphScan {
+    Completes,
+    /// Its scene item read is refused.
+    Fails,
+}
+
+async fn graph_completion_with_full_gtk_queue(scan: GraphScan) {
+    let obs = StatefulObs::default();
+    let obs = match scan {
+        GraphScan::Completes => obs,
+        GraphScan::Fails => obs.refuse(Request::GetSceneItemList, When::Nth(3)),
+    };
+    let mut mock = obs.connect().await;
     let scope = SessionScope::initial(Arc::new(Mutex::new(None))).next();
     scope.install(mock.client.clone());
     // Exactly the four invalidation/inventory/audio publications fit; the
@@ -1041,7 +786,7 @@ async fn graph_completion_with_full_gtk_queue(fail: bool) {
     tokio::pin!(manual);
     tokio::select! {
         () = &mut manual => panic!("graph completion must be blocked by the full queue"),
-        () = mock.wait("GetSceneItemList", 3) => {}
+        () = mock.wait(Request::GetSceneItemList, 3) => {}
     }
     // One later wire reply proves the graph responses passed through obws's
     // receiver. Poll the actual scan through graph_is_current and into send.
@@ -1050,13 +795,12 @@ async fn graph_completion_with_full_gtk_queue(fail: bool) {
     let scan_revision = scope.graph_revision();
     let task = tokio::spawn(crate::controller::refresh_controller::run_event_loop(
         mock.client.clone(),
-        mock.events.take().unwrap(),
+        mock.take_events(),
         sender.clone(),
         vec![],
         Arc::new(Mutex::new(None)),
     ));
-    mock.signal(Signal::Event("SceneListChanged", 4, json!({"scenes":[]})))
-        .await;
+    mock.emit(Event::SceneListChanged).await;
     tokio::time::timeout(TEST_DEADLINE, async {
         while scope.graph_revision() == scan_revision {
             tokio::task::yield_now().await;
@@ -1084,23 +828,21 @@ async fn graph_completion_with_full_gtk_queue(fail: bool) {
 
 #[tokio::test]
 async fn graph_invalidated_midscan_never_publishes_ready_before_followup_completes() {
-    let mut mock = mock(Plan {
-        hold: Some(("GetSceneItemList", 2)),
-        second_hold: Some(("GetSceneList", 2)),
-        ..Default::default()
-    })
-    .await;
+    let mut mock = StatefulObs::default()
+        .hold(Request::GetSceneItemList, When::Nth(2))
+        .hold(Request::GetSceneList, When::Nth(2))
+        .connect()
+        .await;
     let (tx, rx) = mpsc::sync_channel(128);
     let task = pump(&mut mock, tx);
     let mut state = app_state();
-    mock.wait("GetSceneItemList", 2).await;
+    mock.wait(Request::GetSceneItemList, 2).await;
     while let Ok(event) = rx.try_recv() {
         if matches!(peel(event), AppEvent::GraphInvalidated) {
             state.set_topology_loading();
         }
     }
-    mock.signal(Signal::Event("SceneListChanged", 4, json!({"scenes":[]})))
-        .await;
+    mock.emit(Event::SceneListChanged).await;
     loop {
         let event = peel(recv_event(&rx).await);
         let event = match event {
@@ -1114,8 +856,8 @@ async fn graph_invalidated_midscan_never_publishes_ready_before_followup_complet
             break;
         }
     }
-    mock.signal(Signal::Release).await;
-    mock.wait("GetSceneList", 2).await;
+    mock.release_all().await;
+    mock.wait(Request::GetSceneList, 2).await;
     while let Ok(event) = rx.try_recv() {
         let event = peel(event);
         let event = match event {
@@ -1133,25 +875,18 @@ async fn graph_invalidated_midscan_never_publishes_ready_before_followup_complet
         state.topology_status,
         crate::controller::state::TopologyStatus::Ready
     );
-    mock.signal(Signal::Release).await;
+    mock.release_all().await;
     graph_ready(&rx).await;
     mock.client.retire();
     task.await.unwrap();
     mock.stop().await;
 }
-async fn echo_pair(mock: &Mock) {
-    let id = "00000000-0000-0000-0000-000000000001";
-    mock.signal(Signal::Event(
-        "InputMuteStateChanged",
-        8,
-        json!({"inputName":"MicA","inputUuid":id,"inputMuted":true}),
-    ))
-    .await;
-    mock.signal(Signal::Event(
-        "InputVolumeChanged",
-        8,
-        json!({"inputName":"MicA","inputUuid":id,"inputVolumeMul":0.25,"inputVolumeDb":-12.0}),
-    ))
+async fn echo_pair(mock: &StatefulSession) {
+    mock.emit(Event::MicMuted(true)).await;
+    mock.emit(Event::MicVolume {
+        mul: 0.25,
+        db: -12.0,
+    })
     .await;
 }
 async fn consume_echo_pair(rx: &mpsc::Receiver<AppEvent>, state: &mut AppState) {
@@ -1182,16 +917,15 @@ async fn consume_echo_pair(rx: &mpsc::Receiver<AppEvent>, state: &mut AppState) 
 
 #[tokio::test]
 async fn bootstrap_active_audio_snapshot_merges_newer_mute_and_volume_echoes() {
-    let mut mock = mock(Plan {
-        hold: Some(("GetInputVolume", 1)),
-        ..Default::default()
-    })
-    .await;
+    let mut mock = StatefulObs::default()
+        .hold(Request::GetInputVolume, When::Nth(1))
+        .connect()
+        .await;
     let (tx, rx) = mpsc::sync_channel(128);
     let task = pump(&mut mock, tx);
     let mut state = app_state();
     state.set_current_program("A".into());
-    mock.wait("GetInputVolume", 1).await;
+    mock.wait(Request::GetInputVolume, 1).await;
     // Consume loading, then use the exact production reconciliation API used by GTK.
     loop {
         if let AppEvent::Observation { revision, event } = recv_event(&rx).await {
@@ -1203,7 +937,7 @@ async fn bootstrap_active_audio_snapshot_merges_newer_mute_and_volume_echoes() {
     }
     echo_pair(&mock).await;
     consume_echo_pair(&rx, &mut state).await;
-    mock.signal(Signal::Release).await;
+    mock.release_all().await;
     loop {
         if let AppEvent::Observation { revision, event } = recv_event(&rx).await {
             if let Some(AppEvent::ActiveAudioObserved { scene, result }) =
@@ -1236,11 +970,10 @@ fn dependencies() -> ControllerDependencies {
 
 #[tokio::test]
 async fn selected_audio_real_command_snapshot_merges_newer_echoes() {
-    let mut mock = mock(Plan {
-        hold: Some(("GetInputVolume", 2)),
-        ..Default::default()
-    })
-    .await;
+    let mut mock = StatefulObs::default()
+        .hold(Request::GetInputVolume, When::Nth(2))
+        .connect()
+        .await;
     let (tx, rx) = mpsc::sync_channel(128);
     let task = pump(&mut mock, tx.clone());
     graph_ready(&rx).await;
@@ -1249,10 +982,10 @@ async fn selected_audio_real_command_snapshot_merges_newer_echoes() {
     let mut state = app_state();
     let request = state.set_mixer_audio_loading("A".into());
     controller.handle(AppCommand::RefreshMixerSceneAudio(request.clone()));
-    mock.wait("GetInputVolume", 2).await;
+    mock.wait(Request::GetInputVolume, 2).await;
     echo_pair(&mock).await;
     consume_echo_pair(&rx, &mut state).await;
-    mock.signal(Signal::Release).await;
+    mock.release_all().await;
     loop {
         if let AppEvent::Observation { revision, event } = peel(recv_event(&rx).await) {
             if let Some(AppEvent::MixerAudioInputsUpdated {
@@ -1274,30 +1007,25 @@ async fn selected_audio_real_command_snapshot_merges_newer_echoes() {
     mock.stop().await;
 }
 
-async fn switch_b(mock: &Mock) {
-    mock.signal(Signal::Event(
-        "CurrentProgramSceneChanged",
-        4,
-        json!({"sceneName":"B","sceneUuid":"00000000-0000-0000-0000-000000000002"}),
-    ))
-    .await;
+async fn switch_b(mock: &StatefulSession) {
+    mock.emit(Event::ProgramChanged(Scene::B)).await;
 }
 
 #[tokio::test]
 async fn failed_program_audio_clears_previous_controls_and_is_not_successful_emptiness() {
     for failure in [
-        Some("GetSceneItemList"),
-        Some("GetSceneItemEnabled"),
-        Some("GetInputMute"),
-        Some("GetInputVolume"),
+        Some(Request::GetSceneItemList),
+        Some(Request::GetSceneItemEnabled),
+        Some(Request::GetInputMute),
+        Some(Request::GetInputVolume),
         None,
     ] {
-        let mut mock = mock(Plan {
-            fail_b: failure,
-            empty_b: failure.is_none(),
-            ..Default::default()
-        })
-        .await;
+        let obs = StatefulObs::default();
+        let obs = match failure {
+            Some(request) => obs.refuse(request, When::WhileProgram(Scene::B)),
+            None => obs.empty_scene(Scene::B),
+        };
+        let mut mock = obs.connect().await;
         let (tx, rx) = mpsc::sync_channel(128);
         let task = pump(&mut mock, tx);
         let mut state = app_state();
@@ -1377,37 +1105,26 @@ async fn failed_program_audio_clears_previous_controls_and_is_not_successful_emp
 
 #[tokio::test]
 async fn app_disconnect_drains_controller_owned_refresh_before_output_shutdown() {
-    let mut mock = mock(Plan {
-        hold: Some(("GetProfileList", 2)),
-        active_outputs: true,
-        ..Default::default()
-    })
-    .await;
+    let mut mock = StatefulObs::default()
+        .hold(Request::GetProfileList, When::Nth(2))
+        .with_active_outputs()
+        .connect()
+        .await;
     let (tx, rx) = mpsc::sync_channel(128);
+    let runner = Runner {
+        clients: Mutex::new(VecDeque::from([(mock.client.clone(), mock.take_events())])),
+    };
     let mut controller =
-        AppController::with_dependencies(Handle::current(), tx.clone(), dependencies());
-    controller.session = SessionController::with_runner(
-        Handle::current(),
-        EventSender::new(tx),
-        Arc::new(Runner {
-            clients: Mutex::new(VecDeque::from([(
-                mock.client.clone(),
-                mock.events.take().unwrap(),
-            )])),
-        }),
-        SessionScope::initial(controller.client_slot.clone()),
-        Arc::new(Mutex::new(None)),
-    );
-    controller.sync_session_scope();
+        AppController::with_session_runner(Handle::current(), tx, dependencies(), Arc::new(runner));
     controller.handle(AppCommand::Connect);
     graph_ready(&rx).await;
     controller.handle(AppCommand::RefreshData);
-    mock.wait("GetProfileList", 2).await;
+    mock.wait(Request::GetProfileList, 2).await;
     controller.handle(AppCommand::Disconnect);
     // Give the command's synchronous scope synchronization and teardown a turn
     // while the admitted refresh read is still held by the loopback server.
     tokio::task::yield_now().await;
-    mock.signal(Signal::Release).await;
+    mock.release_all().await;
     loop {
         match peel(recv_event(&rx).await) {
             AppEvent::Disconnected => break,
@@ -1417,16 +1134,8 @@ async fn app_disconnect_drains_controller_owned_refresh_before_output_shutdown()
     }
     assert!(controller.connected_client().is_none());
     let frames = mock.stop().await;
-    assert_eq!(
-        frames.iter().filter(|name| *name == "StopStream").count(),
-        1,
-        "{frames:?}"
-    );
-    assert_eq!(
-        frames.iter().filter(|name| *name == "StopRecord").count(),
-        1,
-        "{frames:?}"
-    );
+    assert_eq!(frames.count(Request::StopStream), 1, "{frames:?}");
+    assert_eq!(frames.count(Request::StopRecord), 1, "{frames:?}");
     controller.shutdown().await.unwrap();
 }
 
@@ -1465,57 +1174,17 @@ impl SessionRunner for InstallOnlyRunner {
 
 #[tokio::test]
 async fn manual_refresh_publishes_a_failed_stream_readback() {
-    let (client, _server) = ScriptedObs::by_type([
-        (
-            "GetProfileList",
-            Reply::Ok(json!({"currentProfileName":"Main","profiles":["Main"]})),
-        ),
-        (
-            "GetSceneCollectionList",
-            Reply::Ok(json!({"currentSceneCollectionName":"Show","sceneCollections":["Show"]})),
-        ),
-        (
-            "GetStreamStatus",
-            Reply::Err {
-                code: 207,
-                comment: "stream output is not ready".into(),
-            },
-        ),
-        (
-            "GetRecordStatus",
-            Reply::Ok(
-                json!({"outputActive":false,"outputPaused":false,"outputTimecode":"00:00:00.000","outputDuration":0,"outputBytes":0}),
-            ),
-        ),
-        (
-            "GetSceneList",
-            Reply::Ok(json!({
-                "currentProgramSceneName":"A",
-                "currentProgramSceneUuid":"00000000-0000-0000-0000-000000000001",
-                "scenes":[{"sceneName":"A","sceneUuid":"00000000-0000-0000-0000-000000000001","sceneIndex":0}],
-            })),
-        ),
-        (
-            "GetSpecialInputs",
-            Reply::Ok(
-                json!({"desktop1":null,"desktop2":null,"mic1":null,"mic2":null,"mic3":null,"mic4":null}),
-            ),
-        ),
-        ("GetSceneItemList", Reply::Ok(json!({"sceneItems":[]}))),
-    ])
-    .connect()
-    .await;
+    let mock = StatefulObs::default()
+        .refuse(Request::GetStreamStatus, When::Always)
+        .connect()
+        .await;
     let (tx, rx) = mpsc::sync_channel(128);
-    let mut controller =
-        AppController::with_dependencies(Handle::current(), tx.clone(), dependencies());
-    controller.session = SessionController::with_runner(
+    let mut controller = AppController::with_session_runner(
         Handle::current(),
-        EventSender::new(tx),
-        Arc::new(InstallOnlyRunner(client)),
-        SessionScope::initial(controller.client_slot.clone()),
-        Arc::new(Mutex::new(None)),
+        tx,
+        dependencies(),
+        Arc::new(InstallOnlyRunner(mock.client.clone())),
     );
-    controller.sync_session_scope();
     controller.handle(AppCommand::Connect);
     tokio::time::timeout(TEST_DEADLINE, async {
         while controller.connected_client().is_none() {
@@ -1540,42 +1209,62 @@ async fn manual_refresh_publishes_a_failed_stream_readback() {
     assert_eq!(failed_readbacks, [OutputKind::Stream]);
 }
 
-async fn terminal_case(acknowledged: bool, full: bool, reconnect: bool) {
-    let held = if acknowledged {
-        ("GetStreamStatus", 2)
-    } else {
-        ("StartStream", 1)
+/// Which reply of the stream command OBS withholds until the session times out.
+#[derive(Clone, Copy, PartialEq)]
+enum Delivery {
+    /// `StartStream` itself: OBS may or may not have started streaming.
+    Unacknowledged,
+    /// The status readback after OBS acknowledged `StartStream`.
+    Acknowledged,
+}
+
+/// Room in the GTK event channel while nothing drains it.
+#[derive(Clone, Copy, PartialEq)]
+enum Channel {
+    Roomy,
+    Full,
+}
+
+/// What the operator does after the session retired, before GTK drains.
+#[derive(Clone, Copy, PartialEq)]
+enum Followup {
+    Nothing,
+    Reconnect,
+}
+
+async fn terminal_case(delivery: Delivery, channel: Channel, followup: Followup) {
+    let acknowledged = delivery == Delivery::Acknowledged;
+    let reconnect = followup == Followup::Reconnect;
+    let held = match delivery {
+        Delivery::Acknowledged => (Request::GetStreamStatus, 2),
+        Delivery::Unacknowledged => (Request::StartStream, 1),
     };
-    let mut first = mock(Plan {
-        hold: Some(held),
-        ..Default::default()
-    })
-    .await;
+    let mut first = StatefulObs::default()
+        .hold(held.0, When::Nth(held.1))
+        .connect()
+        .await;
     let mut second = if reconnect {
-        Some(mock(Plan::default()).await)
+        Some(StatefulObs::default().connect().await)
     } else {
         None
     };
-    let (tx, rx) = mpsc::sync_channel(if full { 1 } else { 128 });
-    let mut controller =
-        AppController::with_dependencies(Handle::current(), tx.clone(), dependencies());
-    let mut clients = VecDeque::from([(first.client.clone(), first.events.take().unwrap())]);
+    let capacity = match channel {
+        Channel::Roomy => 128,
+        Channel::Full => 1,
+    };
+    let (tx, rx) = mpsc::sync_channel(capacity);
+    let mut clients = VecDeque::from([(first.client.clone(), first.take_events())]);
     if let Some(second) = &mut second {
-        clients.push_back((second.client.clone(), second.events.take().unwrap()));
+        clients.push_back((second.client.clone(), second.take_events()));
     }
-    controller.session = SessionController::with_runner(
-        Handle::current(),
-        EventSender::new(tx),
-        Arc::new(Runner {
-            clients: Mutex::new(clients),
-        }),
-        SessionScope::initial(controller.client_slot.clone()),
-        Arc::new(Mutex::new(None)),
-    );
-    controller.sync_session_scope();
+    let runner = Runner {
+        clients: Mutex::new(clients),
+    };
+    let mut controller =
+        AppController::with_session_runner(Handle::current(), tx, dependencies(), Arc::new(runner));
     controller.handle(AppCommand::Connect);
     graph_ready(&rx).await;
-    let generation = controller.session.scope().generation();
+    let generation = controller.session_scope().generation();
     controller.handle(AppCommand::SetOutput {
         kind: OutputKind::Stream,
         active: true,
@@ -1584,7 +1273,7 @@ async fn terminal_case(acknowledged: bool, full: bool, reconnect: bool) {
     tokio::time::timeout(Duration::from_secs(12), first.client.wait_retired())
         .await
         .unwrap();
-    tokio::time::timeout(TEST_DEADLINE, controller.session.scope().cancelled())
+    tokio::time::timeout(TEST_DEADLINE, controller.session_scope().cancelled())
         .await
         .unwrap();
     // Deliberately no GTK drain until after the real owner retires the scope.
@@ -1639,46 +1328,37 @@ async fn terminal_case(acknowledged: bool, full: bool, reconnect: bool) {
         assert!(state.last_stream_command_error.is_some());
     }
     controller.shutdown().await.unwrap();
-    assert_eq!(
-        first
-            .stop()
-            .await
-            .iter()
-            .filter(|name| *name == "StartStream")
-            .count(),
-        1
-    );
+    assert_eq!(first.stop().await.count(Request::StartStream), 1);
     if let Some(second) = second {
-        assert!(!second.stop().await.iter().any(|name| name == "StartStream"));
+        assert_eq!(second.stop().await.count(Request::StartStream), 0);
     }
 }
 #[tokio::test]
 async fn delayed_gtk_drain_preserves_unknown_mutation_evidence_after_real_session_timeout() {
-    terminal_case(false, false, false).await;
+    terminal_case(Delivery::Unacknowledged, Channel::Roomy, Followup::Nothing).await;
 }
 #[tokio::test]
 async fn delayed_gtk_drain_preserves_acknowledgement_when_readback_retires_the_session() {
-    terminal_case(true, false, false).await;
+    terminal_case(Delivery::Acknowledged, Channel::Roomy, Followup::Nothing).await;
 }
 #[tokio::test]
 async fn full_gtk_channel_does_not_erase_owner_completed_terminal_evidence() {
-    terminal_case(false, true, false).await;
+    terminal_case(Delivery::Unacknowledged, Channel::Full, Followup::Nothing).await;
 }
 #[tokio::test]
 async fn reconnect_before_terminal_delivery_keeps_old_evidence_audit_only() {
-    terminal_case(false, true, true).await;
+    terminal_case(Delivery::Unacknowledged, Channel::Full, Followup::Reconnect).await;
 }
 
 #[tokio::test]
 async fn bootstrap_scene_snapshot_cannot_relabel_stale_program_audio_as_current() {
-    let mut mock = mock(Plan {
-        hold: Some(("GetSceneList", 1)),
-        ..Default::default()
-    })
-    .await;
+    let mut mock = StatefulObs::default()
+        .hold(Request::GetSceneList, When::Nth(1))
+        .connect()
+        .await;
     let (tx, rx) = mpsc::sync_channel(128);
     let task = pump(&mut mock, tx);
-    mock.wait("GetSceneList", 1).await;
+    mock.wait(Request::GetSceneList, 1).await;
     let mut state = app_state();
     state.set_current_program("A".into());
     switch_b(&mock).await;
@@ -1692,7 +1372,7 @@ async fn bootstrap_scene_snapshot_cannot_relabel_stale_program_audio_as_current(
             }
         }
     }
-    mock.signal(Signal::Release).await;
+    mock.release_all().await;
     let mut stale_audio_discarded = false;
     loop {
         if let AppEvent::Observation { revision, event } = recv_event(&rx).await {
@@ -1724,16 +1404,15 @@ async fn bootstrap_scene_snapshot_cannot_relabel_stale_program_audio_as_current(
 
 #[tokio::test]
 async fn program_aba_during_audio_scan_rejects_the_old_same_name_completion() {
-    let mut mock = mock(Plan {
-        hold: Some(("GetInputVolume", 1)),
-        ..Default::default()
-    })
-    .await;
+    let mut mock = StatefulObs::default()
+        .hold(Request::GetInputVolume, When::Nth(1))
+        .connect()
+        .await;
     let (tx, rx) = mpsc::sync_channel(128);
     let task = pump(&mut mock, tx);
     let mut state = app_state();
     state.set_current_program("A".into());
-    mock.wait("GetInputVolume", 1).await;
+    mock.wait(Request::GetInputVolume, 1).await;
     // Establish the actual request identity before invalidating its Program scope.
     loop {
         if let AppEvent::Observation { revision, event } = recv_event(&rx).await {
@@ -1744,12 +1423,7 @@ async fn program_aba_during_audio_scan_rejects_the_old_same_name_completion() {
         }
     }
     switch_b(&mock).await;
-    mock.signal(Signal::Event(
-        "CurrentProgramSceneChanged",
-        4,
-        json!({"sceneName":"A","sceneUuid":"00000000-0000-0000-0000-000000000001"}),
-    ))
-    .await;
+    mock.emit(Event::ProgramChanged(Scene::A)).await;
     let mut changes = 0;
     while changes < 2 {
         if let AppEvent::Observation { revision, event } = recv_event(&rx).await {
@@ -1761,7 +1435,7 @@ async fn program_aba_during_audio_scan_rejects_the_old_same_name_completion() {
             }
         }
     }
-    mock.signal(Signal::Release).await;
+    mock.release_all().await;
     loop {
         if let AppEvent::Observation { revision, event } = recv_event(&rx).await {
             if matches!(*event, AppEvent::ActiveAudioObserved { .. }) {
@@ -1784,46 +1458,31 @@ async fn program_aba_during_audio_scan_rejects_the_old_same_name_completion() {
     assert_eq!(state.audio_inputs[0].id, "MicA");
     mock.client.retire();
     task.await.unwrap();
-    assert_eq!(
-        mock.stop()
-            .await
-            .iter()
-            .filter(|name| *name == "GetInputMute")
-            .count(),
-        2
-    );
+    assert_eq!(mock.stop().await.count(Request::GetInputMute), 2);
 }
 
 #[tokio::test]
 async fn real_session_retirement_preserves_workspace_ack_and_unknown_outcomes() {
     for acknowledged in [true, false] {
         let held = if acknowledged {
-            ("GetSceneList", 2)
+            (Request::GetSceneList, 2)
         } else {
-            ("SetSceneItemEnabled", 1)
+            (Request::SetSceneItemEnabled, 1)
         };
-        let mut mock = mock(Plan {
-            hold: Some(held),
-            ..Default::default()
-        })
-        .await;
+        let mut mock = StatefulObs::default()
+            .hold(held.0, When::Nth(held.1))
+            .connect()
+            .await;
         let (tx, rx) = mpsc::sync_channel(128);
-        let mut controller =
-            AppController::with_dependencies(Handle::current(), tx.clone(), dependencies());
         let runner = Runner {
-            clients: Mutex::new(VecDeque::from([(
-                mock.client.clone(),
-                mock.events.take().unwrap(),
-            )])),
+            clients: Mutex::new(VecDeque::from([(mock.client.clone(), mock.take_events())])),
         };
-        controller.session = SessionController::with_runner(
+        let mut controller = AppController::with_session_runner(
             Handle::current(),
-            EventSender::new(tx),
+            tx,
+            dependencies(),
             Arc::new(runner),
-            SessionScope::initial(controller.client_slot.clone()),
-            Arc::new(Mutex::new(None)),
         );
-        controller.sync_session_scope();
         controller.handle(AppCommand::Connect);
         graph_ready(&rx).await;
         let mut request = request(&mock.client);
@@ -1841,7 +1500,7 @@ async fn real_session_retirement_preserves_workspace_ack_and_unknown_outcomes() 
         tokio::time::timeout(Duration::from_secs(12), mock.client.wait_retired())
             .await
             .unwrap();
-        tokio::time::timeout(TEST_DEADLINE, controller.session.scope().cancelled())
+        tokio::time::timeout(TEST_DEADLINE, controller.session_scope().cancelled())
             .await
             .unwrap();
         let terminal = loop {
@@ -1867,34 +1526,21 @@ async fn real_session_retirement_preserves_workspace_ack_and_unknown_outcomes() 
         assert!(operation.dispatched);
         assert!(operation.failure.is_some());
         controller.shutdown().await.unwrap();
-        assert_eq!(
-            mock.stop()
-                .await
-                .iter()
-                .filter(|name| *name == "SetSceneItemEnabled")
-                .count(),
-            1
-        );
+        assert_eq!(mock.stop().await.count(Request::SetSceneItemEnabled), 1);
     }
 }
 
 #[tokio::test]
 async fn output_status_snapshot_cannot_undo_a_newer_transport_echo() {
-    let mut mock = mock(Plan {
-        hold: Some(("GetStreamStatus", 1)),
-        ..Default::default()
-    })
-    .await;
+    let mut mock = StatefulObs::default()
+        .hold(Request::GetStreamStatus, When::Nth(1))
+        .connect()
+        .await;
     let (tx, rx) = mpsc::sync_channel(128);
     let task = pump(&mut mock, tx);
-    mock.wait("GetStreamStatus", 1).await;
+    mock.wait(Request::GetStreamStatus, 1).await;
     let request_seen = std::time::Instant::now();
-    mock.signal(Signal::Event(
-        "StreamStateChanged",
-        64,
-        json!({"outputActive":true,"outputState":"OBS_WEBSOCKET_OUTPUT_STARTED"}),
-    ))
-    .await;
+    mock.emit(Event::StreamStarted).await;
     let mut state = app_state();
     state.health.connected();
     loop {
@@ -1912,7 +1558,7 @@ async fn output_status_snapshot_cannot_undo_a_newer_transport_echo() {
             }
         }
     }
-    mock.signal(Signal::Release).await;
+    mock.release_all().await;
     loop {
         if let AppEvent::Observation { revision, event } = recv_event(&rx).await {
             if matches!(
@@ -1945,59 +1591,49 @@ async fn doctor_refresh_without_client_completes_loading_with_failure_even_after
     let mut controller = AppController::with_dependencies(Handle::current(), tx, dependencies());
     for retired in [false, true] {
         if retired {
-            controller.session.scope().retire();
+            controller.session_scope().retire();
         }
         controller.handle(AppCommand::RefreshData);
         assert!(matches!(
             peel(recv_event(&rx).await),
             AppEvent::GraphRefreshRejected(_)
         ));
-        controller.refresh_task.take().unwrap().await.unwrap();
+        controller.take_refresh_task().unwrap().await.unwrap();
     }
     controller.shutdown().await.unwrap();
 }
 
 #[tokio::test]
 async fn doctor_refresh_is_one_coalesced_worker_even_at_optional_command_saturation() {
-    let mut mock = mock(Plan {
-        hold: Some(("GetSceneList", 1)),
-        ..Default::default()
-    })
-    .await;
+    let mut mock = StatefulObs::default()
+        .hold(Request::GetSceneList, When::Nth(1))
+        .connect()
+        .await;
     let (tx, rx) = mpsc::sync_channel(128);
     let mut controller = AppController::with_dependencies(Handle::current(), tx, dependencies());
-    assert!(controller.session.scope().install(mock.client.clone()));
+    assert!(controller.session_scope().install(mock.client.clone()));
     for _ in 0..64 {
         controller
-            .session
-            .scope()
+            .session_scope()
             .spawn(&Handle::current(), std::future::pending())
             .unwrap();
     }
     assert!(controller
-        .session
-        .scope()
+        .session_scope()
         .spawn(&Handle::current(), std::future::pending())
         .is_none());
     controller.handle(AppCommand::RefreshData);
-    mock.wait("GetSceneList", 1).await;
+    mock.wait(Request::GetSceneList, 1).await;
     for _ in 0..256 {
         controller.handle(AppCommand::RefreshData);
     }
-    mock.signal(Signal::Release).await;
+    mock.release_all().await;
     graph_ready(&rx).await;
     graph_ready(&rx).await;
-    tokio::time::timeout(TEST_DEADLINE, controller.refresh_task.take().unwrap())
+    tokio::time::timeout(TEST_DEADLINE, controller.take_refresh_task().unwrap())
         .await
         .unwrap()
         .unwrap();
     controller.shutdown().await.unwrap();
-    assert_eq!(
-        mock.stop()
-            .await
-            .iter()
-            .filter(|name| *name == "GetSceneList")
-            .count(),
-        2
-    );
+    assert_eq!(mock.stop().await.count(Request::GetSceneList), 2);
 }

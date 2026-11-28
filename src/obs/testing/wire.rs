@@ -63,6 +63,16 @@ pub(crate) async fn read_json(socket: &mut MockSocket) -> Value {
     serde_json::from_str(message.as_text().unwrap()).unwrap()
 }
 
+/// The next request frame, or `None` once the client disconnects.
+pub(crate) async fn next_request(socket: &mut MockSocket) -> Option<Value> {
+    loop {
+        let message = socket.next().await?.ok()?;
+        if let Some(text) = message.as_text() {
+            return Some(serde_json::from_str(text).unwrap());
+        }
+    }
+}
+
 /// Send one JSON frame.
 pub(crate) async fn send_json(socket: &mut MockSocket, frame: &Value) {
     socket.send(Message::text(frame.to_string())).await.unwrap();

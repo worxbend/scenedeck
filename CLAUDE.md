@@ -164,7 +164,10 @@ and the widget lookups in `src/ui/test_support.rs` (`find_named`,
 the loopback OBS in `src/obs/testing/`: `wire.rs` speaks the handshake and
 frames, `scripted.rs` (`ScriptedObs`) answers requests in strict order or by
 `requestType`, with typed `Reply::Ok`/`Reply::Err`, counts each request
-type, and pushes OBS events through `connect_with_events`. Prefer extracting
+type, and pushes OBS events through `connect_with_events`. Controller tests
+that need OBS state to follow events use `stateful.rs` (`StatefulObs`): typed
+`Request`/`Event` values hold, refuse and count requests without any wire
+JSON in the test. Prefer extracting
 a pure decision helper — usually an `AppState` method — over testing through
 GTK callbacks.
 
