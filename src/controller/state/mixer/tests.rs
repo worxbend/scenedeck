@@ -1,5 +1,5 @@
 //! Mixer audio view model tests: request fencing, visibility, render
-//! sources, refresh targets and inspection snapshots.
+//! sources, refresh targets, inspection snapshots and input-event rebuilds.
 
 use super::*;
 use crate::controller::state::tests::fixtures::*;
@@ -937,4 +937,140 @@ fn completed_mixer_cache_and_error_are_retired_before_same_name_scope_is_reused(
             );
         }
     }
+}
+
+fn selected_mixer_state() -> AppState {
+    let mut state = app_state();
+    state.current_page = Page::Mixer;
+    state.mixer.mode = MixerMode::SelectedScene;
+    state.mixer.selected_scene = Some("Scene A".to_string());
+    state
+}
+
+#[test]
+fn mixer_input_event_rebuilds_for_visible_active_input() {
+    let mut state = app_state();
+    state.current_page = Page::Mixer;
+    state.mixer.mode = MixerMode::ActiveScene;
+    state.apply_active_audio(None, Ok(vec![input("Mic"), input("Music")]));
+
+    assert!(state.should_rebuild_visible_mixer_for_input_event("Mic"));
+}
+
+#[test]
+fn mixer_input_event_ignores_unrelated_active_input() {
+    let mut state = app_state();
+    state.current_page = Page::Mixer;
+    state.mixer.mode = MixerMode::ActiveScene;
+    state.apply_active_audio(None, Ok(vec![input("Mic")]));
+
+    assert!(!state.should_rebuild_visible_mixer_for_input_event("Music"));
+}
+
+#[test]
+fn mixer_input_event_rebuilds_for_visible_loaded_selected_input() {
+    let mut state = selected_mixer_state();
+    let request = state.set_mixer_audio_loading("Scene A".to_string());
+    state.set_mixer_audio_success(request, vec![input("Mic"), input("Music")]);
+
+    assert!(state.should_rebuild_visible_mixer_for_input_event("Mic"));
+}
+
+#[test]
+fn mixer_input_event_selected_mode_follows_render_source_current_scene_fallback() {
+    let mut state = app_state();
+    state.current_page = Page::Mixer;
+    state.mixer.mode = MixerMode::SelectedScene;
+    state.scene_inventory.current_id = Some("Current".to_string());
+    let request = state.set_mixer_audio_loading("Current".to_string());
+    state.set_mixer_audio_success(request, vec![input("Fallback Mic")]);
+
+    assert!(state.should_rebuild_visible_mixer_for_input_event("Fallback Mic"));
+}
+
+#[test]
+fn mixer_input_event_rebuilds_for_visible_loaded_pinned_input() {
+    let mut state = app_state();
+    state.current_page = Page::Mixer;
+    state.mixer.mode = MixerMode::PinnedScene;
+    state.mixer.selected_scene = Some("Scene A".to_string());
+    state.mixer.pinned_scene = Some("Pinned".to_string());
+    let request = state.set_mixer_audio_loading("Pinned".to_string());
+    state.set_mixer_audio_success(request, vec![input("Pinned Mic")]);
+
+    assert!(state.should_rebuild_visible_mixer_for_input_event("Pinned Mic"));
+}
+
+#[test]
+fn mixer_input_event_pinned_mode_follows_render_source_selected_scene_fallback() {
+    let mut state = app_state();
+    state.current_page = Page::Mixer;
+    state.mixer.mode = MixerMode::PinnedScene;
+    state.mixer.selected_scene = Some("Selected".to_string());
+    state.scene_inventory.current_id = Some("Current".to_string());
+    let request = state.set_mixer_audio_loading("Selected".to_string());
+    state.set_mixer_audio_success(request, vec![input("Selected Mic")]);
+
+    assert!(state.should_rebuild_visible_mixer_for_input_event("Selected Mic"));
+    assert!(!state.should_rebuild_visible_mixer_for_input_event("Current Mic"));
+}
+
+#[test]
+fn mixer_input_event_pinned_mode_follows_render_source_current_scene_fallback() {
+    let mut state = app_state();
+    state.current_page = Page::Mixer;
+    state.mixer.mode = MixerMode::PinnedScene;
+    state.scene_inventory.current_id = Some("Current".to_string());
+    let request = state.set_mixer_audio_loading("Current".to_string());
+    state.set_mixer_audio_success(request, vec![input("Current Mic")]);
+
+    assert!(state.should_rebuild_visible_mixer_for_input_event("Current Mic"));
+}
+
+#[test]
+fn mixer_input_event_ignores_unrelated_loaded_input() {
+    let mut state = selected_mixer_state();
+    let request = state.set_mixer_audio_loading("Scene A".to_string());
+    state.set_mixer_audio_success(request, vec![input("Mic")]);
+
+    assert!(!state.should_rebuild_visible_mixer_for_input_event("Music"));
+}
+
+#[test]
+fn mixer_input_event_ignores_non_mixer_page() {
+    let mut state = selected_mixer_state();
+    state.current_page = Page::Live;
+    let request = state.set_mixer_audio_loading("Scene A".to_string());
+    state.set_mixer_audio_success(request, vec![input("Mic")]);
+
+    assert!(!state.should_rebuild_visible_mixer_for_input_event("Mic"));
+}
+
+#[test]
+fn mixer_input_event_ignores_loading_error_missing_and_empty_snapshots() {
+    let mut loading = selected_mixer_state();
+    loading.set_mixer_audio_loading("Scene A".to_string());
+    assert!(!loading.should_rebuild_visible_mixer_for_input_event("Mic"));
+
+    let mut error = selected_mixer_state();
+    let request = error.set_mixer_audio_loading("Scene A".to_string());
+    error.set_mixer_audio_failure(request, "OBS failed".to_string());
+    assert!(!error.should_rebuild_visible_mixer_for_input_event("Mic"));
+
+    let missing = selected_mixer_state();
+    assert!(!missing.should_rebuild_visible_mixer_for_input_event("Mic"));
+
+    let mut empty = selected_mixer_state();
+    let request = empty.set_mixer_audio_loading("Scene A".to_string());
+    empty.set_mixer_audio_success(request, Vec::new());
+    assert!(!empty.should_rebuild_visible_mixer_for_input_event("Mic"));
+}
+
+#[test]
+fn mixer_input_event_ignores_snapshot_for_other_scene() {
+    let mut state = selected_mixer_state();
+    let request = state.set_mixer_audio_loading("Scene B".to_string());
+    state.set_mixer_audio_success(request, vec![input("Mic")]);
+
+    assert!(!state.should_rebuild_visible_mixer_for_input_event("Mic"));
 }

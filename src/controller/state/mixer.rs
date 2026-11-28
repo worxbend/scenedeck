@@ -270,6 +270,28 @@ impl AppState {
         }
     }
 
+    pub fn should_rebuild_visible_mixer_for_input_event(&self, input_name: &str) -> bool {
+        if self.current_page != Page::Mixer {
+            return false;
+        }
+
+        match self.visible_mixer_render_source() {
+            MixerVisibleRenderSource::ActiveScene(inputs)
+            | MixerVisibleRenderSource::Scene {
+                status: MixerVisibleAudioStatus::Loaded(inputs),
+                ..
+            } => inputs.iter().any(|input| input.id == input_name),
+            MixerVisibleRenderSource::Scene {
+                status:
+                    MixerVisibleAudioStatus::Loading
+                    | MixerVisibleAudioStatus::Error(_)
+                    | MixerVisibleAudioStatus::Missing,
+                ..
+            }
+            | MixerVisibleRenderSource::MissingScene => false,
+        }
+    }
+
     pub fn mixer_inspection_snapshot(&self) -> MixerInspectionSnapshot<'_> {
         let refresh_target = self.mixer_scene_refresh_target_details();
         let (render_source_kind, scene, status, inputs) = match self.visible_mixer_render_source() {

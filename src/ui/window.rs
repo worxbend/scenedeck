@@ -20,10 +20,7 @@ use crate::app_info::APP_NAME;
 use crate::controller::app_controller::AppController;
 use crate::controller::command::AppCommand;
 use crate::controller::event::{AppEvent, FailedOperation};
-use crate::controller::state::{
-    AppState, MixerAudioRefreshTransition, MixerVisibleAudioStatus, MixerVisibleRenderSource,
-    ObsStatus, Page,
-};
+use crate::controller::state::{AppState, MixerAudioRefreshTransition, ObsStatus, Page};
 use crate::domain::appearance::ThemeMode;
 use crate::domain::output::{OutputKind, OutputStatus};
 use crate::infra::error::AppError;
@@ -1150,7 +1147,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
             let rebuild_mixer = {
                 let mut state = nav.state.borrow_mut();
                 state.apply_input_mute(&input, muted);
-                should_rebuild_visible_mixer_for_input_event(&state, &input)
+                state.should_rebuild_visible_mixer_for_input_event(&input)
             };
 
             if let Some(ui) = ui {
@@ -1170,7 +1167,7 @@ fn apply_event(nav: &NavigationContext, event: AppEvent, ui: Option<&EventUiCont
             let rebuild_mixer = {
                 let mut state = nav.state.borrow_mut();
                 state.apply_input_volume(&input, volume_mul, volume_db);
-                should_rebuild_visible_mixer_for_input_event(&state, &input)
+                state.should_rebuild_visible_mixer_for_input_event(&input)
             };
 
             if let Some(ui) = ui {
@@ -1358,31 +1355,6 @@ fn update_live_audio_card(
     }
 }
 
-pub(crate) fn should_rebuild_visible_mixer_for_input_event(
-    state: &AppState,
-    input_name: &str,
-) -> bool {
-    if state.current_page != Page::Mixer {
-        return false;
-    }
-
-    match state.visible_mixer_render_source() {
-        MixerVisibleRenderSource::ActiveScene(inputs)
-        | MixerVisibleRenderSource::Scene {
-            status: MixerVisibleAudioStatus::Loaded(inputs),
-            ..
-        } => inputs.iter().any(|input| input.id == input_name),
-        MixerVisibleRenderSource::Scene {
-            status:
-                MixerVisibleAudioStatus::Loading
-                | MixerVisibleAudioStatus::Error(_)
-                | MixerVisibleAudioStatus::Missing,
-            ..
-        }
-        | MixerVisibleRenderSource::MissingScene => false,
-    }
-}
-
 /// Toast and log a failure; the next render shows the log entry.
 fn report_failure(nav: &NavigationContext, ui: Option<&EventUiContext>, message: String) {
     if let Some(ui) = ui {
@@ -1552,9 +1524,8 @@ mod render_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::controller::test_support::state::{app_state, input};
+    use crate::controller::test_support::state::app_state;
     use crate::domain::audio::AudioInput;
-    use crate::domain::mixer::MixerMode;
 
     #[test]
     #[ignore = "requires isolated GTK navigation and synthetic output observations"]
@@ -2737,164 +2708,5 @@ mod tests {
                 "last window removal must retire the application event receiver"
             );
         });
-    }
-
-    fn selected_mixer_state() -> AppState {
-        let mut state = app_state();
-        state.current_page = Page::Mixer;
-        state.mixer.mode = MixerMode::SelectedScene;
-        state.mixer.selected_scene = Some("Scene A".to_string());
-        state
-    }
-
-    #[test]
-    fn mixer_input_event_rebuilds_for_visible_active_input() {
-        let mut state = app_state();
-        state.current_page = Page::Mixer;
-        state.mixer.mode = MixerMode::ActiveScene;
-        state.apply_active_audio(None, Ok(vec![input("Mic"), input("Music")]));
-
-        assert!(should_rebuild_visible_mixer_for_input_event(&state, "Mic"));
-    }
-
-    #[test]
-    fn mixer_input_event_ignores_unrelated_active_input() {
-        let mut state = app_state();
-        state.current_page = Page::Mixer;
-        state.mixer.mode = MixerMode::ActiveScene;
-        state.apply_active_audio(None, Ok(vec![input("Mic")]));
-
-        assert!(!should_rebuild_visible_mixer_for_input_event(
-            &state, "Music"
-        ));
-    }
-
-    #[test]
-    fn mixer_input_event_rebuilds_for_visible_loaded_selected_input() {
-        let mut state = selected_mixer_state();
-        let request = state.set_mixer_audio_loading("Scene A".to_string());
-        state.set_mixer_audio_success(request, vec![input("Mic"), input("Music")]);
-
-        assert!(should_rebuild_visible_mixer_for_input_event(&state, "Mic"));
-    }
-
-    #[test]
-    fn mixer_input_event_selected_mode_follows_render_source_current_scene_fallback() {
-        let mut state = app_state();
-        state.current_page = Page::Mixer;
-        state.mixer.mode = MixerMode::SelectedScene;
-        state.scene_inventory.current_id = Some("Current".to_string());
-        let request = state.set_mixer_audio_loading("Current".to_string());
-        state.set_mixer_audio_success(request, vec![input("Fallback Mic")]);
-
-        assert!(should_rebuild_visible_mixer_for_input_event(
-            &state,
-            "Fallback Mic"
-        ));
-    }
-
-    #[test]
-    fn mixer_input_event_rebuilds_for_visible_loaded_pinned_input() {
-        let mut state = app_state();
-        state.current_page = Page::Mixer;
-        state.mixer.mode = MixerMode::PinnedScene;
-        state.mixer.selected_scene = Some("Scene A".to_string());
-        state.mixer.pinned_scene = Some("Pinned".to_string());
-        let request = state.set_mixer_audio_loading("Pinned".to_string());
-        state.set_mixer_audio_success(request, vec![input("Pinned Mic")]);
-
-        assert!(should_rebuild_visible_mixer_for_input_event(
-            &state,
-            "Pinned Mic"
-        ));
-    }
-
-    #[test]
-    fn mixer_input_event_pinned_mode_follows_render_source_selected_scene_fallback() {
-        let mut state = app_state();
-        state.current_page = Page::Mixer;
-        state.mixer.mode = MixerMode::PinnedScene;
-        state.mixer.selected_scene = Some("Selected".to_string());
-        state.scene_inventory.current_id = Some("Current".to_string());
-        let request = state.set_mixer_audio_loading("Selected".to_string());
-        state.set_mixer_audio_success(request, vec![input("Selected Mic")]);
-
-        assert!(should_rebuild_visible_mixer_for_input_event(
-            &state,
-            "Selected Mic"
-        ));
-        assert!(!should_rebuild_visible_mixer_for_input_event(
-            &state,
-            "Current Mic"
-        ));
-    }
-
-    #[test]
-    fn mixer_input_event_pinned_mode_follows_render_source_current_scene_fallback() {
-        let mut state = app_state();
-        state.current_page = Page::Mixer;
-        state.mixer.mode = MixerMode::PinnedScene;
-        state.scene_inventory.current_id = Some("Current".to_string());
-        let request = state.set_mixer_audio_loading("Current".to_string());
-        state.set_mixer_audio_success(request, vec![input("Current Mic")]);
-
-        assert!(should_rebuild_visible_mixer_for_input_event(
-            &state,
-            "Current Mic"
-        ));
-    }
-
-    #[test]
-    fn mixer_input_event_ignores_unrelated_loaded_input() {
-        let mut state = selected_mixer_state();
-        let request = state.set_mixer_audio_loading("Scene A".to_string());
-        state.set_mixer_audio_success(request, vec![input("Mic")]);
-
-        assert!(!should_rebuild_visible_mixer_for_input_event(
-            &state, "Music"
-        ));
-    }
-
-    #[test]
-    fn mixer_input_event_ignores_non_mixer_page() {
-        let mut state = selected_mixer_state();
-        state.current_page = Page::Live;
-        let request = state.set_mixer_audio_loading("Scene A".to_string());
-        state.set_mixer_audio_success(request, vec![input("Mic")]);
-
-        assert!(!should_rebuild_visible_mixer_for_input_event(&state, "Mic"));
-    }
-
-    #[test]
-    fn mixer_input_event_ignores_loading_error_missing_and_empty_snapshots() {
-        let mut loading = selected_mixer_state();
-        loading.set_mixer_audio_loading("Scene A".to_string());
-        assert!(!should_rebuild_visible_mixer_for_input_event(
-            &loading, "Mic"
-        ));
-
-        let mut error = selected_mixer_state();
-        let request = error.set_mixer_audio_loading("Scene A".to_string());
-        error.set_mixer_audio_failure(request, "OBS failed".to_string());
-        assert!(!should_rebuild_visible_mixer_for_input_event(&error, "Mic"));
-
-        let missing = selected_mixer_state();
-        assert!(!should_rebuild_visible_mixer_for_input_event(
-            &missing, "Mic"
-        ));
-
-        let mut empty = selected_mixer_state();
-        let request = empty.set_mixer_audio_loading("Scene A".to_string());
-        empty.set_mixer_audio_success(request, Vec::new());
-        assert!(!should_rebuild_visible_mixer_for_input_event(&empty, "Mic"));
-    }
-
-    #[test]
-    fn mixer_input_event_ignores_snapshot_for_other_scene() {
-        let mut state = selected_mixer_state();
-        let request = state.set_mixer_audio_loading("Scene B".to_string());
-        state.set_mixer_audio_success(request, vec![input("Mic")]);
-
-        assert!(!should_rebuild_visible_mixer_for_input_event(&state, "Mic"));
     }
 }

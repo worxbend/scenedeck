@@ -309,7 +309,9 @@ Audio refresh for the current scene includes:
 - Enabled inputs inside nested scenes and groups.
 
 Input mute and volume events update the matching audio card without rebuilding
-the whole mixer. A bounded history of the last 32 actual gain sends recognizes
+the whole mixer. `AppState::should_rebuild_visible_mixer_for_input_event`
+(`controller/state/mixer.rs`) decides whether the Mixer page currently shows
+that input. A bounded history of the last 32 actual gain sends recognizes
 delayed own-value echoes while a newer unsent edit is pending, including OBS f32
 rounding; an unmatched observation clears that history and remains authoritative.
 OBS events carry no command ID, so matching values are an arbitration policy,
