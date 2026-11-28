@@ -452,8 +452,8 @@ pub(super) fn mixer_inspection_inputs(inputs: &[AudioInput]) -> Vec<MixerInspect
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::*;
     use super::*;
+    use crate::controller::state::tests::fixtures::*;
 
     #[test]
     fn mixer_refresh_loading_tracks_request_and_preserves_snapshot() {

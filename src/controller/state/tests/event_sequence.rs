@@ -9,7 +9,7 @@
 
 use std::time::{Duration, Instant};
 
-use super::{app_state, obs_stats, stream_health};
+use super::fixtures::{app_state, obs_stats, stream_health};
 use crate::controller::command::AppCommand;
 use crate::controller::event::{AppEvent, ConnectionInfo};
 use crate::controller::lifecycle::{OperationEvidence, OperationKind, SessionRetirement};
